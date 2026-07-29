@@ -906,6 +906,12 @@ readonly MKFS_EXT4_BIN=/usr/bin/mkfs.ext4
 readonly FUSERMOUNT_BIN=/usr/bin/fusermount3
 readonly MOUNTPOINT_BIN=/usr/bin/mountpoint
 
+advance_transcript_records_after_append() {
+  [[ "$TRANSCRIPT_RECORDS" =~ ^[0-9]+$ ]] ||
+    die 'trusted transcript record counter is malformed'
+  TRANSCRIPT_RECORDS=$((TRANSCRIPT_RECORDS + 1))
+}
+
 validate_exact_tool() {
   local tool="$1"
   local label="$2"
@@ -2494,13 +2500,26 @@ frame = b"\0".join(
         expected_sha256.encode(),
     ]
 ) + b"\0"
+def send_status_body_once(sock, body, ancillary):
+    sent = sock.sendmsg([body], ancillary)
+    if sent <= 0:
+        raise SystemExit(2)
+    remaining = memoryview(body)[sent:]
+    while remaining:
+        sent = sock.send(remaining)
+        if sent <= 0:
+            raise SystemExit(2)
+        remaining = remaining[sent:]
 status_socket = socket.socket(fileno=fd)
-status_socket.sendmsg(
-    [frame],
+status_socket.sendall(len(frame).to_bytes(4, "big"))
+send_status_body_once(
+    status_socket,
+    frame,
     [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [run_fd]))],
 )
 status_socket.detach()
 PY
+    exec {ACGS_STATUS_FD}>&-
     exit 0
   fi
   trap '' INT TERM
@@ -3818,9 +3837,16 @@ fi
 
 append_record() {
   local started="$1" finished="$2" stdout_file="$3" stderr_file="$4" selector="$5" cwd_scope="$6"
+  local append_errexit=0 append_rc=0
   shift 6
   local exact_cwd="${ACGS_LAST_RECORDED_CWD:-}"
   [[ -n "$exact_cwd" ]] || die 'trusted transcript exact cwd is missing'
+  case $- in
+    *e*)
+      append_errexit=1
+      set +e
+      ;;
+  esac
   /usr/bin/python3 -I -S - \
     "$TRUSTED_TRANSCRIPT" "$NODE_EVIDENCE/transcript.jsonl" "$NODE_ID" "$started" "$finished" \
     "$stdout_file" "$stderr_file" "$selector" "$cwd_scope" "$exact_cwd" "$@" <<'PY'
@@ -3861,6 +3887,14 @@ def utc(value):
         raise SystemExit("trusted transcript timestamp timezone is malformed")
     return value
 
+def write_exact(fd, payload, label):
+    remaining = memoryview(payload)
+    while remaining:
+        written = os.write(fd, remaining)
+        if written <= 0:
+            raise SystemExit(f"{label} short write")
+        remaining = remaining[written:]
+
 if not pathlib.Path(exact_cwd).is_absolute():
     raise SystemExit("trusted transcript cwd is not absolute")
 if (
@@ -3900,9 +3934,7 @@ try:
     st = os.fstat(fd)
     if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
         raise SystemExit("trusted transcript output must be regular")
-    written = os.write(fd, payload)
-    if written != len(payload):
-        raise SystemExit("trusted transcript short write")
+    write_exact(fd, payload, "trusted transcript")
     os.fsync(fd)
 finally:
     os.close(fd)
@@ -3918,164 +3950,39 @@ if compatibility_path.is_absolute():
     ).encode()
     compatibility_fd = os.open(compatibility_path, flags, 0o600)
     try:
-        os.write(compatibility_fd, compatibility_payload)
+        write_exact(compatibility_fd, compatibility_payload, "trusted transcript compatibility")
         os.fsync(compatibility_fd)
     finally:
         os.close(compatibility_fd)
 PY
+  append_rc=$?
+  if (( append_errexit == 1 )); then
+    set -e
+  fi
+  if (( append_rc != 0 )); then
+    return "$append_rc"
+  fi
+  advance_transcript_records_after_append
 }
 
 emit_recorded_gate_failure_diagnostic() {
-  local basename="$1" scope="$2" selector="$3" gate_status="$4"
-  if ! /usr/bin/python3 -I -S - "$NODE_EVIDENCE" "$basename" "$scope" "$selector" "$gate_status" <<'PY'
-import base64
+  local gate_ordinal="$1" selector="$2" gate_status="$3"
+  if ! /usr/bin/python3 -I -S - "$ACGS_STATUS_FD" \
+    "$gate_ordinal" "$selector" "$gate_status" <<'PY'
 import hashlib
 import json
-import os
-import re
-import stat
+import socket
 import sys
 
-HEADER = "ACGS_RECORDED_GATE_FAILURE_DIAGNOSTIC_BEGIN"
-FOOTER = "ACGS_RECORDED_GATE_FAILURE_DIAGNOSTIC_END"
-SCHEMA = "acgs.recorded_gate.failure_diagnostic.v1"
-MAX_STREAM_BYTES = 4 * 1024 * 1024
-HEAD_BYTES = 512 * 1024
-TAIL_BYTES = MAX_STREAM_BYTES - HEAD_BYTES
-MAX_FRAME_BYTES = 12 * 1024 * 1024
-SAFE_TEXT = re.compile(r"^[A-Za-z0-9_.:/=+@ -]{1,4096}$")
-SAFE_BASENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+SCHEMA = "acgs.recorded_gate.failure_status"
+VERSION = 1
+MAX_FRAME_BYTES = 4 * 1024 * 1024
 
-node_evidence, basename, scope, selector, gate_status_raw = sys.argv[1:]
-uid = os.getuid()
+status_fd_raw, gate_ordinal_raw, selector, gate_status_raw = sys.argv[1:]
 
 
 class DiagnosticUnavailable(Exception):
     pass
-
-
-def unavailable(reason):
-    payload = {
-        "evidence": False,
-        "reason": reason,
-        "schema": SCHEMA,
-        "trust": "untrusted-internal",
-        "unavailable": True,
-    }
-    emit(payload)
-
-
-def identity(file_stat):
-    return (
-        file_stat.st_dev,
-        file_stat.st_ino,
-        file_stat.st_uid,
-        stat.S_IMODE(file_stat.st_mode),
-        file_stat.st_nlink,
-        file_stat.st_size,
-    )
-
-
-def open_verified_directory(path):
-    if not os.path.isabs(path):
-        raise DiagnosticUnavailable("node-evidence-path")
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    if hasattr(os, "O_NONBLOCK"):
-        flags |= os.O_NONBLOCK
-    fd = os.open(path, flags)
-    try:
-        path_stat = os.stat(path, follow_symlinks=False)
-        fd_stat = os.fstat(fd)
-        if identity(path_stat) != identity(fd_stat):
-            raise DiagnosticUnavailable("node-evidence-identity")
-        if not stat.S_ISDIR(fd_stat.st_mode):
-            raise DiagnosticUnavailable("node-evidence-type")
-        if fd_stat.st_uid != uid or stat.S_IMODE(fd_stat.st_mode) != 0o700:
-            raise DiagnosticUnavailable("node-evidence-mode")
-        return fd
-    except Exception:
-        os.close(fd)
-        raise
-
-
-def open_verified_stream(dir_fd, name):
-    if name not in (f"{basename}.stdout", f"{basename}.stderr"):
-        raise DiagnosticUnavailable("stream-name")
-    flags = os.O_RDONLY | os.O_CLOEXEC
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    if hasattr(os, "O_NONBLOCK"):
-        flags |= os.O_NONBLOCK
-    before = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
-    fd = os.open(name, flags, dir_fd=dir_fd)
-    try:
-        opened = os.fstat(fd)
-        if identity(before) != identity(opened):
-            raise DiagnosticUnavailable("stream-identity")
-        if (
-            not stat.S_ISREG(opened.st_mode)
-            or opened.st_uid != uid
-            or stat.S_IMODE(opened.st_mode) != 0o600
-            or opened.st_nlink != 1
-        ):
-            raise DiagnosticUnavailable("stream-safety")
-        return fd, opened
-    except Exception:
-        os.close(fd)
-        raise
-
-
-def read_all(fd, initial_stat):
-    chunks = []
-    while True:
-        chunk = os.read(fd, 1024 * 1024)
-        if not chunk:
-            break
-        chunks.append(chunk)
-    after = os.fstat(fd)
-    if identity(after) != identity(initial_stat):
-        raise DiagnosticUnavailable("stream-raced")
-    return b"".join(chunks)
-
-
-def segment(position, offset, data):
-    return {
-        "base64": base64.b64encode(data).decode("ascii"),
-        "offset": offset,
-        "position": position,
-        "sha256": hashlib.sha256(data).hexdigest(),
-        "size": len(data),
-    }
-
-
-def summarize_stream(dir_fd, stream_name):
-    fd, file_stat = open_verified_stream(dir_fd, f"{basename}.{stream_name}")
-    try:
-        data = read_all(fd, file_stat)
-    finally:
-        os.close(fd)
-    size = len(data)
-    if size <= MAX_STREAM_BYTES:
-        segments = [segment("full", 0, data)]
-        captured = size
-    else:
-        head = data[:HEAD_BYTES]
-        tail = data[-TAIL_BYTES:]
-        segments = [
-            segment("head", 0, head),
-            segment("tail", size - len(tail), tail),
-        ]
-        captured = len(head) + len(tail)
-    return {
-        "captured_bytes": captured,
-        "full_sha256": hashlib.sha256(data).hexdigest(),
-        "omitted_bytes": max(0, size - captured),
-        "segments": segments,
-        "size": size,
-        "truncated": size > MAX_STREAM_BYTES,
-    }
 
 
 def emit(payload):
@@ -4086,68 +3993,60 @@ def emit(payload):
         separators=(",", ":"),
         sort_keys=True,
     )
-    frame = f"{HEADER}\n{rendered}\n{FOOTER}\n".encode("ascii")
+    frame = rendered.encode("ascii")
     if len(frame) > MAX_FRAME_BYTES:
-        rendered = json.dumps(
-            {
-                "evidence": False,
-                "reason": "diagnostic-frame-too-large",
-                "schema": SCHEMA,
-                "trust": "untrusted-internal",
-                "unavailable": True,
-            },
-            allow_nan=False,
-            ensure_ascii=True,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        frame = f"{HEADER}\n{rendered}\n{FOOTER}\n".encode("ascii")
-    os.write(2, frame)
+        raise DiagnosticUnavailable("status-frame-too-large")
+    if not status_fd_raw.isdecimal():
+        raise DiagnosticUnavailable("status-fd")
+    status_socket = socket.socket(fileno=int(status_fd_raw))
+    def send_status_body_once(sock, body, ancillary):
+        sent = sock.sendmsg([body], ancillary)
+        if sent <= 0:
+            raise DiagnosticUnavailable("status-send")
+        remaining = memoryview(body)[sent:]
+        while remaining:
+            sent = sock.send(remaining)
+            if sent <= 0:
+                raise DiagnosticUnavailable("status-send")
+            remaining = remaining[sent:]
+    try:
+        status_socket.sendall(len(frame).to_bytes(4, "big"))
+        send_status_body_once(status_socket, frame, [])
+    finally:
+        status_socket.detach()
 
 
 try:
-    if not SAFE_BASENAME.fullmatch(basename):
-        raise DiagnosticUnavailable("basename")
-    if not SAFE_TEXT.fullmatch(scope) or not SAFE_TEXT.fullmatch(selector):
-        raise DiagnosticUnavailable("label")
-    if not gate_status_raw.isdecimal() or int(gate_status_raw) < 1:
+    if not gate_ordinal_raw.isdecimal():
+        raise DiagnosticUnavailable("gate-ordinal")
+    if not gate_status_raw.isdecimal() or not (1 <= int(gate_status_raw) <= 255):
         raise DiagnosticUnavailable("exit-code")
-    evidence_fd = open_verified_directory(node_evidence)
-    try:
-        payload = {
-            "basename": basename,
-            "evidence": False,
-            "exit_code": int(gate_status_raw),
-            "schema": SCHEMA,
-            "scope": scope,
-            "selector": selector,
-            "streams": {
-                "stderr": summarize_stream(evidence_fd, "stderr"),
-                "stdout": summarize_stream(evidence_fd, "stdout"),
-            },
-            "trust": "untrusted-internal",
-            "unavailable": False,
-        }
-    finally:
-        os.close(evidence_fd)
+    payload = {
+        "exit_code": int(gate_status_raw),
+        "gate_ordinal": int(gate_ordinal_raw),
+        "schema": SCHEMA,
+        "selector_sha256": hashlib.sha256(selector.encode("utf-8")).hexdigest(),
+        "version": VERSION,
+    }
     emit(payload)
-except DiagnosticUnavailable as exc:
-    unavailable(str(exc))
+except DiagnosticUnavailable:
+    raise SystemExit(2)
 except Exception:
-    unavailable("diagnostic-exception")
+    raise SystemExit(2)
 PY
   then
-    printf '%s\n%s\n%s\n' \
-      'ACGS_RECORDED_GATE_FAILURE_DIAGNOSTIC_BEGIN' \
-      '{"evidence":false,"reason":"diagnostic-helper-unavailable","schema":"acgs.recorded_gate.failure_diagnostic.v1","trust":"untrusted-internal","unavailable":true}' \
-      'ACGS_RECORDED_GATE_FAILURE_DIAGNOSTIC_END' >&2
+    return 2
   fi
+}
+
+recorded_gate_selector_sha256() {
+  printf '%s' "$1" | sha256sum | awk '{print $1}'
 }
 
 run_recorded_gate() {
   local scope="$1" cwd="$2" basename="$3" selector="$4" cwd_scope="$5"
   shift 5
-  local started finished stdout_file stderr_file gate_status stderr_sha256
+  local started finished stdout_file stderr_file gate_status
   stdout_file="$NODE_EVIDENCE/$basename.stdout"
   stderr_file="$NODE_EVIDENCE/$basename.stderr"
   started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -4167,10 +4066,9 @@ run_recorded_gate() {
   fi
   finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ "$gate_status" -ne 0 ]]; then
-    emit_recorded_gate_failure_diagnostic "$basename" "$scope" "$selector" "$gate_status" || true
-    stderr_sha256="$(sha256sum "$stderr_file" | awk '{print $1}')"
-    printf 'RECORDED_GATE=FAIL scope=%s selector=%s exit=%s stderr_sha256=%s\n' \
-      "$scope" "$selector" "$gate_status" "$stderr_sha256" >&2
+    emit_recorded_gate_failure_diagnostic "$TRANSCRIPT_RECORDS" "$selector" "$gate_status" || true
+    printf 'RECORDED_GATE=FAIL ordinal=%s selector_sha256=%s exit=%s\n' \
+      "$TRANSCRIPT_RECORDS" "$(recorded_gate_selector_sha256 "$selector")" "$gate_status" >&2
     return "$gate_status"
   fi
   ACGS_LAST_RECORDED_CWD="$cwd" \
@@ -4181,7 +4079,7 @@ run_recorded_gate() {
 run_trusted_parent_postgres_gate() {
   local scope="$1" cwd="$2" basename="$3" selector="$4" cwd_scope="$5"
   shift 5
-  local started finished stdout_file stderr_file gate_status stderr_sha256 tmpdir
+  local started finished stdout_file stderr_file gate_status tmpdir
   local runner_path runner_fd runner_path_stat runner_fd_stat runner_sha runner_size
   local trusted_runner_sha256='e1f39e7991916d04c500e2da1001f40c58553574dbadab3e3562db3c3ea42c44'
   [[ "$scope" == CP ]] || die 'trusted parent PostgreSQL gate is CP-only'
@@ -4334,10 +4232,9 @@ PY
   exec {runner_fd}<&-
   finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ "$gate_status" -ne 0 ]]; then
-    emit_recorded_gate_failure_diagnostic "$basename" "$scope" "$selector" "$gate_status" || true
-    stderr_sha256="$(sha256sum "$stderr_file" | awk '{print $1}')"
-    printf 'RECORDED_GATE=FAIL scope=%s selector=%s exit=%s stderr_sha256=%s\n' \
-      "$scope" "$selector" "$gate_status" "$stderr_sha256" >&2
+    emit_recorded_gate_failure_diagnostic "$TRANSCRIPT_RECORDS" "$selector" "$gate_status" || true
+    printf 'RECORDED_GATE=FAIL ordinal=%s selector_sha256=%s exit=%s\n' \
+      "$TRANSCRIPT_RECORDS" "$(recorded_gate_selector_sha256 "$selector")" "$gate_status" >&2
     return "$gate_status"
   fi
   ACGS_LAST_RECORDED_CWD="$cwd" \
@@ -4348,9 +4245,9 @@ PY
 run_trusted_parent_p0_launcher_authority_gate() {
   local scope="$1" cwd="$2" basename="$3" selector="$4" cwd_scope="$5"
   shift 5
-  local started finished stdout_file stderr_file gate_status stderr_sha256
+  local started finished stdout_file stderr_file gate_status
   local launcher_path launcher_fd launcher_path_stat launcher_fd_stat launcher_sha
-  local trusted_launcher_sha256='c23a978fecfe095b47e75236ced2af11fb11789a6d0500eba92b628c41aaa00f'
+  local trusted_launcher_sha256='bda70bc471f9399ddc4750ccb1b57011920a9cb9e79c67d5b79b020e9cec878b'
   local target_sha='1111111111111111111111111111111111111111'
   [[ "$scope" == P0 ]] || die 'trusted parent P0 launcher gate is P0-only'
   [[ "$cwd" == "$WORKTREE" ]] || die 'trusted parent P0 launcher gate cwd must be repository root'
@@ -4818,10 +4715,9 @@ PY
   exec {launcher_fd}<&-
   finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ "$gate_status" -ne 0 ]]; then
-    emit_recorded_gate_failure_diagnostic "$basename" "$scope" "$selector" "$gate_status" || true
-    stderr_sha256="$(sha256sum "$stderr_file" | awk '{print $1}')"
-    printf 'RECORDED_GATE=FAIL scope=%s selector=%s exit=%s stderr_sha256=%s\n' \
-      "$scope" "$selector" "$gate_status" "$stderr_sha256" >&2
+    emit_recorded_gate_failure_diagnostic "$TRANSCRIPT_RECORDS" "$selector" "$gate_status" || true
+    printf 'RECORDED_GATE=FAIL ordinal=%s selector_sha256=%s exit=%s\n' \
+      "$TRANSCRIPT_RECORDS" "$(recorded_gate_selector_sha256 "$selector")" "$gate_status" >&2
     return "$gate_status"
   fi
   ACGS_LAST_RECORDED_CWD="$cwd" \
@@ -4896,7 +4792,7 @@ PY
 run_recorded_exact_pytest_gate() {
   local scope="$1" cwd="$2" basename="$3" selector="$4" cwd_scope="$5" expected_tests="$6"
   shift 6
-  local started finished stdout_file stderr_file junit_file gate_status stderr_sha256
+  local started finished stdout_file stderr_file junit_file gate_status
   stdout_file="$NODE_EVIDENCE/$basename.stdout"
   stderr_file="$NODE_EVIDENCE/$basename.stderr"
   junit_file="$NODE_EVIDENCE/$basename.junit.xml"
@@ -4919,13 +4815,21 @@ run_recorded_exact_pytest_gate() {
   fi
   finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ "$gate_status" -ne 0 ]]; then
-    emit_recorded_gate_failure_diagnostic "$basename" "$scope" "$selector" "$gate_status" || true
-    stderr_sha256="$(sha256sum "$stderr_file" | awk '{print $1}')"
-    printf 'RECORDED_GATE=FAIL scope=%s selector=%s exit=%s stderr_sha256=%s\n' \
-      "$scope" "$selector" "$gate_status" "$stderr_sha256" >&2
+    emit_recorded_gate_failure_diagnostic "$TRANSCRIPT_RECORDS" "$selector" "$gate_status" || true
+    printf 'RECORDED_GATE=FAIL ordinal=%s selector_sha256=%s exit=%s\n' \
+      "$TRANSCRIPT_RECORDS" "$(recorded_gate_selector_sha256 "$selector")" "$gate_status" >&2
     return "$gate_status"
   fi
+  set +e
   validate_exact_pytest_junit "$junit_file" "$expected_tests" "$selector"
+  gate_status=$?
+  set -e
+  if [[ "$gate_status" -ne 0 ]]; then
+    emit_recorded_gate_failure_diagnostic "$TRANSCRIPT_RECORDS" "$selector" "$gate_status" || true
+    printf 'RECORDED_GATE=FAIL ordinal=%s selector_sha256=%s exit=%s\n' \
+      "$TRANSCRIPT_RECORDS" "$(recorded_gate_selector_sha256 "$selector")" "$gate_status" >&2
+    return "$gate_status"
+  fi
   ACGS_LAST_RECORDED_CWD="$cwd" \
   append_record "$started" "$finished" "$stdout_file" "$stderr_file" "$selector" \
     "$cwd_scope" "$@"

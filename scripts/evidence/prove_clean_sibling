@@ -159,6 +159,7 @@ import json
 import mmap
 import os
 import resource
+import select
 import signal
 import socket
 import stat
@@ -387,6 +388,138 @@ EXPECTED_COMMAND_SELECTORS = {
         "packages/acgs-control-plane:P3-APPROVAL-003-postgres-approval-gate",
         "packages/gove-zone:P3-APPROVAL-003-escalation-consumption-compatibility",
         "root:P3-APPROVAL-003-cross-plane-contract",
+    ],
+}
+EXPECTED_GATE_IDS = {
+    "P0-EVIDENCE-000": [
+        "evid-gate",
+        "cp-ruff-check",
+        "cp-ruff-format",
+        "cp-mypy",
+        "cp-pytest",
+        "gz-ruff-check",
+        "gz-ruff-format",
+        "gz-mypy",
+        "gz-pytest",
+        "p0-launcher-authority",
+        "p0-root-gate",
+    ],
+    "P1-MIGRATION-001": [
+        "evid-gate",
+        "cp-ruff-check",
+        "cp-ruff-format",
+        "cp-mypy",
+        "cp-pytest",
+        "p1-migration-postgres",
+    ],
+    "P1-SCOPE-002": [
+        "evid-gate",
+        "cp-ruff-check",
+        "cp-ruff-format",
+        "cp-mypy",
+        "cp-pytest",
+        "p1-scope-posture",
+    ],
+    "P1-LEDGER-003": [
+        "evid-gate",
+        "cp-ruff-check",
+        "cp-ruff-format",
+        "cp-mypy",
+        "cp-pytest",
+        "p1-ledger-uow",
+    ],
+    "P1-TRUST-004": [
+        "evid-gate",
+        "cp-ruff-check",
+        "cp-ruff-format",
+        "cp-mypy",
+        "cp-pytest",
+        "gz-ruff-check",
+        "gz-ruff-format",
+        "gz-mypy",
+        "gz-pytest",
+        "p1-trust-control-plane",
+        "p1-trust-runtime",
+    ],
+    "P2-TENANT-BOOTSTRAP-000": [
+        "evid-gate",
+        "cp-ruff-check",
+        "cp-ruff-format",
+        "cp-mypy",
+        "cp-pytest",
+        "gz-ruff-check",
+        "gz-ruff-format",
+        "gz-mypy",
+        "gz-pytest",
+        "p2-tenant-bootstrap-postgres",
+        "p2-tenant-bootstrap-cross-plane",
+    ],
+    "P2-REGISTER-001": [
+        "evid-gate",
+        "cp-ruff-check",
+        "cp-ruff-format",
+        "cp-mypy",
+        "cp-pytest",
+        "gz-ruff-check",
+        "gz-ruff-format",
+        "gz-mypy",
+        "gz-pytest",
+        "p2-register-control-plane",
+        "p2-register-runtime",
+    ],
+    "P2-IDEMPOTENCY-002": [
+        "evid-gate",
+        "cp-ruff-check",
+        "cp-ruff-format",
+        "cp-mypy",
+        "cp-pytest",
+        "p2-idempotency-postgres",
+    ],
+    "P2-VERTICAL-GATE-003": [
+        "evid-gate",
+        "cp-ruff-check",
+        "cp-ruff-format",
+        "cp-mypy",
+        "cp-pytest",
+        "gz-ruff-check",
+        "gz-ruff-format",
+        "gz-mypy",
+        "gz-pytest",
+        "p2-vertical-postgres",
+        "p2-vertical-cross-plane",
+        "p2-vertical-runtime",
+    ],
+    "P3-POLICY-001": [
+        "evid-gate",
+        "cp-ruff-check",
+        "cp-ruff-format",
+        "cp-mypy",
+        "cp-pytest",
+        "p3-policy-postgres",
+        "p3-policy-cross-plane",
+    ],
+    "P3-MUTATIONS-002": [
+        "evid-gate",
+        "cp-ruff-check",
+        "cp-ruff-format",
+        "cp-mypy",
+        "cp-pytest",
+        "p3-mutations-postgres",
+        "p3-mutations-cross-plane",
+    ],
+    "P3-APPROVAL-003": [
+        "evid-gate",
+        "cp-ruff-check",
+        "cp-ruff-format",
+        "cp-mypy",
+        "cp-pytest",
+        "gz-ruff-check",
+        "gz-ruff-format",
+        "gz-mypy",
+        "gz-pytest",
+        "p3-approval-postgres",
+        "p3-approval-runtime",
+        "p3-approval-cross-plane",
     ],
 }
 
@@ -2014,6 +2147,96 @@ def verified_status(status_payload, status_run_fd):
     return parent, target, run_hash, records, assignments
 
 
+def verified_failure_status(status_payload, observed_exit_code):
+    def reject_duplicate_object_pairs(pairs):
+        parsed = {}
+        for key, value in pairs:
+            if key in parsed:
+                raise ValueError("duplicate failure status field")
+            parsed[key] = value
+        return parsed
+
+    try:
+        status = json.loads(
+            status_payload.decode("ascii", "strict"),
+            object_pairs_hook=reject_duplicate_object_pairs,
+        )
+    except Exception:
+        return "gate_failure_status=rejected"
+    expected_keys = {
+        "exit_code",
+        "gate_ordinal",
+        "schema",
+        "selector_sha256",
+        "version",
+    }
+    if not isinstance(status, dict) or set(status) != expected_keys:
+        return "gate_failure_status=rejected"
+    if (
+        status.get("schema") != "acgs.recorded_gate.failure_status"
+        or type(status.get("version")) is not int
+        or status.get("version") != 1
+    ):
+        return "gate_failure_status=rejected"
+    gate_ordinal = status.get("gate_ordinal")
+    selector_sha256 = status.get("selector_sha256")
+    exit_code = status.get("exit_code")
+    if not (
+        isinstance(gate_ordinal, int)
+        and not isinstance(gate_ordinal, bool)
+        and gate_ordinal >= 0
+    ):
+        return "gate_failure_status=rejected"
+    if not all(
+        isinstance(value, str)
+        and len(value) == 64
+        and all(ch in "0123456789abcdef" for ch in value)
+        for value in (selector_sha256,)
+    ):
+        return "gate_failure_status=rejected"
+    if not (
+        isinstance(exit_code, int)
+        and not isinstance(exit_code, bool)
+        and 1 <= exit_code <= 255
+    ):
+        return "gate_failure_status=rejected"
+    if exit_code != observed_exit_code:
+        return "gate_failure_status=rejected"
+    node_id = os.environ.get("NODE_ID", "P0-EVIDENCE-000")
+    selectors = EXPECTED_COMMAND_SELECTORS.get(node_id, ())
+    gate_ids = EXPECTED_GATE_IDS.get(node_id, ())
+    if len(selectors) != len(gate_ids) or gate_ordinal >= len(selectors):
+        return "gate_failure_status=rejected"
+    expected_hash = hashlib.sha256(selectors[gate_ordinal].encode("utf-8")).hexdigest()
+    if selector_sha256 != expected_hash:
+        return "gate_failure_status=rejected"
+    fields = {
+        "gate_failure_status": "authenticated",
+        "gate_id": gate_ids[gate_ordinal],
+        "gate_ordinal": str(gate_ordinal),
+        "gate_exit": str(observed_exit_code),
+        "gate_selector_sha256": selector_sha256,
+    }
+    return " ".join(f"{key}={value}" for key, value in fields.items())
+
+
+def failure_status_summary(
+    status_rejected,
+    status_frames,
+    status_run_fds,
+    status_frame_fd_counts,
+    status_eof,
+    observed_exit_code,
+):
+    if status_rejected or not status_eof:
+        return "gate_failure_status=rejected"
+    if not status_frames:
+        return "gate_failure_status=unavailable"
+    if len(status_frames) != 1 or status_run_fds or status_frame_fd_counts != [0]:
+        return "gate_failure_status=rejected"
+    return verified_failure_status(status_frames[0], observed_exit_code)
+
+
 libc = ctypes.CDLL(None, use_errno=True)
 if libc.prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0:
     raise OSError(ctypes.get_errno(), "guardian prctl(PR_SET_DUMPABLE) failed")
@@ -2035,7 +2258,7 @@ systemd_env = user_bus_env()
 attest_fd = os.dup(1)
 diagnostic_fd = os.dup(2)
 snapshot_artifacts = build_sealed_snapshot_artifacts()
-status_parent, status_child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+status_parent, status_child = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
 status_write_fd = status_child.fileno()
 output_read_fd, output_write_fd = os.pipe()
 startup_read_fd, startup_write_fd = os.pipe()
@@ -2241,10 +2464,13 @@ def receive_startup_ack():
     global wait_status
     deadline_at = time.monotonic() + STARTUP_ACK_TIMEOUT_SECONDS
     status_parent.setblocking(False)
+    ack_chunks = []
+    ack_size = 0
     while time.monotonic() < deadline_at:
         try:
+            remaining = len(STARTUP_ACK_FRAME) - ack_size
             chunk, ancillary, flags, _address = status_parent.recvmsg(
-                len(STARTUP_ACK_FRAME) + 1,
+                remaining,
                 socket.CMSG_SPACE(array.array("i").itemsize),
             )
         except BlockingIOError:
@@ -2257,21 +2483,46 @@ def receive_startup_ack():
             drain_visible_output_until(time.monotonic() + 0.001)
             time.sleep(0.05)
             continue
-        frame_fds = []
-        for level, cmsg_type, cmsg_data in ancillary:
-            if level == socket.SOL_SOCKET and cmsg_type == socket.SCM_RIGHTS:
-                received = array.array("i")
-                received.frombytes(
-                    cmsg_data[: len(cmsg_data) - (len(cmsg_data) % received.itemsize)]
-                )
-                frame_fds.extend(received.tolist())
-        close_received_status_fds(frame_fds)
+        if flags & (socket.MSG_CTRUNC | socket.MSG_TRUNC) or ancillary:
+            frame_fds = []
+            for level, cmsg_type, cmsg_data in ancillary:
+                if level == socket.SOL_SOCKET and cmsg_type == socket.SCM_RIGHTS:
+                    received = array.array("i")
+                    received.frombytes(
+                        cmsg_data[: len(cmsg_data) - (len(cmsg_data) % received.itemsize)]
+                    )
+                    frame_fds.extend(received.tolist())
+            close_received_status_fds(frame_fds)
+            raise RuntimeError("guardian startup ack malformed")
         if not chunk:
-            raise RuntimeError("guardian startup ack socket closed")
-        if flags & (socket.MSG_CTRUNC | socket.MSG_TRUNC) or ancillary or chunk != STARTUP_ACK_FRAME:
+            if ack_size == 0:
+                raise RuntimeError("guardian startup ack socket closed")
+            raise RuntimeError("guardian startup ack malformed")
+        ack_chunks.append(chunk)
+        ack_size += len(chunk)
+        if ack_size < len(STARTUP_ACK_FRAME):
+            continue
+        if b"".join(ack_chunks) != STARTUP_ACK_FRAME:
             raise RuntimeError("guardian startup ack malformed")
         return
     raise RuntimeError("guardian startup ack timed out")
+
+
+def send_status_bytes(status_socket, frame, ancillary):
+    sent = status_socket.sendmsg([frame], ancillary)
+    if sent <= 0:
+        raise RuntimeError("status frame send failed")
+    remaining = memoryview(frame)[sent:]
+    while remaining:
+        sent = status_socket.send(remaining)
+        if sent <= 0:
+            raise RuntimeError("status frame send failed")
+        remaining = remaining[sent:]
+
+
+def send_status_frame(status_socket, frame, ancillary):
+    status_socket.sendall(len(frame).to_bytes(4, "big"))
+    send_status_bytes(status_socket, frame, ancillary)
 
 
 def close_received_status_fds(status_run_fds):
@@ -2283,18 +2534,28 @@ def collect_status_frames():
     status_parent.setblocking(False)
     status_frames = []
     status_run_fds = []
+    status_frame_fd_counts = []
     status_rejected = False
-    while True:
+    status_eof = False
+
+    def reject_with_fds(frame_fds):
+        nonlocal status_rejected
+        close_received_status_fds(frame_fds)
+        status_rejected = True
+        status_frames.append(b"")
+        status_frames.append(b"")
+        status_frame_fd_counts.append(len(frame_fds))
+        status_frame_fd_counts.append(0)
+
+    def recv_status(max_bytes):
         try:
-            chunk, ancillary, flags, _address = status_parent.recvmsg(
-                MAX_STATUS_FRAME_BYTES + 1,
-                socket.CMSG_SPACE(array.array("i").itemsize),
-            )
+            return status_parent.recvmsg(max_bytes, socket.CMSG_SPACE(array.array("i").itemsize))
         except BlockingIOError:
-            break
-        if not chunk:
-            break
+            return None
+
+    def parse_ancillary(ancillary):
         frame_fds = []
+        unexpected_ancillary = False
         for level, cmsg_type, cmsg_data in ancillary:
             if level == socket.SOL_SOCKET and cmsg_type == socket.SCM_RIGHTS:
                 received = array.array("i")
@@ -2302,15 +2563,79 @@ def collect_status_frames():
                     cmsg_data[: len(cmsg_data) - (len(cmsg_data) % received.itemsize)]
                 )
                 frame_fds.extend(received.tolist())
-        if flags & (socket.MSG_CTRUNC | socket.MSG_TRUNC) or len(chunk) > MAX_STATUS_FRAME_BYTES:
-            close_received_status_fds(frame_fds)
+            else:
+                unexpected_ancillary = True
+        return frame_fds, unexpected_ancillary
+
+    header = bytearray()
+    while len(header) < 4:
+        received = recv_status(4 - len(header))
+        if received is None:
+            if header:
+                status_rejected = True
+                status_frames.extend((b"", b""))
+                status_frame_fd_counts.extend((0, 0))
+            return status_rejected, status_frames, status_run_fds, status_frame_fd_counts, status_eof
+        chunk, ancillary, flags, _address = received
+        frame_fds = []
+        frame_fds, unexpected_ancillary = parse_ancillary(ancillary)
+        if flags & (socket.MSG_CTRUNC | socket.MSG_TRUNC) or ancillary or unexpected_ancillary:
+            reject_with_fds(frame_fds)
+            return status_rejected, status_frames, status_run_fds, status_frame_fd_counts, status_eof
+        if not chunk:
+            if not header:
+                status_eof = True
+            else:
+                status_rejected = True
+                status_frames.extend((b"", b""))
+                status_frame_fd_counts.extend((0, 0))
+            return status_rejected, status_frames, status_run_fds, status_frame_fd_counts, status_eof
+        header.extend(chunk)
+
+    frame_length = int.from_bytes(header, "big")
+    if frame_length <= 0 or frame_length > MAX_STATUS_FRAME_BYTES:
+        status_rejected = True
+        status_frames.extend((b"", b""))
+        status_frame_fd_counts.extend((0, 0))
+        return status_rejected, status_frames, status_run_fds, status_frame_fd_counts, status_eof
+
+    frame = bytearray()
+    frame_fds = []
+    unexpected_body_ancillary = False
+    while len(frame) < frame_length:
+        received = recv_status(frame_length - len(frame))
+        if received is None:
             status_rejected = True
-            status_frames.append(b"")
-            status_frames.append(b"")
-            break
-        status_frames.append(chunk)
-        status_run_fds.extend(frame_fds)
-    return status_rejected, status_frames, status_run_fds
+            close_received_status_fds(frame_fds)
+            status_frames.extend((b"", b""))
+            status_frame_fd_counts.append(len(frame_fds))
+            status_frame_fd_counts.append(0)
+            return status_rejected, status_frames, status_run_fds, status_frame_fd_counts, status_eof
+        chunk, ancillary, flags, _address = received
+        received_fds, unexpected_ancillary = parse_ancillary(ancillary)
+        frame_fds.extend(received_fds)
+        unexpected_body_ancillary = unexpected_body_ancillary or unexpected_ancillary
+        if flags & (socket.MSG_CTRUNC | socket.MSG_TRUNC) or unexpected_ancillary or not chunk:
+            reject_with_fds(frame_fds)
+            return status_rejected, status_frames, status_run_fds, status_frame_fd_counts, status_eof
+        frame.extend(chunk)
+    if unexpected_body_ancillary:
+        reject_with_fds(frame_fds)
+        return status_rejected, status_frames, status_run_fds, status_frame_fd_counts, status_eof
+    status_frames.append(bytes(frame))
+    status_frame_fd_counts.append(len(frame_fds))
+    status_run_fds.extend(frame_fds)
+
+    extra = recv_status(1)
+    if extra is None:
+        return status_rejected, status_frames, status_run_fds, status_frame_fd_counts, status_eof
+    chunk, ancillary, flags, _address = extra
+    extra_fds, unexpected_ancillary = parse_ancillary(ancillary)
+    if not chunk and not ancillary and not flags:
+        status_eof = True
+        return status_rejected, status_frames, status_run_fds, status_frame_fd_counts, status_eof
+    reject_with_fds(extra_fds)
+    return status_rejected, status_frames, status_run_fds, status_frame_fd_counts, status_eof
 
 
 deadline = time.monotonic() + GUARDIAN_CHILD_TIMEOUT_SECONDS
@@ -2365,7 +2690,32 @@ try:
         time.sleep(0.1)
     exit_code = os.waitstatus_to_exitcode(wait_status)
     if exit_code != 0:
-        raise RuntimeError(f"child exited {exit_code}")
+        try:
+            stop_scope_once()
+            post_stop_deadline = min(deadline, time.monotonic() + GUARDIAN_POST_STOP_DRAIN_SECONDS)
+            drain_visible_output_until(post_stop_deadline)
+            if not output_eof:
+                raise RuntimeError("visible output pipe did not close after scope stop")
+        except Exception as exc:
+            raise RuntimeError(
+                f"child exited {exit_code} gate_failure_status=rejected scope_stop=failed"
+            ) from exc
+        (
+            status_rejected,
+            status_frames,
+            status_run_fds,
+            status_frame_fd_counts,
+            status_eof,
+        ) = collect_status_frames()
+        status_summary = failure_status_summary(
+            status_rejected,
+            status_frames,
+            status_run_fds,
+            status_frame_fd_counts,
+            status_eof,
+            exit_code,
+        )
+        raise RuntimeError(f"child exited {exit_code} {status_summary}")
     stop_scope_once()
     post_stop_deadline = min(deadline, time.monotonic() + GUARDIAN_POST_STOP_DRAIN_SECONDS)
     drain_visible_output_until(post_stop_deadline)
@@ -2374,8 +2724,20 @@ try:
     captured = seal_and_read_memfd()
     if output_overflow:
         raise RuntimeError("visible output memfd exceeded 64MiB bound")
-    status_rejected, status_frames, status_run_fds = collect_status_frames()
-    if status_rejected or len(status_frames) != 1 or len(status_run_fds) != 1:
+    (
+        status_rejected,
+        status_frames,
+        status_run_fds,
+        status_frame_fd_counts,
+        status_eof,
+    ) = collect_status_frames()
+    if (
+        status_rejected
+        or len(status_frames) != 1
+        or len(status_run_fds) != 1
+        or status_frame_fd_counts != [1]
+        or not status_eof
+    ):
         raise RuntimeError("trusted success status must be exactly one bounded frame")
     parent, target, run_hash, records, assignments = verified_status(
         status_frames[0], status_run_fds[0]

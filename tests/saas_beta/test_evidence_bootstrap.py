@@ -24,10 +24,13 @@ import stat
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import jsonschema
 import pytest
@@ -4722,6 +4725,29 @@ def _python_function_source(source: str, name: str) -> str:
     raise AssertionError(f"missing Python function: {name}")
 
 
+def _embedded_python_function_sources(source: str, name: str) -> list[str]:
+    functions: list[str] = []
+    lines = source.splitlines()
+    for index, line in enumerate(lines):
+        stripped = line.lstrip()
+        if not stripped.startswith(f"def {name}("):
+            continue
+        indent = len(line) - len(stripped)
+        block = [line[indent:]]
+        for candidate in lines[index + 1 :]:
+            if not candidate.strip():
+                block.append("")
+                continue
+            candidate_indent = len(candidate) - len(candidate.lstrip())
+            if candidate_indent <= indent:
+                break
+            block.append(candidate[indent:])
+        function_source = textwrap.dedent("\n".join(block))
+        ast.parse(function_source)
+        functions.append(function_source)
+    return functions
+
+
 def _python_class_source(source: str, name: str) -> str:
     tree = ast.parse(source)
     for node in tree.body:
@@ -4795,12 +4821,78 @@ RECORDED_GATE_DIAGNOSTIC_BEGIN = "ACGS_RECORDED_GATE_FAILURE_DIAGNOSTIC_BEGIN"
 RECORDED_GATE_DIAGNOSTIC_END = "ACGS_RECORDED_GATE_FAILURE_DIAGNOSTIC_END"
 
 
+@dataclass(frozen=True)
+class StreamFrameRecord:
+    payload: bytes
+    fds: tuple[int, ...]
+    flags: int
+
+
+def _drain_stream_frame_records(sock: socket.socket) -> list[StreamFrameRecord]:
+    frames: list[StreamFrameRecord] = []
+    sock.settimeout(0.1)
+    buffered = b""
+    while True:
+        try:
+            while len(buffered) < 4:
+                chunk = sock.recv(4 - len(buffered))
+                if not chunk:
+                    return frames
+                buffered += chunk
+            frame_length = int.from_bytes(buffered[:4], "big")
+            buffered = buffered[4:]
+            assert 0 < frame_length <= 4 * 1024 * 1024
+            chunks: list[bytes] = []
+            captured = 0
+            frame_fds: list[int] = []
+            flags = 0
+            while captured < frame_length:
+                remaining = frame_length - captured
+                chunk, ancillary, flags, _address = sock.recvmsg(
+                    remaining,
+                    socket.CMSG_SPACE(array.array("i").itemsize),
+                )
+                assert chunk
+                chunks.append(chunk)
+                captured += len(chunk)
+                for level, cmsg_type, cmsg_data in ancillary:
+                    if level == socket.SOL_SOCKET and cmsg_type == socket.SCM_RIGHTS:
+                        received = array.array("i")
+                        received.frombytes(
+                            cmsg_data[: len(cmsg_data) - (len(cmsg_data) % received.itemsize)]
+                        )
+                        frame_fds.extend(received.tolist())
+            frames.append(StreamFrameRecord(b"".join(chunks), tuple(frame_fds), flags))
+        except TimeoutError:
+            break
+    return frames
+
+
+def _drain_stream_frames(sock: socket.socket) -> list[tuple[bytes, int, int]]:
+    records = _drain_stream_frame_records(sock)
+    for record in records:
+        for received_fd in record.fds:
+            os.close(received_fd)
+    return [(record.payload, len(record.fds), record.flags) for record in records]
+
+
 def _recorded_gate_diagnostic_payload(stderr: str) -> dict[str, Any]:
     lines = stderr.splitlines()
     begin = lines.index(RECORDED_GATE_DIAGNOSTIC_BEGIN)
     end = lines.index(RECORDED_GATE_DIAGNOSTIC_END, begin + 1)
     assert end == begin + 2
     payload = json.loads(lines[begin + 1])
+    assert isinstance(payload, dict)
+    return payload
+
+
+def _recorded_gate_status_payload(completed: subprocess.CompletedProcess[str]) -> dict[str, Any]:
+    frames = cast(Any, completed).acgs_status_frames
+    assert len(frames) == 1
+    frame, fd_count, flags = frames[0]
+    assert fd_count == 0
+    assert flags & (socket.MSG_CTRUNC | socket.MSG_TRUNC) == 0
+    payload = json.loads(frame.decode("ascii"))
     assert isinstance(payload, dict)
     return payload
 
@@ -4819,23 +4911,11 @@ def _assert_guardian_safe_child_exit_failure(
     assert "CLEAN_SIBLING_TECHNICAL=PASS" not in combined
 
 
-def _write_recorded_gate_streams(
-    node_evidence: Path,
-    basename: str,
-    stdout: bytes,
-    stderr: bytes,
-) -> None:
-    node_evidence.mkdir(mode=0o700)
-    for suffix, data in (("stdout", stdout), ("stderr", stderr)):
-        path = node_evidence / f"{basename}.{suffix}"
-        path.write_bytes(data)
-        path.chmod(0o600)
-
-
 def _run_recorded_gate_diagnostic_harness(
     tmp_path: Path,
     *,
-    basename: str = "gate",
+    gate_ordinal: int = 1,
+    selector: str = "selector::case",
     gate_status: int = 7,
 ) -> subprocess.CompletedProcess[str]:
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
@@ -4844,26 +4924,38 @@ def _run_recorded_gate_diagnostic_harness(
         "emit_recorded_gate_failure_diagnostic",
         "run_recorded_gate",
     )
-    node_evidence = tmp_path / "node"
     harness = tmp_path / "diag.sh"
     harness.write_text(
         "#!/usr/bin/env bash\n"
         "set -Eeuo pipefail\n"
         "umask 077\n"
-        f"NODE_EVIDENCE={shlex.quote(str(node_evidence))}\n"
+        ': "${ACGS_STATUS_FD:?}"\n'
+        "unset ACGS_CLEAN_SIBLING_STATUS_FD\n"
+        '[[ -z "${ACGS_CLEAN_SIBLING_STATUS_FD+x}" ]]\n'
         f"{diagnostic}\n"
-        f"emit_recorded_gate_failure_diagnostic {shlex.quote(basename)} "
-        f"CP {shlex.quote('selector::case')} {gate_status}\n",
+        "emit_recorded_gate_failure_diagnostic "
+        f"{gate_ordinal} {shlex.quote(selector)} {gate_status}\n",
         encoding="utf-8",
     )
     harness.chmod(0o755)
-    return subprocess.run(
-        [str(harness)],
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=10,
-    )
+    parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    os.set_inheritable(child.fileno(), True)
+    try:
+        completed = subprocess.run(
+            [str(harness)],
+            env={**os.environ, "ACGS_STATUS_FD": str(child.fileno())},
+            pass_fds=(child.fileno(),),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+        child.close()
+        cast(Any, completed).acgs_status_frames = _drain_stream_frames(parent)
+        return completed
+    finally:
+        parent.close()
+        child.close()
 
 
 def _run_recorded_gate_harness(
@@ -4907,6 +4999,10 @@ def _run_recorded_gate_harness(
         f"WORKTREE={shlex.quote(str(worktree))}\n"
         f"UV_BIN={shlex.quote(str(uv_bin))}\n"
         f"ACGS_TEST_STATUS={status}\n"
+        "TRANSCRIPT_RECORDS=1\n"
+        ': "${ACGS_STATUS_FD:?}"\n'
+        "unset ACGS_CLEAN_SIBLING_STATUS_FD\n"
+        '[[ -z "${ACGS_CLEAN_SIBLING_STATUS_FD+x}" ]]\n'
         "run_contained() {\n"
         "  printf 'RUN_CONTAINED_ARGV'\n"
         "  printf ' <%s>' \"$@\"\n"
@@ -4936,115 +5032,97 @@ def _run_recorded_gate_harness(
         encoding="utf-8",
     )
     harness.chmod(0o755)
-    return subprocess.run(
-        [str(harness)],
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=10,
-    )
+    parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    os.set_inheritable(child.fileno(), True)
+    try:
+        completed = subprocess.run(
+            [str(harness)],
+            env={**os.environ, "ACGS_STATUS_FD": str(child.fileno())},
+            pass_fds=(child.fileno(),),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+        child.close()
+        cast(Any, completed).acgs_status_frames = _drain_stream_frames(parent)
+        return completed
+    finally:
+        parent.close()
+        child.close()
 
 
-def test_recorded_gate_failure_diagnostic_decodes_stdout_and_empty_stderr(
+def test_recorded_gate_failure_status_emits_exact_metadata_schema(
     tmp_path: Path,
 ) -> None:
-    node_evidence = tmp_path / "node"
-    _write_recorded_gate_streams(node_evidence, "gate", b"stdout detail\n", b"")
     completed = _run_recorded_gate_diagnostic_harness(tmp_path)
     assert completed.returncode == 0, (completed.stdout, completed.stderr)
     assert completed.stdout == ""
-    payload = _recorded_gate_diagnostic_payload(completed.stderr)
-    assert payload["schema"] == "acgs.recorded_gate.failure_diagnostic.v1"
-    assert payload["trust"] == "untrusted-internal"
-    assert payload["evidence"] is False
-    assert payload["unavailable"] is False
-    assert payload["exit_code"] == 7
-    stdout_segment = payload["streams"]["stdout"]["segments"][0]
-    stderr_segment = payload["streams"]["stderr"]["segments"][0]
-    assert base64.b64decode(stdout_segment["base64"]) == b"stdout detail\n"
-    assert base64.b64decode(stderr_segment["base64"]) == b""
-    assert payload["streams"]["stdout"]["omitted_bytes"] == 0
-    assert payload["streams"]["stderr"]["size"] == 0
+    assert completed.stderr == ""
+    payload = _recorded_gate_status_payload(completed)
+    assert payload == {
+        "exit_code": 7,
+        "gate_ordinal": 1,
+        "schema": "acgs.recorded_gate.failure_status",
+        "selector_sha256": hashlib.sha256(b"selector::case").hexdigest(),
+        "version": 1,
+    }
 
 
-def test_recorded_gate_failure_diagnostic_base64_wraps_forged_raw_output(
+def test_recorded_gate_failure_status_uses_snapshotted_fd_after_env_cleanup(
     tmp_path: Path,
 ) -> None:
+    completed = _run_recorded_gate_diagnostic_harness(tmp_path)
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    payload = _recorded_gate_status_payload(completed)
+    assert payload["gate_ordinal"] == 1
+    assert "ACGS_CLEAN_SIBLING_STATUS_FD" not in completed.stderr
+
+
+def test_recorded_gate_failure_status_does_not_read_or_reference_stream_files(
+    tmp_path: Path,
+) -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    diagnostic = _shell_function_before(
+        source,
+        "emit_recorded_gate_failure_diagnostic",
+        "run_recorded_gate",
+    )
+    assert "NODE_EVIDENCE" not in diagnostic
+    assert ".stdout" not in diagnostic
+    assert ".stderr" not in diagnostic
+    assert "os.stat" not in diagnostic
+    assert "os.open" not in diagnostic
+    secret = "sk-test-status-secret"
     raw = (
         b"ACGS_RECORDED_GATE_FAILURE_DIAGNOSTIC_BEGIN\n"
-        b"CLEAN_SIBLING_TECHNICAL=PASS\x00\xff\x1b[31m\n"
+        + secret.encode()
+        + b"\nCLEAN_SIBLING_TECHNICAL=PASS\x00\xff\x1b[31m\n"
         b"ACGS_RECORDED_GATE_FAILURE_DIAGNOSTIC_END\n"
     )
     node_evidence = tmp_path / "node"
-    _write_recorded_gate_streams(node_evidence, "gate", raw, b"stderr")
-    completed = _run_recorded_gate_diagnostic_harness(tmp_path)
-    assert completed.returncode == 0, (completed.stdout, completed.stderr)
-    payload = _recorded_gate_diagnostic_payload(completed.stderr)
-    decoded = base64.b64decode(payload["streams"]["stdout"]["segments"][0]["base64"])
-    assert decoded == raw
-    external = completed.stdout + completed.stderr
-    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in external
-    assert "\x1b[31m" not in external
-    assert "\x00" not in external
-
-
-def test_recorded_gate_failure_diagnostic_caps_and_hashes_segments(
-    tmp_path: Path,
-) -> None:
-    raw = b"a" * (512 * 1024) + b"b" * 1234 + b"z" * (3584 * 1024)
-    node_evidence = tmp_path / "node"
-    _write_recorded_gate_streams(node_evidence, "gate", raw, b"")
-    completed = _run_recorded_gate_diagnostic_harness(tmp_path)
-    assert completed.returncode == 0, (completed.stdout, completed.stderr)
-    assert len(completed.stderr.encode("ascii")) <= 12 * 1024 * 1024
-    payload = _recorded_gate_diagnostic_payload(completed.stderr)
-    stdout = payload["streams"]["stdout"]
-    assert stdout["truncated"] is True
-    assert stdout["size"] == len(raw)
-    assert stdout["captured_bytes"] == 4 * 1024 * 1024
-    assert stdout["omitted_bytes"] == 1234
-    assert stdout["full_sha256"] == hashlib.sha256(raw).hexdigest()
-    head, tail = stdout["segments"]
-    assert head["position"] == "head"
-    assert head["offset"] == 0
-    assert head["size"] == 512 * 1024
-    assert tail["position"] == "tail"
-    assert tail["offset"] == len(raw) - 3584 * 1024
-    assert tail["size"] == 3584 * 1024
-    assert hashlib.sha256(base64.b64decode(head["base64"])).hexdigest() == head["sha256"]
-    assert hashlib.sha256(base64.b64decode(tail["base64"])).hexdigest() == tail["sha256"]
-
-
-@pytest.mark.parametrize("unsafe_kind", ("symlink", "hardlink", "fifo", "directory"))
-def test_recorded_gate_failure_diagnostic_refuses_unsafe_stream_paths_without_hang(
-    tmp_path: Path,
-    unsafe_kind: str,
-) -> None:
-    node_evidence = tmp_path / "node"
-    _write_recorded_gate_streams(node_evidence, "gate", b"safe", b"")
+    node_evidence.mkdir(mode=0o700)
     stdout_path = node_evidence / "gate.stdout"
-    stdout_path.unlink()
-    if unsafe_kind == "symlink":
-        outside = tmp_path / "outside"
-        outside.write_bytes(b"outside")
-        outside.chmod(0o600)
-        stdout_path.symlink_to(outside)
-    elif unsafe_kind == "hardlink":
-        target = node_evidence / "target"
-        target.write_bytes(b"hardlink")
-        target.chmod(0o600)
-        os.link(target, stdout_path)
-    elif unsafe_kind == "fifo":
-        os.mkfifo(stdout_path, 0o600)
-    elif unsafe_kind == "directory":
-        stdout_path.mkdir(mode=0o700)
+    stderr_path = node_evidence / "gate.stderr"
+    stdout_path.write_bytes(raw)
+    stderr_path.write_bytes(b"stderr")
+    stdout_path.chmod(0)
+    stderr_path.chmod(0)
     completed = _run_recorded_gate_diagnostic_harness(tmp_path)
     assert completed.returncode == 0, (completed.stdout, completed.stderr)
-    payload = _recorded_gate_diagnostic_payload(completed.stderr)
-    assert payload["unavailable"] is True
-    assert payload["evidence"] is False
-    assert payload["trust"] == "untrusted-internal"
-    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout + completed.stderr
+    payload = _recorded_gate_status_payload(completed)
+    rendered_status = json.dumps(payload, sort_keys=True)
+    assert set(payload) == {"exit_code", "gate_ordinal", "schema", "selector_sha256", "version"}
+    external = completed.stdout + completed.stderr
+    for forbidden in (
+        "CLEAN_SIBLING_TECHNICAL=PASS",
+        "\x1b[31m",
+        "\x00",
+        secret,
+        base64.b64encode(raw).decode("ascii"),
+    ):
+        assert forbidden not in external
+        assert forbidden not in rendered_status
 
 
 def test_recorded_gate_failure_preserves_original_rc_and_hides_raw_pass(
@@ -5055,15 +5133,18 @@ def test_recorded_gate_failure_preserves_original_rc_and_hides_raw_pass(
     assert "RC=7" in completed.stdout
     assert "APPEND_CALLED" not in completed.stdout
     assert "TRANSCRIPT=1" not in completed.stdout
-    assert "RECORDED_GATE=FAIL scope=CP selector=selector::case exit=7" in completed.stderr
-    payload = _recorded_gate_diagnostic_payload(completed.stderr)
+    selector_hash = hashlib.sha256(b"selector::case").hexdigest()
+    assert f"RECORDED_GATE=FAIL ordinal=1 selector_sha256={selector_hash} exit=7" in (
+        completed.stderr
+    )
+    payload = _recorded_gate_status_payload(completed)
     assert payload["exit_code"] == 7
-    decoded = base64.b64decode(payload["streams"]["stdout"]["segments"][0]["base64"])
-    assert b"CLEAN_SIBLING_TECHNICAL=PASS" in decoded
+    assert payload["gate_ordinal"] == 1
+    assert payload["selector_sha256"] == selector_hash
     assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout + completed.stderr
 
 
-def test_recorded_gate_diagnostic_helper_failure_preserves_rc_and_evidence(
+def test_recorded_gate_status_helper_failure_preserves_rc_without_evidence(
     tmp_path: Path,
 ) -> None:
     completed = _run_recorded_gate_harness(tmp_path, status=7, override_diagnostic=True)
@@ -5072,8 +5153,649 @@ def test_recorded_gate_diagnostic_helper_failure_preserves_rc_and_evidence(
     assert "APPEND_CALLED" not in completed.stdout
     assert "TRANSCRIPT=1" not in completed.stdout
     assert "DIAG_OVERRIDE" in completed.stderr
+    assert cast(Any, completed).acgs_status_frames == []
     assert RECORDED_GATE_DIAGNOSTIC_BEGIN not in completed.stderr
-    assert "RECORDED_GATE=FAIL scope=CP selector=selector::case exit=7" in completed.stderr
+    assert "RECORDED_GATE=FAIL ordinal=1 selector_sha256=" in completed.stderr
+
+
+def test_launcher_failure_status_authenticates_exit_ordinal_selector_and_gate_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = (EVIDENCE_SCRIPTS / "prove_clean_sibling").read_text(encoding="utf-8")
+    launcher_source = _launcher_python_source(launcher)
+    namespace: dict[str, Any] = {}
+    exec(launcher_source.split("\nlibc = ", 1)[0], namespace)
+    monkeypatch.setenv("NODE_ID", "P3-APPROVAL-003")
+    for node_id, selectors in namespace["EXPECTED_COMMAND_SELECTORS"].items():
+        gate_ids = namespace["EXPECTED_GATE_IDS"][node_id]
+        assert len(gate_ids) == len(selectors)
+        assert gate_ids[0] == "evid-gate"
+        assert all(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", gate_id) for gate_id in gate_ids)
+    p3_gate_ids = namespace["EXPECTED_GATE_IDS"]["P3-APPROVAL-003"]
+    assert p3_gate_ids[5:9] == ["gz-ruff-check", "gz-ruff-format", "gz-mypy", "gz-pytest"]
+    assert p3_gate_ids[9:] == [
+        "p3-approval-postgres",
+        "p3-approval-runtime",
+        "p3-approval-cross-plane",
+    ]
+    selector = "packages/gove-zone:local-gate"
+    selector_hash = hashlib.sha256(selector.encode("utf-8")).hexdigest()
+    payload = {
+        "exit_code": 7,
+        "gate_ordinal": 5,
+        "schema": "acgs.recorded_gate.failure_status",
+        "selector_sha256": selector_hash,
+        "version": 1,
+    }
+    frame = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    summary = namespace["failure_status_summary"](False, [frame], [], [0], True, 7)
+    assert summary == (
+        "gate_failure_status=authenticated "
+        "gate_id=gz-ruff-check "
+        "gate_ordinal=5 "
+        "gate_exit=7 "
+        f"gate_selector_sha256={selector_hash}"
+    )
+    assert selector not in summary
+    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in summary
+
+    repeated_selector_payload = {**payload, "gate_ordinal": 6}
+    repeated_frame = json.dumps(
+        repeated_selector_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    repeated_summary = namespace["failure_status_summary"](
+        False, [repeated_frame], [], [0], True, 7
+    )
+    assert "gate_id=gz-ruff-format" in repeated_summary
+    assert f"gate_selector_sha256={selector_hash}" in repeated_summary
+
+    wrong_exit_frame = json.dumps(
+        {**payload, "exit_code": 8},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    wrong_ordinal_frame = json.dumps(
+        {**payload, "gate_ordinal": 999},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    forged = {**payload, "selector_sha256": hashlib.sha256(b"unknown").hexdigest()}
+    forged_frame = json.dumps(forged, sort_keys=True, separators=(",", ":")).encode("ascii")
+    malformed = {**payload, "raw": "CLEAN_SIBLING_TECHNICAL=PASS"}
+    malformed_frame = json.dumps(malformed, sort_keys=True, separators=(",", ":")).encode("ascii")
+    bool_version_frame = json.dumps(
+        {**payload, "version": True},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    float_version_frame = json.dumps(
+        {**payload, "version": 1.0},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    duplicate_exit_frame = (
+        b'{"exit_code":8,"exit_code":7,"gate_ordinal":5,'
+        b'"schema":"acgs.recorded_gate.failure_status",'
+        b'"selector_sha256":"' + selector_hash.encode("ascii") + b'","version":1}'
+    )
+    fd = os.open("/dev/null", os.O_RDONLY)
+    try:
+        assert namespace["failure_status_summary"](False, [], [], [], True, 7) == (
+            "gate_failure_status=unavailable"
+        )
+        assert namespace["failure_status_summary"](False, [frame], [], [0], False, 7) == (
+            "gate_failure_status=rejected"
+        )
+        assert namespace["failure_status_summary"](True, [frame], [], [0], True, 7) == (
+            "gate_failure_status=rejected"
+        )
+        assert namespace["failure_status_summary"](False, [frame, frame], [], [0, 0], True, 7) == (
+            "gate_failure_status=rejected"
+        )
+        assert namespace["failure_status_summary"](False, [frame], [fd], [1], True, 7) == (
+            "gate_failure_status=rejected"
+        )
+        assert namespace["failure_status_summary"](False, [wrong_exit_frame], [], [0], True, 7) == (
+            "gate_failure_status=rejected"
+        )
+        assert (
+            namespace["failure_status_summary"](False, [wrong_ordinal_frame], [], [0], True, 7)
+            == "gate_failure_status=rejected"
+        )
+        assert namespace["failure_status_summary"](False, [forged_frame], [], [0], True, 7) == (
+            "gate_failure_status=rejected"
+        )
+        assert namespace["failure_status_summary"](False, [malformed_frame], [], [0], True, 7) == (
+            "gate_failure_status=rejected"
+        )
+        assert (
+            namespace["failure_status_summary"](False, [bool_version_frame], [], [0], True, 7)
+            == "gate_failure_status=rejected"
+        )
+        assert (
+            namespace["failure_status_summary"](False, [float_version_frame], [], [0], True, 7)
+            == "gate_failure_status=rejected"
+        )
+        assert (
+            namespace["failure_status_summary"](False, [duplicate_exit_frame], [], [0], True, 7)
+            == "gate_failure_status=rejected"
+        )
+    finally:
+        os.close(fd)
+
+
+def test_launcher_status_collector_rejects_empty_records_and_requires_true_eof() -> None:
+    launcher = (EVIDENCE_SCRIPTS / "prove_clean_sibling").read_text(encoding="utf-8")
+    launcher_source = _launcher_python_source(launcher)
+    namespace: dict[str, Any] = {}
+    exec(
+        "\n".join(
+            (
+                "import array",
+                "import os",
+                "import select",
+                "import socket",
+                "MAX_STATUS_FRAME_BYTES = 4 * 1024 * 1024",
+                _python_function_source(launcher_source, "collect_status_frames"),
+            )
+        ),
+        namespace,
+    )
+
+    def send_status_frame(child: socket.socket, payload: bytes, fd: int | None = None) -> None:
+        child.sendall(len(payload).to_bytes(4, "big"))
+        if fd is None:
+            child.sendall(payload)
+        else:
+            child.sendmsg(
+                [payload],
+                [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [fd]))],
+            )
+
+    def collect_with_sender(
+        sender: Callable[[socket.socket], list[int]],
+        *,
+        close_peer: bool,
+    ) -> tuple[tuple[Any, ...], list[int]]:
+        parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+        closed_fds: list[int] = []
+
+        def close_received_status_fds(status_run_fds: list[int]) -> None:
+            for received_fd in status_run_fds:
+                closed_fds.append(received_fd)
+                os.close(received_fd)
+
+        namespace["status_parent"] = parent
+        namespace["close_received_status_fds"] = close_received_status_fds
+        owned_fds = sender(child)
+        if close_peer:
+            child.close()
+        try:
+            result = namespace["collect_status_frames"]()
+        finally:
+            parent.close()
+            child.close()
+            for fd in owned_fds:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        for closed_fd in closed_fds:
+            with pytest.raises(OSError):
+                os.fstat(closed_fd)
+        return result, closed_fds
+
+    def send_normal_success(child: socket.socket) -> list[int]:
+        normal_run_fd = os.open("/dev/null", os.O_RDONLY)
+        send_status_frame(child, b"success-frame", normal_run_fd)
+        return [normal_run_fd]
+
+    normal_result, normal_closed = collect_with_sender(send_normal_success, close_peer=True)
+    normal_success_accepted = (
+        normal_result[0] is False
+        and len(normal_result[1]) == 1
+        and len(normal_result[2]) == 1
+        and normal_result[3] == [1]
+        and normal_result[4] is True
+    )
+    assert normal_success_accepted is True
+    assert normal_result[0] is False
+    assert normal_result[1] == [b"success-frame"]
+    assert len(normal_result[2]) == 1
+    assert normal_result[3] == [1]
+    assert normal_result[4] is True
+    assert normal_closed == []
+    os.close(normal_result[2][0])
+
+    def send_retained_success(child: socket.socket) -> list[int]:
+        retained_run_fd = os.open("/dev/null", os.O_RDONLY)
+        send_status_frame(child, b"success-frame", retained_run_fd)
+        return [retained_run_fd]
+
+    retained_result, retained_closed = collect_with_sender(send_retained_success, close_peer=False)
+    retained_success_accepted = (
+        retained_result[0] is False
+        and len(retained_result[1]) == 1
+        and len(retained_result[2]) == 1
+        and retained_result[3] == [1]
+        and retained_result[4] is True
+    )
+    assert retained_success_accepted is False
+    assert retained_result[0] is False
+    assert retained_result[1] == [b"success-frame"]
+    assert len(retained_result[2]) == 1
+    assert retained_result[3] == [1]
+    assert retained_result[4] is False
+    assert retained_closed == []
+    close_received_status_fds = namespace["close_received_status_fds"]
+    close_received_status_fds(retained_result[2])
+    with pytest.raises(OSError):
+        os.fstat(retained_result[2][0])
+    retained_result[2].clear()
+
+    def send_empty_no_rights_extra(child: socket.socket) -> list[int]:
+        send_status_frame(child, b"valid-frame")
+        sent = child.sendmsg([b""])
+        assert sent == 0
+        send_status_frame(child, b"extra-frame")
+        return []
+
+    empty_no_rights_result, empty_no_rights_closed = collect_with_sender(
+        send_empty_no_rights_extra,
+        close_peer=False,
+    )
+    assert empty_no_rights_result[0] is True
+    assert empty_no_rights_result[1] == [b"valid-frame", b"", b""]
+    assert empty_no_rights_result[3][-2:] == [0, 0]
+    assert empty_no_rights_result[4] is False
+    assert empty_no_rights_closed == []
+
+    def send_empty_rights_extra(child: socket.socket) -> list[int]:
+        empty_rights_fd = os.open("/dev/null", os.O_RDONLY)
+        send_status_frame(child, b"valid-frame")
+        sent = child.sendmsg(
+            [b""],
+            [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [empty_rights_fd]))],
+        )
+        assert sent == 0
+        send_status_frame(child, b"extra-frame")
+        return [empty_rights_fd]
+
+    empty_rights_result, empty_rights_closed = collect_with_sender(
+        send_empty_rights_extra,
+        close_peer=False,
+    )
+    assert empty_rights_result[0] is True
+    assert empty_rights_result[1] == [b"valid-frame", b"", b""]
+    assert empty_rights_result[3][-2:] == [0, 0]
+    assert empty_rights_result[4] is False
+    assert empty_rights_closed == []
+
+    def send_empty_open(child: socket.socket) -> list[int]:
+        sent = child.sendmsg([b""])
+        assert sent == 0
+        return []
+
+    empty_open_result, empty_open_closed = collect_with_sender(send_empty_open, close_peer=False)
+    assert empty_open_result[0] is False
+    assert empty_open_result[1] == []
+    assert empty_open_result[3] == []
+    assert empty_open_result[4] is False
+    assert empty_open_closed == []
+
+
+def test_internal_status_senders_retry_short_stream_writes_without_duplicate_rights() -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    helper_sources = _embedded_python_function_sources(source, "send_status_body_once")
+    assert len(helper_sources) == 2
+
+    class DiagnosticUnavailable(Exception):
+        pass
+
+    class ShortWriteSocket:
+        def __init__(self, *, sendmsg_counts: list[int], send_counts: list[int]) -> None:
+            self.sendmsg_counts = sendmsg_counts
+            self.send_counts = send_counts
+            self.sent_parts: list[bytes] = []
+            self.ancillary_calls: list[list[tuple[int, int, array.array[int]]]] = []
+
+        def sendmsg(
+            self,
+            buffers: list[bytes],
+            ancillary: list[tuple[int, int, array.array[int]]],
+        ) -> int:
+            assert self.sendmsg_counts
+            count = self.sendmsg_counts.pop(0)
+            data = b"".join(buffers)
+            self.sent_parts.append(data[:count])
+            self.ancillary_calls.append(ancillary)
+            return count
+
+        def send(self, data: memoryview) -> int:
+            assert self.send_counts
+            count = self.send_counts.pop(0)
+            self.sent_parts.append(bytes(data[:count]))
+            return count
+
+    success_namespace: dict[str, Any] = {}
+    exec(helper_sources[0], success_namespace)
+    failure_namespace: dict[str, Any] = {"DiagnosticUnavailable": DiagnosticUnavailable}
+    exec(helper_sources[1], failure_namespace)
+
+    success_ancillary = [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [7]))]
+    success_socket = ShortWriteSocket(sendmsg_counts=[3], send_counts=[2, 1])
+    success_namespace["send_status_body_once"](success_socket, b"abcdef", success_ancillary)
+    assert success_socket.sent_parts == [b"abc", b"de", b"f"]
+    assert success_socket.ancillary_calls == [success_ancillary]
+    assert success_socket.sendmsg_counts == []
+    assert success_socket.send_counts == []
+
+    failure_socket = ShortWriteSocket(sendmsg_counts=[2], send_counts=[2, 1])
+    failure_namespace["send_status_body_once"](failure_socket, b"fail!", [])
+    assert failure_socket.sent_parts == [b"fa", b"il", b"!"]
+    assert failure_socket.ancillary_calls == [[]]
+    assert failure_socket.sendmsg_counts == []
+    assert failure_socket.send_counts == []
+
+    zero_success = ShortWriteSocket(sendmsg_counts=[0], send_counts=[])
+    with pytest.raises(SystemExit):
+        success_namespace["send_status_body_once"](zero_success, b"abc", success_ancillary)
+    assert zero_success.ancillary_calls == [success_ancillary]
+    assert zero_success.sent_parts == [b""]
+
+    zero_failure = ShortWriteSocket(sendmsg_counts=[0], send_counts=[])
+    with pytest.raises(DiagnosticUnavailable, match="status-send"):
+        failure_namespace["send_status_body_once"](zero_failure, b"abc", [])
+    assert zero_failure.ancillary_calls == [[]]
+    assert zero_failure.sent_parts == [b""]
+
+
+def test_append_record_failed_helper_in_conditional_preserves_rc_and_counter(
+    tmp_path: Path,
+) -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    harness = tmp_path / "append-fail-conditional.sh"
+    node_evidence = tmp_path / "node"
+    trusted = tmp_path / "trusted"
+    worktree = tmp_path / "worktree"
+    node_evidence.mkdir(mode=0o700)
+    trusted.mkdir(mode=0o700)
+    worktree.mkdir(mode=0o700)
+    stderr_file = node_evidence / "gate.stderr"
+    stderr_file.write_text("", encoding="utf-8")
+    missing_stdout = node_evidence / "missing.stdout"
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        "umask 077\n"
+        "die() { printf 'DIE=%s\\n' \"$*\" >&2; exit 2; }\n"
+        "TRANSCRIPT_RECORDS=41\n"
+        "NODE_ID=P0-EVIDENCE-000\n"
+        f"NODE_EVIDENCE={shlex.quote(str(node_evidence))}\n"
+        f"TRUSTED_TRANSCRIPT={shlex.quote(str(trusted / 'transcript.jsonl'))}\n"
+        f"ACGS_LAST_RECORDED_CWD={shlex.quote(str(worktree))}\n"
+        f"{_shell_function(source, 'advance_transcript_records_after_append')}\n"
+        f"{_shell_function(source, 'append_record')}\n"
+        "append_rc=0\n"
+        "if append_record 2026-07-29T00:00:00Z 2026-07-29T00:00:01Z "
+        f"{shlex.quote(str(missing_stdout))} {shlex.quote(str(stderr_file))} "
+        "'root:EVID-gate' REPO_ROOT /usr/bin/python -m pytest -q; then\n"
+        "  printf 'UNEXPECTED_APPEND_SUCCESS\\n'\n"
+        "  append_rc=0\n"
+        "else\n"
+        "  append_rc=$?\n"
+        "fi\n"
+        'printf \'APPEND_RC=%s\\nRECORDS=%s\\n\' "$append_rc" "$TRANSCRIPT_RECORDS"\n'
+        '[[ ! -e "$TRUSTED_TRANSCRIPT" ]]\n',
+        encoding="utf-8",
+    )
+    harness.chmod(0o755)
+    completed = subprocess.run(
+        [str(harness)],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert "APPEND_RC=1" in completed.stdout
+    assert "RECORDS=41" in completed.stdout
+    assert "UNEXPECTED_APPEND_SUCCESS" not in completed.stdout
+    assert "trusted transcript output path is not a regular file" in completed.stderr
+
+
+def test_append_record_compatibility_write_all_recovers_short_and_fails_zero(
+    tmp_path: Path,
+) -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    real_python = Path("/usr/bin/python3")
+    wrapper_dir = tmp_path / "python-wrapper"
+    wrapper_dir.mkdir(mode=0o700)
+    wrapper_python = wrapper_dir / "python3"
+    wrapper_python.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        f"exec {shlex.quote(str(real_python))} "
+        "-I -S -c 'import os, sys\n"
+        "real_write = os.write\n"
+        "write_calls = 0\n"
+        "def short_second_write(fd, data):\n"
+        "    global write_calls\n"
+        "    write_calls += 1\n"
+        '    mode = os.environ.get("ACGS_TEST_WRITE_MODE", "short_second")\n'
+        '    if write_calls == 2 and mode == "zero_second":\n'
+        "        return 0\n"
+        '    if write_calls == 2 and mode == "short_second":\n'
+        "        return real_write(fd, bytes(data)[: max(1, len(data) // 2)])\n"
+        "    return real_write(fd, data)\n"
+        "os.write = short_second_write\n"
+        "script_name, *script_argv = sys.argv[1:]\n"
+        "sys.argv = [script_name, *script_argv]\n"
+        'namespace = {"__name__": "__main__"}\n'
+        'exec(compile(sys.stdin.read(), script_name, "exec"), namespace)\' "$@"\n',
+        encoding="utf-8",
+    )
+    wrapper_python.chmod(0o700)
+    harness_source = source.replace("/usr/bin/python3 -I -S -", f"{wrapper_python} -")
+
+    def run_append(mode: str) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path]:
+        case_root = tmp_path / mode
+        harness = case_root / "append-compat-write.sh"
+        node_evidence = case_root / "node"
+        trusted = case_root / "trusted"
+        worktree = case_root / "worktree"
+        node_evidence.mkdir(mode=0o700, parents=True)
+        trusted.mkdir(mode=0o700)
+        worktree.mkdir(mode=0o700)
+        stdout_file = node_evidence / "gate.stdout"
+        stderr_file = node_evidence / "gate.stderr"
+        stdout_file.write_text("ok\n", encoding="utf-8")
+        stderr_file.write_text("", encoding="utf-8")
+        harness.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -Eeuo pipefail\n"
+            "umask 077\n"
+            "die() { printf 'DIE=%s\\n' \"$*\" >&2; exit 2; }\n"
+            "TRANSCRIPT_RECORDS=41\n"
+            "NODE_ID=P0-EVIDENCE-000\n"
+            f"NODE_EVIDENCE={shlex.quote(str(node_evidence))}\n"
+            f"TRUSTED_TRANSCRIPT={shlex.quote(str(trusted / 'trusted.jsonl'))}\n"
+            f"ACGS_LAST_RECORDED_CWD={shlex.quote(str(worktree))}\n"
+            f"{_shell_function(harness_source, 'advance_transcript_records_after_append')}\n"
+            f"{_shell_function(harness_source, 'append_record')}\n"
+            "append_rc=0\n"
+            "if append_record 2026-07-29T00:00:00Z 2026-07-29T00:00:01Z "
+            f"{shlex.quote(str(stdout_file))} {shlex.quote(str(stderr_file))} "
+            "'root:EVID-gate' REPO_ROOT /usr/bin/python -m pytest -q; then\n"
+            "  append_rc=0\n"
+            "else\n"
+            "  append_rc=$?\n"
+            "fi\n"
+            'printf \'APPEND_RC=%s\\nRECORDS=%s\\n\' "$append_rc" "$TRANSCRIPT_RECORDS"\n',
+            encoding="utf-8",
+        )
+        harness.chmod(0o755)
+        completed = subprocess.run(
+            [str(harness)],
+            env={**os.environ, "ACGS_TEST_WRITE_MODE": mode},
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+        return completed, trusted / "trusted.jsonl", node_evidence / "transcript.jsonl", worktree
+
+    short, short_trusted_path, short_compatibility_path, short_worktree = run_append("short_second")
+    assert short.returncode == 0, (short.stdout, short.stderr)
+    assert "APPEND_RC=0" in short.stdout
+    assert "RECORDS=42" in short.stdout
+    assert short.stderr == ""
+    trusted_payload = short_trusted_path.read_text(encoding="utf-8")
+    compatibility_payload = short_compatibility_path.read_text(encoding="utf-8")
+    assert trusted_payload.endswith("\n")
+    assert compatibility_payload.endswith("\n")
+    assert json.loads(trusted_payload)["cwd"] == str(short_worktree)
+    assert "cwd" not in json.loads(compatibility_payload)
+
+    zero, zero_trusted_path, zero_compatibility_path, zero_worktree = run_append("zero_second")
+    assert zero.returncode == 0, (zero.stdout, zero.stderr)
+    assert "APPEND_RC=1" in zero.stdout
+    assert "RECORDS=41" in zero.stdout
+    assert "trusted transcript compatibility short write" in zero.stderr
+    zero_trusted_payload = zero_trusted_path.read_text(encoding="utf-8")
+    assert zero_trusted_payload.endswith("\n")
+    assert json.loads(zero_trusted_payload)["cwd"] == str(zero_worktree)
+    assert zero_compatibility_path.exists()
+    assert zero_compatibility_path.read_text(encoding="utf-8") == ""
+
+
+def test_recorded_gate_production_sequence_advances_current_failure_ordinal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    launcher = (EVIDENCE_SCRIPTS / "prove_clean_sibling").read_text(encoding="utf-8")
+    launcher_source = _launcher_python_source(launcher)
+    diagnostic = _shell_function_before(
+        source,
+        "emit_recorded_gate_failure_diagnostic",
+        "run_recorded_gate",
+    )
+    namespace: dict[str, Any] = {}
+    exec(launcher_source.split("\nlibc = ", 1)[0], namespace)
+    monkeypatch.setenv("NODE_ID", "P0-EVIDENCE-000")
+
+    harness = tmp_path / "production-sequence.sh"
+    node_evidence = tmp_path / "node-evidence"
+    trusted = tmp_path / "trusted-ledger"
+    worktree = tmp_path / "worktree"
+    node_evidence.mkdir(mode=0o700)
+    trusted.mkdir(mode=0o700)
+    worktree.mkdir(mode=0o700)
+    evid_stdout = node_evidence / "evid-gate.stdout"
+    evid_stderr = node_evidence / "evid-gate.stderr"
+    evid_stdout.write_text("evid ok\n", encoding="utf-8")
+    evid_stderr.write_text("", encoding="utf-8")
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        "umask 077\n"
+        "die() { printf 'DIE=%s\\n' \"$*\" >&2; exit 2; }\n"
+        "TRANSCRIPT_RECORDS=0\n"
+        "NODE_ID=P0-EVIDENCE-000\n"
+        f"NODE_EVIDENCE={shlex.quote(str(node_evidence))}\n"
+        f"TRUSTED_TRANSCRIPT={shlex.quote(str(trusted / 'transcript.jsonl'))}\n"
+        f"WORKTREE={shlex.quote(str(worktree))}\n"
+        ': "${ACGS_STATUS_FD:?}"\n'
+        "run_contained() {\n"
+        '  local cwd="$1"; shift\n'
+        '  case "${1:-}" in\n'
+        "    pass-one) printf 'first ok\\n'; return 0 ;;\n"
+        "    fail-two) printf 'CLEAN_SIBLING_TECHNICAL=PASS raw-hidden\\n'; "
+        "printf 'raw-hidden-stderr\\n' >&2; return 7 ;;\n"
+        "    *) return 64 ;;\n"
+        "  esac\n"
+        "}\n"
+        f"{_shell_function(source, 'advance_transcript_records_after_append')}\n"
+        f"{_shell_function(source, 'append_record')}\n"
+        f"{diagnostic}\n"
+        f"{_shell_function(source, 'run_recorded_gate')}\n"
+        f"ACGS_LAST_RECORDED_CWD={shlex.quote(str(worktree))} "
+        "append_record 2026-07-29T00:00:00Z 2026-07-29T00:00:01Z "
+        f"{shlex.quote(str(evid_stdout))} {shlex.quote(str(evid_stderr))} "
+        "'root:EVID-gate' REPO_ROOT /usr/bin/python -m pytest -q\n"
+        f"run_recorded_gate CP {shlex.quote(str(worktree))} cp-ruff-check "
+        "'packages/acgs-control-plane:local-gate' CP pass-one\n"
+        "set +e\n"
+        f"run_recorded_gate CP {shlex.quote(str(worktree))} cp-ruff-format "
+        "'packages/acgs-control-plane:local-gate' CP fail-two\n"
+        "rc=$?\n"
+        "set -e\n"
+        'printf \'RC=%s\\nRECORDS=%s\\n\' "$rc" "$TRANSCRIPT_RECORDS"\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    harness.chmod(0o755)
+    parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    os.set_inheritable(child.fileno(), True)
+    try:
+        completed = subprocess.run(
+            [str(harness)],
+            env={**os.environ, "ACGS_STATUS_FD": str(child.fileno())},
+            pass_fds=(child.fileno(),),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+        child.close()
+        cast(Any, completed).acgs_status_frames = _drain_stream_frames(parent)
+    finally:
+        parent.close()
+        child.close()
+
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert "RC=7" in completed.stdout
+    assert "RECORDS=2" in completed.stdout
+    selector_hash = hashlib.sha256(b"packages/acgs-control-plane:local-gate").hexdigest()
+    assert f"RECORDED_GATE=FAIL ordinal=2 selector_sha256={selector_hash} exit=7" in (
+        completed.stderr
+    )
+    combined = completed.stdout + completed.stderr
+    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in combined
+    assert "raw-hidden" not in combined
+    payload = _recorded_gate_status_payload(completed)
+    assert payload == {
+        "exit_code": 7,
+        "gate_ordinal": 2,
+        "schema": "acgs.recorded_gate.failure_status",
+        "selector_sha256": selector_hash,
+        "version": 1,
+    }
+    frame = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
+    assert namespace["failure_status_summary"](False, [frame], [], [0], True, 7) == (
+        "gate_failure_status=authenticated "
+        "gate_id=cp-ruff-format "
+        "gate_ordinal=2 "
+        "gate_exit=7 "
+        f"gate_selector_sha256={selector_hash}"
+    )
+    wrong_ordinal = json.dumps(
+        {**payload, "gate_ordinal": 0},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    assert namespace["failure_status_summary"](False, [wrong_ordinal], [], [0], True, 7) == (
+        "gate_failure_status=rejected"
+    )
 
 
 def test_recorded_gate_success_emits_no_failure_diagnostic(tmp_path: Path) -> None:
@@ -5539,6 +6261,11 @@ def test_exact_pytest_junit_rejects_counter_cancellation_before_append(tmp_path:
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
     validator = _shell_function(source, "validate_exact_pytest_junit")
     wrapper = _shell_function(source, "run_recorded_exact_pytest_gate")
+    diagnostic = _shell_function_before(
+        source,
+        "emit_recorded_gate_failure_diagnostic",
+        "run_recorded_gate",
+    )
     assert "raw = suite.attrib[name]" in validator
     assert "raw.isdecimal()" in validator
     assert "missing-junit-" in validator
@@ -5563,10 +6290,13 @@ def test_exact_pytest_junit_rejects_counter_cancellation_before_append(tmp_path:
         f"NODE_EVIDENCE={json.dumps(str(tmp_path / 'node-evidence'))}\n"
         f"WORKTREE={json.dumps(str(tmp_path))}\n"
         f"APPEND_MARKER={json.dumps(str(tmp_path / 'append-marker'))}\n"
+        "TRANSCRIPT_RECORDS=0\n"
+        "ACGS_STATUS_FD=\n"
         'mkdir -p "$NODE_EVIDENCE"\n'
         'append_record() { printf \'%s\\n\' "$*" >"$APPEND_MARKER"; }\n'
         'run_contained() { local cwd="$1"; shift; ( cd "$cwd"; "$@" ); }\n'
         f"{validator}\n"
+        f"{diagnostic}\n"
         f"{wrapper}\n"
         'run_recorded_exact_pytest_gate CP "$PWD" exact-junit '
         "'packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate' CP 4 "
@@ -5624,6 +6354,11 @@ def test_p2_root_pytest_gate_requires_exact_one_unskipped_result_before_append(
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
     validator = _shell_function(source, "validate_exact_pytest_junit")
     wrapper = _shell_function(source, "run_recorded_exact_pytest_gate")
+    diagnostic = _shell_function_before(
+        source,
+        "emit_recorded_gate_failure_diagnostic",
+        "run_recorded_gate",
+    )
     wrapper_source = wrapper
     assert wrapper_source.index("validate_exact_pytest_junit") < wrapper_source.index(
         "append_record"
@@ -5655,10 +6390,13 @@ def test_p2_root_pytest_gate_requires_exact_one_unskipped_result_before_append(
         f"NODE_EVIDENCE={json.dumps(str(tmp_path / 'node-evidence'))}\n"
         f"WORKTREE={json.dumps(str(tmp_path))}\n"
         f"APPEND_MARKER={json.dumps(str(tmp_path / 'append-marker'))}\n"
+        "TRANSCRIPT_RECORDS=0\n"
+        "ACGS_STATUS_FD=\n"
         'mkdir -p "$NODE_EVIDENCE"\n'
         'append_record() { printf \'%s\\n\' "$*" >"$APPEND_MARKER"; }\n'
         'run_contained() { local cwd="$1"; shift; ( cd "$cwd"; "$@" ); }\n'
         f"{validator}\n"
+        f"{diagnostic}\n"
         f"{wrapper}\n"
         'run_recorded_exact_pytest_gate P2 "$PWD" p2-root '
         "'root:P2-TENANT-BOOTSTRAP-000-cross-plane-contract' REPO_ROOT 1 "
@@ -5718,6 +6456,11 @@ def test_p2_register_gz_pytest_gate_requires_exact_four_unskipped_results_before
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
     validator = _shell_function(source, "validate_exact_pytest_junit")
     wrapper = _shell_function(source, "run_recorded_exact_pytest_gate")
+    diagnostic = _shell_function_before(
+        source,
+        "emit_recorded_gate_failure_diagnostic",
+        "run_recorded_gate",
+    )
     assert 'VIRTUAL_ENV="$WORKTREE/packages/gove-zone/.venv-beta"' in wrapper
     assert wrapper.index("validate_exact_pytest_junit") < wrapper.index("append_record")
     assert "append_record" not in wrapper.split("validate_exact_pytest_junit", 1)[0]
@@ -5754,10 +6497,13 @@ def test_p2_register_gz_pytest_gate_requires_exact_four_unskipped_results_before
         f"NODE_EVIDENCE={json.dumps(str(tmp_path / 'node-evidence'))}\n"
         f"WORKTREE={json.dumps(str(worktree))}\n"
         f"APPEND_MARKER={json.dumps(str(tmp_path / 'append-marker'))}\n"
+        "TRANSCRIPT_RECORDS=0\n"
+        "ACGS_STATUS_FD=\n"
         'mkdir -p "$NODE_EVIDENCE"\n'
         'append_record() { printf \'%s\\n\' "$*" >"$APPEND_MARKER"; }\n'
         'run_contained() { local cwd="$1"; shift; ( cd "$cwd"; "$@" ); }\n'
         f"{validator}\n"
+        f"{diagnostic}\n"
         f"{wrapper}\n"
         'run_recorded_exact_pytest_gate GZ "$PWD" p2-register-runtime '
         f"{json.dumps(selector)} REPO_ROOT 4 "
@@ -7753,7 +8499,7 @@ def test_clean_sibling_guardian_withholds_plaintext_fds_from_child_and_rejects_a
     assert 'exec "$BUSYBOX" env -i' in launcher
     assert "import subprocess" not in launcher
     assert "subprocess.run" not in launcher
-    assert "socket.SOCK_SEQPACKET" in launcher
+    assert "socket.SOCK_STREAM" in launcher
     assert "socket.SCM_RIGHTS" in launcher
     assert "read_status_run(status_run_fd" in launcher
     assert "json.loads(run_bytes)" in launcher
@@ -7930,13 +8676,19 @@ def test_clean_sibling_guardian_withholds_plaintext_fds_from_child_and_rejects_a
     ]
     assert 'STARTUP_ACK_FRAME = b"ACGS_STARTUP_ACK_V1_CLOSED_UNSET"' in launcher
     assert "STARTUP_ACK_TIMEOUT_SECONDS = 3.0" in launcher
-    assert "len(STARTUP_ACK_FRAME) + 1" in ack_block
+    assert "remaining = len(STARTUP_ACK_FRAME) - ack_size" in ack_block
+    assert "ack_size < len(STARTUP_ACK_FRAME)" in ack_block
+    assert 'b"".join(ack_chunks) != STARTUP_ACK_FRAME' in ack_block
+    assert "len(STARTUP_ACK_FRAME) + 1" not in ack_block
     assert "os.waitpid(pid, os.WNOHANG)" in ack_block
     assert "before startup ack" in ack_block
     assert "socket.MSG_CTRUNC | socket.MSG_TRUNC" in ack_block
-    assert "ancillary or chunk != STARTUP_ACK_FRAME" in ack_block
+    assert "or ancillary:" in ack_block
     assert "guardian startup ack malformed" in ack_block
     assert "guardian startup ack timed out" in ack_block
+    assert "def send_status_bytes(status_socket, frame, ancillary):" in ack_block
+    assert "status_socket.sendmsg([frame], ancillary)" in ack_block
+    assert "status_socket.send(remaining)" in ack_block
     finally_block = launcher[launcher.index("finally:\n    close_fd_quietly(startup_write_fd)") :]
     assert finally_block.index("close_fd_quietly(startup_write_fd)") < finally_block.index(
         "kill_and_drain_or_accept_collected_scope(scope_cgroup_identity)"
@@ -7959,11 +8711,28 @@ def test_clean_sibling_guardian_withholds_plaintext_fds_from_child_and_rejects_a
     assert "close_fd_quietly(output_read_fd)" in launcher
     post_reap_block = launcher[
         launcher.index("exit_code = os.waitstatus_to_exitcode(wait_status)") : launcher.index(
-            "status_rejected, status_frames, status_run_fds = collect_status_frames()"
+            ") = collect_status_frames()"
         )
     ]
     assert "os.kill(pid" not in post_reap_block
-    assert launcher.index("stop_scope_once()") < launcher.index("collect_status_frames()")
+    assert post_reap_block.index("stop_scope_once()") < post_reap_block.index(
+        "drain_visible_output_until(post_stop_deadline)"
+    )
+    assert (
+        'f"child exited {exit_code} gate_failure_status=rejected scope_stop=failed"'
+        in post_reap_block
+    )
+    failure_summary_start = launcher.index("def failure_status_summary(")
+    failure_summary_block = launcher[
+        failure_summary_start : launcher.index("libc =", failure_summary_start)
+    ]
+    assert "status_rejected or not status_eof" in failure_summary_block
+    success_status_block = launcher[
+        launcher.index("captured = seal_and_read_memfd()") : launcher.index(
+            "parent, target, run_hash, records, assignments = verified_status("
+        )
+    ]
+    assert "or not status_eof" in success_status_block
     assert "os.close(attest_fd)" in launcher
     assert "os.close(diagnostic_fd)" in launcher
     assert 'os.environ["ACGS_CLEAN_SIBLING_ATTEST_FD"]' not in launcher
@@ -8449,7 +9218,7 @@ if libc.prctl(PR_GET_DUMPABLE, 0, 0, 0, 0) != 0:
 memfd = os.memfd_create("acgs-clean-sibling-adversarial", os.MFD_ALLOW_SEALING)
 attest_fd = os.dup(1)
 diagnostic_fd = os.dup(2)
-status_parent, status_child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+status_parent, status_child = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
 status_write_fd = status_child.fileno()
 output_read_fd, output_write_fd = os.pipe()
 ready_read_fd, ready_write_fd = os.pipe()
@@ -8609,11 +9378,12 @@ def test_clean_sibling_guardian_startup_ack_state_machine_rejects_adversarial_fr
     def spawn_sender(
         *,
         frame: bytes = ack_frame,
+        fragments: tuple[bytes, ...] | None = None,
         extra_frame: bytes | None = None,
         send_fd: bool = False,
         close_without_frame: bool = False,
     ) -> tuple[socket.socket, int, int | None]:
-        status_parent, status_child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        status_parent, status_child = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
         fd_to_send: int | None = None
         pid = os.fork()
         if pid == 0:
@@ -8637,6 +9407,10 @@ def test_clean_sibling_guardian_startup_ack_state_machine_rejects_adversarial_fr
                         )
                     finally:
                         os.close(fd_to_send)
+                elif fragments is not None:
+                    for fragment in fragments:
+                        status_child.sendall(fragment)
+                        time.sleep(0.05)
                 else:
                     status_child.send(frame)
                 if extra_frame is not None:
@@ -8651,6 +9425,7 @@ def test_clean_sibling_guardian_startup_ack_state_machine_rejects_adversarial_fr
         name: str,
         *,
         frame: bytes = ack_frame,
+        fragments: tuple[bytes, ...] | None = None,
         extra_frame: bytes | None = None,
         send_fd: bool = False,
         close_without_frame: bool = False,
@@ -8658,6 +9433,7 @@ def test_clean_sibling_guardian_startup_ack_state_machine_rejects_adversarial_fr
     ) -> socket.socket:
         status_parent, pid, _fd_to_send = spawn_sender(
             frame=frame,
+            fragments=fragments,
             extra_frame=extra_frame,
             send_fd=send_fd,
             close_without_frame=close_without_frame,
@@ -8680,6 +9456,12 @@ def test_clean_sibling_guardian_startup_ack_state_machine_rejects_adversarial_fr
     fast_exit_ack = run_case("ack-then-fast-exit")
     fast_exit_ack.close()
 
+    fragmented_ack = run_case(
+        "fragmented-ack",
+        fragments=(ack_frame[:7], ack_frame[7:19], ack_frame[19:]),
+    )
+    fragmented_ack.close()
+
     ancillary_ack = run_case(
         "ancillary-ack",
         send_fd=True,
@@ -8689,7 +9471,7 @@ def test_clean_sibling_guardian_startup_ack_state_machine_rejects_adversarial_fr
 
     truncated_ack = run_case(
         "truncated-ack",
-        frame=ack_frame + b"XX",
+        frame=ack_frame[:-1],
         expected="guardian startup ack malformed",
     )
     truncated_ack.close()
@@ -8722,8 +9504,8 @@ def test_clean_sibling_guardian_startup_ack_state_machine_rejects_adversarial_fr
     duplicate_ack.close()
 
 
-def test_clean_sibling_guardian_bash_startup_ack_is_single_seqpacket_frame() -> None:
-    parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+def test_clean_sibling_guardian_bash_startup_ack_is_single_stream_frame() -> None:
+    parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
     os.set_inheritable(child.fileno(), True)
     try:
         completed = subprocess.run(
@@ -8759,7 +9541,7 @@ def test_clean_sibling_guardian_bash_startup_ack_is_single_seqpacket_frame() -> 
 def test_clean_sibling_guardian_markers_survive_ack_until_descriptor_pass() -> None:
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
     prelude = source[: source.index('if [[ -z "$ACGS_ATTEST_FD" ]]; then')]
-    parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
     barrier_read, barrier_write = os.pipe()
     tmp_dir = tempfile.TemporaryDirectory()
     tmp_fd = os.open(tmp_dir.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
@@ -8914,7 +9696,7 @@ def test_clean_sibling_guardian_runtime_negatives_revoke_resources_before_failur
         "    ;;\n"
         "  truncated_ack)\n"
         '    IFS= read -r -N 1 -u "$ACGS_CLEAN_SIBLING_STARTUP_BARRIER_FD" _acgs_release\n'
-        '    printf ACGS_STARTUP_ACK_V1_CLOSED_UNSETXX >&"$ACGS_CLEAN_SIBLING_STATUS_FD"\n'
+        '    printf ACGS_STARTUP_ACK_V1_CLOSED_UNSE >&"$ACGS_CLEAN_SIBLING_STATUS_FD"\n'
         "    exit 0\n"
         "    ;;\n"
         "  ancillary_ack)\n"
@@ -12506,7 +13288,7 @@ def test_clean_sibling_guardian_completion_uses_unlinked_run_json_fd_and_rejects
 
     def run_case(mode: str) -> tuple[subprocess.CompletedProcess[str], bytes, int | None]:
         case_root = tmp_path / mode
-        status_parent, status_child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        status_parent, status_child = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
         shell = f"""
 set -Eeuo pipefail
 die() {{ printf 'DIE=%s\\n' "$*" >&2; exit 2; }}
@@ -12560,28 +13342,17 @@ emit_exact_clean_sibling_pass
             )
         finally:
             status_child.close()
-        status_parent.settimeout(0.05)
         try:
-            payload, ancillary, _flags, _address = status_parent.recvmsg(
-                65536, socket.CMSG_SPACE(array.array("i").itemsize)
-            )
-        except TimeoutError:
-            payload = b""
-            received_fd = None
-        else:
-            received_fd = None
-            for level, cmsg_type, cmsg_data in ancillary:
-                if level == socket.SOL_SOCKET and cmsg_type == socket.SCM_RIGHTS:
-                    received = array.array("i")
-                    received.frombytes(
-                        cmsg_data[: len(cmsg_data) - (len(cmsg_data) % received.itemsize)]
-                    )
-                    if received:
-                        received_fd = received[0]
-                    break
+            frames = _drain_stream_frame_records(status_parent)
         finally:
             status_parent.close()
-        return completed, payload, received_fd
+        if not frames:
+            return completed, b"", None
+        assert len(frames) == 1
+        frame = frames[0]
+        assert frame.flags & (socket.MSG_CTRUNC | socket.MSG_TRUNC) == 0
+        assert len(frame.fds) == 1
+        return completed, frame.payload, frame.fds[0]
 
     success, success_frame, success_fd = run_case("success")
     assert success.returncode == 0, (success.stdout, success.stderr)
@@ -13496,7 +14267,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "TMP_PARENT_STAT_BEFORE" in source
     assert "reject_lexists" in source
     assert "clean_sibling_cleanup" in source
-    assert "RECORDED_GATE=FAIL scope=%s selector=%s exit=%s stderr_sha256=%s" in source
+    assert "RECORDED_GATE=FAIL ordinal=%s selector_sha256=%s exit=%s" in source
     assert 'cat "$stderr_file"' not in source
     assert 'rm -rf "$SOURCE_REPO' not in source
     assert "git clean" not in source
@@ -19232,7 +20003,10 @@ def test_clean_sibling_internal_trusted_parent_launcher_pin_matches_live_wrapper
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
     match = re.search(r"local trusted_launcher_sha256='([0-9a-f]{64})'", source)
     assert match is not None
-    assert match.group(1) == hashlib.sha256(launcher.read_bytes()).hexdigest()
+    launcher_digest = hashlib.sha256(launcher.read_bytes()).hexdigest()
+    assert match.group(1) == launcher_digest
+    assert f"local trusted_launcher_sha256='{launcher_digest}'" in source
+    assert "c23a978fecfe095b47e75236ced2af11fb11789a6d0500eba92b628c41aaa00f" not in (source)
 
 
 def test_uv_identity_does_not_depend_on_ambient_path() -> None:
@@ -19298,6 +20072,8 @@ def test_clean_sibling_target_commands_are_forced_through_bwrap_containment() ->
     ):
         assert flag in runner
     assert 'for fd_path in /proc/"$BASHPID"/fd/*' in fd_closer
+    assert '"$ACGS_STATUS_FD"' not in fd_closer
+    assert '"$ACGS_CLEAN_SIBLING_STATUS_FD"' not in fd_closer
     assert "close_noncontained_fds" in runner
     assert "close_noncontained_fds" in bootstrap_runner
     assert "close_noncontained_fds" in python_install_runner
@@ -19527,6 +20303,8 @@ def test_clean_sibling_anonymous_snapshot_overmounts_replace_live_artifact_fds()
     for runner_source in (runner, bootstrap_runner, python_install_runner):
         assert "open_all_snapshot_data_fds" in runner_source
         assert "close_noncontained_fds" in runner_source
+        assert "ACGS_STATUS_FD" not in runner_source
+        assert "ACGS_CLEAN_SIBLING_STATUS_FD" not in runner_source
         assert '--ro-bind-fd "$UV_FD" "$UV_BIN"' not in runner_source
         assert "mounted_artifact_preflight_env_args_all" in runner_source
         assert "ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT" in runner_source
