@@ -1250,9 +1250,7 @@ def test_postgres_gate_fake_entrypoint_uses_default_socket_after_clearing_pg_env
         "inspect",
     ]
     create = lines[0]
-    env_pairs = [
-        create[index + 1] for index, value in enumerate(create[:-1]) if value == "--env"
-    ]
+    env_pairs = [create[index + 1] for index, value in enumerate(create[:-1]) if value == "--env"]
     assert "PGSERVICE=acgs-entrypoint-init" not in env_pairs
     assert not any(value.startswith("PGSERVICEFILE=") for value in env_pairs)
     assert all(not value.startswith("PGHOST=") for value in env_pairs)
