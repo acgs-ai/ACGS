@@ -5158,6 +5158,95 @@ def test_recorded_gate_status_helper_failure_preserves_rc_without_evidence(
     assert "RECORDED_GATE=FAIL ordinal=1 selector_sha256=" in completed.stderr
 
 
+def test_guardian_cleanup_failure_preserves_original_gate_exit_and_authenticates_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    cleanup_function = _shell_function(source, "cleanup")
+    harness = tmp_path / "guardian-cleanup.sh"
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        "ACGS_OUTPUT_GUARDIAN=1\n"
+        "ACGS_QUOTA_RECOVERY_BUNDLE_NAME=recovery-bundle\n"
+        "ACGS_CLEANUP_TRAP_ARMED=1\n"
+        "record_worktree_gitfile_pre_detach_witness() { return 0; }\n"
+        "close_worktree_gitfile_after_witness() { return 0; }\n"
+        "clean_sibling_retain_recovery_contracts() { return 0; }\n"
+        "detach_quota_root() { return 0; }\n"
+        "quota_bound_artifacts_removed() { return 0; }\n"
+        "clean_sibling_cleanup() { return 7; }\n"
+        "finalize_clean_sibling_output() { printf 'RAW_PROTECTED_OUTPUT\\n'; return 0; }\n"
+        f"{cleanup_function}\n"
+        "case \"${1:?}\" in\n"
+        "  original_failure) set +e; (exit 125); cleanup ;;\n"
+        "  original_success) set +e; true; cleanup ;;\n"
+        "  *) exit 99 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    harness.chmod(0o755)
+
+    original_failure = subprocess.run(
+        [str(harness), "original_failure"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert original_failure.returncode == 125, (
+        original_failure.stdout,
+        original_failure.stderr,
+    )
+    assert (
+        "CLEAN_SIBLING=FAIL phase=FINAL reason=cleanup-status-7"
+        in original_failure.stderr
+    )
+    combined = original_failure.stdout + original_failure.stderr
+    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in combined
+    assert "RAW_PROTECTED_OUTPUT" not in combined
+
+    original_success = subprocess.run(
+        [str(harness), "original_success"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert original_success.returncode == 2, (original_success.stdout, original_success.stderr)
+    assert "CLEAN_SIBLING=FAIL phase=FINAL reason=cleanup-status-7" in original_success.stderr
+
+    launcher = (EVIDENCE_SCRIPTS / "prove_clean_sibling").read_text(encoding="utf-8")
+    launcher_source = _launcher_python_source(launcher)
+    namespace: dict[str, Any] = {}
+    exec(launcher_source.split("\nlibc = ", 1)[0], namespace)
+    monkeypatch.setenv("NODE_ID", "P3-APPROVAL-003")
+    gate_ordinal = namespace["EXPECTED_GATE_IDS"]["P3-APPROVAL-003"].index(
+        "p3-approval-postgres"
+    )
+    selector = namespace["EXPECTED_COMMAND_SELECTORS"]["P3-APPROVAL-003"][gate_ordinal]
+    selector_sha256 = hashlib.sha256(selector.encode("utf-8")).hexdigest()
+    frame = json.dumps(
+        {
+            "exit_code": 125,
+            "gate_ordinal": gate_ordinal,
+            "schema": "acgs.recorded_gate.failure_status",
+            "selector_sha256": selector_sha256,
+            "version": 1,
+        },
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    assert namespace["failure_status_summary"](False, [frame], [], [0], True, 125) == (
+        "gate_failure_status=authenticated "
+        "gate_id=p3-approval-postgres "
+        f"gate_ordinal={gate_ordinal} "
+        "gate_exit=125 "
+        f"gate_selector_sha256={selector_sha256}"
+    )
+
+
 def test_launcher_failure_status_authenticates_exit_ordinal_selector_and_gate_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -20611,6 +20700,47 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     reviewed_runner = ROOT / "packages/acgs-control-plane/scripts/run_postgres_gate.sh"
     reviewed_runner_source = reviewed_runner.read_text(encoding="utf-8")
     reviewed_sha = hashlib.sha256(reviewed_runner.read_bytes()).hexdigest()
+
+    def assert_key_only_server_config_verifier(runner_source: str) -> None:
+        assert (
+            'EnvKeys":[{{range $index, $value := .Config.Env}}{{if $index}},{{end}}'
+            '{{json (index (split $value "=") 0)}}{{end}}]'
+            in runner_source
+        )
+        assert "{{json $value}}" not in runner_source
+        assert "{{json .Config.Env}}" not in runner_source
+        assert '"Config":{"Env":' not in runner_source
+        assert "env_keys = config[\"EnvKeys\"]" in runner_source
+        assert 'or "=" in key or "\\0" in key or len(key) > 256' in runner_source
+        assert 'if {"PGHOST", "PGSERVICE", "PGSERVICEFILE"} & seen_env_keys:' in (
+            runner_source
+        )
+        assert "mandatory_env_keys = {" in runner_source
+        assert '    "POSTGRES_DB",' in runner_source
+        assert '    "POSTGRES_USER",' in runner_source
+        assert '    "POSTGRES_PASSWORD",' in runner_source
+        assert '    "POSTGRES_INITDB_ARGS",' in runner_source
+        assert '    "ACGS_POSTGRES_SOCKET_BRIDGE_EXPECTED_IDENTITY",' in runner_source
+        assert '    "ACGS_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256",' in runner_source
+        assert "if not mandatory_env_keys <= seen_env_keys:" in runner_source
+        assert 'fail("mandatory postgres environment keys are missing")' in runner_source
+
+    def assert_server_config_verified_before_first_start(runner_source: str) -> None:
+        create_offset = runner_source.index("timeout --preserve-status 60s docker create")
+        first_start_offset = runner_source.index(
+            'timeout --preserve-status 30s docker start "$container_id"',
+            create_offset,
+        )
+        mount_verify_offset = runner_source.index(
+            'verify_docker_mounts "$container_id" "$server_mount_expectation"',
+            create_offset,
+        )
+        config_verify_offset = runner_source.index(
+            'verify_server_config_before_start "$container_id"',
+            create_offset,
+        )
+        assert create_offset < mount_verify_offset < config_verify_offset < first_start_offset
+
     assert f"local trusted_runner_sha256='{reviewed_sha}'" in pg_runner
     assert 'exec {runner_fd}<"$runner_path"' in pg_runner
     assert "stat -Lc '%d:%i:%u:%a:%h' -- \"$runner_path\"" in pg_runner
@@ -20726,6 +20856,11 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     assert "write_recovery_contract()" in reviewed_runner_source
     assert "cleanup_postgres_socket_bridge()" in reviewed_runner_source
     assert "external_cleanup_uncertain=1" in reviewed_runner_source
+    assert "write_postgres_service_descriptor()" not in reviewed_runner_source
+    assert "verify_postgres_service_file_fd()" not in reviewed_runner_source
+    assert "cleanup_postgres_service_descriptor()" not in reviewed_runner_source
+    assert "postgres_service_file" not in reviewed_runner_source
+    assert "/run/acgs-pg-service.conf" not in reviewed_runner_source
     assert "os.fsync(fd)" in reviewed_runner_source
     assert "os.fsync(dir_fd)" in reviewed_runner_source
     assert "MAX_COMBINED_OUTPUT_BYTES = 2_097_152" in reviewed_runner_source
@@ -20745,9 +20880,105 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     assert '"nproc=128:128"' not in reviewed_runner_source
     assert "PostgreSQL client broker request timed out" in reviewed_runner_source
     assert 'ACP_POSTGRES_CLIENT_PROOF_LABEL="$proof_label"' in reviewed_runner_source
-    assert "timeout --preserve-status 60s docker run -d" in reviewed_runner_source
+    assert "timeout --preserve-status 60s docker run -d" not in reviewed_runner_source
+    assert "timeout --preserve-status 60s docker create" in reviewed_runner_source
+    assert "--entrypoint /bin/sh" in reviewed_runner_source
     assert '--cidfile "$server_cidfile"' in reviewed_runner_source
     assert '--label "acgs.postgres.server=main"' in reviewed_runner_source
+    server_create_block = reviewed_runner_source.split(
+        "timeout --preserve-status 60s docker create",
+        1,
+    )[1].split(')"\nserver_mount_expectation=', 1)[0]
+    assert '--env "PGHOST=' not in server_create_block
+    assert "PGSERVICE" not in server_create_block
+    assert "PGSERVICEFILE" not in server_create_block
+    assert '--mount "type=bind,src=$postgres_socket_bridge,dst=/var/run/postgresql"' in (
+        server_create_block
+    )
+    assert '-ceu "$postgres_entrypoint_guard_wrapper" acgs-postgres-entrypoint-guard' in (
+        server_create_block
+    )
+    assert '"/var/run/postgresql"' in reviewed_runner_source
+    guard_wrapper = reviewed_runner_source.split("postgres_entrypoint_guard_wrapper='", 1)[
+        1
+    ].split("'\n\n", 1)[0]
+    assert 'printf "%s\\n" "PostgreSQL socket bridge guard rejected mounted source"' in (
+        guard_wrapper
+    )
+    assert "exit 70" in guard_wrapper
+    assert 'guard_dir_stat="$(stat -c "%d:%i:%u:%a" "$guard_dir" 2>/dev/null)"' in (
+        guard_wrapper
+    )
+    assert '[ "$guard_dir_stat" = "$guard_expected_identity" ] || guard_fail' in guard_wrapper
+    assert 'guard_marker_stat="$(stat -c "%u:%h:%a" "$guard_marker" 2>/dev/null)"' in (
+        guard_wrapper
+    )
+    assert '[ "$guard_marker_stat" = "${guard_expected_uid}:1:444" ] || guard_fail' in (
+        guard_wrapper
+    )
+    assert 'guard_marker_hash="$(sha256sum "$guard_marker" 2>/dev/null)"' in guard_wrapper
+    assert '[ "$guard_marker_hash" = "$guard_expected_marker_sha256" ] || guard_fail' in (
+        guard_wrapper
+    )
+    assert "unset ACGS_POSTGRES_SOCKET_BRIDGE_EXPECTED_IDENTITY" in guard_wrapper
+    assert "ACGS_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256" in guard_wrapper
+    assert 'exec /usr/local/bin/docker-entrypoint.sh "$@"' in guard_wrapper
+    assert "verify_docker_mounts()" in reviewed_runner_source
+    assert "verify_server_config_before_start()" in reviewed_runner_source
+    assert_server_config_verified_before_first_start(reviewed_runner_source)
+    raw_env_mutation = reviewed_runner_source.replace(
+        '{{json (index (split $value "=") 0)}}',
+        "{{json $value}}",
+        1,
+    )
+    with pytest.raises(AssertionError):
+        assert_key_only_server_config_verifier(raw_env_mutation)
+    early_start_mutation = reviewed_runner_source.replace(
+        'verify_docker_mounts "$container_id" "$server_mount_expectation"',
+        (
+            'timeout --preserve-status 30s docker start "$container_id" >/dev/null || {\n'
+            "  return $?\n"
+            "}\n"
+            'verify_docker_mounts "$container_id" "$server_mount_expectation"'
+        ),
+        1,
+    )
+    with pytest.raises(AssertionError):
+        assert_server_config_verified_before_first_start(early_start_mutation)
+    create_index = reviewed_runner_source.index("timeout --preserve-status 60s docker create")
+    first_mount_verify_index = reviewed_runner_source.index(
+        'verify_docker_mounts "$container_id" "$server_mount_expectation"',
+        create_index,
+    )
+    config_verify_index = reviewed_runner_source.index(
+        'verify_server_config_before_start "$container_id"',
+        first_mount_verify_index,
+    )
+    start_index = reviewed_runner_source.index(
+        'timeout --preserve-status 30s docker start "$container_id"',
+        create_index,
+    )
+    assert create_index < first_mount_verify_index < config_verify_index < start_index
+    assert_key_only_server_config_verifier(reviewed_runner_source)
+    assert 'EnvKeys":[{{range $index, $value := .Config.Env}}' in reviewed_runner_source
+    assert '"Entrypoint":{{json .Config.Entrypoint}},"Cmd":{{json .Config.Cmd}}' in (
+        reviewed_runner_source
+    )
+    assert 'set(config) != {"EnvKeys", "Entrypoint", "Cmd"}' in reviewed_runner_source
+    assert "env_keys = config[\"EnvKeys\"]" in reviewed_runner_source
+    assert 'entrypoint = config["Entrypoint"]' in reviewed_runner_source
+    assert 'if entrypoint != ["/bin/sh"]:' in reviewed_runner_source
+    assert "expected_cmd = [" in reviewed_runner_source
+    assert '    "-ceu",' in reviewed_runner_source
+    assert "    expected_wrapper," in reviewed_runner_source
+    assert '    "acgs-postgres-entrypoint-guard",' in reviewed_runner_source
+    assert "env_values = config" not in reviewed_runner_source
+    assert '"Config":{"Env":' not in reviewed_runner_source
+    assert 'PINNED_PGHOST = "/run/acgs-pg"' in reviewed_runner_source
+    assert '"--mount", f"type=bind,src={PG_SOCKET_BRIDGE},dst=/run/acgs-pg,readonly"' in (
+        reviewed_runner_source
+    )
+    assert "export PGHOST=/run/acgs-pg" in reviewed_runner_source
     production_bwrap_args = reviewed_runner_source.split("\nbwrap_args=(\n", 1)[1].split(
         "\n)\n\n",
         1,

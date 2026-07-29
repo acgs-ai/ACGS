@@ -513,9 +513,6 @@ proof_label="$(derive_postgres_proof_label "$(id -u)" "$proof_nonce")" || {
 container_name="${proof_label}-server"
 server_cidfile="$state_dir/server.cid"
 server_namefile="$state_dir/server.name"
-postgres_service_file="$state_dir/acgs-entrypoint-pg-service.conf"
-postgres_service_file_fd=''
-postgres_service_file_sha256='d80daf1f18b1cdaf32502e1c6bf7362918c712bf75f6712e2991fc1eb31f8c72'
 postgres_socket_bridge=''
 postgres_socket_bridge_name="${proof_label}-socket-bridge"
 postgres_socket_bridge_identity=''
@@ -1384,48 +1381,6 @@ if source_stat.st_mode & 0o777 != expected_mode:
     raise SystemExit(70)
 identity = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
 if any(getattr(source_stat, field) != getattr(fd_stat, field) for field in identity):
-    raise SystemExit(70)
-PY
-}
-
-verify_postgres_service_file_fd() {
-  local source_path=$1
-  local fd_path=$2
-  /usr/bin/python3 -I -S - "$source_path" "$fd_path" "$postgres_service_file_sha256" <<'PY'
-from __future__ import annotations
-
-import hashlib
-import os
-import stat
-import sys
-
-source_path, fd_path, expected_sha256 = sys.argv[1:4]
-expected_payload = b"[acgs-entrypoint-init]\nhost=/run/acgs-pg\nport=5432\n"
-try:
-    source_stat = os.stat(source_path, follow_symlinks=False)
-    fd_stat = os.stat(fd_path, follow_symlinks=True)
-except OSError:
-    raise SystemExit(70) from None
-if not stat.S_ISREG(source_stat.st_mode) or not stat.S_ISREG(fd_stat.st_mode):
-    raise SystemExit(70)
-if source_stat.st_uid != os.getuid() or source_stat.st_nlink != 1:
-    raise SystemExit(70)
-if stat.S_IMODE(source_stat.st_mode) != 0o444:
-    raise SystemExit(70)
-identity = ("st_dev", "st_ino", "st_size", "st_ctime_ns", "st_mtime_ns")
-if any(getattr(source_stat, field) != getattr(fd_stat, field) for field in identity):
-    raise SystemExit(70)
-try:
-    fd = os.open(fd_path, os.O_RDONLY | os.O_CLOEXEC)
-except OSError:
-    raise SystemExit(70) from None
-try:
-    payload = os.read(fd, len(expected_payload) + 1)
-finally:
-    os.close(fd)
-if payload != expected_payload:
-    raise SystemExit(70)
-if hashlib.sha256(payload).hexdigest() != expected_sha256:
     raise SystemExit(70)
 PY
 }
@@ -2598,17 +2553,104 @@ verify_tmpfs(host_config.get("Tmpfs"), expected.get("tmpfs"))
 PY
 }
 
+verify_server_config_before_start() {
+  local container_ref=$1
+  local expected_wrapper=$2
+  local inspect_output=''
+  # Docker Go template variables must reach docker inspect literally.
+  # shellcheck disable=SC2016
+  inspect_output="$(
+    timeout --preserve-status 10s docker inspect --format '{"State":{"Status":{{json .State.Status}}},"Config":{"EnvKeys":[{{range $index, $value := .Config.Env}}{{if $index}},{{end}}{{json (index (split $value "=") 0)}}{{end}}],"Entrypoint":{{json .Config.Entrypoint}},"Cmd":{{json .Config.Cmd}}}}' "$container_ref"
+  )" || return $?
+  [[ "${#inspect_output}" -le 65536 ]] || {
+    printf 'server-config-verifier: inspect output is oversized\n' >&2
+    return 70
+  }
+  /usr/bin/python3 -I -S - "$inspect_output" "$expected_wrapper" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+
+raw_snapshot = sys.argv[1]
+expected_wrapper = sys.argv[2]
+
+
+def fail(reason: str) -> None:
+    print(f"server-config-verifier: {reason}", file=sys.stderr)
+    raise SystemExit(70)
+
+
+def reject_duplicate_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            fail("JSON object has duplicate keys")
+        result[key] = value
+    return result
+
+
+try:
+    snapshot = json.loads(raw_snapshot, object_pairs_hook=reject_duplicate_json_object)
+except json.JSONDecodeError:
+    fail("inspect JSON is malformed")
+if not isinstance(snapshot, dict) or set(snapshot) != {"State", "Config"}:
+    fail("inspect snapshot is malformed")
+state = snapshot["State"]
+config = snapshot["Config"]
+if not isinstance(state, dict) or set(state) != {"Status"} or state["Status"] != "created":
+    fail("container status is not created")
+if not isinstance(config, dict) or set(config) != {"EnvKeys", "Entrypoint", "Cmd"}:
+    fail("container config is malformed")
+env_keys = config["EnvKeys"]
+entrypoint = config["Entrypoint"]
+cmd = config["Cmd"]
+if not isinstance(env_keys, list):
+    fail("container environment keys are malformed")
+seen_env_keys: set[str] = set()
+for key in env_keys:
+    if not isinstance(key, str) or not key or "=" in key or "\0" in key or len(key) > 256:
+        fail("container environment key is malformed")
+    if key in seen_env_keys:
+        fail("container environment keys are duplicated")
+    seen_env_keys.add(key)
+if not isinstance(cmd, list) or not all(isinstance(item, str) for item in cmd):
+    fail("container command is malformed")
+if {"PGHOST", "PGSERVICE", "PGSERVICEFILE"} & seen_env_keys:
+    fail("forbidden postgres endpoint environment is present")
+mandatory_env_keys = {
+    "POSTGRES_DB",
+    "POSTGRES_USER",
+    "POSTGRES_PASSWORD",
+    "POSTGRES_INITDB_ARGS",
+    "ACGS_POSTGRES_SOCKET_BRIDGE_EXPECTED_IDENTITY",
+    "ACGS_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256",
+}
+if not mandatory_env_keys <= seen_env_keys:
+    fail("mandatory postgres environment keys are missing")
+if entrypoint != ["/bin/sh"]:
+    fail("container entrypoint changed")
+expected_cmd = [
+    "-ceu",
+    expected_wrapper,
+    "acgs-postgres-entrypoint-guard",
+    "postgres",
+    "-c",
+    "listen_addresses=",
+    "-c",
+    "unix_socket_directories=/var/run/postgresql",
+    "-c",
+    "unix_socket_permissions=0777",
+]
+if cmd != expected_cmd:
+    fail("postgres command changed")
+PY
+}
+
 verify_server_socket_bridge_marker() {
   local inspect_name=$1
   timeout --preserve-status 10s docker exec "$inspect_name" sh -ec \
-    "test -f /run/acgs-pg/.acgs-postgres-socket-bridge.v2 && test \"\$(sha256sum /run/acgs-pg/.acgs-postgres-socket-bridge.v2 | awk '{print \$1}')\" = '$postgres_socket_bridge_marker_sha256'" \
-    >/dev/null
-}
-
-verify_server_service_file() {
-  local inspect_name=$1
-  timeout --preserve-status 10s docker exec "$inspect_name" sh -ec \
-    "test -f /run/acgs-pg-service.conf && test \"\$(stat -c '%a:%s' /run/acgs-pg-service.conf)\" = '444:51' && test \"\$(sha256sum /run/acgs-pg-service.conf | awk '{print \$1}')\" = '$postgres_service_file_sha256'" \
+    "test -f /var/run/postgresql/.acgs-postgres-socket-bridge.v2 && test \"\$(sha256sum /var/run/postgresql/.acgs-postgres-socket-bridge.v2 | awk '{print \$1}')\" = '$postgres_socket_bridge_marker_sha256'" \
     >/dev/null
 }
 
@@ -2932,23 +2974,6 @@ verify_postgres_socket_bridge 1777 || {
   echo 'PostgreSQL socket bridge failed descriptor verification' >&2
   exit 70
 }
-if ! write_verified_private_artifact "$state_dir" "acgs-entrypoint-pg-service.conf" 0444 <<'EOF'
-[acgs-entrypoint-init]
-host=/run/acgs-pg
-port=5432
-EOF
-then
-  echo 'failed to create PostgreSQL entrypoint service file' >&2
-  exit 70
-fi
-exec {postgres_service_file_fd}<"$postgres_service_file" || {
-  echo 'failed to open PostgreSQL entrypoint service file descriptor' >&2
-  exit 70
-}
-verify_postgres_service_file_fd "$postgres_service_file" "/proc/$BASHPID/fd/$postgres_service_file_fd" || {
-  echo 'PostgreSQL entrypoint service file failed descriptor verification' >&2
-  exit 70
-}
 write_postgres_recovery_intent server-intent server "$server_namefile" || {
   echo 'failed to persist PostgreSQL server recovery intent' >&2
   exit 70
@@ -2958,9 +2983,14 @@ write_private_container_name_file "$server_namefile" "$container_name" || {
   exit 70
 }
 
+# Runs inside the pinned PostgreSQL image and blocks the official entrypoint
+# until the mounted socket bridge matches the host-verified inode and marker.
+# shellcheck disable=SC2016
+postgres_entrypoint_guard_wrapper='guard_fail() { printf "%s\n" "PostgreSQL socket bridge guard rejected mounted source" >&2; exit 70; }; guard_dir=/var/run/postgresql; guard_expected_identity=${ACGS_POSTGRES_SOCKET_BRIDGE_EXPECTED_IDENTITY-}; guard_expected_marker_sha256=${ACGS_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256-}; [ -n "$guard_expected_identity" ] && [ -n "$guard_expected_marker_sha256" ] || guard_fail; case "$guard_expected_identity" in *[!0123456789:]*|"") guard_fail;; esac; case "$guard_expected_marker_sha256" in *[!0123456789abcdef]*|"") guard_fail;; esac; [ "${#guard_expected_marker_sha256}" -eq 64 ] || guard_fail; guard_first=${guard_expected_identity%%:*}; guard_rest=${guard_expected_identity#*:}; [ "$guard_rest" != "$guard_expected_identity" ] || guard_fail; guard_second=${guard_rest%%:*}; guard_rest=${guard_rest#*:}; [ "$guard_rest" != "$guard_second" ] || guard_fail; guard_expected_uid=${guard_rest%%:*}; guard_expected_mode=${guard_rest#*:}; [ "$guard_expected_mode" != "$guard_expected_uid" ] || guard_fail; case "$guard_first$guard_second$guard_expected_uid$guard_expected_mode" in *[!0123456789]*|"") guard_fail;; esac; [ "$guard_expected_mode" = "1777" ] || guard_fail; guard_dir_stat="$(stat -c "%d:%i:%u:%a" "$guard_dir" 2>/dev/null)" || guard_fail; [ "$guard_dir_stat" = "$guard_expected_identity" ] || guard_fail; guard_marker="$guard_dir/.acgs-postgres-socket-bridge.v2"; [ -f "$guard_marker" ] && [ ! -L "$guard_marker" ] || guard_fail; guard_marker_stat="$(stat -c "%u:%h:%a" "$guard_marker" 2>/dev/null)" || guard_fail; [ "$guard_marker_stat" = "${guard_expected_uid}:1:444" ] || guard_fail; guard_marker_hash="$(sha256sum "$guard_marker" 2>/dev/null)" || guard_fail; guard_marker_hash=${guard_marker_hash%% *}; [ "$guard_marker_hash" = "$guard_expected_marker_sha256" ] || guard_fail; unset ACGS_POSTGRES_SOCKET_BRIDGE_EXPECTED_IDENTITY ACGS_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256 guard_dir guard_expected_identity guard_expected_marker_sha256 guard_first guard_second guard_rest guard_expected_uid guard_expected_mode guard_dir_stat guard_marker guard_marker_stat guard_marker_hash; exec /usr/local/bin/docker-entrypoint.sh "$@"'
+
 docker_started=1
 container_id="$(
-  timeout --preserve-status 60s docker run -d \
+  timeout --preserve-status 60s docker create \
     --pull=never \
     --network none \
     --name "$container_name" \
@@ -2981,40 +3011,43 @@ container_id="$(
     --env "POSTGRES_USER=$postgres_user" \
     --env "POSTGRES_PASSWORD=$postgres_password" \
     --env "POSTGRES_INITDB_ARGS=--auth-local=scram-sha-256 --auth-host=scram-sha-256" \
-    --env PGSERVICE=acgs-entrypoint-init \
-    --env PGSERVICEFILE=/run/acgs-pg-service.conf \
-    --health-cmd "test -f /run/acgs-pg/.acgs-postgres-socket-bridge.v2 && test \"\$(sha256sum /run/acgs-pg/.acgs-postgres-socket-bridge.v2 | awk '{print \$1}')\" = '$postgres_socket_bridge_marker_sha256' && pg_isready -h /run/acgs-pg -U $postgres_user -d $main_database" \
+    --env "ACGS_POSTGRES_SOCKET_BRIDGE_EXPECTED_IDENTITY=$postgres_socket_bridge_identity" \
+    --env "ACGS_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256=$postgres_socket_bridge_marker_sha256" \
+    --health-cmd "test -f /var/run/postgresql/.acgs-postgres-socket-bridge.v2 && test \"\$(sha256sum /var/run/postgresql/.acgs-postgres-socket-bridge.v2 | awk '{print \$1}')\" = '$postgres_socket_bridge_marker_sha256' && pg_isready -h /var/run/postgresql -U $postgres_user -d $main_database" \
     --health-interval 1s \
     --health-timeout 5s \
     --health-retries 60 \
     --security-opt label=disable \
-    --mount "type=bind,src=$postgres_socket_bridge,dst=/run/acgs-pg" \
-    --mount "type=bind,src=$postgres_service_file,dst=/run/acgs-pg-service.conf,readonly" \
+    --mount "type=bind,src=$postgres_socket_bridge,dst=/var/run/postgresql" \
     --tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700 \
     --tmpfs /tmp:rw,noexec,nosuid,nodev,size=2g,mode=1777 \
+    --entrypoint /bin/sh \
     "$postgres_image" \
-    postgres -c listen_addresses= -c unix_socket_directories=/run/acgs-pg \
+    -ceu "$postgres_entrypoint_guard_wrapper" acgs-postgres-entrypoint-guard \
+    postgres -c listen_addresses= -c unix_socket_directories=/var/run/postgresql \
       -c unix_socket_permissions=0777
 )"
 server_mount_expectation="$(
-  printf '{"binds":{"%s":{"source":%s,"rw":true,"mode":"","propagation":"rprivate"},"%s":{"source":%s,"rw":false,"mode":"","propagation":"rprivate"}},"tmpfs":{"%s":"rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700","%s":"rw,noexec,nosuid,nodev,size=2g,mode=1777"}}' \
-    "/run/acgs-pg" \
+  printf '{"binds":{"%s":{"source":%s,"rw":true,"mode":"","propagation":"rprivate"}},"tmpfs":{"%s":"rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700","%s":"rw,noexec,nosuid,nodev,size=2g,mode=1777"}}' \
+    "/var/run/postgresql" \
     "$(printf '%s' "$postgres_socket_bridge" | /usr/bin/python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
-    "/run/acgs-pg-service.conf" \
-    "$(printf '%s' "$postgres_service_file" | /usr/bin/python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
     "/var/lib/postgresql/data" \
     "/tmp"
 )"
 verify_docker_mounts "$container_id" "$server_mount_expectation" || {
-  echo 'PostgreSQL server socket bridge mount did not match expected descriptor source' >&2
+  echo 'PostgreSQL server socket bridge mount did not match expected pre-start source' >&2
   exit 70
 }
-verify_postgres_service_file_fd "$postgres_service_file" "/proc/$BASHPID/fd/$postgres_service_file_fd" || {
-  echo 'PostgreSQL entrypoint service file changed after server launch' >&2
+verify_server_config_before_start "$container_id" "$postgres_entrypoint_guard_wrapper" || {
+  echo 'PostgreSQL server config was not the expected default-socket configuration' >&2
   exit 70
 }
-verify_server_service_file "$container_id" || {
-  echo 'PostgreSQL entrypoint service file was not visible as the expected read-only file' >&2
+timeout --preserve-status 30s docker start "$container_id" >/dev/null || {
+  echo 'failed to start disposable PostgreSQL container after pre-start verification' >&2
+  exit 70
+}
+verify_docker_mounts "$container_id" "$server_mount_expectation" || {
+  echo 'PostgreSQL server socket bridge mount changed after start' >&2
   exit 70
 }
 verify_server_socket_bridge_marker "$container_id" || {

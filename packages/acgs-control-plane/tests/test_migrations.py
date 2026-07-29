@@ -1067,8 +1067,12 @@ def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
     assert "--setenv ACP_POSTGRES_CLIENT_BROKER_SOCKET /run/broker/postgresql-client.sock" in script
     assert "PostgreSQL client broker" in script
     assert '"tool": tool, "argv": sys.argv[1:], "env": env' in script
-    server_launch = script.split('container_id="$(', 1)[1].split(')"\n\nfor _ in {1..90}', 1)[0]
-    assert "docker run -d" in server_launch
+    server_launch = script.split('container_id="$(', 1)[1].split(
+        ')"\nserver_mount_expectation=',
+        1,
+    )[0]
+    assert "docker create" in server_launch
+    assert "docker run -d" not in server_launch
     assert "--network none" in server_launch
     assert "--publish" not in server_launch
     assert "--user 999:999" in server_launch
@@ -1079,15 +1083,25 @@ def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
     )
     assert "--tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=2g \\" not in script
     assert "--env PGHOST=/run/acgs-pg" not in server_launch
-    assert "--env PGSERVICE=acgs-entrypoint-init" in server_launch
-    assert "--env PGSERVICEFILE=/run/acgs-pg-service.conf" in server_launch
+    assert "PGSERVICE" not in server_launch
+    assert "PGSERVICEFILE" not in server_launch
+    assert "PGHOST" not in server_launch
     assert "--tmpfs /var/run/postgresql" not in server_launch
-    assert '--mount "type=bind,src=$postgres_socket_bridge,dst=/run/acgs-pg"' in server_launch
-    assert (
-        '--mount "type=bind,src=$postgres_service_file,dst=/run/acgs-pg-service.conf,readonly"'
-        in server_launch
+    assert '--mount "type=bind,src=$postgres_socket_bridge,dst=/var/run/postgresql"' in (
+        server_launch
     )
+    assert "/run/acgs-pg-service.conf" not in script
+    assert "acgs-entrypoint-pg-service.conf" not in script
+    assert "verify_server_config_before_start" in script
+    assert script.index("verify_server_config_before_start") < script.index(
+        'docker start "$container_id"'
+    )
+    assert "--entrypoint /bin/sh" in server_launch
+    assert 'exec /usr/local/bin/docker-entrypoint.sh "$@"' in script
+    assert "ACGS_POSTGRES_SOCKET_BRIDGE_EXPECTED_IDENTITY" in server_launch
+    assert "ACGS_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256" in server_launch
     assert "listen_addresses=" in server_launch
+    assert "unix_socket_directories=/var/run/postgresql" in server_launch
 
     pytest_invocation = (
         'timeout --preserve-status 900s env -i "$bwrap_bin" "${bwrap_args[@]}" -- \\\n'
@@ -1102,46 +1116,83 @@ def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
     assert script.index(pytest_invocation) > script.index("broker_socket=")
 
 
-def test_postgres_gate_fake_entrypoint_uses_service_file_after_clearing_pg_host(
+def test_postgres_gate_fake_entrypoint_uses_default_socket_after_clearing_pg_env(
     tmp_path: Path,
 ) -> None:
     script = _postgres_gate_script_source()
+    config_source = _extract_shell_function(
+        script,
+        "verify_server_config_before_start",
+        "verify_server_socket_bridge_marker",
+    )
+    marker_source = _extract_shell_function(
+        script,
+        "verify_server_socket_bridge_marker",
+        "capture_postgres_server_diagnostics",
+    )
+    guard_wrapper = _postgres_gate_server_entrypoint_guard_wrapper(script)
     server_source = _postgres_gate_server_launch_and_health_source(script)
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
-    argv_log = tmp_path / "docker-argv.json"
-    service_marker = tmp_path / "service-ok"
+    argv_log = tmp_path / "docker-argv.jsonl"
+    started_marker = tmp_path / "started"
+    secret_sentinel = "entrypoint-secret-sentinel"
     docker_path = fake_bin / "docker"
     docker_path.write_text(
         "\n".join(
             [
                 "#!/usr/bin/env python3",
                 "from __future__ import annotations",
-                "import json, sys",
+                "import json, os, sys",
                 f"argv_log = {str(argv_log)!r}",
-                f"service_marker = {str(service_marker)!r}",
+                f"started_marker = {str(started_marker)!r}",
+                f"secret_sentinel = {secret_sentinel!r}",
+                "def log(argv):",
+                "    redacted = list(argv)",
+                "    for index, value in enumerate(redacted[:-1]):",
+                "        if value == '--env':",
+                "            key = redacted[index + 1].split('=', 1)[0]",
+                "            redacted[index + 1] = key + '=<redacted>'",
+                "    with open(argv_log, 'a', encoding='utf-8') as handle:",
+                "        handle.write(json.dumps(redacted) + '\\n')",
                 "argv = sys.argv[1:]",
-                "if argv[:2] == ['run', '-d']:",
-                "    open(argv_log, 'w', encoding='utf-8').write(json.dumps(argv))",
+                "log(argv)",
+                "if argv[:1] == ['create']:",
                 "    env_pairs = [",
                 "        argv[idx + 1] for idx, value in enumerate(argv[:-1]) if value == '--env'",
                 "    ]",
-                "    has_pg_host = any(value.startswith('PGHOST=') for value in env_pairs)",
-                "    has_service = 'PGSERVICE=acgs-entrypoint-init' in env_pairs",
-                "    has_service_file = 'PGSERVICEFILE=/run/acgs-pg-service.conf' in env_pairs",
-                "    if not has_pg_host and has_service and has_service_file:",
-                "        open(service_marker, 'w', encoding='ascii').write('1')",
+                "    cmd = argv[argv.index('-ceu'):]",
+                "    entrypoint = [argv[argv.index('--entrypoint') + 1]]",
+                "    env_keys = [item.split('=', 1)[0] for item in env_pairs]",
+                "    with open(argv_log + '.create.json', 'w', encoding='utf-8') as handle:",
+                "        json.dump(",
+                "            {'EnvKeys': env_keys, 'Entrypoint': entrypoint, 'Cmd': cmd},",
+                "            handle,",
+                "        )",
                 "    print('server-cid')",
                 "    raise SystemExit(0)",
                 "if argv[:2] == ['inspect', '--format']:",
                 "    fmt = argv[2]",
+                "    if fmt.startswith('{\"State\"'):",
+                "        create = json.load(open(argv_log + '.create.json', encoding='utf-8'))",
+                "        if secret_sentinel in json.dumps(create):",
+                "            raise SystemExit(88)",
+                "        print(json.dumps({'State': {'Status': 'created'}, 'Config': create}))",
+                "        raise SystemExit(0)",
                 "    if fmt == '{{.State.Status}}':",
-                "        print('running')",
+                "        print('running' if os.path.exists(started_marker) else 'created')",
                 "        raise SystemExit(0)",
                 "    if fmt == '{{.State.Health.Status}}':",
-                "        healthy = __import__('os').path.exists(service_marker)",
-                "        print('healthy' if healthy else 'unhealthy')",
+                "        print('healthy' if os.path.exists(started_marker) else 'starting')",
                 "        raise SystemExit(0)",
+                "if argv[:1] == ['start']:",
+                "    open(started_marker, 'w', encoding='ascii').write('1')",
+                "    print(argv[-1])",
+                "    raise SystemExit(0)",
+                "if argv[:1] == ['exec']:",
+                "    if '/var/run/postgresql/.acgs-postgres-socket-bridge.v2' in ' '.join(argv):",
+                "        raise SystemExit(0)",
+                "    raise SystemExit(70)",
                 "raise SystemExit(127)",
             ]
         )
@@ -1157,9 +1208,427 @@ def test_postgres_gate_fake_entrypoint_uses_service_file_after_clearing_pg_host(
             f"PATH={str(fake_bin)!r}:$PATH",
             "sleep() { :; }",
             "verify_docker_mounts() { return 0; }",
-            "verify_postgres_service_file_fd() { return 0; }",
-            "verify_server_service_file() { return 0; }",
-            "verify_server_socket_bridge_marker() { return 0; }",
+            "capture_postgres_server_diagnostics() { exit 91; }",
+            f"state_dir={str(tmp_path / 'state')!r}",
+            'mkdir -p "$state_dir"',
+            "container_name='acgs-test-server'",
+            f"server_cidfile={str(tmp_path / 'server.cid')!r}",
+            "proof_label='acgs-proof-label'",
+            "postgres_image='postgres@example'",
+            "main_database='acgs'",
+            "postgres_user='acgs'",
+            f"postgres_password={secret_sentinel!r}",
+            f"postgres_socket_bridge={str(socket_bridge)!r}",
+            "postgres_socket_bridge_identity='1:2:3:1777'",
+            "postgres_socket_bridge_marker_sha256='" + ("a" * 64) + "'",
+            config_source,
+            marker_source,
+            f"postgres_entrypoint_guard_wrapper={shlex.quote(guard_wrapper)}",
+            server_source,
+            "test -f " + shlex.quote(str(started_marker)),
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert secret_sentinel not in result.stdout
+    assert secret_sentinel not in result.stderr
+    assert secret_sentinel not in argv_log.read_text(encoding="utf-8")
+    lines = [json.loads(line) for line in argv_log.read_text(encoding="utf-8").splitlines()]
+    assert [line[0] for line in lines if line] == [
+        "create",
+        "inspect",
+        "start",
+        "exec",
+        "inspect",
+        "inspect",
+        "inspect",
+    ]
+    create = lines[0]
+    env_pairs = [
+        create[index + 1] for index, value in enumerate(create[:-1]) if value == "--env"
+    ]
+    assert "PGSERVICE=acgs-entrypoint-init" not in env_pairs
+    assert not any(value.startswith("PGSERVICEFILE=") for value in env_pairs)
+    assert all(not value.startswith("PGHOST=") for value in env_pairs)
+    assert "--mount" in create
+    assert "type=bind,src=" + str(socket_bridge) + ",dst=/var/run/postgresql" in create
+    assert "/run/acgs-pg-service.conf" not in " ".join(create)
+    assert create[create.index("--entrypoint") + 1] == "/bin/sh"
+    cmd_start = create.index("-ceu")
+    assert create[cmd_start + 2] == "acgs-postgres-entrypoint-guard"
+    assert 'exec /usr/local/bin/docker-entrypoint.sh "$@"' in create[cmd_start + 1]
+    assert create[-10:] == [
+        "-ceu",
+        create[cmd_start + 1],
+        "acgs-postgres-entrypoint-guard",
+        "postgres",
+        "-c",
+        "listen_addresses=",
+        "-c",
+        "unix_socket_directories=/var/run/postgresql",
+        "-c",
+        "unix_socket_permissions=0777",
+    ]
+    inspect_payload = (argv_log.with_suffix(argv_log.suffix + ".create.json")).read_text(
+        encoding="utf-8"
+    )
+    assert secret_sentinel not in inspect_payload
+
+
+def _postgres_gate_server_entrypoint_guard_wrapper(script: str) -> str:
+    marker = "postgres_entrypoint_guard_wrapper='"
+    start = script.index(marker) + len(marker)
+    end = script.index("'\n", start)
+    return script[start:end]
+
+
+@pytest.mark.parametrize(
+    ("case_name", "expected_rc", "entrypoint_expected"),
+    [
+        ("ok", 0, True),
+        ("rename-substitute", 70, False),
+        ("wrong-dir-mode", 70, False),
+        ("marker-directory", 70, False),
+        ("marker-symlink", 70, False),
+        ("marker-hardlink", 70, False),
+        ("marker-mode", 70, False),
+        ("marker-hash", 70, False),
+        ("marker-owner", 70, False),
+    ],
+)
+def test_postgres_gate_server_entrypoint_guard_revalidates_actual_bind_mount(
+    tmp_path: Path,
+    case_name: str,
+    expected_rc: int,
+    entrypoint_expected: bool,
+) -> None:
+    script = _postgres_gate_script_source()
+    wrapper = _postgres_gate_server_entrypoint_guard_wrapper(script)
+    socket_bridge = tmp_path / "bridge"
+    bridge_identity, bridge_marker_sha256, _bridge_mnt_id = _write_postgres_socket_bridge(
+        socket_bridge,
+        "acgs-proof-label",
+        "0" * 32,
+    )
+    marker = socket_bridge / ".acgs-postgres-socket-bridge.v2"
+    expected_uid = bridge_identity.split(":")[2]
+
+    if case_name == "rename-substitute":
+        saved_bridge = tmp_path / "bridge-original"
+        socket_bridge.rename(saved_bridge)
+        socket_bridge.mkdir(mode=0o700)
+        socket_bridge.chmod(0o1777)
+        (socket_bridge / ".acgs-postgres-socket-bridge.v2").write_text(
+            "substitute\n",
+            encoding="ascii",
+        )
+        (socket_bridge / ".acgs-postgres-socket-bridge.v2").chmod(0o444)
+    elif case_name == "wrong-dir-mode":
+        socket_bridge.chmod(0o700)
+    elif case_name == "marker-directory":
+        marker.unlink()
+        marker.mkdir()
+    elif case_name == "marker-symlink":
+        marker.unlink()
+        marker.symlink_to("/etc/passwd")
+    elif case_name == "marker-hardlink":
+        os.link(marker, marker.with_name(".acgs-postgres-socket-bridge.v2.link"))
+    elif case_name == "marker-mode":
+        marker.chmod(0o644)
+    elif case_name == "marker-hash":
+        marker.chmod(0o644)
+        marker.write_text("tampered\n", encoding="ascii")
+        marker.chmod(0o444)
+    elif case_name == "marker-owner":
+        wrapper = wrapper.replace(
+            "${guard_expected_uid}:1:444",
+            f"{int(expected_uid) + 1}:1:444",
+        )
+
+    fake_entrypoint = tmp_path / "docker-entrypoint.sh"
+    sentinel = tmp_path / "official-entrypoint-called"
+    fake_entrypoint.write_text(
+        "\n".join(
+            [
+                "#!/bin/sh",
+                '[ "${ACGS_POSTGRES_SOCKET_BRIDGE_EXPECTED_IDENTITY+set}" != set ] || exit 81',
+                '[ "${ACGS_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256+set}" != set ] || exit 82',
+                f"printf '%s\\n' \"$@\" > {shlex.quote(str(sentinel))}",
+            ]
+        )
+        + "\n",
+        encoding="ascii",
+    )
+    fake_entrypoint.chmod(0o755)
+    executable_wrapper = wrapper.replace(
+        "guard_dir=/var/run/postgresql;",
+        f"guard_dir={shlex.quote(str(socket_bridge))};",
+    ).replace(
+        "/usr/local/bin/docker-entrypoint.sh",
+        shlex.quote(str(fake_entrypoint)),
+    )
+    secret_sentinel = "server-entrypoint-password-secret"
+    env = {
+        "ACGS_POSTGRES_SOCKET_BRIDGE_EXPECTED_IDENTITY": bridge_identity,
+        "ACGS_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256": bridge_marker_sha256,
+        "POSTGRES_PASSWORD": secret_sentinel,
+    }
+    result = subprocess.run(
+        [
+            "sh",
+            "-ceu",
+            executable_wrapper,
+            "acgs-postgres-entrypoint-guard",
+            "postgres",
+            "-c",
+            "listen_addresses=",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == expected_rc, (case_name, result.stdout, result.stderr)
+    assert secret_sentinel not in result.stdout
+    assert secret_sentinel not in result.stderr
+    assert sentinel.exists() is entrypoint_expected
+    if entrypoint_expected:
+        assert result.stdout == ""
+        assert result.stderr == ""
+        assert sentinel.read_text(encoding="ascii").splitlines() == [
+            "postgres",
+            "-c",
+            "listen_addresses=",
+        ]
+    else:
+        assert result.stdout == ""
+        assert result.stderr == "PostgreSQL socket bridge guard rejected mounted source\n"
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_rc"),
+    [
+        ("ok", 0),
+        ("forbidden-pghost", 70),
+        ("forbidden-pgservice", 70),
+        ("forbidden-pgservicefile", 70),
+        ("duplicate-env-key", 70),
+        ("malformed-env-key", 70),
+        ("wrong-status", 70),
+        ("wrong-command", 70),
+        ("wrong-entrypoint", 70),
+        ("wrong-wrapper", 70),
+        ("wrong-args", 70),
+        ("missing-guard-identity", 70),
+        ("missing-guard-marker-sha", 70),
+        ("missing-both-guard-keys", 70),
+        ("missing-postgres-initdb-args", 70),
+    ],
+)
+def test_postgres_gate_server_config_verifier_uses_key_only_env_inspect(
+    tmp_path: Path,
+    mode: str,
+    expected_rc: int,
+) -> None:
+    script = _postgres_gate_script_source()
+    verify_source = _extract_shell_function(
+        script,
+        "verify_server_config_before_start",
+        "verify_server_socket_bridge_marker",
+    )
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    argv_log = tmp_path / "docker-config-argv.jsonl"
+    secret_sentinel = "postgres-password-must-not-enter-config-inspect"
+    expected_wrapper = "expected-entrypoint-guard-wrapper"
+    docker_path = fake_bin / "docker"
+    docker_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "from __future__ import annotations",
+                "import json, sys",
+                f"argv_log = {str(argv_log)!r}",
+                f"mode = {mode!r}",
+                "with open(argv_log, 'a', encoding='utf-8') as handle:",
+                "    handle.write(json.dumps(sys.argv[1:]) + '\\n')",
+                "if sys.argv[1:3] == ['inspect', '--format']:",
+                "    env_keys = [",
+                "        'POSTGRES_DB',",
+                "        'POSTGRES_USER',",
+                "        'POSTGRES_PASSWORD',",
+                "        'POSTGRES_INITDB_ARGS',",
+                "        'ACGS_POSTGRES_SOCKET_BRIDGE_EXPECTED_IDENTITY',",
+                "        'ACGS_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256',",
+                "    ]",
+                "    status = 'created'",
+                "    entrypoint = ['/bin/sh']",
+                "    cmd = [",
+                "        '-ceu',",
+                "        'expected-entrypoint-guard-wrapper',",
+                "        'acgs-postgres-entrypoint-guard',",
+                "        'postgres', '-c', 'listen_addresses=', '-c',",
+                "        'unix_socket_directories=/var/run/postgresql', '-c',",
+                "        'unix_socket_permissions=0777',",
+                "    ]",
+                "    if mode == 'forbidden-pghost':",
+                "        env_keys.append('PGHOST')",
+                "    elif mode == 'forbidden-pgservice':",
+                "        env_keys.append('PGSERVICE')",
+                "    elif mode == 'forbidden-pgservicefile':",
+                "        env_keys.append('PGSERVICEFILE')",
+                "    elif mode == 'duplicate-env-key':",
+                "        env_keys.append('POSTGRES_DB')",
+                "    elif mode == 'malformed-env-key':",
+                "        env_keys.append('BAD=KEY')",
+                "    elif mode == 'wrong-status':",
+                "        status = 'running'",
+                "    elif mode == 'wrong-command':",
+                "        cmd = ['postgres', '-c', 'unix_socket_directories=/run/acgs-pg']",
+                "    elif mode == 'wrong-entrypoint':",
+                "        entrypoint = ['/usr/local/bin/docker-entrypoint.sh']",
+                "    elif mode == 'wrong-wrapper':",
+                "        cmd[1] = 'altered-wrapper'",
+                "    elif mode == 'wrong-args':",
+                "        cmd[2] = 'altered-guard-argv0'",
+                "    elif mode == 'missing-guard-identity':",
+                "        env_keys.remove('ACGS_POSTGRES_SOCKET_BRIDGE_EXPECTED_IDENTITY')",
+                "    elif mode == 'missing-guard-marker-sha':",
+                "        env_keys.remove('ACGS_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256')",
+                "    elif mode == 'missing-both-guard-keys':",
+                "        env_keys.remove('ACGS_POSTGRES_SOCKET_BRIDGE_EXPECTED_IDENTITY')",
+                "        env_keys.remove('ACGS_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256')",
+                "    elif mode == 'missing-postgres-initdb-args':",
+                "        env_keys.remove('POSTGRES_INITDB_ARGS')",
+                "    snapshot = {",
+                "        'State': {'Status': status},",
+                "        'Config': {",
+                "            'EnvKeys': env_keys,",
+                "            'Entrypoint': entrypoint,",
+                "            'Cmd': cmd,",
+                "        },",
+                "    }",
+                "    print(json.dumps(snapshot))",
+                "    raise SystemExit(0)",
+                "raise SystemExit(127)",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            f"PATH={str(fake_bin)!r}:$PATH",
+            f"secret_sentinel={secret_sentinel!r}",
+            verify_source,
+            f"verify_server_config_before_start server-cid {shlex.quote(expected_wrapper)}",
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == expected_rc, (mode, result.stdout, result.stderr)
+    assert secret_sentinel not in result.stdout
+    assert secret_sentinel not in result.stderr
+    docker_argv = argv_log.read_text(encoding="utf-8")
+    assert secret_sentinel not in docker_argv
+    assert "POSTGRES_PASSWORD=" not in docker_argv
+
+
+@pytest.mark.parametrize("failure_mode", ["mount", "config", "missing-guard-identity"])
+def test_postgres_gate_server_pre_start_verification_failure_never_starts_container(
+    tmp_path: Path,
+    failure_mode: str,
+) -> None:
+    script = _postgres_gate_script_source()
+    config_source = _extract_shell_function(
+        script,
+        "verify_server_config_before_start",
+        "verify_server_socket_bridge_marker",
+    )
+    guard_wrapper = _postgres_gate_server_entrypoint_guard_wrapper(script)
+    server_source = _postgres_gate_server_launch_and_health_source(script)
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    docker_log = tmp_path / "docker-prestart.jsonl"
+    docker_path = fake_bin / "docker"
+    docker_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "from __future__ import annotations",
+                "import json, sys",
+                f"docker_log = {str(docker_log)!r}",
+                f"failure_mode = {failure_mode!r}",
+                "def redacted(argv):",
+                "    result = list(argv)",
+                "    for index, value in enumerate(result[:-1]):",
+                "        if value == '--env':",
+                "            key = result[index + 1].split('=', 1)[0]",
+                "            result[index + 1] = key + '=<redacted>'",
+                "    return result",
+                "with open(docker_log, 'a', encoding='utf-8') as handle:",
+                "    handle.write(json.dumps(redacted(sys.argv[1:])) + '\\n')",
+                "argv = sys.argv[1:]",
+                "if argv[:1] == ['create']:",
+                "    env_pairs = [",
+                "        argv[idx + 1] for idx, value in enumerate(argv[:-1]) if value == '--env'",
+                "    ]",
+                "    env_keys = [item.split('=', 1)[0] for item in env_pairs]",
+                "    cmd = argv[argv.index('-ceu'):]",
+                "    entrypoint = [argv[argv.index('--entrypoint') + 1]]",
+                "    with open(docker_log + '.create.json', 'w', encoding='utf-8') as handle:",
+                "        json.dump(",
+                "            {'EnvKeys': env_keys, 'Entrypoint': entrypoint, 'Cmd': cmd},",
+                "            handle,",
+                "        )",
+                "    print('server-cid')",
+                "    raise SystemExit(0)",
+                "if argv[:2] == ['inspect', '--format']:",
+                "    create = json.load(open(docker_log + '.create.json', encoding='utf-8'))",
+                "    if failure_mode == 'config':",
+                "        create['EnvKeys'].append('PGSERVICE')",
+                "    elif failure_mode == 'missing-guard-identity':",
+                "        create['EnvKeys'].remove('ACGS_POSTGRES_SOCKET_BRIDGE_EXPECTED_IDENTITY')",
+                "    snapshot = {",
+                "        'State': {'Status': 'created'},",
+                "        'Config': create,",
+                "    }",
+                "    print(json.dumps(snapshot))",
+                "    raise SystemExit(0)",
+                "if argv[:1] == ['start']:",
+                "    raise SystemExit(99)",
+                "raise SystemExit(127)",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    socket_bridge = tmp_path / "bridge"
+    socket_bridge.mkdir()
+    verify_mounts = (
+        "verify_docker_mounts() { return 70; }"
+        if failure_mode == "mount"
+        else "verify_docker_mounts() { return 0; }"
+    )
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            f"PATH={str(fake_bin)!r}:$PATH",
+            verify_mounts,
             "capture_postgres_server_diagnostics() { exit 91; }",
             f"state_dir={str(tmp_path / 'state')!r}",
             'mkdir -p "$state_dir"',
@@ -1171,12 +1640,11 @@ def test_postgres_gate_fake_entrypoint_uses_service_file_after_clearing_pg_host(
             "postgres_user='acgs'",
             "postgres_password='entrypoint-secret'",
             f"postgres_socket_bridge={str(socket_bridge)!r}",
-            f"postgres_service_file={str(tmp_path / 'acgs-entrypoint-pg-service.conf')!r}",
-            "postgres_service_file_fd=''",
-            "postgres_service_file_sha256='d80daf1f18b1cdaf32502e1c6bf7362918c712bf75f6712e2991fc1eb31f8c72'",
+            "postgres_socket_bridge_identity='1:2:3:1777'",
             "postgres_socket_bridge_marker_sha256='" + ("a" * 64) + "'",
+            config_source,
+            f"postgres_entrypoint_guard_wrapper={shlex.quote(guard_wrapper)}",
             server_source,
-            "test -f " + shlex.quote(str(service_marker)),
         )
     )
     result = subprocess.run(
@@ -1186,13 +1654,14 @@ def test_postgres_gate_fake_entrypoint_uses_service_file_after_clearing_pg_host(
         text=True,
         check=False,
     )
-    assert result.returncode == 0, (result.stdout, result.stderr)
-    argv = json.loads(argv_log.read_text(encoding="utf-8"))
-    env_pairs = [argv[index + 1] for index, value in enumerate(argv[:-1]) if value == "--env"]
-    assert "PGSERVICE=acgs-entrypoint-init" in env_pairs
-    assert "PGSERVICEFILE=/run/acgs-pg-service.conf" in env_pairs
-    assert all(not value.startswith("PGHOST=") for value in env_pairs)
-    assert "/var/run/postgresql" not in " ".join(argv)
+    assert result.returncode == 70, (result.stdout, result.stderr)
+    docker_calls = [
+        json.loads(line) for line in docker_log.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [call[0] for call in docker_calls] == (
+        ["create"] if failure_mode == "mount" else ["create", "inspect"]
+    )
+    assert not any(call[:1] == ["start"] for call in docker_calls)
 
 
 def _postgres_gate_python_runtime_validation_source() -> str:
@@ -2704,12 +3173,12 @@ def test_postgres_gate_socket_sources_bind_relative_names() -> None:
     assert "postgres_socket_proxy.py" not in script
     assert "--publish 127.0.0.1" not in script
     assert "listen_addresses=" in script
-    assert "unix_socket_directories=/run/acgs-pg" in script
+    assert "unix_socket_directories=/var/run/postgresql" in script
     assert "--security-opt label=disable" in script
-    assert '"type=bind,src=$postgres_socket_bridge,dst=/run/acgs-pg"' in script
+    assert '"type=bind,src=$postgres_socket_bridge,dst=/var/run/postgresql"' in script
     assert "verify_docker_mounts" in script
     assert "verify_server_socket_bridge_marker" in script
-    assert ":/var/run/postgresql:" not in script
+    assert "acgs-entrypoint-pg-service.conf" not in script
     assert '"$state_dir/pg:/run/acgs-pg' not in script
     assert "forbids volume syntax drift" in broker_source
     assert "STATE_DIR = Path(sys.argv[2]).resolve(strict=True)" in broker_source
@@ -2782,87 +3251,6 @@ def _postgres_gate_server_health_loop_source(script: str) -> str:
     return script[start:end]
 
 
-@pytest.mark.parametrize(
-    ("case_name", "mutator", "expected_rc"),
-    [
-        ("valid", "", 0),
-        (
-            "tamper-path",
-            'chmod 0644 "$postgres_service_file" && printf tampered > "$postgres_service_file"',
-            70,
-        ),
-        ("writable", 'chmod 0644 "$postgres_service_file"', 70),
-        ("hardlink", 'ln "$postgres_service_file" "$state_dir/service-hardlink"', 70),
-        (
-            "symlink-swap",
-            'rm "$postgres_service_file" && ln -s /etc/passwd "$postgres_service_file"',
-            70,
-        ),
-        ("missing", 'rm "$postgres_service_file"', 70),
-    ],
-)
-def test_postgres_gate_entrypoint_service_file_is_exact_descriptor_bound_artifact(
-    tmp_path: Path,
-    case_name: str,
-    mutator: str,
-    expected_rc: int,
-) -> None:
-    script = _postgres_gate_script_source()
-    write_source = _extract_shell_function(
-        script,
-        "write_verified_private_artifact",
-        "verify_private_artifact_fd",
-    )
-    verify_source = _extract_shell_function(
-        script,
-        "verify_postgres_service_file_fd",
-        "write_postgres_recovery_intent",
-    )
-    state_dir = tmp_path / "state"
-    sentinel = tmp_path / "later-work"
-    harness = "\n".join(
-        (
-            "set -euo pipefail",
-            f"state_dir={str(state_dir)!r}",
-            'mkdir -p "$state_dir"',
-            'postgres_service_file="$state_dir/acgs-entrypoint-pg-service.conf"',
-            "postgres_service_file_sha256='d80daf1f18b1cdaf32502e1c6bf7362918c712bf75f6712e2991fc1eb31f8c72'",
-            write_source,
-            verify_source,
-            'write_verified_private_artifact "$state_dir" '
-            "acgs-entrypoint-pg-service.conf 0444 <<'EOF'",
-            "[acgs-entrypoint-init]",
-            "host=/run/acgs-pg",
-            "port=5432",
-            "EOF",
-            'exec {postgres_service_file_fd}<"$postgres_service_file"',
-            mutator,
-            "verify_postgres_service_file_fd "
-            '"$postgres_service_file" "/proc/$BASHPID/fd/$postgres_service_file_fd"',
-            "test \"$(stat -c '%a:%s' \"$postgres_service_file\")\" = '444:51'",
-            'test "$(sha256sum "$postgres_service_file" | awk \'{print $1}\')" = '
-            "'d80daf1f18b1cdaf32502e1c6bf7362918c712bf75f6712e2991fc1eb31f8c72'",
-            "touch " + shlex.quote(str(sentinel)),
-        )
-    )
-    result = subprocess.run(
-        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
-        input=harness,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == expected_rc, (case_name, result.stdout, result.stderr)
-    assert sentinel.exists() is (expected_rc == 0)
-    if expected_rc == 0:
-        service_file = state_dir / "acgs-entrypoint-pg-service.conf"
-        assert (
-            service_file.read_bytes() == b"[acgs-entrypoint-init]\nhost=/run/acgs-pg\nport=5432\n"
-        )
-        assert stat.S_IMODE(service_file.stat().st_mode) == 0o444
-        assert service_file.stat().st_nlink == 1
-
-
 @pytest.mark.parametrize("fail_at", ["write", "fchmod", "validation"])
 def test_postgres_gate_private_artifact_failure_unlinks_only_created_inode(
     tmp_path: Path,
@@ -2883,14 +3271,12 @@ def test_postgres_gate_private_artifact_failure_unlinks_only_created_inode(
             f"state_dir={str(state_dir)!r}",
             f"export ACGS_TEST_WRITE_VERIFIED_PRIVATE_ARTIFACT_FAIL_AT={fail_at!r}",
             write_source,
-            'if write_verified_private_artifact "$state_dir" '
-            "acgs-entrypoint-pg-service.conf 0444 <<'EOF'",
-            "[acgs-entrypoint-init]",
-            "host=/run/acgs-pg",
-            "port=5432",
+            'if write_verified_private_artifact "$state_dir" generic-private-artifact.txt 0444 <<'
+            "'EOF'",
+            "artifact",
             "EOF",
             "then exit 90; fi",
-            'test ! -e "$state_dir/acgs-entrypoint-pg-service.conf"',
+            'test ! -e "$state_dir/generic-private-artifact.txt"',
         )
     )
     result = subprocess.run(
@@ -4042,11 +4428,6 @@ def test_postgres_gate_recovery_intent_strict_contract_refuses_mutation(
         ("wrong-bind-source", "wrong-bind-source", 70),
         ("wrong-bind-rw", "wrong-bind-rw", 70),
         ("wrong-bind-propagation", "wrong-bind-propagation", 70),
-        ("missing-service-bind", "missing-service-bind", 70),
-        ("wrong-service-source", "wrong-service-source", 70),
-        ("wrong-service-destination", "wrong-service-destination", 70),
-        ("writable-service-bind", "writable-service-bind", 70),
-        ("wrong-service-mode", "wrong-service-mode", 70),
         ("extra-bind", "extra-bind", 70),
         ("duplicate-bind-destination", "duplicate-bind-destination", 70),
         ("malformed-inspect", "malformed-inspect", 70),
@@ -4073,24 +4454,13 @@ def test_postgres_gate_server_mount_verifier_requires_exact_type_source_rw(
     )
     socket_bridge = tmp_path / "bridge"
     socket_bridge.mkdir()
-    service_file = tmp_path / "acgs-entrypoint-pg-service.conf"
-    service_file.write_bytes(b"[acgs-entrypoint-init]\nhost=/run/acgs-pg\nport=5432\n")
-    service_file.chmod(0o444)
     snapshot = {
         "Mounts": [
             {
                 "Type": "bind",
                 "Source": str(socket_bridge),
-                "Destination": "/run/acgs-pg",
+                "Destination": "/var/run/postgresql",
                 "RW": True,
-                "Mode": "",
-                "Propagation": "rprivate",
-            },
-            {
-                "Type": "bind",
-                "Source": str(service_file),
-                "Destination": "/run/acgs-pg-service.conf",
-                "RW": False,
                 "Mode": "",
                 "Propagation": "rprivate",
             },
@@ -4141,16 +4511,6 @@ def test_postgres_gate_server_mount_verifier_requires_exact_type_source_rw(
         snapshot["Mounts"][0] = {**snapshot["Mounts"][0], "RW": False}
     elif mode == "wrong-bind-propagation":
         snapshot["Mounts"][0] = {**snapshot["Mounts"][0], "Propagation": "rshared"}
-    elif mode == "missing-service-bind":
-        snapshot["Mounts"].pop(1)
-    elif mode == "wrong-service-source":
-        snapshot["Mounts"][1] = {**snapshot["Mounts"][1], "Source": str(tmp_path / "wrong.conf")}
-    elif mode == "wrong-service-destination":
-        snapshot["Mounts"][1] = {**snapshot["Mounts"][1], "Destination": "/tmp/service.conf"}
-    elif mode == "writable-service-bind":
-        snapshot["Mounts"][1] = {**snapshot["Mounts"][1], "RW": True}
-    elif mode == "wrong-service-mode":
-        snapshot["Mounts"][1] = {**snapshot["Mounts"][1], "Mode": "ro"}
     elif mode == "extra-bind":
         snapshot["Mounts"].append(
             {
@@ -4168,15 +4528,9 @@ def test_postgres_gate_server_mount_verifier_requires_exact_type_source_rw(
         snapshot["HostConfig"] = None
     expected = {
         "binds": {
-            "/run/acgs-pg": {
+            "/var/run/postgresql": {
                 "source": str(socket_bridge),
                 "rw": True,
-                "mode": "",
-                "propagation": "rprivate",
-            },
-            "/run/acgs-pg-service.conf": {
-                "source": str(service_file),
-                "rw": False,
                 "mode": "",
                 "propagation": "rprivate",
             },
@@ -4215,7 +4569,7 @@ def test_postgres_gate_server_mount_verifier_requires_exact_type_source_rw(
                 "    if mode == 'duplicate-json-bind-field':",
                 "        print(",
                 '            \'{"Mounts":[{"Type":"bind","Type":"bind",\'',
-                '            \'"Source":"/tmp/x","Destination":"/run/acgs-pg",\'',
+                '            \'"Source":"/tmp/x","Destination":"/var/run/postgresql",\'',
                 '            \'"RW":true,"Mode":"","Propagation":"rprivate"}],\'',
                 '            \'"HostConfig":{"Tmpfs":{\'',
                 "            '\"/var/lib/postgresql/data\":'",
