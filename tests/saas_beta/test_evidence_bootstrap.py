@@ -6116,6 +6116,7 @@ def test_p2_idempotency_postgres_gate_success_reaches_append_record_with_isolate
     script_dir = package_dir / "scripts"
     script_dir.mkdir(parents=True)
     expected_uv_python_install_dir = tmp_path / "uv-python-install"
+    source_git_common_dir = tmp_path / "source-git-common"
     expected_args = list(_common.P2_IDEMPOTENCY_CP_SELECTORS)
     fake_postgres_gate = script_dir / "run_postgres_gate.sh"
     quoted_uv_python_install_dir = shlex.quote(str(expected_uv_python_install_dir))
@@ -6153,18 +6154,31 @@ def test_p2_idempotency_postgres_gate_success_reaches_append_record_with_isolate
         trusted_parent_gate,
         count=1,
     )
+    bwrap_argv = tmp_path / "fake-bwrap.argv"
     fake_bwrap = tmp_path / "fake-bwrap"
     fake_bwrap.write_text(
         "#!/usr/bin/env bash\n"
         "set -Eeuo pipefail\n"
+        f"expected_git_common={shlex.quote(str(source_git_common_dir))}\n"
+        f"printf '%s\\0' \"$@\" >{shlex.quote(str(bwrap_argv))}\n"
         'args=("$@")\n'
         "chdir=\n"
         "env_index=-1\n"
+        "git_common_ro=0\n"
         'for index in "${!args[@]}"; do\n'
         '  if [[ "${args[index]}" == --chdir ]]; then chdir="${args[index+1]}"; fi\n'
         '  if [[ "${args[index]}" == /usr/bin/env ]]; then env_index="$index"; break; fi\n'
+        '  if [[ "${args[index]}" == --ro-bind && "${args[index+1]:-}" == "$expected_git_common" '
+        '&& "${args[index+2]:-}" == "$expected_git_common" ]]; then\n'
+        "    git_common_ro=1\n"
+        "  fi\n"
+        '  if [[ "${args[index]}" == --bind '
+        '&& "${args[index+1]:-}" == "$expected_git_common" ]]; then\n'
+        "    exit 92\n"
+        "  fi\n"
         "done\n"
         '[[ "$env_index" != -1 ]] || exit 91\n'
+        '[[ "$git_common_ro" == 1 ]] || exit 93\n'
         '[[ -n "$chdir" ]] && cd "$chdir"\n'
         'exec "${args[@]:env_index}"\n',
         encoding="utf-8",
@@ -6188,6 +6202,7 @@ def test_p2_idempotency_postgres_gate_success_reaches_append_record_with_isolate
             "set -Eeuo pipefail\n"
             f"NODE_EVIDENCE={json.dumps(str(tmp_path / 'node-evidence'))}\n"
             f"WORKTREE={json.dumps(str(tmp_path))}\n"
+            f"SOURCE_GIT_COMMON_DIR={json.dumps(str(source_git_common_dir))}\n"
             f"TMP_ROOT={json.dumps(str(tmp_path / 'proof-root'))}\n"
             f"ACGS_POSTGRES_RECOVERY_ROOT={json.dumps(str(postgres_recovery))}\n"
             f"ACGS_POSTGRES_RECOVERY_ROOT_DEVICE={postgres_recovery_stat.st_dev}\n"
@@ -6208,7 +6223,8 @@ def test_p2_idempotency_postgres_gate_success_reaches_append_record_with_isolate
             "ACGS_CLEANUP_DATA_FD=\n"
             "ACGS_UV_DATA_FD=\n"
             "ACGS_POSTGRES_RUNNER_DATA_FD=\n"
-            'mkdir -p "$NODE_EVIDENCE" "$TMP_ROOT" "$ACGS_POSTGRES_RECOVERY_ROOT"\n'
+            'mkdir -p "$NODE_EVIDENCE" "$TMP_ROOT" "$ACGS_POSTGRES_RECOVERY_ROOT" '
+            '"$SOURCE_GIT_COMMON_DIR"\n'
             'chmod 700 "$ACGS_POSTGRES_RECOVERY_ROOT"\n'
             'exec 10<"$UV_BIN"\n'
             "UV_FD=10\n"
@@ -6247,6 +6263,17 @@ def test_p2_idempotency_postgres_gate_success_reaches_append_record_with_isolate
     assert "wrapper-owned PostgreSQL gate accepted" in (
         tmp_path / "node-evidence/p2-idempotency-postgres.stdout"
     ).read_text(encoding="utf-8")
+    bwrap_args = bwrap_argv.read_bytes().split(b"\0")
+    expected_git_common_bytes = str(source_git_common_dir).encode()
+    ro_bind_indices = [
+        index
+        for index, value in enumerate(bwrap_args)
+        if value == b"--ro-bind"
+        and bwrap_args[index + 1 : index + 3]
+        == [expected_git_common_bytes, expected_git_common_bytes]
+    ]
+    assert len(ro_bind_indices) == 1
+    assert b"--bind\0" + expected_git_common_bytes not in bwrap_argv.read_bytes()
 
 
 def test_p2_idempotency_workflow_prerequisite_loads_bwrap_userns_profile() -> None:
@@ -20936,6 +20963,14 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     assert pg_runner.index(
         '--bind "$ACGS_POSTGRES_RECOVERY_ROOT" "$ACGS_POSTGRES_RECOVERY_ROOT"'
     ) < pg_runner.index('--ro-bind "$WORKTREE" "$WORKTREE"')
+    assert '--ro-bind "$SOURCE_GIT_COMMON_DIR" "$SOURCE_GIT_COMMON_DIR"' in pg_runner
+    assert '--bind "$SOURCE_GIT_COMMON_DIR" "$SOURCE_GIT_COMMON_DIR"' not in pg_runner
+    assert pg_runner.index('--ro-bind "$WORKTREE" "$WORKTREE"') < pg_runner.index(
+        '--ro-bind "$SOURCE_GIT_COMMON_DIR" "$SOURCE_GIT_COMMON_DIR"'
+    )
+    assert pg_runner.index(
+        '--ro-bind "$SOURCE_GIT_COMMON_DIR" "$SOURCE_GIT_COMMON_DIR"'
+    ) < pg_runner.index('"${ACGS_UV_SNAPSHOT_MOUNT[@]}"')
     assert "for fd_path in /proc/$$/fd/*" in pg_runner
     assert "0 | 1 | 2) ;;" in pg_runner
     assert 'UV_BIN="$2"' in pg_runner

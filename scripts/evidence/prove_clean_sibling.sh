@@ -4152,6 +4152,7 @@ run_trusted_parent_postgres_gate() {
       --bind "$TMP_ROOT" "$TMP_ROOT" \
       --bind "$ACGS_POSTGRES_RECOVERY_ROOT" "$ACGS_POSTGRES_RECOVERY_ROOT" \
       --ro-bind "$WORKTREE" "$WORKTREE" \
+      --ro-bind "$SOURCE_GIT_COMMON_DIR" "$SOURCE_GIT_COMMON_DIR" \
       "${ACGS_UV_SNAPSHOT_MOUNT[@]}" \
       --perms 500 --ro-bind-data "$ACGS_POSTGRES_RUNNER_DATA_FD" "$runner_path" \
       --bind-try /var/run/docker.sock /run/docker.sock \
