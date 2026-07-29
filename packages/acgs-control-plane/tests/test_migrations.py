@@ -1078,6 +1078,15 @@ def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
         in server_launch
     )
     assert "--tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=2g \\" not in script
+    assert "--env PGHOST=/run/acgs-pg" not in server_launch
+    assert "--env PGSERVICE=acgs-entrypoint-init" in server_launch
+    assert "--env PGSERVICEFILE=/run/acgs-pg-service.conf" in server_launch
+    assert "--tmpfs /var/run/postgresql" not in server_launch
+    assert '--mount "type=bind,src=$postgres_socket_bridge,dst=/run/acgs-pg"' in server_launch
+    assert (
+        '--mount "type=bind,src=$postgres_service_file,dst=/run/acgs-pg-service.conf,readonly"'
+        in server_launch
+    )
     assert "listen_addresses=" in server_launch
 
     pytest_invocation = (
@@ -1091,6 +1100,99 @@ def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
         '  "$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"'
     ) not in script
     assert script.index(pytest_invocation) > script.index("broker_socket=")
+
+
+def test_postgres_gate_fake_entrypoint_uses_service_file_after_clearing_pg_host(
+    tmp_path: Path,
+) -> None:
+    script = _postgres_gate_script_source()
+    server_source = _postgres_gate_server_launch_and_health_source(script)
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    argv_log = tmp_path / "docker-argv.json"
+    service_marker = tmp_path / "service-ok"
+    docker_path = fake_bin / "docker"
+    docker_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "from __future__ import annotations",
+                "import json, sys",
+                f"argv_log = {str(argv_log)!r}",
+                f"service_marker = {str(service_marker)!r}",
+                "argv = sys.argv[1:]",
+                "if argv[:2] == ['run', '-d']:",
+                "    open(argv_log, 'w', encoding='utf-8').write(json.dumps(argv))",
+                "    env_pairs = [",
+                "        argv[idx + 1] for idx, value in enumerate(argv[:-1]) if value == '--env'",
+                "    ]",
+                "    has_pg_host = any(value.startswith('PGHOST=') for value in env_pairs)",
+                "    has_service = 'PGSERVICE=acgs-entrypoint-init' in env_pairs",
+                "    has_service_file = 'PGSERVICEFILE=/run/acgs-pg-service.conf' in env_pairs",
+                "    if not has_pg_host and has_service and has_service_file:",
+                "        open(service_marker, 'w', encoding='ascii').write('1')",
+                "    print('server-cid')",
+                "    raise SystemExit(0)",
+                "if argv[:2] == ['inspect', '--format']:",
+                "    fmt = argv[2]",
+                "    if fmt == '{{.State.Status}}':",
+                "        print('running')",
+                "        raise SystemExit(0)",
+                "    if fmt == '{{.State.Health.Status}}':",
+                "        healthy = __import__('os').path.exists(service_marker)",
+                "        print('healthy' if healthy else 'unhealthy')",
+                "        raise SystemExit(0)",
+                "raise SystemExit(127)",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    socket_bridge = tmp_path / "bridge"
+    socket_bridge.mkdir()
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            f"PATH={str(fake_bin)!r}:$PATH",
+            "sleep() { :; }",
+            "verify_docker_mounts() { return 0; }",
+            "verify_postgres_service_file_fd() { return 0; }",
+            "verify_server_service_file() { return 0; }",
+            "verify_server_socket_bridge_marker() { return 0; }",
+            "capture_postgres_server_diagnostics() { exit 91; }",
+            f"state_dir={str(tmp_path / 'state')!r}",
+            'mkdir -p "$state_dir"',
+            "container_name='acgs-test-server'",
+            f"server_cidfile={str(tmp_path / 'server.cid')!r}",
+            "proof_label='acgs-proof-label'",
+            "postgres_image='postgres@example'",
+            "main_database='acgs'",
+            "postgres_user='acgs'",
+            "postgres_password='entrypoint-secret'",
+            f"postgres_socket_bridge={str(socket_bridge)!r}",
+            f"postgres_service_file={str(tmp_path / 'acgs-entrypoint-pg-service.conf')!r}",
+            "postgres_service_file_fd=''",
+            "postgres_service_file_sha256='d80daf1f18b1cdaf32502e1c6bf7362918c712bf75f6712e2991fc1eb31f8c72'",
+            "postgres_socket_bridge_marker_sha256='" + ("a" * 64) + "'",
+            server_source,
+            "test -f " + shlex.quote(str(service_marker)),
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    argv = json.loads(argv_log.read_text(encoding="utf-8"))
+    env_pairs = [argv[index + 1] for index, value in enumerate(argv[:-1]) if value == "--env"]
+    assert "PGSERVICE=acgs-entrypoint-init" in env_pairs
+    assert "PGSERVICEFILE=/run/acgs-pg-service.conf" in env_pairs
+    assert all(not value.startswith("PGHOST=") for value in env_pairs)
+    assert "/var/run/postgresql" not in " ".join(argv)
 
 
 def _postgres_gate_python_runtime_validation_source() -> str:
@@ -1345,7 +1447,7 @@ def _write_fake_postgres_client_docker(
                 "            )",
                 "            continue",
                 "        item = dict(mount)",
-                "        item.setdefault('Mode', 'ro' if not item.get('RW', True) else '')",
+                "        item.setdefault('Mode', '')",
                 "        item.setdefault('Propagation', 'rprivate')",
                 "        bind_mounts.append(item)",
                 "    return {'Mounts': bind_mounts, 'HostConfig': {'Tmpfs': tmpfs}}",
@@ -1429,6 +1531,8 @@ def _write_fake_postgres_client_docker(
                 "        actual[0] = {**actual[0], 'Type': 'volume'}",
                 "    elif mode == 'wrong-rw':",
                 "        actual[0] = {**actual[0], 'RW': True, 'Mode': ''}",
+                "    elif mode == 'readonly-bind-mode-ro':",
+                "        actual[0] = {**actual[0], 'Mode': 'ro'}",
                 "    elif mode == 'wrong-propagation':",
                 "        actual[0] = {**actual[0], 'Propagation': 'rshared'}",
                 "    elif mode == 'tmpfs-fabricated-in-mounts':",
@@ -1491,11 +1595,99 @@ def _write_fake_postgres_client_docker(
                 "if args[:1] == ['inspect']:",
                 "    if not state.exists():",
                 "        raise SystemExit(1)",
+                "    if mode == 'identity-inspect-absent':",
+                "        raise SystemExit(1)",
+                "    if mode == 'identity-inspect-non1':",
+                "        raise SystemExit(2)",
+                "    if mode == 'identity-inspect-malformed':",
+                "        print('malformed-inspect-record')",
+                "        raise SystemExit(0)",
+                "    if mode == 'identity-inspect-nonascii':",
+                "        sys.stdout.buffer.write(b'\\xff\\xfe')",
+                "        raise SystemExit(0)",
+                "    if mode == 'identity-inspect-oversize':",
+                "        sys.stdout.write('[' + (' ' * 8193) + ']')",
+                "        raise SystemExit(0)",
                 "    data = json.loads(state.read_text(encoding='utf-8'))",
-                "    print(f\"{data['id']}|/{data['name']}|{data['proof']}||trusted-broker\")",
+                "    server_label = (",
+                "        'main'",
+                "        if mode == 'wrong-server-label'",
+                "        else None",
+                "    )",
+                "    id_value = (",
+                "        'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'",
+                "        if mode == 'wrong-created-id'",
+                "        else data['id']",
+                "    )",
+                "    name_value = (",
+                "        'wrong-client-name'",
+                "        if mode == 'wrong-created-name'",
+                "        else data['name']",
+                "    )",
+                "    proof_label = (",
+                "        'wrong-proof-label'",
+                "        if mode == 'wrong-required-proof-label'",
+                "        else (",
+                "            None",
+                "            if mode == 'missing-required-proof-label'",
+                "            else (",
+                "                ''",
+                "                if mode == 'empty-required-proof-label'",
+                "                else data['proof']",
+                "            )",
+                "        )",
+                "    )",
+                "    if mode == 'proof-terminal-lf':",
+                "        proof_label = data['proof'] + '\\n'",
+                "    elif mode == 'proof-multiple-lf':",
+                "        proof_label = data['proof'] + '\\nspoof'",
+                "    elif mode == 'proof-terminal-space':",
+                "        proof_label = data['proof'] + ' '",
+                "    elif mode == 'proof-terminal-tab':",
+                "        proof_label = data['proof'] + '\\t'",
+                "    client_label = (",
+                "        'wrong-client-label'",
+                "        if mode == 'wrong-required-client-label'",
+                "        else (",
+                "            None",
+                "            if mode == 'missing-required-client-label'",
+                "            else (",
+                "                ''",
+                "                if mode == 'empty-required-client-label'",
+                "                else 'trusted-broker'",
+                "            )",
+                "        )",
+                "    )",
+                "    if mode == 'client-terminal-lf':",
+                "        client_label = 'trusted-broker\\n'",
+                "    elif mode == 'client-multiple-lf':",
+                "        client_label = 'trusted-broker\\nspoof'",
+                "    elif mode == 'client-terminal-space':",
+                "        client_label = 'trusted-broker '",
+                "    elif mode == 'client-terminal-tab':",
+                "        client_label = 'trusted-broker\\t'",
+                "    fields = [",
+                "        id_value,",
+                "        f'/{name_value}',",
+                "        proof_label,",
+                "        server_label,",
+                "        client_label,",
+                "    ]",
+                "    if mode == 'identity-inspect-extra-json':",
+                "        fields.append('extra')",
+                "    print(",
+                "        json.dumps(",
+                "            fields,",
+                "            separators=(',', ':'),",
+                "        )",
+                "    )",
                 "    raise SystemExit(0)",
                 "if args[:2] == ['rm', '-f']:",
-                "    state.unlink(missing_ok=True)",
+                "    if mode == 'rm-fail':",
+                "        raise SystemExit(70)",
+                "    Path(str(state) + '.removed').write_text('1\\n', encoding='ascii')",
+                "    if mode != 'post-rm-nonabsence':",
+                "        state.unlink(missing_ok=True)",
                 "    raise SystemExit(0)",
                 "if args[:1] == ['create']:",
                 "    append_log(args)",
@@ -1511,6 +1703,7 @@ def _write_fake_postgres_client_docker(
                 "    )",
                 "    cidfile = Path(args[args.index('--cidfile') + 1])",
                 "    cidfile.write_text(cid + '\\n', encoding='ascii')",
+                "    cidfile.chmod(0o600)",
                 "    Path(str(state) + '.env.json').write_text(",
                 "        json.dumps(",
                 "            {",
@@ -1743,6 +1936,121 @@ def _run_fake_docker_broker_request(
         env_attestation,
         Path(str(docker_state) + ".tool-sentinel").exists(),
     )
+
+
+def test_postgres_gate_client_broker_normalizes_optional_server_label_and_removes_records(
+    tmp_path: Path,
+) -> None:
+    mode = "ok"
+    (
+        response,
+        _docker_lines,
+        archive_exists,
+        _env_attestation,
+        tool_sentinel_exists,
+    ) = _run_fake_docker_broker_request(tmp_path, mode)
+
+    state_dir = tmp_path / f"state-{mode}"
+    client_dir = state_dir / "client"
+    docker_state = tmp_path / f"docker-{mode}.state.json"
+
+    assert response["returncode"] == 0, response
+    assert archive_exists
+    assert not tool_sentinel_exists
+    assert not docker_state.exists()
+    assert Path(str(docker_state) + ".removed").read_text(encoding="ascii") == "1\n"
+    assert not list(client_dir.glob("*.cid"))
+    assert not list(client_dir.glob("*.name"))
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "wrong-required-proof-label",
+        "missing-required-proof-label",
+        "empty-required-proof-label",
+        "proof-terminal-lf",
+        "proof-multiple-lf",
+        "proof-terminal-space",
+        "proof-terminal-tab",
+        "wrong-required-client-label",
+        "missing-required-client-label",
+        "empty-required-client-label",
+        "client-terminal-lf",
+        "client-multiple-lf",
+        "client-terminal-space",
+        "client-terminal-tab",
+        "wrong-server-label",
+        "wrong-created-id",
+        "wrong-created-name",
+        "identity-inspect-absent",
+        "identity-inspect-non1",
+        "identity-inspect-malformed",
+        "identity-inspect-nonascii",
+        "identity-inspect-extra-json",
+        "identity-inspect-oversize",
+    ],
+)
+def test_postgres_gate_client_broker_untrusted_created_identity_is_retained_before_start(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    (
+        response,
+        docker_lines,
+        archive_exists,
+        _env_attestation,
+        tool_sentinel_exists,
+    ) = _run_fake_docker_broker_request(tmp_path, mode)
+
+    state_dir = tmp_path / f"state-{mode}"
+    client_dir = state_dir / "client"
+    recovery_dir = state_dir / "recovery"
+    docker_state = tmp_path / f"docker-{mode}.state.json"
+
+    assert response["returncode"] == 70, response
+    assert not archive_exists
+    assert not [line for line in docker_lines if line[:2] == ["start", "-a"]]
+    assert not tool_sentinel_exists
+    assert docker_state.exists()
+    assert not Path(str(docker_state) + ".removed").exists()
+    assert list(client_dir.glob("*.cid"))
+    assert list(client_dir.glob("*.name"))
+    assert list(recovery_dir.glob("*.intent"))
+
+
+@pytest.mark.parametrize("mode", ["rm-fail", "post-rm-nonabsence"])
+def test_postgres_gate_client_broker_uncertain_removal_retains_records(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    (
+        response,
+        docker_lines,
+        archive_exists,
+        _env_attestation,
+        tool_sentinel_exists,
+    ) = _run_fake_docker_broker_request(tmp_path, mode)
+
+    state_dir = tmp_path / f"state-{mode}"
+    client_dir = state_dir / "client"
+    recovery_dir = state_dir / "recovery"
+    docker_state = tmp_path / f"docker-{mode}.state.json"
+
+    assert response["returncode"] == 70, response
+    assert "container cleanup is uncertain" in response["stderr"]
+    starts = [line for line in docker_lines if line[:2] == ["start", "-a"]]
+    assert bool(starts)
+    assert archive_exists
+    assert not tool_sentinel_exists
+    assert docker_state.exists()
+    assert list(client_dir.glob("*.cid"))
+    assert list(client_dir.glob("*.name"))
+    assert list(recovery_dir.glob("*.intent"))
+    if mode == "rm-fail":
+        assert not Path(str(docker_state) + ".removed").exists()
+    else:
+        assert Path(str(docker_state) + ".removed").read_text(encoding="ascii") == "1\n"
 
 
 def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escape(
@@ -1994,6 +2302,7 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
         ("wrong-mount", 70, False),
         ("wrong-type", 70, False),
         ("wrong-rw", 70, False),
+        ("readonly-bind-mode-ro", 70, False),
         ("wrong-propagation", 70, False),
         ("tmpfs-fabricated-in-mounts", 70, False),
         ("image-volume-data-entry", 70, False),
@@ -2459,6 +2768,294 @@ def _extract_shell_function(script: str, name: str, next_name: str) -> str:
     start = script.index(f"{name}() {{")
     end = script.index(f"\n{next_name}() {{", start)
     return script[start:end]
+
+
+def _postgres_gate_server_launch_and_health_source(script: str) -> str:
+    start = script.index("docker_started=1\n")
+    end = script.index('\nif [[ ! -S "$postgres_socket_bridge/.s.PGSQL.5432" ]]', start)
+    return script[start:end]
+
+
+def _postgres_gate_server_health_loop_source(script: str) -> str:
+    start = script.index("for _ in {1..90}; do\n")
+    end = script.index('\nif [[ ! -S "$postgres_socket_bridge/.s.PGSQL.5432" ]]', start)
+    return script[start:end]
+
+
+@pytest.mark.parametrize(
+    ("case_name", "mutator", "expected_rc"),
+    [
+        ("valid", "", 0),
+        (
+            "tamper-path",
+            'chmod 0644 "$postgres_service_file" && printf tampered > "$postgres_service_file"',
+            70,
+        ),
+        ("writable", 'chmod 0644 "$postgres_service_file"', 70),
+        ("hardlink", 'ln "$postgres_service_file" "$state_dir/service-hardlink"', 70),
+        (
+            "symlink-swap",
+            'rm "$postgres_service_file" && ln -s /etc/passwd "$postgres_service_file"',
+            70,
+        ),
+        ("missing", 'rm "$postgres_service_file"', 70),
+    ],
+)
+def test_postgres_gate_entrypoint_service_file_is_exact_descriptor_bound_artifact(
+    tmp_path: Path,
+    case_name: str,
+    mutator: str,
+    expected_rc: int,
+) -> None:
+    script = _postgres_gate_script_source()
+    write_source = _extract_shell_function(
+        script,
+        "write_verified_private_artifact",
+        "verify_private_artifact_fd",
+    )
+    verify_source = _extract_shell_function(
+        script,
+        "verify_postgres_service_file_fd",
+        "write_postgres_recovery_intent",
+    )
+    state_dir = tmp_path / "state"
+    sentinel = tmp_path / "later-work"
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            f"state_dir={str(state_dir)!r}",
+            'mkdir -p "$state_dir"',
+            'postgres_service_file="$state_dir/acgs-entrypoint-pg-service.conf"',
+            "postgres_service_file_sha256='d80daf1f18b1cdaf32502e1c6bf7362918c712bf75f6712e2991fc1eb31f8c72'",
+            write_source,
+            verify_source,
+            'write_verified_private_artifact "$state_dir" '
+            "acgs-entrypoint-pg-service.conf 0444 <<'EOF'",
+            "[acgs-entrypoint-init]",
+            "host=/run/acgs-pg",
+            "port=5432",
+            "EOF",
+            'exec {postgres_service_file_fd}<"$postgres_service_file"',
+            mutator,
+            "verify_postgres_service_file_fd "
+            '"$postgres_service_file" "/proc/$BASHPID/fd/$postgres_service_file_fd"',
+            "test \"$(stat -c '%a:%s' \"$postgres_service_file\")\" = '444:51'",
+            'test "$(sha256sum "$postgres_service_file" | awk \'{print $1}\')" = '
+            "'d80daf1f18b1cdaf32502e1c6bf7362918c712bf75f6712e2991fc1eb31f8c72'",
+            "touch " + shlex.quote(str(sentinel)),
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == expected_rc, (case_name, result.stdout, result.stderr)
+    assert sentinel.exists() is (expected_rc == 0)
+    if expected_rc == 0:
+        service_file = state_dir / "acgs-entrypoint-pg-service.conf"
+        assert (
+            service_file.read_bytes() == b"[acgs-entrypoint-init]\nhost=/run/acgs-pg\nport=5432\n"
+        )
+        assert stat.S_IMODE(service_file.stat().st_mode) == 0o444
+        assert service_file.stat().st_nlink == 1
+
+
+@pytest.mark.parametrize("fail_at", ["write", "fchmod", "validation"])
+def test_postgres_gate_private_artifact_failure_unlinks_only_created_inode(
+    tmp_path: Path,
+    fail_at: str,
+) -> None:
+    script = _postgres_gate_script_source()
+    write_source = _extract_shell_function(
+        script,
+        "write_verified_private_artifact",
+        "verify_private_artifact_fd",
+    )
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            "umask 077",
+            f"state_dir={str(state_dir)!r}",
+            f"export ACGS_TEST_WRITE_VERIFIED_PRIVATE_ARTIFACT_FAIL_AT={fail_at!r}",
+            write_source,
+            'if write_verified_private_artifact "$state_dir" '
+            "acgs-entrypoint-pg-service.conf 0444 <<'EOF'",
+            "[acgs-entrypoint-init]",
+            "host=/run/acgs-pg",
+            "port=5432",
+            "EOF",
+            "then exit 90; fi",
+            'test ! -e "$state_dir/acgs-entrypoint-pg-service.conf"',
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (fail_at, result.stdout, result.stderr)
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_state_status"),
+    [
+        ("ok", "ok"),
+        ("state-malformed", "malformed"),
+        ("state-duplicate", "malformed"),
+        ("state-oversize", "oversized"),
+        ("state-fail", "command_failed"),
+        ("state-timeout", "command_failed"),
+        ("logs-oversize", "ok"),
+        ("logs-fail", "ok"),
+        ("logs-binary", "ok"),
+    ],
+)
+def test_postgres_gate_prehealth_exit_captures_hash_only_bounded_diagnostics(
+    tmp_path: Path,
+    mode: str,
+    expected_state_status: str,
+) -> None:
+    script = _postgres_gate_script_source()
+    diagnostic_source = _extract_shell_function(
+        script,
+        "capture_postgres_server_diagnostics",
+        "cleanup",
+    )
+    health_source = _postgres_gate_server_health_loop_source(script)
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    sentinel = tmp_path / "pytest-client-or-broker-reached"
+    argv_log = tmp_path / "docker-argv.log"
+    docker_path = fake_bin / "docker"
+    raw_sentinels = [
+        "super-secret-password",
+        "Bearer abc.def.ghi",
+        "access_token=token-123",
+        "--password p@ssw0rd",
+        "postgresql://user:url-secret@example/acgs",
+        "MiXeDSecret=case-value",
+        "prefixsuper-secret-passwordsuffix",
+    ]
+    secret_blob = " ".join(raw_sentinels)
+    docker_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "from __future__ import annotations",
+                "import json, sys",
+                f"mode = {mode!r}",
+                f"argv_log = {str(argv_log)!r}",
+                f"secret_blob = {secret_blob!r}",
+                "with open(argv_log, 'a', encoding='utf-8') as handle:",
+                "    handle.write(json.dumps(sys.argv) + '\\n')",
+                "argv = sys.argv[1:]",
+                "if argv[:2] == ['inspect', '--format']:",
+                "    fmt = argv[2]",
+                "    if fmt == '{{.State.Status}}':",
+                "        print('exited')",
+                "        raise SystemExit(0)",
+                "    if fmt == '{{.State.Health.Status}}':",
+                "        print('starting')",
+                "        raise SystemExit(0)",
+                "    if fmt.startswith('{\"State\"'):",
+                "        if mode == 'state-fail':",
+                "            print(secret_blob, file=sys.stderr)",
+                "            raise SystemExit(42)",
+                "        if mode == 'state-timeout':",
+                "            print(secret_blob, file=sys.stderr)",
+                "            raise SystemExit(124)",
+                "        if mode == 'state-malformed':",
+                "            print('{')",
+                "            raise SystemExit(0)",
+                "        if mode == 'state-duplicate':",
+                '            print(\'{"State":{"Status":"exited","Status":"running"}}\')',
+                "            raise SystemExit(0)",
+                "        if mode == 'state-oversize':",
+                "            sys.stdout.write('x' * 70000)",
+                "            raise SystemExit(0)",
+                "        print(secret_blob, file=sys.stderr)",
+                "        print(json.dumps({",
+                "            'State': {",
+                "                'Status': 'exited',",
+                "                'ExitCode': 2,",
+                "                'Error': secret_blob,",
+                "                'OOMKilled': False,",
+                "                'HealthStatus': 'starting',",
+                "                'FailingStreak': 1,",
+                "            },",
+                "        }, separators=(',', ':')))",
+                "        raise SystemExit(0)",
+                "if argv[:1] == ['logs']:",
+                "    if mode == 'logs-fail':",
+                "        print(secret_blob, file=sys.stderr)",
+                "        raise SystemExit(43)",
+                "    if mode == 'logs-oversize':",
+                "        sys.stdout.write(secret_blob + ('x' * 17000))",
+                "        raise SystemExit(0)",
+                "    if mode == 'logs-binary':",
+                "        sys.stdout.buffer.write(b'\\xff\\x00' + secret_blob.encode())",
+                "        raise SystemExit(0)",
+                "    print(secret_blob)",
+                "    print(secret_blob, file=sys.stderr)",
+                "    raise SystemExit(0)",
+                "raise SystemExit(127)",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            f"PATH={str(fake_bin)!r}:$PATH",
+            "sleep() { :; }",
+            f"state_dir={str(tmp_path / 'state')!r}",
+            'mkdir -p "$state_dir/tmp"',
+            "container_id='server-cid'",
+            diagnostic_source,
+            health_source,
+            "touch " + shlex.quote(str(sentinel)),
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 70, (mode, result.stdout, result.stderr)
+    assert not sentinel.exists()
+    diagnostic_lines = [
+        line
+        for line in result.stderr.splitlines()
+        if line.startswith("postgres_server_diagnostic=")
+    ]
+    assert len(diagnostic_lines) == 1, result.stderr
+    assert len(diagnostic_lines[0].encode("utf-8")) <= 4096 + len("postgres_server_diagnostic=")
+    diagnostic = json.loads(diagnostic_lines[0].split("=", 1)[1])
+    assert diagnostic["schema"] == "acgs-postgres-server-prehealth-diagnostic/v1"
+    assert diagnostic["state"]["capture_status"] == expected_state_status
+    assert "sha256" in diagnostic["logs_stdout"]
+    assert "byte_count" in diagnostic["logs_stdout"]
+    assert "the disposable PostgreSQL container exited before becoming healthy" in result.stderr
+    docker_argv = argv_log.read_text(encoding="utf-8")
+    combined_output = result.stdout + result.stderr + docker_argv
+    for sentinel_value in raw_sentinels:
+        assert sentinel_value not in combined_output
+    if mode == "ok":
+        assert diagnostic["state"]["Status"] == "exited"
+        assert diagnostic["state"]["ExitCode"] == 2
+        assert diagnostic["state"]["HealthStatus"] == "starting"
+        assert diagnostic["error"]["byte_count"] == len(secret_blob.encode("utf-8"))
 
 
 def test_postgres_gate_socket_bridge_create_refuses_existing_paths(tmp_path: Path) -> None:
@@ -3445,6 +4042,11 @@ def test_postgres_gate_recovery_intent_strict_contract_refuses_mutation(
         ("wrong-bind-source", "wrong-bind-source", 70),
         ("wrong-bind-rw", "wrong-bind-rw", 70),
         ("wrong-bind-propagation", "wrong-bind-propagation", 70),
+        ("missing-service-bind", "missing-service-bind", 70),
+        ("wrong-service-source", "wrong-service-source", 70),
+        ("wrong-service-destination", "wrong-service-destination", 70),
+        ("writable-service-bind", "writable-service-bind", 70),
+        ("wrong-service-mode", "wrong-service-mode", 70),
         ("extra-bind", "extra-bind", 70),
         ("duplicate-bind-destination", "duplicate-bind-destination", 70),
         ("malformed-inspect", "malformed-inspect", 70),
@@ -3471,6 +4073,9 @@ def test_postgres_gate_server_mount_verifier_requires_exact_type_source_rw(
     )
     socket_bridge = tmp_path / "bridge"
     socket_bridge.mkdir()
+    service_file = tmp_path / "acgs-entrypoint-pg-service.conf"
+    service_file.write_bytes(b"[acgs-entrypoint-init]\nhost=/run/acgs-pg\nport=5432\n")
+    service_file.chmod(0o444)
     snapshot = {
         "Mounts": [
             {
@@ -3478,6 +4083,14 @@ def test_postgres_gate_server_mount_verifier_requires_exact_type_source_rw(
                 "Source": str(socket_bridge),
                 "Destination": "/run/acgs-pg",
                 "RW": True,
+                "Mode": "",
+                "Propagation": "rprivate",
+            },
+            {
+                "Type": "bind",
+                "Source": str(service_file),
+                "Destination": "/run/acgs-pg-service.conf",
+                "RW": False,
                 "Mode": "",
                 "Propagation": "rprivate",
             },
@@ -3528,6 +4141,16 @@ def test_postgres_gate_server_mount_verifier_requires_exact_type_source_rw(
         snapshot["Mounts"][0] = {**snapshot["Mounts"][0], "RW": False}
     elif mode == "wrong-bind-propagation":
         snapshot["Mounts"][0] = {**snapshot["Mounts"][0], "Propagation": "rshared"}
+    elif mode == "missing-service-bind":
+        snapshot["Mounts"].pop(1)
+    elif mode == "wrong-service-source":
+        snapshot["Mounts"][1] = {**snapshot["Mounts"][1], "Source": str(tmp_path / "wrong.conf")}
+    elif mode == "wrong-service-destination":
+        snapshot["Mounts"][1] = {**snapshot["Mounts"][1], "Destination": "/tmp/service.conf"}
+    elif mode == "writable-service-bind":
+        snapshot["Mounts"][1] = {**snapshot["Mounts"][1], "RW": True}
+    elif mode == "wrong-service-mode":
+        snapshot["Mounts"][1] = {**snapshot["Mounts"][1], "Mode": "ro"}
     elif mode == "extra-bind":
         snapshot["Mounts"].append(
             {
@@ -3548,6 +4171,12 @@ def test_postgres_gate_server_mount_verifier_requires_exact_type_source_rw(
             "/run/acgs-pg": {
                 "source": str(socket_bridge),
                 "rw": True,
+                "mode": "",
+                "propagation": "rprivate",
+            },
+            "/run/acgs-pg-service.conf": {
+                "source": str(service_file),
+                "rw": False,
                 "mode": "",
                 "propagation": "rprivate",
             },
@@ -3672,9 +4301,251 @@ def test_postgres_gate_cleanup_preserves_bridge_until_docker_absence_is_stable()
     assert "write_recovery_contract" in cleanup_source
 
 
+def test_postgres_gate_duplicate_cleanup_inspect_absence_is_quiet_and_fail_closed(
+    tmp_path: Path,
+) -> None:
+    script = _postgres_gate_script_source()
+    remove_exact_source = _extract_shell_function(
+        script,
+        "remove_exact_recorded_container",
+        "cleanup_server_container",
+    )
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    docker_path = fake_bin / "docker"
+    docker_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "from __future__ import annotations",
+                "import sys",
+                "args = sys.argv[1:]",
+                "if args[:1] == ['inspect'] and '--format' in args:",
+                "    print('Error: No such object: duplicate-client', file=sys.stderr)",
+                "    raise SystemExit(1)",
+                "raise SystemExit(127)",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            f"PATH={str(fake_bin)!r}:$PATH",
+            "proof_label='acp-postgres-gate-1000-0123456789abcdef0123456789abcdef'",
+            remove_exact_source,
+            "if remove_exact_recorded_container duplicate-client "
+            "acp-postgres-gate-1000-0123456789abcdef0123456789abcdef-client-1-1 "
+            "trusted-broker; then",
+            "  exit 90",
+            "else",
+            "  rc=$?",
+            "fi",
+            'test "$rc" -eq 1',
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    ("mode", "container_ref", "expected_role", "expected_rc", "rm_expected"),
+    [
+        ("exact-trusted-broker", "trusted-client", "trusted-broker", 0, True),
+        ("exact-main", "main-server", "main", 0, True),
+        ("trusted-with-server-label", "trusted-client", "trusted-broker", 70, False),
+        ("main-with-client-label", "main-server", "main", 70, False),
+        ("trusted-missing-role", "trusted-client", "trusted-broker", 70, False),
+        ("main-missing-role", "main-server", "main", 70, False),
+        ("proof-terminal-lf", "trusted-client", "trusted-broker", 70, False),
+        ("proof-multiple-lf", "trusted-client", "trusted-broker", 70, False),
+        ("proof-terminal-space", "trusted-client", "trusted-broker", 70, False),
+        ("proof-terminal-tab", "trusted-client", "trusted-broker", 70, False),
+        ("client-terminal-lf", "trusted-client", "trusted-broker", 70, False),
+        ("client-multiple-lf", "trusted-client", "trusted-broker", 70, False),
+        ("client-terminal-space", "trusted-client", "trusted-broker", 70, False),
+        ("client-terminal-tab", "trusted-client", "trusted-broker", 70, False),
+        ("main-client-terminal-lf", "main-server", "main", 70, False),
+        ("main-client-multiple-lf", "main-server", "main", 70, False),
+        ("main-client-terminal-space", "main-server", "main", 70, False),
+        ("main-client-terminal-tab", "main-server", "main", 70, False),
+        ("malformed-json", "trusted-client", "trusted-broker", 70, False),
+        ("extra-json", "trusted-client", "trusted-broker", 70, False),
+        ("oversize-json", "trusted-client", "trusted-broker", 70, False),
+        (
+            "wrong-id",
+            "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+            "trusted-broker",
+            70,
+            False,
+        ),
+        ("post-rm-nonabsence", "trusted-client", "trusted-broker", 70, True),
+        ("post-rm-rc2", "trusted-client", "trusted-broker", 2, True),
+        ("post-rm-timeout", "trusted-client", "trusted-broker", 124, True),
+    ],
+)
+def test_postgres_gate_remove_exact_recorded_container_strict_identity_matrix(
+    tmp_path: Path,
+    mode: str,
+    container_ref: str,
+    expected_role: str,
+    expected_rc: int,
+    rm_expected: bool,
+) -> None:
+    script = _postgres_gate_script_source()
+    remove_exact_source = _extract_shell_function(
+        script,
+        "remove_exact_recorded_container",
+        "cleanup_server_container",
+    )
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    rm_marker = tmp_path / "rm-called"
+    trusted_name = "acp-postgres-gate-1000-0123456789abcdef0123456789abcdef-client-1-1"
+    main_name = "acp-postgres-gate-1000-0123456789abcdef0123456789abcdef-server"
+    trusted_id = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+    main_id = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+    docker_path = fake_bin / "docker"
+    docker_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "from __future__ import annotations",
+                "from pathlib import Path",
+                "import json",
+                "import sys",
+                "args = sys.argv[1:]",
+                f"mode = {mode!r}",
+                f"rm_marker = Path({str(rm_marker)!r})",
+                f"trusted_id = {trusted_id!r}",
+                f"main_id = {main_id!r}",
+                f"trusted_name = {trusted_name!r}",
+                f"main_name = {main_name!r}",
+                "proof = 'acp-postgres-gate-1000-0123456789abcdef0123456789abcdef'",
+                "if args[:1] == ['inspect'] and '--format' in args:",
+                "    if mode == 'malformed-json':",
+                "        print('malformed-inspect-record')",
+                "        raise SystemExit(0)",
+                "    if mode == 'oversize-json':",
+                "        sys.stdout.write('[' + (' ' * 8193) + ']')",
+                "        raise SystemExit(0)",
+                "    container_id = main_id if mode == 'exact-main' else trusted_id",
+                "    name = (",
+                "        main_name",
+                "        if mode.startswith('main') or mode == 'exact-main'",
+                "        else trusted_name",
+                "    )",
+                "    if mode == 'wrong-id':",
+                "        container_id = (",
+                "            'fedcba0987654321fedcba0987654321'",
+                "            'fedcba0987654321fedcba0987654321'",
+                "        )",
+                "    server = None",
+                "    client = 'trusted-broker'",
+                "    if mode == 'exact-main':",
+                "        server = 'main'",
+                "        client = None",
+                "    elif mode == 'trusted-with-server-label':",
+                "        server = 'main'",
+                "    elif mode == 'main-with-client-label':",
+                "        server = 'main'",
+                "        client = 'trusted-broker'",
+                "    elif mode == 'trusted-missing-role':",
+                "        client = None",
+                "    elif mode == 'main-missing-role':",
+                "        server = None",
+                "        client = None",
+                "    elif mode.startswith('main-client-'):",
+                "        server = 'main'",
+                "        client = ''",
+                "    if mode == 'proof-terminal-lf':",
+                "        proof = proof + '\\n'",
+                "    elif mode == 'proof-multiple-lf':",
+                "        proof = proof + '\\nspoof'",
+                "    elif mode == 'proof-terminal-space':",
+                "        proof = proof + ' '",
+                "    elif mode == 'proof-terminal-tab':",
+                "        proof = proof + '\\t'",
+                "    if mode in {'client-terminal-lf', 'main-client-terminal-lf'}:",
+                "        client = client + '\\n'",
+                "    elif mode in {'client-multiple-lf', 'main-client-multiple-lf'}:",
+                "        client = client + '\\nspoof'",
+                "    elif mode in {'client-terminal-space', 'main-client-terminal-space'}:",
+                "        client = client + ' '",
+                "    elif mode in {'client-terminal-tab', 'main-client-terminal-tab'}:",
+                "        client = client + '\\t'",
+                "    fields = [container_id, f'/{name}', proof, server, client]",
+                "    if mode == 'extra-json':",
+                "        fields.append('extra')",
+                "    print(json.dumps(fields, separators=(',', ':')))",
+                "    raise SystemExit(0)",
+                "if args[:2] == ['rm', '-f']:",
+                "    rm_marker.write_text(args[-1] + '\\n', encoding='ascii')",
+                "    raise SystemExit(0)",
+                "if args[:1] == ['inspect']:",
+                "    if mode == 'post-rm-nonabsence':",
+                "        raise SystemExit(0)",
+                "    if mode == 'post-rm-rc2':",
+                "        raise SystemExit(2)",
+                "    if mode == 'post-rm-timeout':",
+                "        raise SystemExit(124)",
+                "    raise SystemExit(1)",
+                "raise SystemExit(127)",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    expected_name = main_name if expected_role == "main" else trusted_name
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            f"PATH={str(fake_bin)!r}:$PATH",
+            "proof_label='acp-postgres-gate-1000-0123456789abcdef0123456789abcdef'",
+            remove_exact_source,
+            f"if remove_exact_recorded_container {shlex.quote(container_ref)} "
+            f"{shlex.quote(expected_name)} {shlex.quote(expected_role)}; then",
+            "  rc=0",
+            "else",
+            "  rc=$?",
+            "fi",
+            f'test "$rc" -eq {expected_rc}',
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (mode, result.returncode, result.stdout, result.stderr)
+    assert rm_marker.exists() is rm_expected
+
+
 @pytest.mark.parametrize(
     "failure_function",
-    ["cleanup_client_containers", "verify_stable_no_proof_labelled_containers"],
+    [
+        "cleanup_client_containers",
+        "cleanup_client_identity_mismatch",
+        "cleanup_client_post_rm_rc2",
+        "cleanup_client_post_rm_timeout",
+        "cleanup_client_terminal_lf",
+        "cleanup_client_multiple_lf",
+        "cleanup_client_terminal_space",
+        "cleanup_client_terminal_tab",
+        "verify_stable_no_proof_labelled_containers",
+    ],
 )
 def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
     tmp_path: Path,
@@ -3748,34 +4619,108 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
     intent.chmod(0o600)
     server_cidfile = state_dir / f"{proof_label}-server.cid"
     server_namefile = state_dir / f"{proof_label}-server.name"
-    if failure_function == "cleanup_client_containers":
+    if failure_function in {
+        "cleanup_client_containers",
+        "cleanup_client_identity_mismatch",
+        "cleanup_client_post_rm_rc2",
+        "cleanup_client_post_rm_timeout",
+        "cleanup_client_terminal_lf",
+        "cleanup_client_multiple_lf",
+        "cleanup_client_terminal_space",
+        "cleanup_client_terminal_tab",
+    }:
         (client_dir / f"{client_name}.cid").write_text(f"{client_id}\n", encoding="ascii")
         (client_dir / f"{client_name}.name").write_text(f"{client_name}\n", encoding="ascii")
         (client_dir / f"{client_name}.cid").chmod(0o600)
         (client_dir / f"{client_name}.name").chmod(0o600)
     docker_path = fake_bin / "docker"
+    rm_marker = tmp_path / "cleanup-rm-called"
     docker_path.write_text(
         "\n".join(
             [
                 "#!/usr/bin/env python3",
                 "from __future__ import annotations",
+                "from pathlib import Path",
+                "import json",
                 "import os, sys",
                 "args = sys.argv[1:]",
                 f"mode = {failure_function!r}",
                 f"proof_label = {proof_label!r}",
                 f"client_id = {client_id!r}",
                 f"client_name = {client_name!r}",
+                f"rm_marker = Path({str(rm_marker)!r})",
                 "if args[:1] == ['inspect'] and '--format' in args:",
                 "    ref = args[-1]",
-                "    if mode == 'cleanup_client_containers' and ref in {client_id, client_name}:",
-                "        print(f'{client_id}|/{client_name}|{proof_label}||trusted-broker')",
+                "    if mode in {",
+                "        'cleanup_client_containers',",
+                "        'cleanup_client_post_rm_rc2',",
+                "        'cleanup_client_post_rm_timeout',",
+                "    } and ref in {client_id, client_name}:",
+                "        print(",
+                "            json.dumps(",
+                "                [",
+                "                    client_id,",
+                "                    f'/{client_name}',",
+                "                    proof_label,",
+                "                    None,",
+                "                    'trusted-broker',",
+                "                ],",
+                "                separators=(',', ':'),",
+                "            )",
+                "        )",
+                "        raise SystemExit(0)",
+                "    if (",
+                "        mode == 'cleanup_client_identity_mismatch'",
+                "        and ref in {client_id, client_name}",
+                "    ):",
+                "        print(",
+                "            json.dumps(",
+                "                [",
+                "                    client_id,",
+                "                    f'/{client_name}',",
+                "                    proof_label,",
+                "                    None,",
+                "                    'wrong-client-label',",
+                "                ],",
+                "                separators=(',', ':'),",
+                "            )",
+                "        )",
+                "        raise SystemExit(0)",
+                "    if mode in {",
+                "        'cleanup_client_terminal_lf',",
+                "        'cleanup_client_multiple_lf',",
+                "        'cleanup_client_terminal_space',",
+                "        'cleanup_client_terminal_tab',",
+                "    } and ref in {client_id, client_name}:",
+                "        client_label = 'trusted-broker'",
+                "        if mode == 'cleanup_client_terminal_lf':",
+                "            client_label += '\\n'",
+                "        elif mode == 'cleanup_client_multiple_lf':",
+                "            client_label += '\\nspoof'",
+                "        elif mode == 'cleanup_client_terminal_space':",
+                "            client_label += ' '",
+                "        elif mode == 'cleanup_client_terminal_tab':",
+                "            client_label += '\\t'",
+                "        print(",
+                "            json.dumps(",
+                "                [client_id, f'/{client_name}', proof_label, None, client_label],",
+                "                separators=(',', ':'),",
+                "            )",
+                "        )",
                 "        raise SystemExit(0)",
                 "    raise SystemExit(1)",
                 "if args[:1] == ['inspect']:",
+                "    if mode == 'cleanup_client_post_rm_rc2':",
+                "        raise SystemExit(2)",
+                "    if mode == 'cleanup_client_post_rm_timeout':",
+                "        raise SystemExit(124)",
                 "    raise SystemExit(1)",
                 "if args[:2] == ['rm', '-f']:",
+                "    rm_marker.write_text(args[-1] + '\\n', encoding='ascii')",
                 "    if mode == 'cleanup_client_containers':",
                 "        raise SystemExit(70)",
+                "    if mode == 'cleanup_client_identity_mismatch':",
+                "        raise SystemExit(90)",
                 "    raise SystemExit(0)",
                 "if args[:2] == ['ps', '-aq']:",
                 "    joined = ' '.join(args)",
@@ -3842,12 +4787,29 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
         text=True,
         check=False,
     )
-    assert result.returncode == 70, (failure_function, result.stderr)
+    expected_rc = {
+        "cleanup_client_post_rm_rc2": 2,
+        "cleanup_client_post_rm_timeout": 124,
+    }.get(failure_function, 70)
+    assert result.returncode == expected_rc, (failure_function, result.stderr)
     assert bridge.is_dir()
     assert (bridge / ".acgs-postgres-socket-bridge.v2").is_file()
     assert intent.read_text(encoding="ascii") == "intent"
     assert not touched.exists()
     assert (state_dir / "recovery-contract.env").exists()
+    if failure_function in {
+        "cleanup_client_containers",
+        "cleanup_client_post_rm_rc2",
+        "cleanup_client_post_rm_timeout",
+    }:
+        assert rm_marker.exists()
+    else:
+        assert not rm_marker.exists()
+    if failure_function != "verify_stable_no_proof_labelled_containers":
+        assert (client_dir / f"{client_name}.cid").read_text(encoding="ascii") == (f"{client_id}\n")
+        assert (client_dir / f"{client_name}.name").read_text(encoding="ascii") == (
+            f"{client_name}\n"
+        )
 
 
 def _rename_exchange(first: Path, second: Path) -> None:

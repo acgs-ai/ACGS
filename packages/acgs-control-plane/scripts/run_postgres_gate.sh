@@ -513,6 +513,9 @@ proof_label="$(derive_postgres_proof_label "$(id -u)" "$proof_nonce")" || {
 container_name="${proof_label}-server"
 server_cidfile="$state_dir/server.cid"
 server_namefile="$state_dir/server.name"
+postgres_service_file="$state_dir/acgs-entrypoint-pg-service.conf"
+postgres_service_file_fd=''
+postgres_service_file_sha256='d80daf1f18b1cdaf32502e1c6bf7362918c712bf75f6712e2991fc1eb31f8c72'
 postgres_socket_bridge=''
 postgres_socket_bridge_name="${proof_label}-socket-bridge"
 postgres_socket_bridge_identity=''
@@ -641,6 +644,7 @@ import re
 import stat
 import sys
 
+created_stat = None
 directory, name, mode_text = sys.argv[1:4]
 if "/" in name or name in {"", ".", ".."}:
     raise SystemExit(70)
@@ -666,24 +670,67 @@ try:
     fd = os.open(
         name,
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
-        mode,
+        0o600,
         dir_fd=dir_fd,
     )
     try:
-        file_stat = os.fstat(fd)
-        if not stat.S_ISREG(file_stat.st_mode):
+        created_stat = os.fstat(fd)
+        if not stat.S_ISREG(created_stat.st_mode):
             raise SystemExit(70)
-        if file_stat.st_uid != os.getuid() or file_stat.st_nlink != 1:
+        if created_stat.st_uid != os.getuid() or created_stat.st_nlink != 1:
             raise SystemExit(70)
-        if file_stat.st_mode & 0o777 != mode:
+        if stat.S_IMODE(created_stat.st_mode) != 0o600:
+            raise SystemExit(70)
+        if os.environ.get("ACGS_TEST_WRITE_VERIFIED_PRIVATE_ARTIFACT_FAIL_AT") == "write":
             raise SystemExit(70)
         written = os.write(fd, payload)
         if written != len(payload):
             raise SystemExit(70)
         os.fsync(fd)
+        if os.environ.get("ACGS_TEST_WRITE_VERIFIED_PRIVATE_ARTIFACT_FAIL_AT") == "fchmod":
+            raise SystemExit(70)
+        os.fchmod(fd, mode)
+        if os.environ.get("ACGS_TEST_WRITE_VERIFIED_PRIVATE_ARTIFACT_FAIL_AT") == "validation":
+            raise SystemExit(70)
+        file_stat = os.fstat(fd)
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise SystemExit(70)
+        if file_stat.st_uid != os.getuid() or file_stat.st_nlink != 1:
+            raise SystemExit(70)
+        if stat.S_IMODE(file_stat.st_mode) != mode:
+            raise SystemExit(70)
+        if file_stat.st_size != len(payload):
+            raise SystemExit(70)
+        read_fd = os.open(f"/proc/self/fd/{fd}", os.O_RDONLY | os.O_CLOEXEC)
+        try:
+            read_stat = os.fstat(read_fd)
+            if read_stat.st_dev != file_stat.st_dev or read_stat.st_ino != file_stat.st_ino:
+                raise SystemExit(70)
+            if os.read(read_fd, len(payload) + 1) != payload:
+                raise SystemExit(70)
+        finally:
+            os.close(read_fd)
+        os.fsync(fd)
     finally:
         os.close(fd)
     os.fsync(dir_fd)
+except BaseException:
+    if created_stat is not None:
+        try:
+            current_stat = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        except OSError:
+            current_stat = None
+        if (
+            current_stat is not None
+            and current_stat.st_dev == created_stat.st_dev
+            and current_stat.st_ino == created_stat.st_ino
+        ):
+            try:
+                os.unlink(name, dir_fd=dir_fd)
+                os.fsync(dir_fd)
+            except OSError:
+                pass
+    raise
 finally:
     os.close(dir_fd)
 PY
@@ -1341,6 +1388,48 @@ if any(getattr(source_stat, field) != getattr(fd_stat, field) for field in ident
 PY
 }
 
+verify_postgres_service_file_fd() {
+  local source_path=$1
+  local fd_path=$2
+  /usr/bin/python3 -I -S - "$source_path" "$fd_path" "$postgres_service_file_sha256" <<'PY'
+from __future__ import annotations
+
+import hashlib
+import os
+import stat
+import sys
+
+source_path, fd_path, expected_sha256 = sys.argv[1:4]
+expected_payload = b"[acgs-entrypoint-init]\nhost=/run/acgs-pg\nport=5432\n"
+try:
+    source_stat = os.stat(source_path, follow_symlinks=False)
+    fd_stat = os.stat(fd_path, follow_symlinks=True)
+except OSError:
+    raise SystemExit(70) from None
+if not stat.S_ISREG(source_stat.st_mode) or not stat.S_ISREG(fd_stat.st_mode):
+    raise SystemExit(70)
+if source_stat.st_uid != os.getuid() or source_stat.st_nlink != 1:
+    raise SystemExit(70)
+if stat.S_IMODE(source_stat.st_mode) != 0o444:
+    raise SystemExit(70)
+identity = ("st_dev", "st_ino", "st_size", "st_ctime_ns", "st_mtime_ns")
+if any(getattr(source_stat, field) != getattr(fd_stat, field) for field in identity):
+    raise SystemExit(70)
+try:
+    fd = os.open(fd_path, os.O_RDONLY | os.O_CLOEXEC)
+except OSError:
+    raise SystemExit(70) from None
+try:
+    payload = os.read(fd, len(expected_payload) + 1)
+finally:
+    os.close(fd)
+if payload != expected_payload:
+    raise SystemExit(70)
+if hashlib.sha256(payload).hexdigest() != expected_sha256:
+    raise SystemExit(70)
+PY
+}
+
 write_postgres_recovery_intent() {
   local phase=$1
   local intent_name=$2
@@ -1794,42 +1883,94 @@ remove_exact_recorded_container() {
   local container_ref=$1
   local expected_name=$2
   local expected_role=$3
-  local inspect_output=''
-  local inspected_id=''
-  local inspected_name=''
-  local inspected_proof_label=''
-  local inspected_server_label=''
-  local inspected_client_label=''
+  local validated_id=''
   local rc=0
-  inspect_output="$(
-    timeout --preserve-status 10s docker inspect \
-      --format '{{.Id}}|{{.Name}}|{{index .Config.Labels "acgs.postgres.proof"}}|{{index .Config.Labels "acgs.postgres.server"}}|{{index .Config.Labels "acgs.postgres.client"}}' \
-      "$container_ref"
+  validated_id="$(
+    /usr/bin/python3 -I -S - "$container_ref" "$expected_name" "$expected_role" "$proof_label" <<'PY'
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+import sys
+
+
+container_ref, expected_name, expected_role, proof_label = sys.argv[1:5]
+inspect_format = (
+    '{{printf "["}}{{json .Id}},{{json .Name}},'
+    '{{with index .Config.Labels "acgs.postgres.proof"}}{{json .}}{{else}}null{{end}},'
+    '{{with index .Config.Labels "acgs.postgres.server"}}{{json .}}{{else}}null{{end}},'
+    '{{with index .Config.Labels "acgs.postgres.client"}}{{json .}}{{else}}null{{end}}'
+    '{{printf "]"}}'
+)
+try:
+    completed = subprocess.run(
+        [
+            "timeout",
+            "--preserve-status",
+            "10s",
+            "docker",
+            "inspect",
+            "--format",
+            inspect_format,
+            container_ref,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+except (OSError, subprocess.SubprocessError):
+    raise SystemExit(70) from None
+if completed.returncode == 1:
+    raise SystemExit(1)
+if completed.returncode != 0:
+    raise SystemExit(completed.returncode)
+if len(completed.stdout) > 8192:
+    raise SystemExit(70)
+try:
+    payload = completed.stdout.decode("utf-8", "strict")
+    fields = json.loads(payload)
+except (UnicodeDecodeError, json.JSONDecodeError):
+    raise SystemExit(70) from None
+if not isinstance(fields, list) or len(fields) != 5:
+    raise SystemExit(70)
+if not all(isinstance(field, str) or field is None for field in fields):
+    raise SystemExit(70)
+container_id, name, inspected_proof, server_role, client_role = (
+    "" if field is None else field for field in fields
+)
+if re.fullmatch(r"[0-9a-f]{12,64}", container_id) is None:
+    raise SystemExit(70)
+if re.fullmatch(r"[0-9a-f]{12,64}", container_ref) and container_id != container_ref:
+    raise SystemExit(70)
+if name != f"/{expected_name}" or inspected_proof != proof_label:
+    raise SystemExit(70)
+if expected_role == "main":
+    if server_role != "main" or client_role != "":
+        raise SystemExit(70)
+elif expected_role == "trusted-broker":
+    if server_role != "" or client_role != "trusted-broker":
+        raise SystemExit(70)
+else:
+    raise SystemExit(70)
+sys.stdout.write(container_id)
+PY
   )" || {
     rc=$?
     [[ "$rc" == 1 ]] && return 1
     return "$rc"
   }
-  IFS='|' read -r inspected_id inspected_name inspected_proof_label inspected_server_label inspected_client_label <<<"$inspect_output"
-  [[ "$inspected_id" =~ ^[0-9a-f]{12,64}$ ]] || return 70
-  [[ "$inspected_name" == "/$expected_name" ]] || return 70
-  [[ "$inspected_proof_label" == "$proof_label" ]] || return 70
-  case "$expected_role" in
-    main)
-      [[ "$inspected_server_label" == main ]] || return 70
-      ;;
-    trusted-broker)
-      [[ "$inspected_client_label" == trusted-broker ]] || return 70
-      ;;
-    *)
-      return 70
-      ;;
-  esac
-  timeout --preserve-status 30s docker rm -f "$inspected_id" >/dev/null 2>&1 || return $?
-  if timeout --preserve-status 10s docker inspect "$inspected_id" >/dev/null 2>&1; then
+  [[ "$validated_id" =~ ^[0-9a-f]{12,64}$ ]] || return 70
+  timeout --preserve-status 30s docker rm -f "$validated_id" >/dev/null 2>&1 || return $?
+  if timeout --preserve-status 10s docker inspect "$validated_id" >/dev/null 2>&1; then
     return 70
+  else
+    rc=$?
+    if [[ "$rc" == 1 ]]; then
+      return 0
+    fi
+    return "$rc"
   fi
-  return 0
 }
 
 cleanup_server_container() {
@@ -2464,6 +2605,214 @@ verify_server_socket_bridge_marker() {
     >/dev/null
 }
 
+verify_server_service_file() {
+  local inspect_name=$1
+  timeout --preserve-status 10s docker exec "$inspect_name" sh -ec \
+    "test -f /run/acgs-pg-service.conf && test \"\$(stat -c '%a:%s' /run/acgs-pg-service.conf)\" = '444:51' && test \"\$(sha256sum /run/acgs-pg-service.conf | awk '{print \$1}')\" = '$postgres_service_file_sha256'" \
+    >/dev/null
+}
+
+capture_postgres_server_diagnostics() {
+  local inspect_name=$1
+  local diagnostic_root="$state_dir/tmp"
+  local state_file=''
+  local inspect_stderr_file=''
+  local log_stdout_file=''
+  local log_stderr_file=''
+  local state_rc=0
+  local logs_rc=0
+  mkdir -p "$diagnostic_root" || {
+    printf 'postgres_server_diagnostic={"capture_status":"unavailable"}\n' >&2
+    return 0
+  }
+  state_file="$(mktemp "$diagnostic_root/server-state.XXXXXX")" || {
+    printf 'postgres_server_diagnostic={"capture_status":"unavailable"}\n' >&2
+    return 0
+  }
+  inspect_stderr_file="$(mktemp "$diagnostic_root/server-inspect-stderr.XXXXXX")" || {
+    rm -f -- "$state_file"
+    printf 'postgres_server_diagnostic={"capture_status":"unavailable"}\n' >&2
+    return 0
+  }
+  log_stdout_file="$(mktemp "$diagnostic_root/server-log-stdout.XXXXXX")" || {
+    rm -f -- "$state_file" "$inspect_stderr_file"
+    printf 'postgres_server_diagnostic={"capture_status":"unavailable"}\n' >&2
+    return 0
+  }
+  log_stderr_file="$(mktemp "$diagnostic_root/server-log-stderr.XXXXXX")" || {
+    rm -f -- "$state_file" "$inspect_stderr_file" "$log_stdout_file"
+    printf 'postgres_server_diagnostic={"capture_status":"unavailable"}\n' >&2
+    return 0
+  }
+  timeout --preserve-status 5s docker inspect \
+    --format '{"State":{"Status":{{json .State.Status}},"ExitCode":{{json .State.ExitCode}},"Error":{{json .State.Error}},"OOMKilled":{{json .State.OOMKilled}},"HealthStatus":{{json .State.Health.Status}},"FailingStreak":{{json .State.Health.FailingStreak}}}}}' \
+    "$inspect_name" >"$state_file" 2>"$inspect_stderr_file" || state_rc=$?
+  timeout --preserve-status 5s docker logs --tail 80 "$inspect_name" \
+    >"$log_stdout_file" 2>"$log_stderr_file" || logs_rc=$?
+  if ! /usr/bin/python3 -I -S - \
+    "$state_file" "$inspect_stderr_file" "$log_stdout_file" "$log_stderr_file" \
+    "$state_rc" "$logs_rc" <<'PY' >&2
+import json
+import hashlib
+import os
+import sys
+
+
+state_path, inspect_stderr_path, log_stdout_path, log_stderr_path, state_rc_raw, logs_rc_raw = (
+    sys.argv[1:7]
+)
+ALLOWED_STATUSES = {"created", "restarting", "running", "removing", "paused", "exited", "dead"}
+ALLOWED_HEALTH = {"none", "starting", "healthy", "unhealthy"}
+
+
+def parse_rc(raw: str) -> int:
+    try:
+        value = int(raw)
+    except ValueError:
+        raise SystemExit(1) from None
+    if value < 0 or value > 255:
+        raise SystemExit(1)
+    return value
+
+
+def reject_duplicate_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def read_bytes(path: str, cap: int) -> tuple[str, bytes]:
+    try:
+        stat_result = os.stat(path, follow_symlinks=False)
+        if stat_result.st_size > cap:
+            return "oversized", b""
+        with open(path, "rb") as handle:
+            payload = handle.read(cap + 1)
+    except OSError:
+        return "unavailable", b""
+    if len(payload) > cap:
+        return "oversized", b""
+    return "ok", payload
+
+
+def byte_metadata(path: str, cap: int, command_rc: int) -> dict[str, object]:
+    capture_status, payload = read_bytes(path, cap)
+    if capture_status == "ok" and command_rc != 0:
+        capture_status = "command_failed"
+    if capture_status != "ok" and capture_status != "command_failed":
+        payload = b""
+    return {
+        "capture_status": capture_status,
+        "byte_count": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest() if payload else None,
+        "truncated": False,
+    }
+
+
+def require_int(value: object) -> int | None:
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise SystemExit(1)
+    return value
+
+
+def require_bool(value: object) -> bool | None:
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise SystemExit(1)
+    return value
+
+
+def require_status(value: object, allowed: set[str]) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or value not in allowed:
+        raise SystemExit(1)
+    return value
+
+
+state_rc = parse_rc(state_rc_raw)
+logs_rc = parse_rc(logs_rc_raw)
+state_status, state_payload = read_bytes(state_path, 65_536)
+state: dict[str, object] = {"capture_status": state_status}
+error_bytes = b""
+if state_status == "ok":
+    if state_rc != 0:
+        state["capture_status"] = "command_failed"
+    else:
+        try:
+            snapshot = json.loads(
+                state_payload.decode("utf-8"),
+                object_pairs_hook=reject_duplicate_json_object,
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            state = {"capture_status": "malformed"}
+        else:
+            if not isinstance(snapshot, dict) or set(snapshot) != {"State"}:
+                state = {"capture_status": "malformed"}
+            else:
+                raw_state = snapshot["State"]
+                if not isinstance(raw_state, dict) or set(raw_state) != {
+                    "Status",
+                    "ExitCode",
+                    "Error",
+                    "OOMKilled",
+                    "HealthStatus",
+                    "FailingStreak",
+                }:
+                    state = {"capture_status": "malformed"}
+                else:
+                    raw_error = raw_state["Error"]
+                    if not isinstance(raw_error, str):
+                        state = {"capture_status": "malformed"}
+                    else:
+                        error_bytes = raw_error.encode("utf-8", "surrogatepass")
+                        state.update(
+                            {
+                                "Status": require_status(raw_state["Status"], ALLOWED_STATUSES),
+                                "ExitCode": require_int(raw_state["ExitCode"]),
+                                "OOMKilled": require_bool(raw_state["OOMKilled"]),
+                                "HealthStatus": require_status(
+                                    raw_state["HealthStatus"],
+                                    ALLOWED_HEALTH,
+                                ),
+                                "FailingStreak": require_int(raw_state["FailingStreak"]),
+                            }
+                        )
+elif state_status == "oversized":
+    state = {"capture_status": "oversized"}
+else:
+    state = {"capture_status": "unavailable" if state_rc == 0 else "command_failed"}
+error_meta = {
+    "capture_status": "ok" if error_bytes else "unavailable",
+    "byte_count": len(error_bytes),
+    "sha256": hashlib.sha256(error_bytes).hexdigest() if error_bytes else None,
+    "truncated": False,
+}
+diagnostic = {
+    "schema": "acgs-postgres-server-prehealth-diagnostic/v1",
+    "state": state,
+    "error": error_meta,
+    "inspect_stderr": byte_metadata(inspect_stderr_path, 8192, state_rc),
+    "logs_stdout": byte_metadata(log_stdout_path, 16384, logs_rc),
+    "logs_stderr": byte_metadata(log_stderr_path, 8192, logs_rc),
+}
+serialized = json.dumps(diagnostic, sort_keys=True, separators=(",", ":"))
+if len(serialized.encode("utf-8")) > 4096:
+    serialized = '{"capture_status":"oversized","schema":"acgs-postgres-server-prehealth-diagnostic/v1"}'
+print("postgres_server_diagnostic=" + serialized)
+PY
+  then
+    printf 'postgres_server_diagnostic={"capture_status":"unavailable"}\n' >&2
+  fi
+  rm -f -- "$state_file" "$inspect_stderr_file" "$log_stdout_file" "$log_stderr_file"
+}
+
 cleanup() {
   local status=$?
   local cleanup_status=0
@@ -2583,6 +2932,23 @@ verify_postgres_socket_bridge 1777 || {
   echo 'PostgreSQL socket bridge failed descriptor verification' >&2
   exit 70
 }
+if ! write_verified_private_artifact "$state_dir" "acgs-entrypoint-pg-service.conf" 0444 <<'EOF'
+[acgs-entrypoint-init]
+host=/run/acgs-pg
+port=5432
+EOF
+then
+  echo 'failed to create PostgreSQL entrypoint service file' >&2
+  exit 70
+fi
+exec {postgres_service_file_fd}<"$postgres_service_file" || {
+  echo 'failed to open PostgreSQL entrypoint service file descriptor' >&2
+  exit 70
+}
+verify_postgres_service_file_fd "$postgres_service_file" "/proc/$BASHPID/fd/$postgres_service_file_fd" || {
+  echo 'PostgreSQL entrypoint service file failed descriptor verification' >&2
+  exit 70
+}
 write_postgres_recovery_intent server-intent server "$server_namefile" || {
   echo 'failed to persist PostgreSQL server recovery intent' >&2
   exit 70
@@ -2615,13 +2981,15 @@ container_id="$(
     --env "POSTGRES_USER=$postgres_user" \
     --env "POSTGRES_PASSWORD=$postgres_password" \
     --env "POSTGRES_INITDB_ARGS=--auth-local=scram-sha-256 --auth-host=scram-sha-256" \
-    --env PGHOST=/run/acgs-pg \
+    --env PGSERVICE=acgs-entrypoint-init \
+    --env PGSERVICEFILE=/run/acgs-pg-service.conf \
     --health-cmd "test -f /run/acgs-pg/.acgs-postgres-socket-bridge.v2 && test \"\$(sha256sum /run/acgs-pg/.acgs-postgres-socket-bridge.v2 | awk '{print \$1}')\" = '$postgres_socket_bridge_marker_sha256' && pg_isready -h /run/acgs-pg -U $postgres_user -d $main_database" \
     --health-interval 1s \
     --health-timeout 5s \
     --health-retries 60 \
     --security-opt label=disable \
     --mount "type=bind,src=$postgres_socket_bridge,dst=/run/acgs-pg" \
+    --mount "type=bind,src=$postgres_service_file,dst=/run/acgs-pg-service.conf,readonly" \
     --tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700 \
     --tmpfs /tmp:rw,noexec,nosuid,nodev,size=2g,mode=1777 \
     "$postgres_image" \
@@ -2629,14 +2997,24 @@ container_id="$(
       -c unix_socket_permissions=0777
 )"
 server_mount_expectation="$(
-  printf '{"binds":{"%s":{"source":%s,"rw":true,"mode":"","propagation":"rprivate"}},"tmpfs":{"%s":"rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700","%s":"rw,noexec,nosuid,nodev,size=2g,mode=1777"}}' \
+  printf '{"binds":{"%s":{"source":%s,"rw":true,"mode":"","propagation":"rprivate"},"%s":{"source":%s,"rw":false,"mode":"","propagation":"rprivate"}},"tmpfs":{"%s":"rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700","%s":"rw,noexec,nosuid,nodev,size=2g,mode=1777"}}' \
     "/run/acgs-pg" \
     "$(printf '%s' "$postgres_socket_bridge" | /usr/bin/python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+    "/run/acgs-pg-service.conf" \
+    "$(printf '%s' "$postgres_service_file" | /usr/bin/python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
     "/var/lib/postgresql/data" \
     "/tmp"
 )"
 verify_docker_mounts "$container_id" "$server_mount_expectation" || {
   echo 'PostgreSQL server socket bridge mount did not match expected descriptor source' >&2
+  exit 70
+}
+verify_postgres_service_file_fd "$postgres_service_file" "/proc/$BASHPID/fd/$postgres_service_file_fd" || {
+  echo 'PostgreSQL entrypoint service file changed after server launch' >&2
+  exit 70
+}
+verify_server_service_file "$container_id" || {
+  echo 'PostgreSQL entrypoint service file was not visible as the expected read-only file' >&2
   exit 70
 }
 verify_server_socket_bridge_marker "$container_id" || {
@@ -2645,9 +3023,18 @@ verify_server_socket_bridge_marker "$container_id" || {
 }
 
 for _ in {1..90}; do
-  container_status="$(timeout --preserve-status 10s docker inspect --format '{{.State.Status}}' "$container_id")"
-  health_status="$(timeout --preserve-status 10s docker inspect --format '{{.State.Health.Status}}' "$container_id")"
+  container_status="$(timeout --preserve-status 10s docker inspect --format '{{.State.Status}}' "$container_id")" || {
+    capture_postgres_server_diagnostics "$container_id"
+    echo 'failed to inspect disposable PostgreSQL container status before it became healthy' >&2
+    exit 70
+  }
+  health_status="$(timeout --preserve-status 10s docker inspect --format '{{.State.Health.Status}}' "$container_id")" || {
+    capture_postgres_server_diagnostics "$container_id"
+    echo 'failed to inspect disposable PostgreSQL container health before it became healthy' >&2
+    exit 70
+  }
   if [[ "$container_status" != 'running' ]]; then
+    capture_postgres_server_diagnostics "$container_id"
     echo 'the disposable PostgreSQL container exited before becoming healthy' >&2
     exit 70
   fi
@@ -2655,12 +3042,19 @@ for _ in {1..90}; do
     break
   fi
   if [[ "$health_status" == 'unhealthy' ]]; then
+    capture_postgres_server_diagnostics "$container_id"
     echo 'the disposable PostgreSQL container became unhealthy' >&2
     exit 70
   fi
   sleep 1
 done
-if [[ "$(timeout --preserve-status 10s docker inspect --format '{{.State.Health.Status}}' "$container_id")" != 'healthy' ]]; then
+final_health_status="$(timeout --preserve-status 10s docker inspect --format '{{.State.Health.Status}}' "$container_id")" || {
+  capture_postgres_server_diagnostics "$container_id"
+  echo 'failed to inspect final disposable PostgreSQL container health' >&2
+  exit 70
+}
+if [[ "$final_health_status" != 'healthy' ]]; then
+  capture_postgres_server_diagnostics "$container_id"
   echo 'timed out waiting for the disposable PostgreSQL container to become healthy' >&2
   exit 70
 fi
@@ -2915,7 +3309,7 @@ def validate_mount_snapshot(snapshot: object) -> None:
         "/run/acgs-pg": {
             "source": str(PG_SOCKET_BRIDGE),
             "rw": False,
-            "mode": "ro",
+            "mode": "",
             "propagation": "rprivate",
         },
         "/run/tmp": {
@@ -3381,6 +3775,7 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
     overflow = False
     process: subprocess.Popen[bytes] | None = None
     created_container_ref: str | None = None
+    client_cleanup_confirmed = False
 
     def read_record(path: Path, pattern: str) -> str | None:
         try:
@@ -3408,8 +3803,10 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
 
     def candidate_refs() -> list[str]:
         refs: list[str] = []
+        if created_container_ref and re.fullmatch(r"[0-9a-f]{12,64}", created_container_ref):
+            refs.append(created_container_ref)
         cid = read_record(cidfile, r"[0-9a-f]{12,64}")
-        if cid:
+        if cid and cid not in refs:
             refs.append(cid)
         recorded_name = read_record(
             namefile,
@@ -3422,12 +3819,19 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
         return refs
 
     def inspect_ref(ref: str) -> tuple[str, str, str, str, str] | None:
+        inspect_format = (
+            '{{printf "["}}{{json .Id}},{{json .Name}},'
+            '{{with index .Config.Labels "acgs.postgres.proof"}}{{json .}}{{else}}null{{end}},'
+            '{{with index .Config.Labels "acgs.postgres.server"}}{{json .}}{{else}}null{{end}},'
+            '{{with index .Config.Labels "acgs.postgres.client"}}{{json .}}{{else}}null{{end}}'
+            '{{printf "]"}}'
+        )
         try:
             completed = subprocess.run(
                 [
                     str(DOCKER_BIN), "inspect",
                     "--format",
-                    '{{.Id}}|{{.Name}}|{{index .Config.Labels "acgs.postgres.proof"}}|{{index .Config.Labels "acgs.postgres.server"}}|{{index .Config.Labels "acgs.postgres.client"}}',
+                    inspect_format,
                     ref,
                 ],
                 stdout=subprocess.PIPE,
@@ -3441,32 +3845,72 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
             return None
         if completed.returncode != 0:
             fail("PostgreSQL client broker container inspection is uncertain", 70)
-        fields = completed.stdout.decode("ascii", "strict").strip().split("|")
-        if len(fields) != 5:
-            fail("PostgreSQL client broker container inspection is malformed", 70)
-        return tuple(fields)  # type: ignore[return-value]
+        if len(completed.stdout) > 8192:
+            fail("PostgreSQL client broker container inspection is uncertain", 70)
+        try:
+            fields = json.loads(completed.stdout.decode("utf-8", "strict"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            fail("PostgreSQL client broker container inspection is uncertain", 70)
+        if not isinstance(fields, list) or len(fields) != 5:
+            fail("PostgreSQL client broker container inspection is uncertain", 70)
+        normalized_fields: list[str] = []
+        for field in fields:
+            if field is None:
+                normalized_fields.append("")
+            elif isinstance(field, str):
+                normalized_fields.append(field)
+            else:
+                fail("PostgreSQL client broker container inspection is uncertain", 70)
+        return tuple(normalized_fields)  # type: ignore[return-value]
 
     def is_expected_client(inspected: tuple[str, str, str, str, str]) -> bool:
         container_id, name, proof_label, server_role, client_role = inspected
         return (
-            re.fullmatch(r"[0-9a-f]{12,64}", container_id) is not None
+            created_container_ref is not None
+            and re.fullmatch(r"[0-9a-f]{12,64}", container_id) is not None
+            and container_id == created_container_ref
             and name == f"/{client_name}"
             and proof_label == PROOF_LABEL
             and server_role == ""
             and client_role == "trusted-broker"
         )
 
+    def inspect_expected_ref(ref: str) -> tuple[str, str, str, str, str] | None:
+        inspected = inspect_ref(ref)
+        if inspected is None:
+            return None
+        if not is_expected_client(inspected):
+            fail("PostgreSQL client broker container identity is not trusted", 70)
+        return inspected
+
+    def validate_created_container_records() -> None:
+        if read_record(cidfile, r"[0-9a-f]{12,64}") != created_container_ref:
+            fail("PostgreSQL client broker container ID record is inconsistent", 70)
+        if read_record(
+            namefile,
+            r"acp-postgres-gate-[0-9]+-[0-9a-f]{32}-client-[0-9]+-[0-9]+",
+        ) != client_name:
+            fail("PostgreSQL client broker container name record is inconsistent", 70)
+
     def client_exists() -> bool:
         for ref in candidate_refs():
-            inspected = inspect_ref(ref)
-            if inspected is not None and is_expected_client(inspected):
+            if inspect_expected_ref(ref) is not None:
                 return True
         return False
 
-    def kill_client() -> bool:
+    def candidate_refs_are_absent() -> bool:
         for ref in candidate_refs():
-            inspected = inspect_ref(ref)
-            if inspected is None or not is_expected_client(inspected):
+            if inspect_expected_ref(ref) is not None:
+                return False
+        return True
+
+    def kill_client() -> bool:
+        nonlocal client_cleanup_confirmed
+        if client_cleanup_confirmed:
+            return True
+        for ref in candidate_refs():
+            inspected = inspect_expected_ref(ref)
+            if inspected is None:
                 continue
             container_id = inspected[0]
             try:
@@ -3481,7 +3925,11 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
                 return False
             if completed.returncode != 0:
                 return False
-        return not client_exists()
+            if not candidate_refs_are_absent():
+                return False
+            client_cleanup_confirmed = True
+            return True
+        return False
 
     try:
         created = subprocess.run(
@@ -3502,6 +3950,10 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
             r"[0-9a-f]{12,64}", created_container_ref
         ):
             fail("PostgreSQL client broker Docker create output is malformed", 70)
+        inspected_client = inspect_ref(created_container_ref)
+        if inspected_client is None or not is_expected_client(inspected_client):
+            fail("PostgreSQL client broker created container labels are not trusted", 70)
+        validate_created_container_records()
         wait_for_actual_docker_mounts(created_container_ref)
         validate_socket_bridge()
         process = subprocess.Popen(
@@ -3557,11 +4009,12 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
             fail("PostgreSQL client broker container cleanup is uncertain", 70)
         if client_exists():
             fail("PostgreSQL client broker container cleanup is uncertain", 70)
-        try:
-            cidfile.unlink(missing_ok=True)
-            namefile.unlink(missing_ok=True)
-        except OSError:
-            pass
+        if client_cleanup_confirmed:
+            try:
+                cidfile.unlink(missing_ok=True)
+                namefile.unlink(missing_ok=True)
+            except OSError:
+                pass
     if len(combined) > MAX_COMBINED_OUTPUT_BYTES:
         fail("PostgreSQL client broker combined output is too large", 70)
     return rc, bytes(combined), b""

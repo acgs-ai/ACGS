@@ -4183,7 +4183,7 @@ run_trusted_parent_postgres_gate() {
   shift 5
   local started finished stdout_file stderr_file gate_status stderr_sha256 tmpdir
   local runner_path runner_fd runner_path_stat runner_fd_stat runner_sha runner_size
-  local trusted_runner_sha256='8aa7d49efc92401a3647af0ff9720e4f039695d49761e0398dcfc07d6f0541fe'
+  local trusted_runner_sha256='e1f39e7991916d04c500e2da1001f40c58553574dbadab3e3562db3c3ea42c44'
   [[ "$scope" == CP ]] || die 'trusted parent PostgreSQL gate is CP-only'
   [[ "$cwd" == "$WORKTREE/packages/acgs-control-plane" ]] ||
     die 'trusted parent PostgreSQL gate cwd must be the control-plane package'
