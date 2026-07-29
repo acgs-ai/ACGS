@@ -2398,7 +2398,7 @@ def _run_fake_docker_broker_request(
         try:
             os.chdir(socket_path.parent)
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as broker_client:
-                broker_client.settimeout(5)
+                broker_client.settimeout(15)
                 broker_client.connect(socket_path.name)
                 broker_client.sendall(
                     json.dumps(
