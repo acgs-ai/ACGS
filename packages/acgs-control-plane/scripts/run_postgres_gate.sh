@@ -4002,6 +4002,7 @@ def write_exchange_marker(parent_fd: int, payload: bytes) -> None:
         dir_fd=parent_fd,
     )
     try:
+        os.fchmod(fd, 0o444)
         marker_stat = os.fstat(fd)
         if not stat.S_ISREG(marker_stat.st_mode):
             fail("PostgreSQL client exchange marker is not regular", 70)

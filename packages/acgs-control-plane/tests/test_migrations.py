@@ -2381,6 +2381,7 @@ def _run_fake_docker_broker_request(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        umask=0o077,
     )
     try:
         deadline = time.monotonic() + 5
@@ -3886,6 +3887,14 @@ def test_postgres_gate_socket_sources_bind_relative_names() -> None:
     assert "server.bind(SOCKET_NAME)" in broker_source
     assert "os.chdir(socket_dir)" in client_source
     assert "client.connect(socket_name)" in client_source
+    exchange_marker_open_index = broker_source.index("def write_exchange_marker")
+    exchange_marker_fchmod_index = broker_source.index(
+        "os.fchmod(fd, 0o444)", exchange_marker_open_index
+    )
+    exchange_marker_fstat_index = broker_source.index(
+        "marker_stat = os.fstat(fd)", exchange_marker_open_index
+    )
+    assert exchange_marker_fchmod_index < exchange_marker_fstat_index
     assert '"--memory", "512m", "--cpus", "1", "--pids-limit", "128"' in broker_source
     assert '"--ulimit", "nofile=256:256"' in broker_source
     assert (
