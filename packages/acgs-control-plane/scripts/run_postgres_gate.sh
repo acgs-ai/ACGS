@@ -282,8 +282,11 @@ if (
     or fd_stat.st_gid != path_stat.st_gid
 ):
     raise SystemExit(70)
-descriptor_path = os.path.realpath(f"/proc/self/fd/{fd}")
-if descriptor_path != os.path.realpath(expected_path):
+descriptor_path = f"/proc/self/fd/{fd}"
+try:
+    if not os.path.samefile(descriptor_path, expected_path):
+        raise SystemExit(70)
+except OSError:
     raise SystemExit(70)
 if os.lseek(fd, 0, os.SEEK_CUR) != 0:
     raise SystemExit(70)
@@ -294,6 +297,25 @@ while True:
         break
     digest.update(chunk)
 if digest.hexdigest() != expected_sha256:
+    raise SystemExit(70)
+post_hash_fd_stat = os.fstat(fd)
+post_hash_path_stat = os.stat(expected_path, follow_symlinks=False)
+if (
+    post_hash_fd_stat.st_dev != path_stat.st_dev
+    or post_hash_fd_stat.st_ino != path_stat.st_ino
+    or post_hash_fd_stat.st_size != path_stat.st_size
+    or post_hash_fd_stat.st_uid != fd_stat.st_uid
+    or post_hash_fd_stat.st_gid != fd_stat.st_gid
+    or stat.S_IMODE(post_hash_fd_stat.st_mode) != stat.S_IMODE(fd_stat.st_mode)
+    or post_hash_fd_stat.st_mtime_ns != fd_stat.st_mtime_ns
+    or post_hash_path_stat.st_dev != path_stat.st_dev
+    or post_hash_path_stat.st_ino != path_stat.st_ino
+    or post_hash_path_stat.st_size != path_stat.st_size
+    or post_hash_path_stat.st_uid != path_stat.st_uid
+    or post_hash_path_stat.st_gid != path_stat.st_gid
+    or stat.S_IMODE(post_hash_path_stat.st_mode) != stat.S_IMODE(path_stat.st_mode)
+    or post_hash_path_stat.st_mtime_ns != path_stat.st_mtime_ns
+):
     raise SystemExit(70)
 os.lseek(fd, 0, os.SEEK_SET)
 if os.lseek(fd, 0, os.SEEK_CUR) != 0:

@@ -1142,7 +1142,10 @@ def test_postgres_gate_binds_fresh_verified_uv_fd_to_inner_sandboxes() -> None:
     assert 'exec {active_uv_fd}<"$uv_bin"' in script
     assert 'verify_trusted_uv_fd "$active_uv_fd" "$uv_bin"' in script
     assert "close_active_uv_fd()" in script
-    assert 'descriptor_path = os.path.realpath(f"/proc/self/fd/{fd}")' in script
+    assert 'descriptor_path = f"/proc/self/fd/{fd}"' in script
+    assert "os.path.samefile(descriptor_path, expected_path)" in script
+    assert "post_hash_fd_stat = os.fstat(fd)" in script
+    assert "post_hash_path_stat = os.stat(expected_path, follow_symlinks=False)" in script
     assert "digest.hexdigest() != expected_sha256" in script
     assert "os.lseek(fd, 0, os.SEEK_CUR) != 0" in script
     assert "os.lseek(fd, 0, os.SEEK_SET)" in script
@@ -1170,6 +1173,183 @@ def test_postgres_gate_binds_fresh_verified_uv_fd_to_inner_sandboxes() -> None:
     assert '--setenv UV_BIN "$inner_uv_bin"' in script
     assert 'broker_child_path="/run/client:$package_dir/.venv/bin:/usr/bin:/bin"' in script
     assert "/run/client:$package_dir/.venv/bin:/run:/usr/bin:/bin" not in script
+
+
+def _run_verify_trusted_uv_fd(
+    uv_path: Path,
+    expected_path: Path,
+    expected_sha256: str,
+    tmp_path: Path,
+    *,
+    consume_fd_before_verify: bool = False,
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    script = _postgres_gate_script_source()
+    verify_source = _extract_shell_function(
+        script,
+        "verify_trusted_uv_fd",
+        "open_active_verified_uv_fd",
+    )
+    sentinel_file = tmp_path / f"verified-{time.time_ns()}"
+    consume_line = 'dd bs=1 count=1 <&"$uv_fd" >/dev/null 2>&1' if consume_fd_before_verify else ":"
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            f"pinned_uv_sha256={shlex.quote(expected_sha256)}",
+            verify_source,
+            f"exec {{uv_fd}}<{shlex.quote(str(uv_path))}",
+            consume_line,
+            f'if verify_trusted_uv_fd "$uv_fd" {shlex.quote(str(expected_path))}; then',
+            f"  printf verified >{shlex.quote(str(sentinel_file))}",
+            "else",
+            "  rc=$?",
+            '  exit "$rc"',
+            "fi",
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result, sentinel_file
+
+
+def test_postgres_gate_trusted_uv_fd_verifier_rejects_mismatches(
+    tmp_path: Path,
+) -> None:
+    uv_source = tmp_path / "uv"
+    uv_source.write_bytes(b"trusted uv bytes\n")
+    uv_source.chmod(0o755)
+    expected_sha = hashlib.sha256(uv_source.read_bytes()).hexdigest()
+    other_uv = tmp_path / "other-uv"
+    other_uv.write_bytes(uv_source.read_bytes())
+    other_uv.chmod(0o755)
+
+    ok_result, ok_sentinel = _run_verify_trusted_uv_fd(
+        uv_source,
+        uv_source,
+        expected_sha,
+        tmp_path,
+    )
+    assert ok_result.returncode == 0, ok_result.stderr
+    assert ok_sentinel.read_text(encoding="ascii") == "verified"
+
+    mismatch_result, mismatch_sentinel = _run_verify_trusted_uv_fd(
+        uv_source,
+        other_uv,
+        expected_sha,
+        tmp_path,
+    )
+    assert mismatch_result.returncode != 0
+    assert not mismatch_sentinel.exists()
+
+    wrong_digest_result, wrong_digest_sentinel = _run_verify_trusted_uv_fd(
+        uv_source,
+        uv_source,
+        hashlib.sha256(b"mutated uv bytes\n").hexdigest(),
+        tmp_path,
+    )
+    assert wrong_digest_result.returncode != 0
+    assert not wrong_digest_sentinel.exists()
+
+    offset_result, offset_sentinel = _run_verify_trusted_uv_fd(
+        uv_source,
+        uv_source,
+        expected_sha,
+        tmp_path,
+        consume_fd_before_verify=True,
+    )
+    assert offset_result.returncode != 0
+    assert not offset_sentinel.exists()
+
+
+def test_postgres_gate_trusted_uv_fd_accepts_deleted_ro_bind_data_procfd(
+    tmp_path: Path,
+) -> None:
+    bwrap_bin = _require_postgres_gate_bwrap()
+    script = _postgres_gate_script_source()
+    verify_source = _extract_shell_function(
+        script,
+        "verify_trusted_uv_fd",
+        "open_active_verified_uv_fd",
+    )
+    uv_payload = b"trusted uv snapshot\n"
+    expected_sha = hashlib.sha256(uv_payload).hexdigest()
+    uv_source = tmp_path / "uv-source"
+    uv_source.write_bytes(uv_payload)
+    uv_source.chmod(0o755)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    fd = os.open(uv_source, os.O_RDONLY)
+    try:
+        result = subprocess.run(
+            [
+                bwrap_bin,
+                "--unshare-all",
+                "--unshare-user",
+                "--die-with-parent",
+                "--new-session",
+                "--disable-userns",
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "--tmpfs",
+                "/tmp",
+                "--tmpfs",
+                "/run",
+                "--perms",
+                "500",
+                "--ro-bind-data",
+                str(fd),
+                "/run/acgs-uv",
+                "--ro-bind",
+                "/usr",
+                "/usr",
+                "--ro-bind",
+                "/bin",
+                "/bin",
+                "--ro-bind-try",
+                "/lib",
+                "/lib",
+                "--ro-bind-try",
+                "/lib64",
+                "/lib64",
+                "--bind",
+                str(out_dir),
+                "/out",
+                "--clearenv",
+                "--setenv",
+                "PATH",
+                "/usr/bin:/bin",
+                "--",
+                "/bin/bash",
+                "-s",
+            ],
+            input="\n".join(
+                (
+                    "set -euo pipefail",
+                    f"pinned_uv_sha256={shlex.quote(expected_sha)}",
+                    verify_source,
+                    "exec {uv_fd}</run/acgs-uv",
+                    'readlink "/proc/self/fd/$uv_fd" >/out/procfd-target',
+                    'verify_trusted_uv_fd "$uv_fd" /run/acgs-uv',
+                    "printf verified >/out/verified",
+                )
+            ),
+            capture_output=True,
+            text=True,
+            pass_fds=(fd,),
+            check=False,
+        )
+    finally:
+        os.close(fd)
+
+    assert result.returncode == 0, result.stderr
+    assert (out_dir / "verified").read_text(encoding="ascii") == "verified"
+    assert "(deleted)" in (out_dir / "procfd-target").read_text(encoding="ascii")
 
 
 def test_postgres_gate_uv_fd_cleanup_is_first_cleanup_side_effect() -> None:

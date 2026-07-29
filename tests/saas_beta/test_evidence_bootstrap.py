@@ -165,7 +165,7 @@ P3_APPROVAL_ROOT_SELECTORS = (
     "test_approval_contract_locks_vote_and_resume_assurance",
 )
 P3_APPROVAL_POSTGRES_RUNNER_SHA256 = (
-    "95596fe52f74cce00673cb139907d282de63a528820b51e38d44a47fbe078db5"
+    "5c0f216d6a4ed34610e5ae0001f305157d09d0f014a68b32b2025b6e94c231dd"
 )
 P2_IDEMPOTENCY_RETIRED_SELECTOR_PATTERNS = (
     "tests/integration/test_production_posture.py",
@@ -20785,11 +20785,21 @@ def _assert_postgres_uv_fd_contract(
     assert "if os.lseek(fd, 0, os.SEEK_CUR) != 0:\n    raise SystemExit(70)" in (
         uv_fd_verifier
     )
+    assert 'descriptor_path = f"/proc/self/fd/{fd}"' in uv_fd_verifier
+    assert "os.path.samefile(descriptor_path, expected_path)" in uv_fd_verifier
+    assert "os.path.realpath" not in uv_fd_verifier
+    assert "post_hash_fd_stat = os.fstat(fd)" in uv_fd_verifier
+    assert "post_hash_path_stat = os.stat(expected_path, follow_symlinks=False)" in (uv_fd_verifier)
+    assert "post_hash_fd_stat.st_mtime_ns != fd_stat.st_mtime_ns" in uv_fd_verifier
+    assert "post_hash_path_stat.st_mtime_ns != path_stat.st_mtime_ns" in uv_fd_verifier
     assert "os.lseek(fd, 0, os.SEEK_SET)" in uv_fd_verifier
     assert uv_fd_verifier.index("digest = hashlib.sha256()") < uv_fd_verifier.index(
         "if digest.hexdigest() != expected_sha256:"
     )
     assert uv_fd_verifier.index("if digest.hexdigest() != expected_sha256:") < (
+        uv_fd_verifier.index("post_hash_fd_stat = os.fstat(fd)")
+    )
+    assert uv_fd_verifier.index("post_hash_fd_stat = os.fstat(fd)") < (
         uv_fd_verifier.index("os.lseek(fd, 0, os.SEEK_SET)")
     )
 
@@ -20989,6 +20999,41 @@ def test_clean_sibling_postgres_uv_fd_contract_rejects_inner_bind_mutations() ->
         "active-fd-sha-bypassed": reviewed_runner_source.replace(
             "if digest.hexdigest() != expected_sha256:\n    raise SystemExit(70)",
             "if False:\n    raise SystemExit(70)",
+            1,
+        ),
+        "procfd-realpath-string-compare-reintroduced": reviewed_runner_source.replace(
+            'descriptor_path = f"/proc/self/fd/{fd}"\n'
+            "try:\n"
+            "    if not os.path.samefile(descriptor_path, expected_path):\n"
+            "        raise SystemExit(70)\n"
+            "except OSError:\n"
+            "    raise SystemExit(70)\n",
+            'descriptor_path = os.path.realpath(f"/proc/self/fd/{fd}")\n'
+            "if descriptor_path != os.path.realpath(expected_path):\n"
+            "    raise SystemExit(70)\n",
+            1,
+        ),
+        "post-hash-fd-path-restats-omitted": reviewed_runner_source.replace(
+            "post_hash_fd_stat = os.fstat(fd)\n"
+            "post_hash_path_stat = os.stat(expected_path, follow_symlinks=False)\n"
+            "if (\n"
+            "    post_hash_fd_stat.st_dev != path_stat.st_dev\n"
+            "    or post_hash_fd_stat.st_ino != path_stat.st_ino\n"
+            "    or post_hash_fd_stat.st_size != path_stat.st_size\n"
+            "    or post_hash_fd_stat.st_uid != fd_stat.st_uid\n"
+            "    or post_hash_fd_stat.st_gid != fd_stat.st_gid\n"
+            "    or stat.S_IMODE(post_hash_fd_stat.st_mode) != stat.S_IMODE(fd_stat.st_mode)\n"
+            "    or post_hash_fd_stat.st_mtime_ns != fd_stat.st_mtime_ns\n"
+            "    or post_hash_path_stat.st_dev != path_stat.st_dev\n"
+            "    or post_hash_path_stat.st_ino != path_stat.st_ino\n"
+            "    or post_hash_path_stat.st_size != path_stat.st_size\n"
+            "    or post_hash_path_stat.st_uid != path_stat.st_uid\n"
+            "    or post_hash_path_stat.st_gid != path_stat.st_gid\n"
+            "    or stat.S_IMODE(post_hash_path_stat.st_mode) != stat.S_IMODE(path_stat.st_mode)\n"
+            "    or post_hash_path_stat.st_mtime_ns != path_stat.st_mtime_ns\n"
+            "):\n"
+            "    raise SystemExit(70)\n",
+            "",
             1,
         ),
         "close-helper-no-op": reviewed_runner_source.replace(
@@ -21916,6 +21961,8 @@ def test_clean_sibling_outer_ro_bind_data_can_feed_inner_fd_uv_mount() -> None:
         f"EXPECTED_UV_VERSION={shlex.quote(expected_uv_version)}\n"
         'test -x "$UV_HOST_PATH"\n'
         'exec 9<"$UV_HOST_PATH"\n'
+        'fd_target="$(/usr/bin/readlink /proc/$$/fd/9)"\n'
+        'case "$fd_target" in *" (deleted)") ;; *) echo "$fd_target" >&2; exit 82;; esac\n'
         "/usr/bin/python3 -I -S - 9 <<'PY'\n"
         "import os\n"
         "import stat\n"
