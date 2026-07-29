@@ -165,7 +165,7 @@ P3_APPROVAL_ROOT_SELECTORS = (
     "test_approval_contract_locks_vote_and_resume_assurance",
 )
 P3_APPROVAL_POSTGRES_RUNNER_SHA256 = (
-    "5c0f216d6a4ed34610e5ae0001f305157d09d0f014a68b32b2025b6e94c231dd"
+    "9abedfa3445832d12459ebf79f40824c6bc0cb2cf3217c07ba0c021a7389a4cb"
 )
 P2_IDEMPOTENCY_RETIRED_SELECTOR_PATTERNS = (
     "tests/integration/test_production_posture.py",
@@ -20747,6 +20747,10 @@ def _assert_postgres_uv_fd_contract(
     uv_fd_verifier = _shell_function(runner_source, "verify_trusted_uv_fd")
     active_fd_opener = _shell_function(runner_source, "open_active_verified_uv_fd")
     active_fd_closer = _shell_function(runner_source, "close_active_uv_fd")
+    exact_container_cleanup = _shell_function(
+        runner_source,
+        "remove_exact_recorded_container",
+    )
     inner_preflight = _shell_single_quoted_assignment(
         runner_source,
         "inner_uv_preflight",
@@ -20824,6 +20828,26 @@ def _assert_postgres_uv_fd_contract(
     assert active_fd_closer.index("exec {active_uv_fd}<&-") < active_fd_closer.index(
         "active_uv_fd=''"
     )
+
+    expected_cleanup_sequence = (
+        '  timeout --preserve-status 30s docker rm -f "$validated_id" >/dev/null 2>&1 '
+        "|| return $?\n"
+        "  for _ in {1..25}; do\n"
+        '    if timeout --preserve-status 10s docker inspect "$validated_id" '
+        ">/dev/null 2>&1; then\n"
+        "      sleep 0.2\n"
+        "      continue\n"
+        "    else\n"
+        "      rc=$?\n"
+        "    fi\n"
+        '    if [[ "$rc" == 1 ]]; then\n'
+        "      return 0\n"
+        "    fi\n"
+        '    return "$rc"\n'
+        "  done\n"
+        "  return 70"
+    )
+    assert expected_cleanup_sequence in exact_container_cleanup
 
     assert inner_preflight.startswith("set -eu\n")
     assert "mode=$(/usr/bin/stat -c %a -- \"$uv_path\")" in inner_preflight
@@ -21058,6 +21082,41 @@ def test_clean_sibling_postgres_uv_fd_contract_rejects_inner_bind_mutations() ->
         "cleanup-active-fd-close-omitted": reviewed_runner_source.replace(
             "  close_active_uv_fd\n  local cleanup_status=0\n",
             "  local cleanup_status=0\n",
+            1,
+        ),
+        "post-rm-loop-collapsed-to-one-shot": reviewed_runner_source.replace(
+            "  for _ in {1..25}; do\n"
+            '    if timeout --preserve-status 10s docker inspect "$validated_id" '
+            ">/dev/null 2>&1; then\n"
+            "      sleep 0.2\n"
+            "      continue\n"
+            "    else\n"
+            "      rc=$?\n"
+            "    fi\n"
+            '    if [[ "$rc" == 1 ]]; then\n'
+            "      return 0\n"
+            "    fi\n"
+            '    return "$rc"\n'
+            "  done\n"
+            "  return 70\n",
+            '  timeout --preserve-status 10s docker inspect "$validated_id" '
+            ">/dev/null 2>&1 || return 0\n"
+            "  return 70\n",
+            1,
+        ),
+        "post-rm-exact-id-inspect-bypassed": reviewed_runner_source.replace(
+            'timeout --preserve-status 10s docker inspect "$validated_id"',
+            'timeout --preserve-status 10s docker inspect "$container_ref"',
+            1,
+        ),
+        "post-rm-still-present-treated-as-success": reviewed_runner_source.replace(
+            "      sleep 0.2\n      continue\n",
+            "      return 0\n",
+            1,
+        ),
+        "post-rm-exhaustion-treated-as-success": reviewed_runner_source.replace(
+            "  done\n  return 70\n",
+            "  done\n  return 0\n",
             1,
         ),
     }

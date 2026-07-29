@@ -6284,6 +6284,7 @@ def test_postgres_gate_duplicate_cleanup_inspect_absence_is_quiet_and_fail_close
         ("malformed-json", "trusted-client", "trusted-broker", 70, False),
         ("extra-json", "trusted-client", "trusted-broker", 70, False),
         ("oversize-json", "trusted-client", "trusted-broker", 70, False),
+        ("wrong-name", "trusted-client", "trusted-broker", 70, False),
         (
             "wrong-id",
             "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
@@ -6291,6 +6292,7 @@ def test_postgres_gate_duplicate_cleanup_inspect_absence_is_quiet_and_fail_close
             70,
             False,
         ),
+        ("post-rm-eventual-absence", "trusted-client", "trusted-broker", 0, True),
         ("post-rm-nonabsence", "trusted-client", "trusted-broker", 70, True),
         ("post-rm-rc2", "trusted-client", "trusted-broker", 2, True),
         ("post-rm-timeout", "trusted-client", "trusted-broker", 124, True),
@@ -6313,11 +6315,13 @@ def test_postgres_gate_remove_exact_recorded_container_strict_identity_matrix(
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
     rm_marker = tmp_path / "rm-called"
+    post_rm_inspect_count = tmp_path / "post-rm-inspect-count"
     trusted_name = "acp-postgres-gate-1000-0123456789abcdef0123456789abcdef-client-1-1"
     main_name = "acp-postgres-gate-1000-0123456789abcdef0123456789abcdef-server"
     trusted_id = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
     main_id = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
     docker_path = fake_bin / "docker"
+    sleep_path = fake_bin / "sleep"
     docker_path.write_text(
         "\n".join(
             [
@@ -6329,6 +6333,7 @@ def test_postgres_gate_remove_exact_recorded_container_strict_identity_matrix(
                 "args = sys.argv[1:]",
                 f"mode = {mode!r}",
                 f"rm_marker = Path({str(rm_marker)!r})",
+                f"post_rm_inspect_count = Path({str(post_rm_inspect_count)!r})",
                 f"trusted_id = {trusted_id!r}",
                 f"main_id = {main_id!r}",
                 f"trusted_name = {trusted_name!r}",
@@ -6352,6 +6357,8 @@ def test_postgres_gate_remove_exact_recorded_container_strict_identity_matrix(
                 "            'fedcba0987654321fedcba0987654321'",
                 "            'fedcba0987654321fedcba0987654321'",
                 "        )",
+                "    if mode == 'wrong-name':",
+                "        name = 'unexpected-client-name'",
                 "    server = None",
                 "    client = 'trusted-broker'",
                 "    if mode == 'exact-main':",
@@ -6395,6 +6402,12 @@ def test_postgres_gate_remove_exact_recorded_container_strict_identity_matrix(
                 "    rm_marker.write_text(args[-1] + '\\n', encoding='ascii')",
                 "    raise SystemExit(0)",
                 "if args[:1] == ['inspect']:",
+                "    count = 1",
+                "    if post_rm_inspect_count.exists():",
+                "        count = int(post_rm_inspect_count.read_text(encoding='ascii')) + 1",
+                "    post_rm_inspect_count.write_text(str(count) + '\\n', encoding='ascii')",
+                "    if mode == 'post-rm-eventual-absence' and count == 1:",
+                "        raise SystemExit(0)",
                 "    if mode == 'post-rm-nonabsence':",
                 "        raise SystemExit(0)",
                 "    if mode == 'post-rm-rc2':",
@@ -6409,6 +6422,8 @@ def test_postgres_gate_remove_exact_recorded_container_strict_identity_matrix(
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
+    sleep_path.write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
+    sleep_path.chmod(0o755)
     expected_name = main_name if expected_role == "main" else trusted_name
     harness = "\n".join(
         (
@@ -6434,6 +6449,10 @@ def test_postgres_gate_remove_exact_recorded_container_strict_identity_matrix(
     )
     assert result.returncode == 0, (mode, result.returncode, result.stdout, result.stderr)
     assert rm_marker.exists() is rm_expected
+    if mode == "post-rm-eventual-absence":
+        assert int(post_rm_inspect_count.read_text(encoding="ascii")) > 1
+    elif mode == "post-rm-nonabsence":
+        assert int(post_rm_inspect_count.read_text(encoding="ascii")) == 25
 
 
 @pytest.mark.parametrize(

@@ -2021,15 +2021,19 @@ PY
   }
   [[ "$validated_id" =~ ^[0-9a-f]{12,64}$ ]] || return 70
   timeout --preserve-status 30s docker rm -f "$validated_id" >/dev/null 2>&1 || return $?
-  if timeout --preserve-status 10s docker inspect "$validated_id" >/dev/null 2>&1; then
-    return 70
-  else
-    rc=$?
+  for _ in {1..25}; do
+    if timeout --preserve-status 10s docker inspect "$validated_id" >/dev/null 2>&1; then
+      sleep 0.2
+      continue
+    else
+      rc=$?
+    fi
     if [[ "$rc" == 1 ]]; then
       return 0
     fi
     return "$rc"
-  fi
+  done
+  return 70
 }
 
 cleanup_server_container() {
