@@ -1091,6 +1091,7 @@ def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
     assert "PGSERVICEFILE" not in server_launch
     assert "PGHOST" not in server_launch
     assert "--tmpfs /var/run/postgresql" not in server_launch
+    assert '--ro-bind "$uv_bin"' not in script
     assert '--mount "type=bind,src=$postgres_socket_bridge,dst=/var/run/postgresql"' in (
         server_launch
     )
@@ -1109,15 +1110,279 @@ def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
 
     pytest_invocation = (
         'timeout --preserve-status 900s env -i "$bwrap_bin" "${bwrap_args[@]}" -- \\\n'
+        '    /bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \\\n'
+        '      "$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"'
+    )
+    obsolete_direct_pytest_invocation = (
+        'timeout --preserve-status 900s env -i "$bwrap_bin" "${bwrap_args[@]}" -- \\\n'
         '    "$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"'
     )
     assert pytest_invocation in script
+    assert obsolete_direct_pytest_invocation not in script
     assert ') >"/proc/$BASHPID/fd/$pytest_output_fd" 2>&1' in script
     assert (
         'env -i "$bwrap_bin" "${bwrap_args[@]}" -- \\\n'
         '  "$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"'
     ) not in script
     assert script.index(pytest_invocation) > script.index("broker_socket=")
+
+
+def test_postgres_gate_binds_fresh_verified_uv_fd_to_inner_sandboxes() -> None:
+    script = _postgres_gate_script_source()
+
+    assert "inner_uv_bin='/run/acgs-uv'" in script
+    assert "active_uv_fd=''" in script
+    assert (
+        "pinned_uv_sha256='a00d3a24514fc0403fc232c9c99bf5e542657c38f4ed941e0611731e4cff268b'"
+        in script
+    )
+    assert "pinned_uv_version='uv 0.11.19 (x86_64-unknown-linux-gnu)'" in script
+    assert "verify_trusted_uv_fd()" in script
+    assert "open_active_verified_uv_fd()" in script
+    assert 'exec {active_uv_fd}<"$uv_bin"' in script
+    assert 'verify_trusted_uv_fd "$active_uv_fd" "$uv_bin"' in script
+    assert "close_active_uv_fd()" in script
+    assert 'descriptor_path = os.path.realpath(f"/proc/self/fd/{fd}")' in script
+    assert "digest.hexdigest() != expected_sha256" in script
+    assert "os.lseek(fd, 0, os.SEEK_CUR) != 0" in script
+    assert "os.lseek(fd, 0, os.SEEK_SET)" in script
+    assert "inner_uv_preflight='set -eu" in script
+    assert 'mode=$(/usr/bin/stat -c %a -- "$uv_path")' in script
+    assert 'test "$mode" = 500' in script
+    assert 'digest_line=$(/usr/bin/sha256sum -- "$uv_path")' in script
+    assert 'test "$digest" = "$expected_sha"' in script
+    assert 'exec "$@"' in script
+
+    assert script.count("open_active_verified_uv_fd") == 3
+    assert script.count("close_active_uv_fd") == 5
+    assert '--perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"' in script
+    assert '--tmpfs /run\n  --perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"' in script
+    assert (
+        '/bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \\\n'
+        '      "$inner_uv_bin" build --no-build-isolation' in script
+    )
+    assert (
+        '/bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \\\n'
+        '      "$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"' in script
+    )
+    assert '"$inner_uv_bin" build --no-build-isolation' in script
+    assert 'export UV_BIN="$inner_uv_bin"' in script
+    assert '--setenv UV_BIN "$inner_uv_bin"' in script
+    assert 'broker_child_path="/run/client:$package_dir/.venv/bin:/usr/bin:/bin"' in script
+    assert "/run/client:$package_dir/.venv/bin:/run:/usr/bin:/bin" not in script
+
+
+def test_postgres_gate_uv_fd_cleanup_is_first_cleanup_side_effect() -> None:
+    script = _postgres_gate_script_source()
+
+    cleanup_source = script.split("cleanup() {", 1)[1].split("\n}\ntrap cleanup EXIT", 1)[0]
+    assert cleanup_source.splitlines()[1:3] == [
+        "  local status=$?",
+        "  close_active_uv_fd",
+    ]
+    assert script.index("pytest_output_file=") < script.index(
+        "open_active_verified_uv_fd || {\n  echo 'failed to open a fresh verified uv FD"
+    )
+
+
+def test_postgres_gate_rejects_old_inner_uv_path_bind_contract() -> None:
+    script = _postgres_gate_script_source()
+
+    forbidden_fragments = [
+        '--ro-bind "$uv_bin" "$uv_bin"',
+        '--ro-bind "$uv_bin" /run/acgs-uv',
+        '--ro-bind "$uv_bin" "$inner_uv_bin"',
+        '--ro-bind-data "$uv_bin"',
+        '--ro-bind-data "$canonical_uv_bin"',
+    ]
+    for fragment in forbidden_fragments:
+        assert fragment not in script
+
+
+def _require_postgres_gate_bwrap() -> str:
+    bwrap_bin = shutil.which("bwrap")
+    if bwrap_bin is None:
+        pytest.skip("bwrap is unavailable")
+    preflight = subprocess.run(
+        [
+            bwrap_bin,
+            "--unshare-all",
+            "--unshare-user",
+            "--die-with-parent",
+            "--new-session",
+            "--disable-userns",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+            "--tmpfs",
+            "/run",
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--ro-bind",
+            "/bin",
+            "/bin",
+            "--ro-bind-try",
+            "/lib",
+            "/lib",
+            "--ro-bind-try",
+            "/lib64",
+            "/lib64",
+            "--clearenv",
+            "--setenv",
+            "PATH",
+            "/usr/bin:/bin",
+            "--",
+            "/bin/sh",
+            "-c",
+            "true",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if preflight.returncode != 0:
+        pytest.skip(f"bwrap preflight unavailable: {preflight.stderr.strip()}")
+    return bwrap_bin
+
+
+def _run_inner_uv_snapshot_preflight(
+    tmp_path: Path,
+    uv_payload: bytes,
+    *,
+    expected_sha256: str | None = None,
+    bind_mode: str = "500",
+    seek_to_end_then_reset: bool = False,
+) -> tuple[subprocess.CompletedProcess[str], Path, int]:
+    bwrap_bin = _require_postgres_gate_bwrap()
+    uv_source = tmp_path / "uv-source"
+    uv_source.write_bytes(uv_payload)
+    expected = expected_sha256 or hashlib.sha256(uv_payload).hexdigest()
+    sentinel_dir = tmp_path / "sentinel"
+    sentinel_dir.mkdir()
+    sentinel_file = sentinel_dir / "executed"
+    fd = os.open(uv_source, os.O_RDONLY)
+    try:
+        if seek_to_end_then_reset:
+            os.read(fd, len(uv_payload))
+            assert os.lseek(fd, 0, os.SEEK_CUR) == len(uv_payload)
+            os.lseek(fd, 0, os.SEEK_SET)
+        result = subprocess.run(
+            [
+                bwrap_bin,
+                "--unshare-all",
+                "--unshare-user",
+                "--die-with-parent",
+                "--new-session",
+                "--disable-userns",
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "--tmpfs",
+                "/tmp",
+                "--tmpfs",
+                "/run",
+                "--perms",
+                bind_mode,
+                "--ro-bind-data",
+                str(fd),
+                "/run/acgs-uv",
+                "--ro-bind",
+                "/usr",
+                "/usr",
+                "--ro-bind",
+                "/bin",
+                "/bin",
+                "--ro-bind-try",
+                "/lib",
+                "/lib",
+                "--ro-bind-try",
+                "/lib64",
+                "/lib64",
+                "--bind",
+                str(sentinel_dir),
+                "/out",
+                "--clearenv",
+                "--setenv",
+                "PATH",
+                "/usr/bin:/bin",
+                "--",
+                "/bin/sh",
+                "-c",
+                (
+                    "set -eu\n"
+                    "uv_path=$1\n"
+                    "expected_sha=$2\n"
+                    "shift 2\n"
+                    'mode=$(/usr/bin/stat -c %a -- "$uv_path")\n'
+                    'test "$mode" = 500\n'
+                    'digest_line=$(/usr/bin/sha256sum -- "$uv_path")\n'
+                    "digest=${digest_line%% *}\n"
+                    'test "$digest" = "$expected_sha"\n'
+                    'exec "$@"'
+                ),
+                "sh",
+                "/run/acgs-uv",
+                expected,
+                "/bin/sh",
+                "-c",
+                "printf executed > /out/executed",
+            ],
+            capture_output=True,
+            text=True,
+            pass_fds=(fd,),
+            check=False,
+        )
+    finally:
+        os.close(fd)
+    return result, sentinel_file, fd
+
+
+def test_postgres_gate_inner_uv_snapshot_preflight_executes_only_matching_mode500(
+    tmp_path: Path,
+) -> None:
+    result, sentinel_file, fd = _run_inner_uv_snapshot_preflight(
+        tmp_path,
+        b"trusted uv snapshot\n",
+        seek_to_end_then_reset=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert sentinel_file.read_text(encoding="utf-8") == "executed"
+    assert not Path(f"/proc/self/fd/{fd}").exists()
+
+
+def test_postgres_gate_inner_uv_snapshot_preflight_blocks_mutated_bytes(
+    tmp_path: Path,
+) -> None:
+    expected = hashlib.sha256(b"trusted uv snapshot\n").hexdigest()
+    result, sentinel_file, fd = _run_inner_uv_snapshot_preflight(
+        tmp_path,
+        b"mutated uv snapshot\n",
+        expected_sha256=expected,
+    )
+
+    assert result.returncode != 0
+    assert not sentinel_file.exists()
+    assert not Path(f"/proc/self/fd/{fd}").exists()
+
+
+def test_postgres_gate_inner_uv_snapshot_preflight_blocks_wrong_mode(
+    tmp_path: Path,
+) -> None:
+    result, sentinel_file, fd = _run_inner_uv_snapshot_preflight(
+        tmp_path,
+        b"trusted uv snapshot\n",
+        bind_mode="400",
+    )
+
+    assert result.returncode != 0
+    assert not sentinel_file.exists()
+    assert not Path(f"/proc/self/fd/{fd}").exists()
 
 
 def test_postgres_gate_fake_entrypoint_uses_default_socket_after_clearing_pg_env(
@@ -6050,6 +6315,9 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
         "verify_stable_no_proof_labelled_containers",
         "cleanup_postgres_socket_bridge",
     )
+    close_active_uv_start = script.index("close_active_uv_fd() {")
+    close_active_uv_end = script.index("\n}\n\n# shellcheck disable=SC2016", close_active_uv_start)
+    close_active_uv_source = script[close_active_uv_start : close_active_uv_end + 3]
     start = script.index("cleanup() {")
     end = script.index("\ntrap cleanup EXIT", start)
     cleanup_source = script[start:end]
@@ -6196,6 +6464,8 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
     )
     docker_path.chmod(0o755)
     touched = tmp_path / "touched"
+    active_uv_fd_source = tmp_path / "active-uv-fd"
+    active_uv_fd_source.write_text("fd lifecycle sentinel\n", encoding="ascii")
     harness = "\n".join(
         (
             "set -euo pipefail",
@@ -6218,6 +6488,8 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
             "broker_pid=''",
             "docker_started=1",
             "DOCKER_PS_IDS=()",
+            "active_uv_fd=''",
+            f"active_uv_fd_source={str(active_uv_fd_source)!r}",
             read_private_source,
             write_recovery_source,
             capture_source,
@@ -6226,6 +6498,7 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
             cleanup_server_source,
             verify_no_source,
             verify_stable_source,
+            close_active_uv_source,
             "cleanup_postgres_socket_bridge() {",
             f"  echo bridge >>{str(touched)!r}",
             f"  rm -rf {str(bridge)!r}",
@@ -6235,6 +6508,7 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
             f"  rm -f {str(intent)!r}",
             "}",
             cleanup_source,
+            'exec {active_uv_fd}<"$active_uv_fd_source"',
             "cleanup",
         )
     )

@@ -10,6 +10,10 @@ postgres_password=''
 postgres_fixture_owner_user='acgs_control_plane_fixture_owner'
 postgres_fixture_owner_password=''
 main_database='acgs_control_plane_test'
+pinned_uv_sha256='a00d3a24514fc0403fc232c9c99bf5e542657c38f4ed941e0611731e4cff268b'
+pinned_uv_version='uv 0.11.19 (x86_64-unknown-linux-gnu)'
+inner_uv_bin='/run/acgs-uv'
+active_uv_fd=''
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 package_dir="$(cd -- "$script_dir/.." && pwd)"
@@ -238,14 +242,92 @@ if [[ "$canonical_uv_bin" != "$uv_bin" ]]; then
   echo 'UV_BIN must already be a canonical path' >&2
   exit 69
 fi
-if [[ "$(sha256sum "$uv_bin" | awk '{print $1}')" != 'a00d3a24514fc0403fc232c9c99bf5e542657c38f4ed941e0611731e4cff268b' ]]; then
+if [[ "$(sha256sum "$uv_bin" | awk '{print $1}')" != "$pinned_uv_sha256" ]]; then
   echo 'UV_BIN does not match the required pinned sha256' >&2
   exit 69
 fi
-if [[ "$("$uv_bin" --version)" != 'uv 0.11.19 (x86_64-unknown-linux-gnu)' ]]; then
+if [[ "$("$uv_bin" --version)" != "$pinned_uv_version" ]]; then
   echo 'UV_BIN must be uv 0.11.19' >&2
   exit 69
 fi
+
+verify_trusted_uv_fd() {
+  local uv_fd=$1
+  local expected_uv_path=$2
+  /usr/bin/python3 -I -S - "$uv_fd" "$expected_uv_path" "$pinned_uv_sha256" <<'PY'
+from __future__ import annotations
+
+import hashlib
+import os
+import stat
+import sys
+
+fd_text, expected_path, expected_sha256 = sys.argv[1:4]
+if not fd_text.isdigit() or not expected_path.startswith("/"):
+    raise SystemExit(70)
+fd = int(fd_text)
+fd_stat = os.fstat(fd)
+path_stat = os.stat(expected_path, follow_symlinks=False)
+if not stat.S_ISREG(fd_stat.st_mode):
+    raise SystemExit(70)
+if not stat.S_ISREG(path_stat.st_mode):
+    raise SystemExit(70)
+if stat.S_IMODE(fd_stat.st_mode) & 0o111 == 0:
+    raise SystemExit(70)
+if (
+    fd_stat.st_dev != path_stat.st_dev
+    or fd_stat.st_ino != path_stat.st_ino
+    or fd_stat.st_size != path_stat.st_size
+    or fd_stat.st_uid != path_stat.st_uid
+    or fd_stat.st_gid != path_stat.st_gid
+):
+    raise SystemExit(70)
+descriptor_path = os.path.realpath(f"/proc/self/fd/{fd}")
+if descriptor_path != os.path.realpath(expected_path):
+    raise SystemExit(70)
+if os.lseek(fd, 0, os.SEEK_CUR) != 0:
+    raise SystemExit(70)
+digest = hashlib.sha256()
+while True:
+    chunk = os.read(fd, 1024 * 1024)
+    if not chunk:
+        break
+    digest.update(chunk)
+if digest.hexdigest() != expected_sha256:
+    raise SystemExit(70)
+os.lseek(fd, 0, os.SEEK_SET)
+if os.lseek(fd, 0, os.SEEK_CUR) != 0:
+    raise SystemExit(70)
+PY
+}
+
+open_active_verified_uv_fd() {
+  exec {active_uv_fd}<"$uv_bin"
+  if ! verify_trusted_uv_fd "$active_uv_fd" "$uv_bin"; then
+    exec {active_uv_fd}<&-
+    active_uv_fd=''
+    return 70
+  fi
+}
+
+close_active_uv_fd() {
+  if [[ -n "$active_uv_fd" ]]; then
+    exec {active_uv_fd}<&-
+    active_uv_fd=''
+  fi
+}
+
+# shellcheck disable=SC2016
+inner_uv_preflight='set -eu
+uv_path=$1
+expected_sha=$2
+shift 2
+mode=$(/usr/bin/stat -c %a -- "$uv_path")
+test "$mode" = 500
+digest_line=$(/usr/bin/sha256sum -- "$uv_path")
+digest=${digest_line%% *}
+test "$digest" = "$expected_sha"
+exec "$@"'
 canonical_venv_python="$(realpath -e -- "$package_dir/.venv/bin/python")"
 venv_python_target="$(readlink -- "$package_dir/.venv/bin/python")"
 if [[ "$venv_python_target" != /* ]]; then
@@ -2875,6 +2957,7 @@ PY
 
 cleanup() {
   local status=$?
+  close_active_uv_fd
   local cleanup_status=0
   local cleanup_safe=1
   local rc=0
@@ -5167,7 +5250,11 @@ export SOURCE_DATE_EPOCH
 SOURCE_DATE_EPOCH="$(git -C "$workspace_dir" show -s --format=%ct "$old_commit")"
 run_sandboxed_uv_build() {
   local output_dir="$1"
-  env -i "$bwrap_bin" \
+  open_active_verified_uv_fd || {
+    echo 'failed to open a fresh verified uv FD for the old-wheel build sandbox' >&2
+    return 70
+  }
+  if env -i "$bwrap_bin" \
     --unshare-all --unshare-user --die-with-parent --new-session --disable-userns \
     --proc /proc \
     --dev /dev \
@@ -5178,7 +5265,7 @@ run_sandboxed_uv_build() {
     --ro-bind-try /lib /lib \
     --ro-bind-try /lib64 /lib64 \
     --ro-bind "$package_dir" "$package_dir" \
-    --ro-bind "$uv_bin" "$uv_bin" \
+    --perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin" \
     --ro-bind "$python_runtime_bind_root" "$python_runtime_bind_root" \
     --bind "$state_dir" "$state_dir" \
     --ro-bind "$package_dir/.venv" "$state_dir/acp-old/packages/acgs-control-plane/.venv" \
@@ -5187,13 +5274,22 @@ run_sandboxed_uv_build() {
     --setenv TMPDIR "$state_dir/tmp" \
     --setenv UV_CACHE_DIR "$state_dir/uv-cache" \
     --setenv SOURCE_DATE_EPOCH "$SOURCE_DATE_EPOCH" \
+    --setenv UV_BIN "$inner_uv_bin" \
     --setenv PATH /usr/bin:/bin \
     --chdir "$package_dir" \
     -- \
-    "$uv_bin" build --no-build-isolation \
+    /bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \
+      "$inner_uv_bin" build --no-build-isolation \
       --python "$package_dir/.venv/bin/python" \
       --offline --no-index --no-cache --wheel --out-dir "$output_dir" \
       "$state_dir/acp-old/packages/acgs-control-plane"
+  then
+    close_active_uv_fd
+  else
+    local build_status=$?
+    close_active_uv_fd
+    return "$build_status"
+  fi
 }
 run_sandboxed_uv_build "$state_dir/old-1"
 run_sandboxed_uv_build "$state_dir/old-2"
@@ -5232,17 +5328,35 @@ if [[ "$selector_mode" == 'p1-migration' || "$selector_mode" == 'p2-immutable-00
 else
   unset ACP_TEST_OLD_APP_ARTIFACT ACP_TEST_OLD_APP_ARTIFACT_SHA256
 fi
-export UV_BIN="$uv_bin"
+export UV_BIN="$inner_uv_bin"
 export ACP_TEST_POSTGRES_SELECTOR_MODE="$selector_mode"
 
 junit_report="/run/tmp/junit.xml"
 broker_child_path="/run/client:$package_dir/.venv/bin:/usr/bin:/bin"
+pytest_output_file="$state_dir/tmp/pytest-output.bin"
+write_verified_private_artifact "$state_dir/tmp" "pytest-output.bin" 0600 </dev/null || {
+  echo 'failed to create bounded pytest output sink' >&2
+  exit 70
+}
+if ! exec {pytest_output_fd}<>"$pytest_output_file"; then
+  echo 'failed to open bounded pytest output sink' >&2
+  exit 70
+fi
+verify_private_artifact_fd "$pytest_output_file" "/proc/$BASHPID/fd/$pytest_output_fd" 0600 || {
+  echo 'bounded pytest output sink failed verification' >&2
+  exit 70
+}
+open_active_verified_uv_fd || {
+  echo 'failed to open a fresh verified uv FD for the pytest sandbox' >&2
+  exit 70
+}
 bwrap_args=(
   --unshare-all --unshare-user --die-with-parent --new-session --disable-userns
   --proc /proc
   --dev /dev
   --tmpfs /tmp
   --tmpfs /run
+  --perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"
   --dir /proof-scratch
   --ro-bind /usr /usr
   --ro-bind /bin /bin
@@ -5250,7 +5364,6 @@ bwrap_args=(
   --ro-bind-try /lib64 /lib64
   --ro-bind "$package_dir" "$package_dir"
   --ro-bind "$gove_zone_src" "$gove_zone_src"
-  --ro-bind "$uv_bin" "$uv_bin"
   --ro-bind "$python_runtime_bind_root" "$python_runtime_bind_root"
   --ro-bind "$state_dir/client" /run/client
   --ro-bind "$state_dir/broker" /run/broker
@@ -5278,7 +5391,7 @@ bwrap_args=(
   --setenv PYTEST_ADDOPTS "-p no:cacheprovider"
   --setenv PYTHONNOUSERSITE 1
   --setenv PYTHONDONTWRITEBYTECODE 1
-  --setenv UV_BIN "$uv_bin"
+  --setenv UV_BIN "$inner_uv_bin"
   --setenv PATH "$broker_child_path"
   --setenv TMPDIR /run/tmp
   --setenv HOME /run/home
@@ -5288,23 +5401,15 @@ if [[ "$selector_mode" == 'p1-migration' || "$selector_mode" == 'p2-immutable-00
   bwrap_args+=(--setenv ACP_TEST_OLD_APP_ARTIFACT "/old-1/${old_wheel##*/}")
   bwrap_args+=(--setenv ACP_TEST_OLD_APP_ARTIFACT_SHA256 "$old_digest")
 fi
-pytest_output_file="$state_dir/tmp/pytest-output.bin"
-write_verified_private_artifact "$state_dir/tmp" "pytest-output.bin" 0600 </dev/null || {
-  echo 'failed to create bounded pytest output sink' >&2
-  exit 70
-}
-exec {pytest_output_fd}<>"$pytest_output_file"
-verify_private_artifact_fd "$pytest_output_file" "/proc/$BASHPID/fd/$pytest_output_fd" 0600 || {
-  echo 'bounded pytest output sink failed verification' >&2
-  exit 70
-}
 set +e
 (
   ulimit -f 131072
   timeout --preserve-status 900s env -i "$bwrap_bin" "${bwrap_args[@]}" -- \
-    "$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"
+    /bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \
+      "$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"
 ) >"/proc/$BASHPID/fd/$pytest_output_fd" 2>&1
 pytest_status=$?
+close_active_uv_fd
 set -e
 verify_private_artifact_fd "$pytest_output_file" "/proc/$BASHPID/fd/$pytest_output_fd" 0600 || {
   echo 'bounded pytest output sink changed during execution' >&2

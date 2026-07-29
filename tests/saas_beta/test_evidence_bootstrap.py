@@ -164,6 +164,9 @@ P3_APPROVAL_ROOT_SELECTORS = (
     "tests/saas_beta/test_cross_plane_contracts.py::"
     "test_approval_contract_locks_vote_and_resume_assurance",
 )
+P3_APPROVAL_POSTGRES_RUNNER_SHA256 = (
+    "95596fe52f74cce00673cb139907d282de63a528820b51e38d44a47fbe078db5"
+)
 P2_IDEMPOTENCY_RETIRED_SELECTOR_PATTERNS = (
     "tests/integration/test_production_posture.py",
     "tests/test_agent_registration_managed_route.py",
@@ -4659,6 +4662,13 @@ def _shell_function_before(source: str, name: str, next_name: str) -> str:
     return source[start:end]
 
 
+def _shell_single_quoted_assignment(source: str, name: str, next_marker: str) -> str:
+    start_marker = f"\n{name}='"
+    start = source.index(start_marker) + len(start_marker)
+    end = source.index(next_marker, start)
+    return source[start:end]
+
+
 def _postgres_gate_cleanup_extraction_functions(runner_source: str, cleanup_function: str) -> str:
     return "\n".join(
         (
@@ -4671,6 +4681,8 @@ def _postgres_gate_cleanup_extraction_functions(runner_source: str, cleanup_func
             _shell_function(runner_source, "verify_no_proof_labelled_containers"),
             _shell_function(runner_source, "verify_stable_no_proof_labelled_containers"),
             _shell_function(runner_source, "unlink_postgres_recovery_intents"),
+            "active_uv_fd=",
+            _shell_function(runner_source, "close_active_uv_fd"),
             "cleanup_postgres_socket_bridge() { return 0; }",
             "postgres_socket_bridge=",
             'postgres_recovery_root="$state_dir/recovery-intents"',
@@ -20724,12 +20736,302 @@ def test_clean_sibling_bootstrap_containment_unshares_network_and_blocks_localho
             tcp_server.accept()
 
 
+def _assert_postgres_uv_fd_contract(
+    prover_source: str,
+    runner_source: str,
+    *,
+    check_digest: bool = True,
+) -> None:
+    pg_runner = _shell_function(prover_source, "run_trusted_parent_postgres_gate")
+    uv_mount = _shell_function(prover_source, "contained_uv_snapshot_data_mount_args")
+    uv_fd_verifier = _shell_function(runner_source, "verify_trusted_uv_fd")
+    active_fd_opener = _shell_function(runner_source, "open_active_verified_uv_fd")
+    active_fd_closer = _shell_function(runner_source, "close_active_uv_fd")
+    inner_preflight = _shell_single_quoted_assignment(
+        runner_source,
+        "inner_uv_preflight",
+        "'\ncanonical_venv_python=",
+    )
+    assert (
+        f"local trusted_runner_sha256='{P3_APPROVAL_POSTGRES_RUNNER_SHA256}'" in pg_runner
+    )
+    assert '"${ACGS_UV_SNAPSHOT_MOUNT[@]}"' in pg_runner
+    assert 'printf \'%s\\0%s\\0%s\\0%s\\0%s\\0\' --perms 500 --ro-bind-data' in uv_mount
+    assert '"$ACGS_UV_DATA_FD" "$UV_BIN"' in uv_mount
+
+    if check_digest:
+        assert hashlib.sha256(runner_source.encode()).hexdigest() == (
+            P3_APPROVAL_POSTGRES_RUNNER_SHA256
+        )
+    assert "inner_uv_bin='/run/acgs-uv'" in runner_source
+    assert "active_uv_fd=''" in runner_source
+    assert "open_active_verified_uv_fd()" in runner_source
+    assert 'exec {active_uv_fd}<"$uv_bin"' in runner_source
+    assert 'verify_trusted_uv_fd "$active_uv_fd" "$uv_bin"' in runner_source
+    assert "close_active_uv_fd()" in runner_source
+    assert "open_verified_uv_fd" not in runner_source
+    assert "build_uv_fd" not in runner_source
+    assert "pytest_uv_fd" not in runner_source
+    assert runner_source.count("--perms 500 --ro-bind-data") == 2
+    assert '--perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"' in runner_source
+    assert runner_source.count('--perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"') == 2
+    assert '"$inner_uv_bin" build --no-build-isolation' in runner_source
+    assert 'export UV_BIN="$inner_uv_bin"' in runner_source
+    assert '--setenv UV_BIN "$inner_uv_bin"' in runner_source
+
+    assert "if digest.hexdigest() != expected_sha256:\n    raise SystemExit(70)" in (
+        uv_fd_verifier
+    )
+    assert "if os.lseek(fd, 0, os.SEEK_CUR) != 0:\n    raise SystemExit(70)" in (
+        uv_fd_verifier
+    )
+    assert "os.lseek(fd, 0, os.SEEK_SET)" in uv_fd_verifier
+    assert uv_fd_verifier.index("digest = hashlib.sha256()") < uv_fd_verifier.index(
+        "if digest.hexdigest() != expected_sha256:"
+    )
+    assert uv_fd_verifier.index("if digest.hexdigest() != expected_sha256:") < (
+        uv_fd_verifier.index("os.lseek(fd, 0, os.SEEK_SET)")
+    )
+
+    assert 'exec {active_uv_fd}<"$uv_bin"' in active_fd_opener
+    assert 'if ! verify_trusted_uv_fd "$active_uv_fd" "$uv_bin"; then' in active_fd_opener
+    assert "exec {active_uv_fd}<&-" in active_fd_opener
+    assert "active_uv_fd=''" in active_fd_opener
+    assert "return 70" in active_fd_opener
+    assert active_fd_opener.index('exec {active_uv_fd}<"$uv_bin"') < active_fd_opener.index(
+        'if ! verify_trusted_uv_fd "$active_uv_fd" "$uv_bin"; then'
+    )
+    assert active_fd_opener.index(
+        'if ! verify_trusted_uv_fd "$active_uv_fd" "$uv_bin"; then'
+    ) < active_fd_opener.index("exec {active_uv_fd}<&-")
+    assert active_fd_opener.index("exec {active_uv_fd}<&-") < active_fd_opener.index(
+        "active_uv_fd=''"
+    )
+    assert active_fd_opener.index("active_uv_fd=''") < active_fd_opener.index("return 70")
+
+    assert "exec {active_uv_fd}<&-" in active_fd_closer
+    assert "active_uv_fd=''" in active_fd_closer
+    assert active_fd_closer.index("exec {active_uv_fd}<&-") < active_fd_closer.index(
+        "active_uv_fd=''"
+    )
+
+    assert inner_preflight.startswith("set -eu\n")
+    assert "mode=$(/usr/bin/stat -c %a -- \"$uv_path\")" in inner_preflight
+    assert 'test "$mode" = 500' in inner_preflight
+    assert "digest_line=$(/usr/bin/sha256sum -- \"$uv_path\")" in inner_preflight
+    assert 'test "$digest" = "$expected_sha"' in inner_preflight
+    assert inner_preflight.count('exec "$@"') == 1
+    assert inner_preflight.index("mode=$(/usr/bin/stat -c %a -- \"$uv_path\")") < (
+        inner_preflight.index('test "$mode" = 500')
+    )
+    assert inner_preflight.index('test "$mode" = 500') < inner_preflight.index(
+        "digest_line=$(/usr/bin/sha256sum -- \"$uv_path\")"
+    )
+    assert inner_preflight.index("digest_line=$(/usr/bin/sha256sum -- \"$uv_path\")") < (
+        inner_preflight.index('test "$digest" = "$expected_sha"')
+    )
+    assert inner_preflight.index('test "$digest" = "$expected_sha"') < inner_preflight.index(
+        'exec "$@"'
+    )
+    assert (
+        "cleanup() {\n"
+        "  local status=$?\n"
+        "  close_active_uv_fd\n"
+        "  local cleanup_status=0\n"
+    ) in runner_source
+
+    build_block = runner_source.split("run_sandboxed_uv_build() {\n", 1)[1].split(
+        "\n}\nrun_sandboxed_uv_build",
+        1,
+    )[0]
+    assert "open_active_verified_uv_fd" in build_block
+    assert 'if env -i "$bwrap_bin" \\' in build_block
+    assert '--perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"' in build_block
+    assert '/bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \\' in (
+        build_block
+    )
+    assert '"$inner_uv_bin" build --no-build-isolation' in build_block
+    assert build_block.index("open_active_verified_uv_fd") < build_block.index(
+        'if env -i "$bwrap_bin" \\'
+    )
+    assert build_block.index('if env -i "$bwrap_bin" \\') < build_block.index(
+        '--perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"'
+    )
+    assert build_block.index(
+        '--perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"'
+    ) < build_block.index(
+        '/bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \\'
+    )
+    assert build_block.index(
+        '/bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \\'
+    ) < build_block.index('"$inner_uv_bin" build --no-build-isolation')
+    assert build_block.count("close_active_uv_fd") == 2
+
+    pytest_setup = runner_source.split("junit_report=\"/run/tmp/junit.xml\"\n", 1)[1].split(
+        "\nset +e\n",
+        1,
+    )[0]
+    assert "open_active_verified_uv_fd" in pytest_setup
+    assert "bwrap_args=(" in pytest_setup
+    assert '--perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"' in pytest_setup
+    assert pytest_setup.index("open_active_verified_uv_fd") < pytest_setup.index(
+        "bwrap_args=("
+    )
+    assert pytest_setup.index("bwrap_args=(") < pytest_setup.index(
+        '--perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"'
+    )
+    pytest_execution = runner_source.split("set +e\n", 1)[1].split(
+        'verify_private_artifact_fd "$pytest_output_file"',
+        1,
+    )[0]
+    assert '/bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \\' in (
+        pytest_execution
+    )
+    assert '"$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"' in (
+        pytest_execution
+    )
+    assert pytest_execution.index(
+        '/bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \\'
+    ) < pytest_execution.index(
+        '"$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"'
+    )
+    assert "close_active_uv_fd\nset -e" in pytest_execution
+
+    forbidden_fragments = (
+        '--ro-bind "$uv_bin" "$uv_bin"',
+        '--ro-bind "$uv_bin" /run/acgs-uv',
+        '--ro-bind "$uv_bin" "$inner_uv_bin"',
+        '--ro-bind-data "$uv_bin"',
+        '--ro-bind-data "$canonical_uv_bin"',
+        '--perms 400 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"',
+        '--perms 700 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"',
+        '--perms 500 --ro-bind-data "$active_uv_fd" "$uv_bin"',
+    )
+    for fragment in forbidden_fragments:
+        assert fragment not in runner_source
+
+
+def test_clean_sibling_postgres_uv_fd_contract_rejects_inner_bind_mutations() -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    reviewed_runner_source = (
+        ROOT / "packages/acgs-control-plane/scripts/run_postgres_gate.sh"
+    ).read_text(encoding="utf-8")
+    _assert_postgres_uv_fd_contract(source, reviewed_runner_source)
+
+    mutations = {
+        "old-build-path-bind": reviewed_runner_source.replace(
+            '--perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"',
+            '--ro-bind "$uv_bin" "$uv_bin"',
+            1,
+        ),
+        "old-pytest-path-bind": reviewed_runner_source.replace(
+            '--perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"',
+            '--ro-bind "$uv_bin" /run/acgs-uv',
+            2,
+        ),
+        "writable-build-bind": reviewed_runner_source.replace(
+            '--perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"',
+            '--perms 700 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"',
+            1,
+        ),
+        "wrong-destination": reviewed_runner_source.replace(
+            '--perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"',
+            '--perms 500 --ro-bind-data "$active_uv_fd" "$uv_bin"',
+            2,
+        ),
+        "missing-active-pytest-fd-open": reviewed_runner_source.replace(
+            "open_active_verified_uv_fd || {\n"
+            "  echo 'failed to open a fresh verified uv FD for the pytest sandbox' >&2\n"
+            "  exit 70\n"
+            "}\n",
+            "",
+            1,
+        ),
+        "opener-failure-close-omitted": reviewed_runner_source.replace(
+            "  if ! verify_trusted_uv_fd \"$active_uv_fd\" \"$uv_bin\"; then\n"
+            "    exec {active_uv_fd}<&-\n"
+            "    active_uv_fd=''\n"
+            "    return 70\n"
+            "  fi\n",
+            "  if ! verify_trusted_uv_fd \"$active_uv_fd\" \"$uv_bin\"; then\n"
+            "    active_uv_fd=''\n"
+            "    return 70\n"
+            "  fi\n",
+            1,
+        ),
+        "only-one-inner-site": reviewed_runner_source.replace(
+            '  --perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"\n',
+            "",
+            1,
+        ),
+        "missing-inner-build-preflight": reviewed_runner_source.replace(
+            '/bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \\\n'
+            '      "$inner_uv_bin" build --no-build-isolation',
+            '"$inner_uv_bin" build --no-build-isolation',
+            1,
+        ),
+        "missing-inner-pytest-preflight": reviewed_runner_source.replace(
+            '/bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \\\n'
+            '      "$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"',
+            '"$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"',
+            1,
+        ),
+        "mode500-preflight-bypassed": reviewed_runner_source.replace(
+            'test "$mode" = 500',
+            'test "$mode" != 000',
+            1,
+        ),
+        "sha-preflight-bypassed": reviewed_runner_source.replace(
+            'test "$digest" = "$expected_sha"',
+            "true",
+            1,
+        ),
+        "active-fd-sha-bypassed": reviewed_runner_source.replace(
+            "if digest.hexdigest() != expected_sha256:\n    raise SystemExit(70)",
+            "if False:\n    raise SystemExit(70)",
+            1,
+        ),
+        "close-helper-no-op": reviewed_runner_source.replace(
+            "close_active_uv_fd() {\n"
+            "  if [[ -n \"$active_uv_fd\" ]]; then\n"
+            "    exec {active_uv_fd}<&-\n"
+            "    active_uv_fd=''\n"
+            "  fi\n"
+            "}",
+            "close_active_uv_fd() {\n  :\n}",
+            1,
+        ),
+        "early-inner-exec-before-checks": reviewed_runner_source.replace(
+            "shift 2\n"
+            "mode=$(/usr/bin/stat -c %a -- \"$uv_path\")\n"
+            "test \"$mode\" = 500\n",
+            "shift 2\nexec \"$@\"\n"
+            "mode=$(/usr/bin/stat -c %a -- \"$uv_path\")\n"
+            "test \"$mode\" = 500\n",
+            1,
+        ),
+        "cleanup-active-fd-close-omitted": reviewed_runner_source.replace(
+            "  close_active_uv_fd\n  local cleanup_status=0\n",
+            "  local cleanup_status=0\n",
+            1,
+        ),
+    }
+    for name, mutated_source in mutations.items():
+        try:
+            _assert_postgres_uv_fd_contract(source, mutated_source, check_digest=False)
+        except AssertionError:
+            continue
+        pytest.fail(f"mutation accepted: {name}")
+
+
 def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() -> None:
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
     pg_runner = _shell_function(source, "run_trusted_parent_postgres_gate")
     reviewed_runner = ROOT / "packages/acgs-control-plane/scripts/run_postgres_gate.sh"
     reviewed_runner_source = reviewed_runner.read_text(encoding="utf-8")
     reviewed_sha = hashlib.sha256(reviewed_runner.read_bytes()).hexdigest()
+    assert reviewed_sha == P3_APPROVAL_POSTGRES_RUNNER_SHA256
+    _assert_postgres_uv_fd_contract(source, reviewed_runner_source)
 
     def assert_key_only_server_config_verifier(runner_source: str) -> None:
         assert (
@@ -21537,6 +21839,187 @@ def test_clean_sibling_outer_bwrap_allows_reviewed_inner_userns_only(tmp_path: P
     assert "USERNS_DISABLED rc=-1 errno=28" in result.stdout
 
 
+def test_clean_sibling_outer_ro_bind_data_can_feed_inner_fd_uv_mount() -> None:
+    bwrap = Path("/usr/bin/bwrap")
+    if not bwrap.exists():
+        pytest.skip("/usr/bin/bwrap unavailable")
+    host_uv_executable = shutil.which("uv")
+    if host_uv_executable is None:
+        pytest.skip("uv unavailable")
+    host_uv = Path(host_uv_executable).resolve(strict=True)
+    expected_uv_version = subprocess.run(
+        [str(host_uv), "--version"],
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    synthetic_uv_path = "/home/acgs-proof/.local/bin/uv"
+
+    outer_base_argv = [
+        str(bwrap),
+        "--die-with-parent",
+        "--unshare-user",
+        "--unshare-ipc",
+        "--unshare-pid",
+        "--new-session",
+        "--cap-drop",
+        "ALL",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--tmpfs",
+        "/tmp",
+        "--tmpfs",
+        "/run",
+        "--ro-bind",
+        "/usr",
+        "/usr",
+        "--ro-bind",
+        "/bin",
+        "/bin",
+        "--ro-bind-try",
+        "/lib",
+        "/lib",
+        "--ro-bind-try",
+        "/lib64",
+        "/lib64",
+        "--",
+    ]
+    inner_base = (
+        "/usr/bin/bwrap "
+        "--unshare-all --unshare-user --die-with-parent --new-session --disable-userns "
+        "--proc /proc --dev /dev --tmpfs /tmp --tmpfs /run "
+        "--ro-bind /usr /usr --ro-bind /bin /bin "
+        "--ro-bind-try /lib /lib --ro-bind-try /lib64 /lib64"
+    )
+    try:
+        smoke = subprocess.run(
+            [*outer_base_argv, "/bin/sh", "-c", f"{inner_base} -- /bin/true"],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("nested bwrap smoke timed out after 15s")
+    if smoke.returncode != 0:
+        pytest.skip(
+            "nested /usr/bin/bwrap unsupported: "
+            f"{smoke.stderr.strip() or smoke.stdout.strip()}"
+        )
+
+    uv_fd = os.open(host_uv, os.O_RDONLY)
+    probe = (
+        "set -eu\n"
+        f"UV_HOST_PATH={shlex.quote(synthetic_uv_path)}\n"
+        f"EXPECTED_UV_VERSION={shlex.quote(expected_uv_version)}\n"
+        'test -x "$UV_HOST_PATH"\n'
+        'exec 9<"$UV_HOST_PATH"\n'
+        "/usr/bin/python3 -I -S - 9 <<'PY'\n"
+        "import os\n"
+        "import stat\n"
+        "import sys\n"
+        "\n"
+        "fd = int(sys.argv[1])\n"
+        "st = os.fstat(fd)\n"
+        "if not stat.S_ISREG(st.st_mode):\n"
+        "    raise SystemExit('fd_not_regular')\n"
+        "if stat.S_IMODE(st.st_mode) & 0o111 == 0:\n"
+        "    raise SystemExit('fd_not_executable')\n"
+        "if os.lseek(fd, 0, os.SEEK_CUR) != 0:\n"
+        "    raise SystemExit('fd_offset_not_fresh')\n"
+        "if not os.read(fd, 1):\n"
+        "    raise SystemExit('fd_empty')\n"
+        "os.lseek(fd, 0, os.SEEK_SET)\n"
+        "if os.lseek(fd, 0, os.SEEK_CUR) != 0:\n"
+        "    raise SystemExit('fd_offset_not_reset')\n"
+        "PY\n"
+        "fresh_output=$("
+        f"{inner_base} "
+        "--perms 500 --ro-bind-data 9 /run/acgs-uv "
+        "-- /run/acgs-uv --version)\n"
+        'test "$fresh_output" = "$EXPECTED_UV_VERSION"\n'
+        "set +e\n"
+        f"{inner_base} "
+        '"--ro-bind" "$UV_HOST_PATH" /run/acgs-uv '
+        "-- /run/acgs-uv --version >/tmp/old-bind.stdout 2>/tmp/old-bind.stderr\n"
+        "old_status=$?\n"
+        "set -e\n"
+        'if [ "$old_status" -eq 0 ]; then\n'
+        "  echo 'old path-only inner bind unexpectedly succeeded' >&2\n"
+        "  cat /tmp/old-bind.stdout >&2\n"
+        "  exit 81\n"
+        "fi\n"
+        'printf "INNER_FD_BIND_OK %s\\n" "$fresh_output"\n'
+    )
+    try:
+        result = subprocess.run(
+            [
+                str(bwrap),
+                "--die-with-parent",
+                "--unshare-user",
+                "--unshare-ipc",
+                "--unshare-pid",
+                "--new-session",
+                "--cap-drop",
+                "ALL",
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "--tmpfs",
+                "/tmp",
+                "--tmpfs",
+                "/run",
+                "--dir",
+                "/home",
+                "--dir",
+                "/home/acgs-proof",
+                "--dir",
+                "/home/acgs-proof/.local",
+                "--dir",
+                "/home/acgs-proof/.local/bin",
+                "--ro-bind",
+                "/usr",
+                "/usr",
+                "--ro-bind",
+                "/bin",
+                "/bin",
+                "--ro-bind-try",
+                "/lib",
+                "/lib",
+                "--ro-bind-try",
+                "/lib64",
+                "/lib64",
+                "--perms",
+                "500",
+                "--ro-bind-data",
+                str(uv_fd),
+                synthetic_uv_path,
+                "--",
+                "/bin/sh",
+                "-c",
+                probe,
+            ],
+            pass_fds=(uv_fd,),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("outer ro-bind-data to inner FD mount probe timed out after 15s")
+    finally:
+        os.close(uv_fd)
+
+    assert result.returncode == 0, (
+        f"outer ro-bind-data to inner FD mount failed: "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert result.stdout == f"INNER_FD_BIND_OK {expected_uv_version}\n"
+
+
 def test_postgres_gate_nonce_label_is_pid_independent_and_nonce_bound(tmp_path: Path) -> None:
     runner_source = (ROOT / "packages/acgs-control-plane/scripts/run_postgres_gate.sh").read_text(
         encoding="utf-8"
@@ -21720,6 +22203,7 @@ def test_postgres_gate_cleanup_extraction_includes_stable_verifier_dependencies(
         "verify_no_proof_labelled_containers",
         "verify_stable_no_proof_labelled_containers",
         "unlink_postgres_recovery_intents",
+        "close_active_uv_fd",
     ]:
         assert extraction.count(f"{function_name}() {{") == 1
     assert extraction.index("verify_no_proof_labelled_containers() {") < extraction.index(
@@ -21729,6 +22213,10 @@ def test_postgres_gate_cleanup_extraction_includes_stable_verifier_dependencies(
         "unlink_postgres_recovery_intents() {"
     )
     assert extraction.index("unlink_postgres_recovery_intents() {") < extraction.index(
+        "active_uv_fd="
+    )
+    assert extraction.index("active_uv_fd=") < extraction.index("close_active_uv_fd() {")
+    assert extraction.index("close_active_uv_fd() {") < extraction.index(
         "cleanup_postgres_socket_bridge() { return 0; }"
     )
     assert extraction.index("cleanup_postgres_socket_bridge() { return 0; }") < extraction.index(
