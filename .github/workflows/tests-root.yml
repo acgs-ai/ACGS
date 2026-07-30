@@ -14,7 +14,8 @@
 # environment-independent invariant guards (82 tests, green on master). The
 # SaaS-beta evidence proof requires its locked, three-environment bootstrap and
 # is gated by the automatic hosted contract lane in
-# `saas-beta-p0-evidence.yml`; its exact proof remains authorized/manual. It is
+# `saas-beta-p0-evidence.yml`; exact proof is intentionally local trusted-broker work
+# and is never dispatched to the persistent runner. This is
 # not a generic root test. The five release-evidence / readiness tests use the dedicated
 # `readiness-evidence.yml` workflow (+ its hosted twin); the package-floor /
 # mypy-scope tests need initialized submodules and remain a follow-up.
@@ -78,7 +79,7 @@ jobs:
         #
         # EXCLUSIONS — tests gated elsewhere or deferred:
         #   tests/docs/**                      -> already covered by tests-docs.yml
-        #   tests/saas_beta/**                 -> hosted contract; exact proof authorized/manual
+        #   tests/saas_beta/**                 -> hosted contract; exact proof local trusted-broker only
         #   test_platform_readiness_report     -> covered by readiness-evidence.yml
         #   test_readiness_evidence_boundaries -> covered by readiness-evidence.yml
         #   test_release_evidence_bundle       -> covered by readiness-evidence.yml
