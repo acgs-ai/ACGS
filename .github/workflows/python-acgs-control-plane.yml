@@ -318,3 +318,81 @@ jobs:
           if totals != {"tests": 3, "failures": 0, "errors": 0, "skipped": 0}:
               sys.exit("the P2 tenant-bootstrap gate must run all 3 tests with zero skips")
           PY
+
+  p2-idempotency-evidence-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
+        with:
+          version: 0.11.19
+          enable-cache: true
+          cache-dependency-glob: 'requirements/saas-beta/cp-test.lock'
+
+      - name: Install bubblewrap prerequisite
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+          if ! command -v apparmor_parser >/dev/null 2>&1; then
+            sudo apt-get install --yes apparmor
+          fi
+          test "$(command -v bwrap)" = /usr/bin/bwrap
+          bwrap --version
+          sudo tee /etc/apparmor.d/acgs-ci-bwrap >/dev/null <<'APPARMOR'
+          abi <abi/4.0>,
+          include <tunables/global>
+
+          profile acgs-ci-bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          APPARMOR
+          sudo apparmor_parser -r /etc/apparmor.d/acgs-ci-bwrap
+          bwrap \
+            --unshare-all --unshare-user --die-with-parent --new-session --disable-userns \
+            --proc /proc --dev /dev --tmpfs /tmp --tmpfs /run \
+            --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind-try /lib /lib \
+            --ro-bind-try /lib64 /lib64 --clearenv \
+            --setenv PATH /usr/bin:/bin \
+            /bin/sh -c 'test ! -e /run/docker.sock && test ! -e /var/run/docker.sock && test -r /proc/self/status'
+
+      - name: Install locked migration test environment
+        run: |
+          uv python install 3.11.14
+          uv venv --python 3.11.14 --clear .venv
+          uv pip sync \
+            --python .venv/bin/python \
+            --require-hashes \
+            ../../requirements/saas-beta/cp-test.lock
+          uv pip install \
+            --python .venv/bin/python \
+            --no-deps \
+            --no-build-isolation \
+            --editable ../gove-zone \
+            --editable .
+
+      - name: Pull digest-pinned PostgreSQL image
+        shell: bash
+        run: |
+          set -euo pipefail
+          postgres_image='postgres:17.10-bookworm@sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394'
+          postgres_digest='sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394'
+          docker pull "$postgres_image"
+          docker image inspect --format '{{json .RepoDigests}}' "$postgres_image" \
+            | grep --fixed-strings "$postgres_digest"
+
+      - name: Run brokered P2 idempotency evidence gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          UV_BIN="$(realpath -e "$(command -v uv)")" ./scripts/run_postgres_gate.sh \
+            tests/integration/test_agent_registration_idempotency_postgres.py::test_identical_key_and_canonical_request_converges_to_one_terminal_result \
+            tests/integration/test_agent_registration_idempotency_postgres.py::test_same_key_different_canonical_request_conflicts_without_additional_side_effects \
+            tests/integration/test_agent_registration_idempotency_postgres.py::test_exact_receipt_replay_is_typed_and_nonduplicating \
+            tests/integration/test_agent_registration_idempotency_postgres.py::test_100_request_multiprocess_has_at_most_one_authorized_execution
