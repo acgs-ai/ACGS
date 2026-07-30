@@ -241,8 +241,6 @@ def test_saas_beta_required_gate_has_no_privileged_or_external_side_effect_surfa
         "workflow_dispatch",
         "paths-ignore",
         "id-token:",
-        "secrets.",
-        "${{ secrets",
         "continue-on-error",
         "environment:",
         "gcloud ",
@@ -275,6 +273,16 @@ def test_saas_beta_required_gate_has_no_privileged_or_external_side_effect_surfa
     )
     for token in forbidden_tokens:
         assert token not in text
+
+    # Carve-out (reviewed): the gate may reference exactly one secret —
+    # SUBMODULE_TOKEN, the read-only fine-grained PAT that initializes the
+    # private acgs-control-plane submodule. The blanket "secrets." ban was
+    # narrowed for it when control-plane became a private submodule; any
+    # other secret reference, or any secrets usage not written as
+    # `${{ secrets.NAME }}`, is still a contract violation.
+    secret_refs = re.findall(r"\$\{\{\s*secrets\.([A-Za-z0-9_]+)\s*\}\}", text)
+    assert set(secret_refs) == {"SUBMODULE_TOKEN"}
+    assert text.count("secrets.") == len(secret_refs)
 
     external_mutation_words = re.compile(
         r"\b(deploy|publish|upload-artifact|pages|cloud run|oidc|workload identity|release)\b",

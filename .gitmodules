@@ -16,3 +16,4 @@
 [submodule "packages/acgs-control-plane"]
 	path = packages/acgs-control-plane
 	url = https://github.com/acgs-ai/acgs-control-plane.git
+	branch = main

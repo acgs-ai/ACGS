@@ -101,6 +101,10 @@ jobs:
         run: .venv/bin/pytest -q
 
   postgresql-migrations:
+    # Same-repo only, mirroring the test job above: fork PRs have no access
+    # to SUBMODULE_TOKEN, so the private-submodule init could never succeed;
+    # skip cleanly instead of hard-failing on an unreachable secret.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     services:
