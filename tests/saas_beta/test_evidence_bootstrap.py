@@ -170,6 +170,14 @@ P3_APPROVAL_POSTGRES_TRUSTED_RUNNER_SHA256 = (
 P3_APPROVAL_POSTGRES_REVIEWED_RUNNER_SHA256 = (
     "1afe623226adf06fd27bf859a9f010fb56678b408b7f653dd3437c8b9b2ed676"
 )
+TRUSTED_STATIC_BUSYBOX = Path("/usr/bin/busybox")
+TRUSTED_STATIC_BUSYBOX_SHA256 = "98d9040015eb17931e17b45e00b5f49f2451326372d5107a3a280f1cb3aaf3fc"
+REAL_QUOTA_FUSE_TOOLS = (
+    Path("/usr/bin/fuse2fs"),
+    Path("/usr/bin/mkfs.ext4"),
+    Path("/usr/bin/fusermount3"),
+    Path("/usr/bin/mountpoint"),
+)
 P2_IDEMPOTENCY_RETIRED_SELECTOR_PATTERNS = (
     "tests/integration/test_production_posture.py",
     "tests/test_agent_registration_managed_route.py",
@@ -421,6 +429,29 @@ def _mounted_artifact_preflight_assignment(source: str) -> str:
         )[1].split("readonly ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT", 1)[0]
     )
     return assignment + "readonly ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT\n"
+
+
+def _has_exact_trusted_static_busybox() -> bool:
+    try:
+        st = TRUSTED_STATIC_BUSYBOX.lstat()
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode):
+        return False
+    if not os.access(TRUSTED_STATIC_BUSYBOX, os.X_OK):
+        return False
+    return hashlib.sha256(TRUSTED_STATIC_BUSYBOX.read_bytes()).hexdigest() == (
+        TRUSTED_STATIC_BUSYBOX_SHA256
+    )
+
+
+def _missing_real_quota_fuse_prerequisite() -> str | None:
+    if not Path("/dev/fuse").is_char_device():
+        return "/dev/fuse char device unavailable"
+    for tool in REAL_QUOTA_FUSE_TOOLS:
+        if not tool.is_absolute() or not tool.is_file() or not os.access(tool, os.X_OK):
+            return f"{tool} unavailable or not executable"
+    return None
 
 
 def _clean_sibling_gitfile_witness(path: Path) -> dict[str, str]:
@@ -8278,7 +8309,7 @@ def test_clean_sibling_launcher_empty_run_refuses_authenticated_bus_without_trac
             "TMPDIR": str(caller),
         }
     )
-    if Path("/usr/bin/bwrap").exists():
+    if Path("/usr/bin/bwrap").exists() and _has_exact_trusted_static_busybox():
         command = [
             "/usr/bin/bwrap",
             "--die-with-parent",
@@ -8390,6 +8421,8 @@ def test_clean_sibling_static_target_validation_is_deterministic_before_mutation
     tmp_path: Path,
     target: str,
 ) -> None:
+    if not _has_exact_trusted_static_busybox():
+        pytest.skip("trusted static /usr/bin/busybox unavailable")
     caller = tmp_path / "caller"
     caller.mkdir(mode=0o700)
     marker = caller / "hostile-marker"
@@ -8879,6 +8912,8 @@ exec /bin/bash --noprofile --norc {shlex.quote(str(internal))} {"0" * 40}
 def test_clean_sibling_static_launcher_rejects_wrong_argv_and_hardlink(
     tmp_path: Path,
 ) -> None:
+    if not _has_exact_trusted_static_busybox():
+        pytest.skip("trusted static /usr/bin/busybox unavailable")
     env = _evidence_env(tmp_path / "unused")
     env.update({"P": "26d11c2c7a8da37937a7c50c642f18edc75c9345", "TMPDIR": str(tmp_path)})
     wrong_argv = subprocess.run(
@@ -10858,6 +10893,8 @@ def test_clean_sibling_guardian_child_limits_split_as_from_cgroup_memory(
 def test_clean_sibling_quota_fuse_mount_enforces_byte_inode_and_detaches(
     tmp_path: Path,
 ) -> None:
+    if missing := _missing_real_quota_fuse_prerequisite():
+        pytest.skip(missing)
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
     functions = "\n".join(
         (
@@ -11081,8 +11118,8 @@ def test_clean_sibling_quota_partial_hardening_failure_detaches_exact_mount(
     tmp_path: Path,
     fault: str,
 ) -> None:
-    if not Path("/dev/fuse").is_char_device():
-        pytest.skip("/dev/fuse unavailable")
+    if missing := _missing_real_quota_fuse_prerequisite():
+        pytest.skip(missing)
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
     functions = "\n".join(
         (
@@ -14353,6 +14390,7 @@ ACGS_AUTH_TARGET={"2" * 40}
 AUTH_LOG={shlex.quote(str(auth_log))}
 DBUS_SESSION_BUS_ADDRESS=
 XDG_RUNTIME_DIR=
+TRANSCRIPT_RECORDS=0
 {gate}
 run_trusted_parent_p0_launcher_authority_gate P0 "$WORKTREE" p0-launcher-authority \\
   root:P0-EVIDENCE-000-launcher-authority-harness __NONE__ \\
@@ -26494,6 +26532,51 @@ def test_clean_sibling_trusted_network_resolver_rejects_unsafe_inputs_before_uv(
         assert completed.returncode == 2, (name, completed.stdout, completed.stderr)
         assert "HARNESS_DIE=trusted network resolver" in completed.stderr
         assert not uv_marker.exists(), name
+
+
+def test_clean_sibling_mounted_artifact_preflight_validates_digest_without_awk(
+    tmp_path: Path,
+) -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    preflight_assignment = _mounted_artifact_preflight_assignment(source)
+    assert "| awk" not in preflight_assignment
+    artifact = tmp_path / "mounted-artifact"
+    artifact.write_bytes(b"trusted-mounted-artifact\n")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "stat").symlink_to("/usr/bin/stat")
+    (fake_bin / "sha256sum").symlink_to("/usr/bin/sha256sum")
+    harness = tmp_path / "mounted-preflight-no-awk.sh"
+    artifact_record = (
+        f"{artifact}|{hashlib.sha256(artifact.read_bytes()).hexdigest()}|{artifact.stat().st_size}"
+    )
+    bad_artifact_record = f"{artifact}|{'0' * 64}|{artifact.stat().st_size}"
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        f"PATH={shlex.quote(str(fake_bin))}\n"
+        f"ACGS_PREFLIGHT_UV={shlex.quote(artifact_record)}\n"
+        "export ACGS_PREFLIGHT_UV\n"
+        f"{preflight_assignment}"
+        '/bin/bash --noprofile --norc -c "$ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT" '
+        "_ /usr/bin/true\n"
+        f"ACGS_PREFLIGHT_UV={shlex.quote(bad_artifact_record)}\n"
+        "export ACGS_PREFLIGHT_UV\n"
+        "if /bin/bash --noprofile --norc -c "
+        '"$ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT" _ /usr/bin/true; then exit 80; fi\n'
+        "printf 'PREFLIGHT_DIGEST_VALIDATED_WITHOUT_AWK\\n'\n",
+        encoding="utf-8",
+    )
+    harness.chmod(0o755)
+    completed = subprocess.run(
+        [str(harness)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert "PREFLIGHT_DIGEST_VALIDATED_WITHOUT_AWK" in completed.stdout
+    assert not (fake_bin / "awk").exists()
 
 
 def test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_sockets(
