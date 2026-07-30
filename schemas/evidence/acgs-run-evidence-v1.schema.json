@@ -901,6 +901,12 @@
                 "single-process-evidence-and-package-gates",
                 "postgres-pg6-policy-registry-lifecycle"
               ]
+            },
+            {
+              "const": [
+                "single-process-evidence-and-package-gates",
+                "postgres-pg6-mutation-inventory-drift"
+              ]
             }
           ]
         }

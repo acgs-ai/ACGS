@@ -87,7 +87,10 @@ jobs:
           POSTGRES_USER: acgs_control_plane_test
           POSTGRES_PASSWORD: g101-test-password-17
         ports:
-          - 5432/tcp
+          # Fixed host port: the connection-ceiling step below restarts the
+          # container, and Docker reassigns randomly published ports on
+          # restart, which would strand every later step on a dead port.
+          - 15432:5432
         options: >-
           --health-cmd "pg_isready -U acgs_control_plane_test -d acgs_control_plane_test"
           --health-interval 10s
@@ -195,6 +198,32 @@ jobs:
           test "$(psql --version | awk '{print $3}')" = '17.10'
           test "$(pg_dump --version | awk '{print $3}')" = '17.10'
           test "$(pg_restore --version | awk '{print $3}')" = '17.10'
+
+      # The tenant-bootstrap vertical drives 100 spawned worker processes, each
+      # holding at least one pooled connection, which sits exactly at the
+      # PostgreSQL default max_connections=100 and fails the gate on timing.
+      # Service containers cannot override the image command, so raise the
+      # ceiling via ALTER SYSTEM and restart the container before any suite runs.
+      - name: Raise PostgreSQL connection ceiling for multiprocess verticals
+        shell: bash
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: ${{ job.services.postgres.ports['5432'] }}
+          PGUSER: acgs_control_plane_test
+          PGPASSWORD: g101-test-password-17
+          PGDATABASE: acgs_control_plane_test
+        run: |
+          set -euo pipefail
+          psql --set ON_ERROR_STOP=1 --command 'ALTER SYSTEM SET max_connections = 400'
+          docker restart ${{ job.services.postgres.id }}
+          for _ in $(seq 1 60); do
+            if [ "$(psql --tuples-only --no-align --command 'SHOW max_connections' 2>/dev/null || true)" = '400' ]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo 'PostgreSQL did not come back with the raised connection ceiling' >&2
+          exit 1
 
       - name: Create fixed disposable databases
         shell: bash
