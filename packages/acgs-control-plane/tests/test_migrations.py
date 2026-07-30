@@ -2383,6 +2383,147 @@ def _recovery_root_binding(path: Path) -> str:
     )
 
 
+def _run_recovery_root_binding_validation(
+    recovery_root: Path,
+    binding: str,
+    sentinel: Path,
+) -> subprocess.CompletedProcess[str]:
+    script = _postgres_gate_script_source()
+    validate_root_source = _extract_shell_function(
+        script,
+        "validate_postgres_recovery_root",
+        "validate_postgres_recovery_root_binding",
+    )
+    validate_binding_source = _extract_shell_function_before_marker(
+        script,
+        "validate_postgres_recovery_root_binding",
+        "\n\nmint_postgres_proof_nonce",
+    )
+    harness = "\n".join(
+        (
+            "set -u",
+            f"postgres_recovery_root={str(recovery_root)!r}",
+            f"postgres_recovery_root_binding={shlex.quote(binding)}",
+            validate_root_source,
+            validate_binding_source,
+            'if ! postgres_recovery_root="$(validate_postgres_recovery_root '
+            '"$postgres_recovery_root")"; then',
+            '  printf "VALID_BINDING_RC=70\\n"',
+            "  exit 70",
+            "fi",
+            'if observed_mnt_id="$(validate_postgres_recovery_root_binding '
+            '"$postgres_recovery_root" "$postgres_recovery_root_binding")"; then',
+            f"  touch {shlex.quote(str(sentinel))}",
+            '  printf "VALID_BINDING_MNT_ID=%s\\n" "$observed_mnt_id"',
+            "  exit 0",
+            "else",
+            '  printf "VALID_BINDING_RC=70\\n"',
+            "  exit 70",
+            "fi",
+        )
+    )
+    return subprocess.run(
+        ["bash", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_postgres_gate_recovery_root_binding_validation_accepts_exact_identity(
+    tmp_path: Path,
+) -> None:
+    recovery_root = tmp_path / "recovery"
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    sentinel = tmp_path / "binding-sentinel"
+
+    result = _run_recovery_root_binding_validation(
+        recovery_root,
+        _recovery_root_binding(recovery_root),
+        sentinel,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert f"VALID_BINDING_MNT_ID={_mount_id(recovery_root)}\n" in result.stdout
+    assert sentinel.exists()
+
+
+def test_postgres_gate_recovery_root_binding_validation_refuses_bad_inputs(
+    tmp_path: Path,
+) -> None:
+    recovery_root = tmp_path / "recovery"
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    exact_binding = _recovery_root_binding(recovery_root)
+    exact_mnt_id = _mount_id(recovery_root)
+    stat_fields = recovery_root.stat(follow_symlinks=False)
+    exact_identity = f"{stat_fields.st_dev}:{stat_fields.st_ino}:{stat_fields.st_uid}:700"
+    cases = {
+        "missing": "",
+        "malformed": "acgs-postgres-recovery-root/v2\ttoo-few-fields",
+        "wrong-schema": f"wrong/v2\t{exact_identity}\t{exact_mnt_id}",
+        "wrong-identity": f"acgs-postgres-recovery-root/v2\t1:2:3:700\t{exact_mnt_id}",
+        "wrong-mount": f"acgs-postgres-recovery-root/v2\t{exact_identity}\t0",
+        "malformed-mount": f"acgs-postgres-recovery-root/v2\t{exact_identity}\tnot-a-mount",
+    }
+    for name, binding in cases.items():
+        sentinel = tmp_path / f"{name}-sentinel"
+        result = _run_recovery_root_binding_validation(recovery_root, binding, sentinel)
+        assert result.returncode == 70, (name, result.stdout, result.stderr)
+        assert "VALID_BINDING_RC=70\n" in result.stdout
+        assert not sentinel.exists()
+
+    recovery_root.chmod(0o770)
+    mode_sentinel = tmp_path / "wrong-mode-sentinel"
+    mode_result = _run_recovery_root_binding_validation(
+        recovery_root,
+        exact_binding,
+        mode_sentinel,
+    )
+    assert mode_result.returncode == 70, (mode_result.stdout, mode_result.stderr)
+    assert not mode_sentinel.exists()
+    recovery_root.chmod(0o700)
+
+    symlink_root = tmp_path / "recovery-link"
+    symlink_root.symlink_to(recovery_root, target_is_directory=True)
+    symlink_sentinel = tmp_path / "symlink-sentinel"
+    symlink_result = _run_recovery_root_binding_validation(
+        symlink_root,
+        exact_binding,
+        symlink_sentinel,
+    )
+    assert symlink_result.returncode == 70, (symlink_result.stdout, symlink_result.stderr)
+    assert not symlink_sentinel.exists()
+
+    shutil.rmtree(recovery_root)
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    replaced_sentinel = tmp_path / "post-mint-replaced-sentinel"
+    replaced_result = _run_recovery_root_binding_validation(
+        recovery_root,
+        exact_binding,
+        replaced_sentinel,
+    )
+    assert replaced_result.returncode == 70, (replaced_result.stdout, replaced_result.stderr)
+    assert not replaced_sentinel.exists()
+
+    current_binding = _recovery_root_binding(recovery_root)
+    renamed_original = tmp_path / "recovery-original-renamed"
+    recovery_root.rename(renamed_original)
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    renamed_sentinel = tmp_path / "rename-replaced-sentinel"
+    renamed_result = _run_recovery_root_binding_validation(
+        recovery_root,
+        current_binding,
+        renamed_sentinel,
+    )
+    assert renamed_result.returncode == 70, (renamed_result.stdout, renamed_result.stderr)
+    assert not renamed_sentinel.exists()
+
+
 def _write_fake_postgres_client_docker(
     docker_path: Path,
     docker_log: Path,

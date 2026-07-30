@@ -6433,9 +6433,201 @@ def test_p2_idempotency_workflow_prerequisite_loads_bwrap_userns_profile() -> No
     forbidden_workflow_text = workflow_text.lower()
     assert "apparmor_restrict_unprivileged_userns=0" not in forbidden_workflow_text
     assert "kernel.apparmor_restrict_unprivileged_userns" not in forbidden_workflow_text
+
+    _, gate_text = extract_step(job_text, "Run brokered P2 idempotency evidence gate")
+    gate_run = gate_text.split("        run: |", 1)[1]
+    assert 'ACGS_POSTGRES_RECOVERY_ROOT="$(realpath -e "$recovery_root")"' in gate_run
+    assert "export ACGS_POSTGRES_RECOVERY_ROOT" in gate_run
+    assert 'ACGS_POSTGRES_RECOVERY_ROOT_BINDING_V2="$(' in gate_run
+    assert "export ACGS_POSTGRES_RECOVERY_ROOT_BINDING_V2" in gate_run
+    assert "/usr/bin/python3 -I -S - \"$ACGS_POSTGRES_RECOVERY_ROOT\" <<'PY'" in gate_run
+    assert "import os" in gate_run
+    assert "import stat" in gate_run
+    assert "fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)" in (
+        gate_run
+    )
+    assert gate_run.count("os.fstat(fd)") == 1
+    assert "if not stat.S_ISDIR(st.st_mode):" in gate_run
+    assert "if st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o700:" in gate_run
+    assert "if not mnt_id.isdigit():" in gate_run
+    assert 'identity = f"{st.st_dev}:{st.st_ino}:{st.st_uid}:700"' in gate_run
+    assert 'print(f"acgs-postgres-recovery-root/v2\\t{identity}\\t{mnt_id}")' in gate_run
+    assert "os.close(fd)" in gate_run
+    assert gate_run.count("os.close(fd)") == 1
+    assert gate_run.index("export ACGS_POSTGRES_RECOVERY_ROOT_BINDING_V2") < gate_run.index(
+        'UV_BIN="$(realpath -e "$(command -v uv)")" ./scripts/run_postgres_gate.sh'
+    )
+    assert gate_run.index("os.close(fd)") < gate_run.index(
+        'UV_BIN="$(realpath -e "$(command -v uv)")" ./scripts/run_postgres_gate.sh'
+    )
     assert "sysctl -w" not in forbidden_workflow_text
     assert "fallback" not in forbidden_workflow_text
     assert "|| true" not in run
+    assert "|| true" not in gate_run
+    assert "exec {recovery_root_fd}" not in gate_run
+    assert "exec {postgres_recovery_root_fd}" not in gate_run
+
+
+def test_p2_idempotency_workflow_recovery_root_binding_executes_without_fd_leak(
+    tmp_path: Path,
+) -> None:
+    workflow_path = ROOT / ".github/workflows/python-acgs-control-plane.yml"
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    gate_step = workflow_text.split("      - name: Run brokered P2 idempotency evidence gate\n", 1)[
+        1
+    ]
+    gate_step = gate_step.split("\n      - name:", 1)[0]
+    gate_run = textwrap.dedent(gate_step.split("        run: |", 1)[1]).strip() + "\n"
+
+    workspace = tmp_path / "workspace"
+    scripts_dir = workspace / "scripts"
+    runner_temp = Path(tempfile.mkdtemp(prefix="acgs-rt-", dir="/tmp"))
+    runner_temp.chmod(0o700)
+    scripts_dir.mkdir(parents=True)
+    fake_uv = tmp_path / "uv"
+    fake_uv.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_uv.chmod(0o755)
+    fake_runner = scripts_dir / "run_postgres_gate.sh"
+    fake_runner.write_text(
+        "#!/usr/bin/env python3\n"
+        "from __future__ import annotations\n"
+        "import os, socket, stat, sys\n"
+        "root = os.environ['ACGS_POSTGRES_RECOVERY_ROOT']\n"
+        "binding = os.environ['ACGS_POSTGRES_RECOVERY_ROOT_BINDING_V2']\n"
+        "escape_path = os.environ['ACGS_TEST_ESCAPE_PATH']\n"
+        "socket_path = os.environ['ACGS_TEST_EXTERNAL_SOCKET']\n"
+        "st = os.stat(root, follow_symlinks=False)\n"
+        "if stat.S_IMODE(st.st_mode) != 0o700:\n"
+        "    print('bad-mode', file=sys.stderr)\n"
+        "    raise SystemExit(64)\n"
+        "mnt_id = ''\n"
+        "fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)\n"
+        "try:\n"
+        "    with open(f'/proc/self/fdinfo/{fd}', encoding='utf-8') as fdinfo:\n"
+        "        for line in fdinfo:\n"
+        "            if line.startswith('mnt_id:'):\n"
+        "                mnt_id = line.split(':', 1)[1].strip()\n"
+        "                break\n"
+        "finally:\n"
+        "    os.close(fd)\n"
+        "expected = 'acgs-postgres-recovery-root/v2\\t'\n"
+        "expected += f'{st.st_dev}:{st.st_ino}:{st.st_uid}:700\\t{mnt_id}'\n"
+        "if binding != expected:\n"
+        "    print(f'binding-mismatch: {binding!r} != {expected!r}', file=sys.stderr)\n"
+        "    raise SystemExit(65)\n"
+        "for fd_name in os.listdir('/proc/self/fd'):\n"
+        "    if not fd_name.isdigit():\n"
+        "        continue\n"
+        "    fd_path = f'/proc/self/fd/{fd_name}'\n"
+        "    try:\n"
+        "        fd_st = os.stat(fd_path)\n"
+        "    except OSError:\n"
+        "        continue\n"
+        "    if not stat.S_ISDIR(fd_st.st_mode):\n"
+        "        continue\n"
+        "    if (fd_st.st_dev, fd_st.st_ino) != (st.st_dev, st.st_ino):\n"
+        "        continue\n"
+        "    parent_escape = os.path.join(fd_path, '..', os.path.basename(escape_path))\n"
+        "    with open(parent_escape, 'w', encoding='ascii') as marker:\n"
+        "        marker.write('escaped\\n')\n"
+        "    reached_socket = False\n"
+        "    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:\n"
+        "        client.settimeout(0.2)\n"
+        "        try:\n"
+        "            client.connect(os.path.join(fd_path, '..', os.path.basename(socket_path)))\n"
+        "        except OSError:\n"
+        "            pass\n"
+        "        else:\n"
+        "            reached_socket = True\n"
+        "    print(f'LEAKED_RECOVERY_ROOT_FD={fd_name} ESCAPE=1 SOCKET={int(reached_socket)}')\n"
+        "    raise SystemExit(71)\n"
+        "print('SAFE_RECOVERY_ROOT_BINDING')\n",
+        encoding="utf-8",
+    )
+    fake_runner.chmod(0o755)
+
+    def run_gate(script_body: str, *, expect_socket: bool) -> subprocess.CompletedProcess[str]:
+        escape_path = runner_temp / "workflow-fd-escape"
+        socket_path = runner_temp / "external.sock"
+        if escape_path.exists():
+            escape_path.unlink()
+        try:
+            socket_path.unlink()
+        except FileNotFoundError:
+            pass
+        env = {
+            **os.environ,
+            "GITHUB_WORKSPACE": str(workspace),
+            "RUNNER_TEMP": str(runner_temp),
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "ACGS_TEST_ESCAPE_PATH": str(escape_path),
+            "ACGS_TEST_EXTERNAL_SOCKET": str(socket_path),
+        }
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            listener.bind(str(socket_path))
+            listener.listen(1)
+            listener.settimeout(1.0)
+            process = subprocess.Popen(
+                ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=workspace,
+                env=env,
+                text=True,
+                start_new_session=True,
+            )
+            try:
+                stdout, stderr = process.communicate(script_body, timeout=10)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                stdout, stderr = process.communicate()
+                completed = subprocess.CompletedProcess(
+                    process.args,
+                    124,
+                    stdout,
+                    stderr,
+                )
+            else:
+                completed = subprocess.CompletedProcess(
+                    process.args,
+                    process.returncode,
+                    stdout,
+                    stderr,
+                )
+                if expect_socket:
+                    connection, _ = listener.accept()
+                    connection.close()
+        finally:
+            listener.close()
+            try:
+                socket_path.unlink()
+            except FileNotFoundError:
+                pass
+        return completed
+
+    try:
+        safe = run_gate(gate_run, expect_socket=False)
+        assert safe.returncode == 0, (safe.stdout, safe.stderr)
+        assert "SAFE_RECOVERY_ROOT_BINDING" in safe.stdout
+        assert not (runner_temp / "workflow-fd-escape").exists()
+
+        leaky_gate_run = gate_run.replace(
+            "export ACGS_POSTGRES_RECOVERY_ROOT_BINDING_V2\n",
+            "export ACGS_POSTGRES_RECOVERY_ROOT_BINDING_V2\n"
+            'exec {recovery_root_fd}<"$ACGS_POSTGRES_RECOVERY_ROOT"\n',
+            1,
+        )
+        assert "exec {recovery_root_fd}" in leaky_gate_run
+        leaky = run_gate(leaky_gate_run, expect_socket=True)
+        assert leaky.returncode == 71, (leaky.stdout, leaky.stderr)
+        assert "LEAKED_RECOVERY_ROOT_FD=" in leaky.stdout
+        assert "ESCAPE=1 SOCKET=1" in leaky.stdout
+        assert (runner_temp / "workflow-fd-escape").read_text(encoding="ascii") == "escaped\n"
+    finally:
+        shutil.rmtree(runner_temp)
+        assert not runner_temp.exists()
 
 
 def test_exact_pytest_junit_rejects_counter_cancellation_before_append(tmp_path: Path) -> None:
