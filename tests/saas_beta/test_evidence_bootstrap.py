@@ -14314,6 +14314,7 @@ def test_p0_launcher_authority_gate_authenticates_outer_target_not_nested_negati
     if not _has_exact_trusted_static_busybox():
         pytest.skip("trusted static /usr/bin/busybox unavailable")
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    recorded_gate_selector_sha256 = _shell_function(source, "recorded_gate_selector_sha256")
     gate = _shell_function(source, "run_trusted_parent_p0_launcher_authority_gate")
     node_evidence = tmp_path / "node"
     tmp_root = tmp_path / "tmp"
@@ -14393,6 +14394,7 @@ AUTH_LOG={shlex.quote(str(auth_log))}
 DBUS_SESSION_BUS_ADDRESS=
 XDG_RUNTIME_DIR=
 TRANSCRIPT_RECORDS=0
+{recorded_gate_selector_sha256}
 {gate}
 run_trusted_parent_p0_launcher_authority_gate P0 "$WORKTREE" p0-launcher-authority \\
   root:P0-EVIDENCE-000-launcher-authority-harness __NONE__ \\
