@@ -602,6 +602,43 @@ REVIEWED_P3_APPROVAL_003B_TRANSCRIPT = (
         ),
     ),
 )
+REVIEWED_P3_APPROVAL_003C_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:9],
+    (
+        "packages/acgs-control-plane:P3-APPROVAL-003C-postgres-approval-gate",
+        ("./scripts/run_postgres_gate.sh", *P3_APPROVAL_CP_SELECTORS),
+    ),
+    (
+        "packages/gove-zone:P3-APPROVAL-003C-escalation-consumption-compatibility",
+        (
+            "uv",
+            "run",
+            "--active",
+            "--no-sync",
+            "--python",
+            "3.11",
+            "--package",
+            "gove-zone",
+            "python",
+            "-m",
+            "pytest",
+            *P3_APPROVAL_GZ_SELECTORS,
+            "--import-mode=importlib",
+            "-q",
+        ),
+    ),
+    (
+        "root:P3-APPROVAL-003C-cross-plane-contract",
+        (
+            "packages/acgs-control-plane/.venv/bin/python",
+            "-m",
+            "pytest",
+            "-q",
+            *P3_APPROVAL_ROOT_SELECTORS,
+        ),
+    ),
+)
 REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P0-EVIDENCE-000": REVIEWED_P0_TRANSCRIPT,
     "P1-MIGRATION-001": REVIEWED_P1_MIGRATION_TRANSCRIPT,
@@ -616,6 +653,7 @@ REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P3-MUTATIONS-002": REVIEWED_P3_MUTATIONS_TRANSCRIPT,
     "P3-APPROVAL-003": REVIEWED_P3_APPROVAL_TRANSCRIPT,
     "P3-APPROVAL-003B": REVIEWED_P3_APPROVAL_003B_TRANSCRIPT,
+    "P3-APPROVAL-003C": REVIEWED_P3_APPROVAL_003C_TRANSCRIPT,
 }
 REVIEWED_CWD_SCOPES_BY_NODE = {
     "P1-MIGRATION-001": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
@@ -705,6 +743,20 @@ REVIEWED_CWD_SCOPES_BY_NODE = {
         "REPO_ROOT",
         "REPO_ROOT",
     ),
+    "P3-APPROVAL-003C": (
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+    ),
 }
 REVIEWED_COMMAND_SELECTORS = {argv: selector for selector, argv in REVIEWED_P0_TRANSCRIPT}
 ALLOWED_ASSIGNMENTS = {
@@ -732,6 +784,7 @@ EXPECTED_BOOTSTRAP_MAP = {
     "P3-MUTATIONS-002": "EVID+CP",
     "P3-APPROVAL-003": "EVID+CP+GZ",
     "P3-APPROVAL-003B": "EVID+CP+GZ",
+    "P3-APPROVAL-003C": "EVID+CP+GZ",
     "P4-ENROLLMENT-001": "EVID+CP+GZ",
     "P4-POLICY-SYNC-002": "EVID+CP+GZ",
     "P4-OUTAGE-003": "EVID+CP+GZ",
@@ -801,6 +854,15 @@ REVIEWED_RUN_METADATA_BY_NODE["P3-APPROVAL-003"] = {
     "external": (),
 }
 REVIEWED_RUN_METADATA_BY_NODE["P3-APPROVAL-003B"] = {
+    "process_schedule": (
+        "single-process-evidence-and-package-gates",
+        "postgres-pg9-approval-resume-multiprocess",
+    ),
+    "clock_source": "system-utc",
+    "skipped": (),
+    "external": (),
+}
+REVIEWED_RUN_METADATA_BY_NODE["P3-APPROVAL-003C"] = {
     "process_schedule": (
         "single-process-evidence-and-package-gates",
         "postgres-pg9-approval-resume-multiprocess",
@@ -1208,6 +1270,7 @@ def validate_secret_free_run(value: Any, *, expected_node: str | None = None) ->
         "P3-MUTATIONS-002",
         "P3-APPROVAL-003",
         "P3-APPROVAL-003B",
+        "P3-APPROVAL-003C",
     } and (determinism.get("seed") != 20260710 or determinism.get("python_hash_seed") != "0"):
         if str(node_id).startswith("P1-"):
             fail("P1 run determinism differs from the reviewed node contract", phase="B6")
