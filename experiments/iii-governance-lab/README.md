@@ -6,14 +6,20 @@ change the production console, Cloud Run, Vercel, or package release paths.
 
 ## Shape
 
-The lab has two external workers:
+The lab has one external worker:
 
 - `governance-worker`: Python worker that registers `governance::evaluate_policy`.
-- `caller-worker`: TypeScript worker that registers `governance::evaluate_request`
-  and an optional HTTP trigger at `/governance/evaluate`.
 
-The workers connect to the local iii engine at `ws://localhost:49134`. The HTTP
-worker, when installed with iii, serves endpoints from `http://localhost:3111`.
+The worker connects to the local iii engine at `ws://localhost:49134`. The
+engine's built-in HTTP worker serves endpoints from `http://localhost:3111`.
+
+A TypeScript `caller-worker` previously registered `governance::evaluate_request`
+and an HTTP trigger at `/governance/evaluate`, demonstrating the cross-language
+path. It was removed because its only dependency, `iii-sdk`, pulls
+`@opentelemetry/core` and `@opentelemetry/propagator-jaeger` at `1.30.1`, which
+carry CVE-2026-54285 and CVE-2026-59892. Both are fixed only on the 2.x majors,
+and every published `iii-sdk` pins `^1.30.0`, so no upgrade path exists. Restore
+the worker once `iii-sdk` ships on OpenTelemetry 2.x.
 
 ## Setup
 
@@ -31,25 +37,16 @@ added separately.
 iii --config config.yaml
 ```
 
-In separate terminals, add the workers:
+In a separate terminal, add the worker:
 
 ```bash
 iii worker add ./workers/governance-worker
-iii worker add ./workers/caller-worker
 ```
 
-Trigger the cross-language path:
+Trigger the policy worker directly:
 
 ```bash
-iii trigger governance::evaluate_request subject=demo action=read resource=policy/P-1207
-```
-
-Call the HTTP endpoint:
-
-```bash
-curl -X POST http://localhost:3111/governance/evaluate \
-  -H 'Content-Type: application/json' \
-  -d '{"subject":"demo","action":"read","resource":"policy/P-1207"}'
+iii trigger governance::evaluate_policy subject=demo action=read resource=policy/P-1207
 ```
 
 Expected decision:
