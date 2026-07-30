@@ -48,8 +48,11 @@ langchain = ["langchain-core>=0.1"]
 # (gove_zone.adapters.mcp_gateway). Lazy-imported inside the gateway entry
 # points; `import gove_zone` / `import gove_zone.adapters` stay dependency-free
 # and the gateway raises a loud RuntimeError with an install hint when the SDK
-# is absent.
-mcp = ["mcp>=1.27"]
+# is absent. Capped below 2.0: mcp 2.0.0 removed `mcp.server.fastmcp` and
+# `mcp.shared.memory.create_connected_server_and_client_session`, which the
+# gateway's FastMCP entry point and its conformance tests depend on. Lift the
+# cap only alongside a deliberate 2.x migration of the gateway and tests.
+mcp = ["mcp>=1.28.1,<2"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
