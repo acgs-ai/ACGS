@@ -7,14 +7,23 @@
 #
 # SETUP (human-gated, one-time): add the repo secret GITGUARDIAN_API_KEY
 #   Settings > Secrets and variables > Actions > New repository secret
-#   (create a free key at https://dashboard.gitguardian.com). Until the secret
-#   exists this workflow no-ops with a clear skip message rather than erroring.
+#   (create a free key at https://dashboard.gitguardian.com).
+#
+# NO-OP POSTURE CHANGED (2026-07-30): this workflow used to no-op with a skip
+#   message when the key was absent. `GitGuardian secret scan` is now a REQUIRED
+#   status check on master, and GitHub satisfies a required check on a `success`/
+#   `skipped`/`neutral` conclusion, never on proof the gate ran — so the required
+#   check was reporting green having scanned nothing. The scan now fails closed on
+#   pull requests when it cannot run; a maintainer applies the `gitguardian-waived`
+#   label to record an explicit decision to merge without it. Pushes to master
+#   still no-op, because there is no pull request there to carry a waiver.
 
 name: gitguardian
 
 on:
   pull_request:
     branches: [master]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   push:
     branches: [master]
 
@@ -50,6 +59,7 @@ jobs:
           fetch-depth: 0 # ggshield scans the full commit range of the PR
 
       - name: GitGuardian scan
+        id: scan
         if: steps.guard.outputs.enabled == 'true'
         uses: GitGuardian/ggshield-action@v1
         env:
@@ -57,3 +67,34 @@ jobs:
           GITHUB_PUSH_BASE_SHA: ${{ github.event.base }}
           GITHUB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
+
+      # Decides the required check. Runs unconditionally so the gate can never be
+      # satisfied by a skip.
+      - name: Gate on scan outcome
+        if: ${{ always() }}
+        env:
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+          IS_WAIVED: ${{ contains(github.event.pull_request.labels.*.name, 'gitguardian-waived') }}
+        run: |
+          set -euo pipefail
+
+          if [ "$SCAN_OUTCOME" = "success" ]; then
+            echo "GitGuardian scan ran and found no secrets."
+            exit 0
+          fi
+
+          if [ "$IS_PR" != "true" ]; then
+            echo "::warning title=GitGuardian scan did not run::No pull request context, so no waiver is possible. Not failing a branch push."
+            exit 0
+          fi
+
+          if [ "$IS_WAIVED" = "true" ]; then
+            echo "::warning title=GitGuardian scan waived::A maintainer applied the 'gitguardian-waived' label, so this required check passes without a secret scan. The waiver is recorded in the pull request's label history."
+            exit 0
+          fi
+
+          echo "::error title=GitGuardian scan did not run::This required check fails closed. GITGUARDIAN_API_KEY is not configured, or the scan did not complete (outcome: '$SCAN_OUTCOME')."
+          echo "Set the repo secret to enable the scan, or apply the 'gitguardian-waived'"
+          echo "label to record a maintainer decision to merge without it."
+          exit 1

@@ -9,14 +9,25 @@
 # teams that prefer an explicit, blocking CI check.
 #
 # SETUP (human-gated, one-time): add the repo secret SOCKET_SECURITY_API_TOKEN
-#   (free key at https://socket.dev). Until it exists this workflow no-ops with a
-#   clear skip message rather than erroring.
+#   (free key at https://socket.dev).
+#
+# NO-OP POSTURE CHANGED (2026-07-30): this workflow used to no-op with a skip
+#   message when the token was absent. That was a reasonable soft-launch while the
+#   job was advisory — but `Socket supply-chain scan` is now a REQUIRED status check
+#   on master, and GitHub satisfies a required check on a `success`/`skipped`/
+#   `neutral` conclusion, never on proof the gate ran. A skipped step does not fail
+#   its job, so the required check was reporting green in ~4s having scanned nothing.
+#   The scan now fails closed on pull requests when it cannot run. A maintainer who
+#   accepts the risk applies the `socket-scan-waived` label, which records the
+#   decision in the pull request's label history. Pushes to master still no-op,
+#   because there is no pull request there to carry a waiver.
 
 name: socket-security
 
 on:
   pull_request:
     branches: [master]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
 
 concurrency:
   group: socket-security-${{ github.ref }}
@@ -61,6 +72,7 @@ jobs:
         run: pip install --upgrade socketsecurity
 
       - name: Socket scan
+        id: scan
         if: steps.guard.outputs.enabled == 'true'
         # --strict-blocking fails the job on new dependency risk. socketcli
         # auto-detects the GitHub Actions PR context (repo, branch, PR number).
@@ -68,3 +80,34 @@ jobs:
         env:
           SOCKET_SECURITY_API_TOKEN: ${{ secrets.SOCKET_SECURITY_API_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Decides the required check. Runs unconditionally so the gate can never be
+      # satisfied by a skip.
+      - name: Gate on scan outcome
+        if: ${{ always() }}
+        env:
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+          IS_WAIVED: ${{ contains(github.event.pull_request.labels.*.name, 'socket-scan-waived') }}
+        run: |
+          set -euo pipefail
+
+          if [ "$SCAN_OUTCOME" = "success" ]; then
+            echo "Socket scan ran and found no blocking dependency risk."
+            exit 0
+          fi
+
+          if [ "$IS_PR" != "true" ]; then
+            echo "::warning title=Socket scan did not run::No pull request context, so no waiver is possible. Not failing a branch push."
+            exit 0
+          fi
+
+          if [ "$IS_WAIVED" = "true" ]; then
+            echo "::warning title=Socket scan waived::A maintainer applied the 'socket-scan-waived' label, so this required check passes without a supply-chain scan. The waiver is recorded in the pull request's label history."
+            exit 0
+          fi
+
+          echo "::error title=Socket scan did not run::This required check fails closed. SOCKET_SECURITY_API_TOKEN is not configured, or the scan did not complete (outcome: '$SCAN_OUTCOME')."
+          echo "Set the repo secret to enable the scan, or apply the 'socket-scan-waived'"
+          echo "label to record a maintainer decision to merge without it."
+          exit 1
