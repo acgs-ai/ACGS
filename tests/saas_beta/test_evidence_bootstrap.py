@@ -24080,7 +24080,7 @@ def _external_intent_cleanup_helper(
 ) -> str:
     source = (ROOT / "scripts/evidence/clean_sibling_cleanup.sh").read_text(encoding="utf-8")
     assert hashlib.sha256(source.encode("utf-8")).hexdigest() == (
-        "68d996434a6a92b4695872b8ec6dbe7792e3a03d6a791bcaae35a3851e7787be"
+        "eeddca259d38529f3d6ea584b81ee6abf2435e6cfe63c17aa0ee68afd863a06f"
     )
     helper = _shell_function(source, "clean_sibling_retain_recovery_contracts")
     helper = (

@@ -3143,7 +3143,8 @@ check_artifact() {
   [[ -f "$path" && ! -L "$path" ]] || exit 126
   actual_size="$(stat -Lc "%s" -- "$path")" || exit 126
   [[ "$actual_size" == "$expected_size" ]] || exit 126
-  actual_sha="$(sha256sum "$path" | awk "{print \$1}")" || exit 126
+  actual_sha="$(sha256sum "$path")" || exit 126
+  actual_sha="${actual_sha%% *}"
   [[ "$actual_sha" == "$expected_sha" ]] || exit 126
 }
 check_artifact "${ACGS_PREFLIGHT_LAUNCHER:-}" launcher
