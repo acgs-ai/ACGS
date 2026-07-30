@@ -4255,7 +4255,7 @@ run_trusted_parent_p0_launcher_authority_gate() {
   shift 5
   local started finished stdout_file stderr_file gate_status
   local launcher_path launcher_fd launcher_path_stat launcher_fd_stat launcher_sha
-  local trusted_launcher_sha256='bda70bc471f9399ddc4750ccb1b57011920a9cb9e79c67d5b79b020e9cec878b'
+  local trusted_launcher_sha256='4edc226d5981fd55f8ee20cf20caaa5246f5345dcb6f6a0c6068eadc0365e963'
   local target_sha='1111111111111111111111111111111111111111'
   [[ "$scope" == P0 ]] || die 'trusted parent P0 launcher gate is P0-only'
   [[ "$cwd" == "$WORKTREE" ]] || die 'trusted parent P0 launcher gate cwd must be repository root'

@@ -36,7 +36,7 @@ ALLOWED_ASSIGNMENTS = {
     "EVID+UI",
     "EVID+CP+GZ+UI",
 }
-NODE_COUNTS = {"P0": 4, "P1": 4, "P2": 4, "P3": 3, "P4": 3, "P5": 3, "P6": 3, "P7": 4}
+NODE_COUNTS = {"P0": 4, "P1": 4, "P2": 4, "P3": 4, "P4": 3, "P5": 3, "P6": 3, "P7": 4}
 EXPECTED_BOOTSTRAP_MAP = {
     "P0-EVIDENCE-000": "EVID+CP+GZ",
     "P0-MEMBRANE-001": "EVID+CP",

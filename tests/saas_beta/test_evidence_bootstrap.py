@@ -885,6 +885,7 @@ def test_lock_model_and_assignment_map_are_exact_closed_contracts() -> None:
         "python_platform": "x86_64-manylinux_2_28",
         "exclude_newer": "2026-07-10T00:00:00Z",
     }
+    assert render_lock_inputs.NODE_COUNTS["P3"] == 4
     assert config["bootstrap_by_scope"] == _common.EXPECTED_BOOTSTRAP_MAP
     assert _json(LOCK_ROOT / "bootstrap-by-scope.json") == _common.EXPECTED_BOOTSTRAP_MAP
     for code in ("CP", "GZ"):
@@ -14473,7 +14474,8 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "P2-VERTICAL-GATE-003)" in source
     assert "P3-POLICY-001)" in source
     assert "P3-MUTATIONS-002)" in source
-    assert "P3-APPROVAL-003)" in source
+    assert "P3-APPROVAL-003 | P3-APPROVAL-003B)" in source
+    assert "P3_APPROVAL_REVIEWED_BASE='a2299d510d792dd04646204653e405e0485204a6'" in source
     assert "P3-APPROVAL-003B" in source
     assert "P1_SCOPE_REVIEWED_BASE='40781e1200289507fcfbcedf6ab14c120ac6aae8'" in source
     assert "P1_LEDGER_REVIEWED_BASE='9450db249e4428021c4d98b2f1b81d414693d9af'" in source
@@ -14599,7 +14601,8 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "packages/acgs-control-plane:P3-APPROVAL-003B-postgres-approval-gate" in source
     assert "packages/gove-zone:P3-APPROVAL-003B-escalation-consumption-compatibility" in source
     assert "root:P3-APPROVAL-003B-cross-plane-contract" in source
-    assert "'root:P3-APPROVAL-003-cross-plane-contract' REPO_ROOT 1" in source
+    assert '"$P3_APPROVAL_ROOT_SELECTOR" REPO_ROOT 1' in source
+    assert "P3_APPROVAL_ROOT_SELECTOR='root:P3-APPROVAL-003-cross-plane-contract'" in source
     assert "P3_APPROVAL_ROOT_SELECTOR='root:P3-APPROVAL-003B-cross-plane-contract'" in source
     assert "p3-approval-postgres" in source
     assert "p3-approval-runtime" in source
