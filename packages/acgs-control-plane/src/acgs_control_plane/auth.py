@@ -28,6 +28,7 @@ class Principal:
     org_id: str
     name: str
     role: Role
+    api_key_hash: str | None = None
 
     @property
     def actor_id(self) -> str:
@@ -57,4 +58,10 @@ def resolve_principal(session: Session, raw_key: str) -> Principal | None:
     except ValueError:
         # Unknown role in storage: fail closed, treat as unauthenticated.
         return None
-    return Principal(user_id=user.id, org_id=user.org_id, name=user.name, role=role)
+    return Principal(
+        user_id=user.id,
+        org_id=user.org_id,
+        name=user.name,
+        role=role,
+        api_key_hash=key_hash,
+    )

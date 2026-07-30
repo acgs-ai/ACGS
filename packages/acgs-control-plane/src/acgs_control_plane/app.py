@@ -42,6 +42,11 @@ from acgs_control_plane.api_contract import (
     redacted_error,
     request_id_from_scope,
 )
+from acgs_control_plane.approvals import (
+    ApprovalHttpError,
+    ApprovalService,
+    local_approval_payload_sealer,
+)
 from acgs_control_plane.auth import (
     API_KEY_HEADER,
     BOOTSTRAP_HEADER,
@@ -107,6 +112,8 @@ from acgs_control_plane.schemas import (
     AgentRegisterRequest,
     AgentResponse,
     AgentStatusRequest,
+    ApprovalVoteRequest,
+    ApprovalVoteResponse,
     DashboardResponse,
     ExportCreateRequest,
     ExportDetail,
@@ -363,6 +370,7 @@ def create_app(
     policy_registry_issuer: Any | None = None,
     policy_registry_receipt_sealer: Any | None = None,
     policy_registry_receipt_issuer: Any | None = None,
+    approval_payload_sealer: Any | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     app = MutationGuardedFastAPI(
@@ -457,16 +465,33 @@ def create_app(
         # scope, untrusted key, aborted transaction, cross-tenant admission)
         # has no receipt to cite and stays redacted and flat.
         if exc.receipt_id is not None and exc.decision is not None:
+            receipt_content: dict[str, Any] = {
+                "status": exc.status,
+                "reason": exc.detail,
+                "receipt_id": exc.receipt_id,
+                "decision": exc.decision,
+                "request_id": request_id_from_scope(request.scope),
+            }
+            if exc.extra:
+                receipt_content.update(exc.extra)
             return JSONResponse(
                 status_code=exc.status_code,
-                content={
-                    "status": exc.status,
-                    "reason": exc.detail,
-                    "receipt_id": exc.receipt_id,
-                    "decision": exc.decision,
-                    "request_id": request_id_from_scope(request.scope),
-                },
+                content=receipt_content,
             )
+        error_content: dict[str, Any] = {
+            "code": exc.code,
+            "status": exc.status,
+            "detail": exc.detail,
+        }
+        if exc.extra:
+            error_content.update(exc.extra)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=error_content,
+        )
+
+    @app.exception_handler(ApprovalHttpError)
+    def _approval_error(_request: Request, exc: ApprovalHttpError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
             content={
@@ -645,8 +670,15 @@ def create_app(
         effective_agent_registration_receipt_sealer = (
             agent_registration_receipt_sealer or local_agent_registration_receipt_sealer()
         )
+        effective_approval_payload_sealer = (
+            approval_payload_sealer or local_approval_payload_sealer()
+        )
     else:
-        if agent_registration_issuer is None or agent_registration_receipt_sealer is None:
+        if (
+            agent_registration_issuer is None
+            or agent_registration_receipt_sealer is None
+            or approval_payload_sealer is None
+        ):
             raise ProductionPostureBlocked(
                 (
                     PostureBlocker(
@@ -657,11 +689,19 @@ def create_app(
             )
         effective_agent_registration_issuer = agent_registration_issuer
         effective_agent_registration_receipt_sealer = agent_registration_receipt_sealer
+        effective_approval_payload_sealer = approval_payload_sealer
     app.state.agent_registration_service = AgentRegistrationService(
         app.state.session_factory,
         issuer=effective_agent_registration_issuer,
         receipt_sealer=effective_agent_registration_receipt_sealer,
+        approval_payload_sealer=effective_approval_payload_sealer,
         receipt_issuer=agent_registration_receipt_issuer,
+    )
+    app.state.approval_service = ApprovalService(
+        app.state.session_factory,
+        issuer=effective_agent_registration_issuer,
+        receipt_sealer=effective_agent_registration_receipt_sealer,
+        payload_sealer=effective_approval_payload_sealer,
     )
     if settings.runtime_posture is RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED:
         effective_policy_registry_issuer = policy_registry_issuer or local_policy_registry_issuer()
@@ -709,7 +749,7 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/readyz", tags=["meta"])
     def readyz(request: Request) -> JSONResponse:
         preflight: SchemaPreflight = request.app.state.schema_preflight
-        schema_current = preflight.state is DatabaseSchemaState.VERSION_0008
+        schema_current = preflight.state is DatabaseSchemaState.VERSION_0010
         blockers: tuple[PostureBlocker, ...] = request.app.state.readiness_blockers
         return JSONResponse(
             status_code=503,
@@ -993,6 +1033,73 @@ def _register_routes(app: FastAPI) -> None:
             state={"trust_tier": rec.trust_tier},
         )
         return _agent_response(rec, receipt_id=outcome.receipt.id)
+
+    # -- approvals -----------------------------------------------------------
+
+    @app.post(
+        "/orgs/{org_id}/approvals/{approval_request_id}/votes",
+        response_model=ApprovalVoteResponse,
+        tags=["approvals"],
+        operation_id="approval.vote",
+    )
+    def vote_approval(
+        approval_request_id: str,
+        body: ApprovalVoteRequest,
+        org: OrgDep,
+        request: Request,
+        _session: SessionDep,
+        principal: Annotated[Principal, require(Permission.APPROVAL_VOTE)],
+        idempotency_key: Annotated[str | None, Header(alias=BOOTSTRAP_IDEMPOTENCY_HEADER)] = None,
+    ) -> ApprovalVoteResponse:
+        service: ApprovalService = request.app.state.approval_service
+        result = service.vote(
+            org_id=org.id,
+            approval_request_id=approval_request_id,
+            principal=principal,
+            decision=body.decision,
+            idempotency_key=idempotency_key,
+        )
+        return ApprovalVoteResponse(
+            approval_request_id=result.approval_request_id,
+            decision=result.decision,
+            outcome=result.outcome,
+            vote_hash=result.vote_hash,
+            receipt_id=result.receipt_id,
+        )
+
+    @app.post(
+        "/orgs/{org_id}/approvals/{approval_request_id}/resume",
+        response_model=AgentResponse,
+        status_code=201,
+        tags=["approvals"],
+        operation_id="approval.resume",
+    )
+    def resume_approval(
+        approval_request_id: str,
+        org: OrgDep,
+        request: Request,
+        _session: SessionDep,
+        principal: Annotated[Principal, require(Permission.APPROVAL_RESUME)],
+        idempotency_key: Annotated[str | None, Header(alias=BOOTSTRAP_IDEMPOTENCY_HEADER)] = None,
+    ) -> AgentResponse:
+        service: ApprovalService = request.app.state.approval_service
+        result = service.resume(
+            org_id=org.id,
+            approval_request_id=approval_request_id,
+            principal=principal,
+            idempotency_key=idempotency_key,
+        )
+        return AgentResponse(
+            agent_id=result.agent_id,
+            org_id=result.org_id,
+            name=result.name,
+            description=result.description,
+            trust_tier=result.trust_tier,
+            allowed_tools=result.allowed_tools,
+            status=result.status,
+            created_at=result.created_at,
+            receipt_id=result.receipt_id,
+        )
 
     # -- policy registry ------------------------------------------------------
 

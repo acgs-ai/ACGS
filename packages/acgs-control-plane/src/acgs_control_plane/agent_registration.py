@@ -21,6 +21,10 @@ from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustScope, TrustCo
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
+from acgs_control_plane.approvals import (
+    ApprovalPayloadSealer,
+    create_agent_registration_approval_request,
+)
 from acgs_control_plane.auth import Principal
 from acgs_control_plane.governance import mirror_managed_decision
 from acgs_control_plane.managed_mutations import (
@@ -37,6 +41,7 @@ from acgs_control_plane.managed_mutations import (
 from acgs_control_plane.models import (
     AgentRecord,
     AgentRegistrationIdempotency,
+    ApprovalRequest,
     Environment,
     EnvironmentPolicyHead,
     ManagedDecisionReceipt,
@@ -90,6 +95,7 @@ class AgentRegistrationHttpError(RuntimeError):
     # keys the envelope off these, not off the status code.
     receipt_id: str | None = None
     decision: str | None = None
+    extra: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -152,6 +158,7 @@ class DefaultAgentRegistrationReceiptIssuer:
 class AgentRegistrationProviders:
     issuer: ManagedPlatformIssuer
     receipt_sealer: AesGcmReceiptArtifactSealer
+    approval_payload_sealer: ApprovalPayloadSealer
     receipt_issuer: AgentRegistrationReceiptIssuer
 
 
@@ -187,6 +194,7 @@ class AgentRegistrationService:
         *,
         issuer: ManagedPlatformIssuer,
         receipt_sealer: AesGcmReceiptArtifactSealer,
+        approval_payload_sealer: ApprovalPayloadSealer,
         receipt_issuer: AgentRegistrationReceiptIssuer | None = None,
     ) -> None:
         object.__setattr__(self, "_session_factory", session_factory)
@@ -196,6 +204,7 @@ class AgentRegistrationService:
             AgentRegistrationProviders(
                 issuer=issuer,
                 receipt_sealer=receipt_sealer,
+                approval_payload_sealer=approval_payload_sealer,
                 receipt_issuer=receipt_issuer or DefaultAgentRegistrationReceiptIssuer(issuer),
             ),
         )
@@ -220,11 +229,13 @@ class AgentRegistrationService:
         args = _normalized_agent_args(body)
         with self._session_factory() as session:
             project, environment = _resolve_default_scope(session, org_id=org_id)
-            policy, policy_bundle_id, policy_hash = _active_policy_context(
-                session,
-                org_id=org_id,
-                project_id=project.id,
-                environment_id=environment.id,
+            policy, policy_bundle_id, policy_hash, policy_version, policy_generation = (
+                _active_policy_context(
+                    session,
+                    org_id=org_id,
+                    project_id=project.id,
+                    environment_id=environment.id,
+                )
             )
             context = ManagedMutationContext(
                 org_id=org_id,
@@ -321,6 +332,7 @@ class AgentRegistrationService:
         )
 
         if decision_record.decision in {Decision.DENY, Decision.ESCALATE}:
+            terminal_to_raise = _terminal_http_error_for_decision(decision_record)
 
             def before_record(tx_session: Session) -> None:
                 _revalidate_active_policy_under_lock(
@@ -358,7 +370,30 @@ class AgentRegistrationService:
                 _outbox: ManagedOutboxMessage,
                 _result: ManagedNonExecutableEvidenceResult,
             ) -> None:
+                nonlocal terminal_to_raise
                 terminal = _terminal_http_error_for_decision(decision_record)
+                approval_id: str | None = None
+                if decision_record.decision is Decision.ESCALATE:
+                    approval = create_agent_registration_approval_request(
+                        session,
+                        context=context,
+                        args=args,
+                        receipt_row=receipt_row,
+                        receipt_id=receipt_row.receipt_id,
+                        policy_version=policy_version,
+                        policy_head_generation=policy_generation,
+                        trust_epoch=trust_epoch,
+                        sealer=self._providers.approval_payload_sealer,
+                    )
+                    approval_id = approval.id
+                    terminal = replace(
+                        terminal,
+                        extra={
+                            "approval_request_id": approval.id,
+                            "approval_request_hash": approval.request_hash,
+                        },
+                    )
+                    terminal_to_raise = terminal
                 session.add(
                     AgentRegistrationIdempotency(
                         id=new_id(),
@@ -374,6 +409,7 @@ class AgentRegistrationService:
                             terminal,
                             context=context,
                             receipt_id=receipt_row.receipt_id,
+                            approval_id=approval_id,
                         ),
                     )
                 )
@@ -457,7 +493,7 @@ class AgentRegistrationService:
             # control plane. Envelope matches the pre-managed v0 contract, and
             # the detail matches the stored idempotency row so a replay of this
             # key answers with the identical terminal.
-            terminal = _terminal_http_error_for_decision(decision_record)
+            terminal = terminal_to_raise
             raise AgentRegistrationHttpError(
                 terminal.status_code,
                 terminal.code,
@@ -466,6 +502,7 @@ class AgentRegistrationService:
                 stage=terminal.stage,
                 receipt_id=receipt.receipt_id,
                 decision=receipt.decision,
+                extra=terminal.extra,
             )
 
         if decision_record.decision is not Decision.ALLOW:
@@ -1021,12 +1058,36 @@ def _validated_idempotency_replay(
         if not isinstance(stored_detail, str) or not stored_detail:
             raise _invalid_idempotency_record()
         terminal = replace(terminal, detail=stored_detail)
+        approval_id: str | None = None
+        if receipt.decision == "escalate":
+            approval = session.scalars(
+                sa.select(ApprovalRequest)
+                .where(
+                    ApprovalRequest.org_id == row.org_id,
+                    ApprovalRequest.project_id == row.project_id,
+                    ApprovalRequest.environment_id == row.environment_id,
+                    ApprovalRequest.escalate_receipt_id == receipt.receipt_id,
+                    ApprovalRequest.status == "pending",
+                )
+                .with_for_update()
+            ).one_or_none()
+            if approval is None:
+                raise _invalid_idempotency_record()
+            approval_id = approval.id
+            terminal = replace(
+                terminal,
+                extra={
+                    "approval_request_id": approval.id,
+                    "approval_request_hash": approval.request_hash,
+                },
+            )
         expected_response = _idempotency_error_payload_for_scope(
             terminal,
             org_id=row.org_id,
             project_id=row.project_id,
             environment_id=row.environment_id,
             receipt_id=receipt.receipt_id,
+            approval_id=approval_id,
         )
         if row.response != expected_response:
             raise _invalid_idempotency_record()
@@ -1041,6 +1102,7 @@ def _validated_idempotency_replay(
             stage=terminal.stage,
             receipt_id=receipt.receipt_id,
             decision=receipt.decision,
+            extra=terminal.extra,
         )
 
     raise _invalid_idempotency_record()
@@ -1441,6 +1503,7 @@ def _idempotency_error_payload(
     *,
     context: ManagedMutationContext,
     receipt_id: str,
+    approval_id: str | None = None,
 ) -> dict[str, Any]:
     return _idempotency_error_payload_for_scope(
         terminal,
@@ -1448,6 +1511,7 @@ def _idempotency_error_payload(
         project_id=context.project_id,
         environment_id=context.environment_id,
         receipt_id=receipt_id,
+        approval_id=approval_id,
     )
 
 
@@ -1458,9 +1522,10 @@ def _idempotency_error_payload_for_scope(
     project_id: str,
     environment_id: str,
     receipt_id: str,
+    approval_id: str | None = None,
 ) -> dict[str, Any]:
     decision = "escalate" if terminal.code == "ESCALATE_PENDING" else "deny"
-    return {
+    payload = {
         "schema": "agent-registration-idempotency-response/v1",
         "terminal": decision,
         "http_status": terminal.status_code,
@@ -1473,6 +1538,11 @@ def _idempotency_error_payload_for_scope(
         "environment_id": environment_id,
         "receipt_id": receipt_id,
     }
+    if approval_id is not None:
+        payload["approval_request_id"] = approval_id
+    if terminal.extra:
+        payload["extra"] = dict(terminal.extra)
+    return payload
 
 
 def _terminal_http_error_for_decision(record: DecisionRecord) -> AgentRegistrationHttpError:
@@ -1533,7 +1603,7 @@ def _active_policy_context(
     project_id: str,
     environment_id: str,
     lock: bool = False,
-) -> tuple[Any, str, str]:
+) -> tuple[Any, str, str, str, int]:
     head_statement = sa.select(EnvironmentPolicyHead).where(
         EnvironmentPolicyHead.org_id == org_id,
         EnvironmentPolicyHead.project_id == project_id,
@@ -1585,7 +1655,7 @@ def _active_policy_context(
             "policy_not_ready",
             "active environment policy document is invalid",
         ) from exc
-    return policy, version.id, version.content_hash
+    return policy, version.id, version.content_hash, version.version, head.generation
 
 
 def _normalized_agent_args(body: AgentRegisterRequest) -> dict[str, Any]:
@@ -1642,7 +1712,7 @@ def _revalidate_active_policy_under_lock(
     project, environment = _resolve_default_scope(session, org_id=context.org_id, lock=True)
     if project.id != context.project_id or environment.id != context.environment_id:
         raise ReceiptValidationError("agent registration scope changed before execution")
-    policy, bundle_id, policy_hash = _active_policy_context(
+    policy, bundle_id, policy_hash, _policy_version, _policy_generation = _active_policy_context(
         session,
         org_id=context.org_id,
         project_id=context.project_id,

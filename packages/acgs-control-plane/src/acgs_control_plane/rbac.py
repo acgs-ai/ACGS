@@ -27,6 +27,8 @@ class Permission(enum.StrEnum):
     AGENT_REGISTER = "agent.register"
     AGENT_MANAGE = "agent.manage"
     AGENT_READ = "agent.read"
+    APPROVAL_VOTE = "approval.vote"
+    APPROVAL_RESUME = "approval.resume"
     POLICY_PUBLISH = "policy.publish"
     POLICY_ACTIVATE = "policy.activate"
     POLICY_READ = "policy.read"
@@ -46,6 +48,8 @@ PERMISSIONS: dict[Permission, frozenset[Role]] = {
     Permission.AGENT_REGISTER: frozenset({Role.ORG_ADMIN, Role.AGENT_OPERATOR}),
     Permission.AGENT_MANAGE: frozenset({Role.ORG_ADMIN, Role.AGENT_OPERATOR}),
     Permission.AGENT_READ: _ALL,
+    Permission.APPROVAL_VOTE: frozenset({Role.ORG_ADMIN}),
+    Permission.APPROVAL_RESUME: frozenset({Role.ORG_ADMIN}),
     Permission.POLICY_PUBLISH: frozenset({Role.ORG_ADMIN, Role.POLICY_AUTHOR}),
     Permission.POLICY_ACTIVATE: frozenset({Role.ORG_ADMIN}),
     Permission.POLICY_READ: _ALL,

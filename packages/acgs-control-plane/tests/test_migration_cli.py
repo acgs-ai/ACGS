@@ -149,7 +149,7 @@ def test_upgrade_forwards_expected_database_and_emits_no_secret(
         observed.update(url=database_url, expected=expected_database or "")
         return MigrationResult(
             before=SchemaPreflight(DatabaseSchemaState.EMPTY, "not emitted"),
-            after=SchemaPreflight(DatabaseSchemaState.VERSION_0008, "not emitted"),
+            after=SchemaPreflight(DatabaseSchemaState.VERSION_0009, "not emitted"),
         )
 
     monkeypatch.setattr(migration_cli, "upgrade_database", upgrade)
@@ -160,7 +160,7 @@ def test_upgrade_forwards_expected_database_and_emits_no_secret(
     assert exit_code == 0
     assert stderr is None
     assert stdout == {
-        "after": "version_0008",
+        "after": "version_0009",
         "before": "empty",
         "command": "upgrade",
         "ok": True,
@@ -498,7 +498,7 @@ def test_all_logging_levels_are_suppressed_and_exact_state_is_restored(
             raise RuntimeError(_SECRET_URL)
         return MigrationResult(
             before=SchemaPreflight(DatabaseSchemaState.EMPTY, "not emitted"),
-            after=SchemaPreflight(DatabaseSchemaState.VERSION_0008, "not emitted"),
+            after=SchemaPreflight(DatabaseSchemaState.VERSION_0009, "not emitted"),
         )
 
     monkeypatch.setattr(migration_cli, "upgrade_database", upgrade)
@@ -601,7 +601,7 @@ def test_existing_unbound_sqlite_upgrade_remains_compatible_but_identity_bound_r
     compatible_url = f"sqlite:///{tmp_path / 'compatible.sqlite3'}"
     result = upgrade_database(compatible_url)
     assert result.before.state is DatabaseSchemaState.EMPTY
-    assert result.after.state is DatabaseSchemaState.VERSION_0008
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
 
     rejected_url = f"sqlite:///{tmp_path / 'rejected.sqlite3'}"
     with pytest.raises(UnsupportedMigrationDialect):

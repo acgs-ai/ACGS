@@ -420,6 +420,44 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The hardened gate refuses to run without an owner-only recovery-intent
+          # directory; mktemp -d creates it with mode 0700 owned by the runner user.
+          recovery_root="$(mktemp -d "${RUNNER_TEMP}/acp-postgres-recovery.XXXXXXXX")"
+          export ACGS_POSTGRES_RECOVERY_ROOT="$(realpath -e "$recovery_root")"
+          # The gate also requires a descriptor-bound identity binding for the
+          # recovery root (device:inode:uid:mode plus mount id), minted in the
+          # same mount namespace the gate validates it in.
+          ACGS_POSTGRES_RECOVERY_ROOT_BINDING_V2="$(
+            /usr/bin/python3 -I -S - "$ACGS_POSTGRES_RECOVERY_ROOT" <<'PY'
+          from __future__ import annotations
+
+          import os
+          import stat
+          import sys
+
+          root = sys.argv[1]
+          fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+          try:
+              st = os.fstat(fd)
+              if not stat.S_ISDIR(st.st_mode):
+                  raise SystemExit(70)
+              if st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o700:
+                  raise SystemExit(70)
+              mnt_id = ""
+              with open(f"/proc/self/fdinfo/{fd}", encoding="utf-8") as fdinfo:
+                  for line in fdinfo:
+                      if line.startswith("mnt_id:"):
+                          mnt_id = line.split(":", 1)[1].strip()
+                          break
+              if not mnt_id.isdigit():
+                  raise SystemExit(70)
+              identity = f"{st.st_dev}:{st.st_ino}:{st.st_uid}:700"
+              print(f"acgs-postgres-recovery-root/v2\t{identity}\t{mnt_id}")
+          finally:
+              os.close(fd)
+          PY
+          )"
+          export ACGS_POSTGRES_RECOVERY_ROOT_BINDING_V2
           UV_BIN="$(realpath -e "$(command -v uv)")" ./scripts/run_postgres_gate.sh \
             tests/integration/test_agent_registration_idempotency_postgres.py::test_identical_key_and_canonical_request_converges_to_one_terminal_result \
             tests/integration/test_agent_registration_idempotency_postgres.py::test_same_key_different_canonical_request_conflicts_without_additional_side_effects \

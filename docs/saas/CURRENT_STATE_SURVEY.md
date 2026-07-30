@@ -12,6 +12,74 @@ at the frozen baseline. It is not deployment, customer-use, independent-assessme
 certification, or production-readiness evidence. It deliberately excludes
 credential material, request payloads, machine-local paths, and raw command output.
 
+## Branch-local delta after the frozen survey
+
+The G006 findings below remain the frozen `2026-07-13T09:59:25Z` survey record.
+On branch `beta/p3-approval-003-reconciled` in draft PR #413, the managed
+control plane adds
+a narrow approval/resume proof path for `agent.register` only:
+
+- Alembic head is now `0010`: revision `0008` adds the managed policy registry;
+  revision `0009` adds additive, forward-only approval request, vote, outcome,
+  and resume-authorization tables; and revision `0010` binds each approval vote
+  to the approver credential and exact managed vote receipt. Revision `0010`
+  refuses ambiguous pre-existing vote/resume rows rather than inventing their
+  provenance.
+- `POST /orgs/{org}/agents` now creates a scoped pending approval request when
+  the active managed policy returns ESCALATE for `agent.register`; the parked
+  request stores sealed arguments and binds scope, action, policy, trust epoch,
+  execution boundary, ESCALATE receipt, and audit-event hashes.
+- `POST /orgs/{org}/approvals/{approval_request_id}/votes` records a governed
+  approval vote, and `POST /orgs/{org}/approvals/{approval_request_id}/resume`
+  resumes only the original `control-plane.agent.create` action.
+- Resume requires a distinct active credential-bound approver, live policy and
+  trust revalidation, requester/approver/caller checks, a fresh short-lived
+  signed `DecisionReceipt`, `execute_with_receipt` verification, SQL
+  single-use consumption, and one atomic commit for the agent row, receipt,
+  event, outbox, mutation attempt, and resume authorization.
+
+This delta resolves the prior "no managed control-plane approval/resume API"
+gap only for the local/test `agent.register` path. Bootstrap approvals remain a
+separate pre-tenant domain; policy publish/activate escalations remain
+unsupported and fail closed. The activated request threshold is fixed at one
+approver and there is no cancel endpoint. The tested guarantee is at-most-once
+authorized SQL execution for this one action, not exactly-once arbitrary
+external effects. Customer-runtime evidence ingestion, signed policy sync,
+durable spool, independent witnessing, deployment, customer use, external
+audit, compliance, and production readiness remain unclaimed.
+
+The branch evidence is local tests plus live local PostgreSQL harness coverage:
+
+```bash
+cd packages/acgs-control-plane
+./scripts/run_postgres_gate.sh \
+  tests/integration/test_approval_resume_postgres.py::test_pg_escalate_creates_scoped_pending_without_agent_or_consumption \
+  tests/integration/test_approval_resume_postgres.py::test_pg_self_and_wrong_role_approval_are_non_executable \
+  tests/integration/test_approval_resume_postgres.py::test_pg_resume_before_required_vote_is_non_executable \
+  tests/integration/test_approval_resume_postgres.py::test_pg_approved_resume_executes_once_and_replay_is_stable \
+  tests/integration/test_approval_resume_postgres.py::test_pg_rejected_and_expired_requests_resume_zero_side_effects \
+  tests/integration/test_approval_resume_postgres.py::test_pg_concurrent_vote_refusal_replay_records_one_evidence_set \
+  tests/integration/test_approval_resume_postgres.py::test_pg_mixed_refusal_then_allow_same_vote_key_has_one_terminal_artifact \
+  tests/integration/test_approval_resume_postgres.py::test_pg_stale_policy_trust_and_requester_resume_zero_side_effects \
+  tests/integration/test_approval_resume_postgres.py::test_pg_tampered_sealed_payload_resume_zero_side_effects \
+  tests/integration/test_approval_resume_postgres.py::test_pg_multiprocess_resume_race_authorizes_one_agent \
+  tests/integration/test_approval_resume_postgres.py::test_pg_approval_composite_constraints_reject_cross_scope_rows
+```
+
+```bash
+uv run --extra mcp --package gove-zone python -m pytest \
+  packages/gove-zone/tests/test_mcp_gateway_conformance.py::test_escalate_approve_resume_single_use \
+  packages/gove-zone/tests/test_mcp_gateway_conformance.py::test_cross_pending_reuse \
+  packages/gove-zone/tests/test_receipt_consumption.py::test_resume_replay_blocked_with_ledger \
+  packages/gove-zone/tests/test_receipt_consumption.py::test_concurrent_consumers_single_winner \
+  --import-mode=importlib -q
+```
+
+```bash
+packages/acgs-control-plane/.venv/bin/python -m pytest -q \
+  tests/saas_beta/test_cross_plane_contracts.py::test_approval_contract_locks_vote_and_resume_assurance
+```
+
 ## Built / partial / missing / conflicting matrix
 
 | Plane | State | Current evidence boundary | Required next proof |

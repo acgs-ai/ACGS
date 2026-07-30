@@ -128,6 +128,20 @@ class AgentStatusRequest(BaseModel):
     status: str = Field(pattern="^(active|suspended)$")
 
 
+class ApprovalVoteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: str = Field(pattern="^(approve|reject)$")
+
+
+class ApprovalVoteResponse(BaseModel):
+    approval_request_id: str
+    decision: str
+    outcome: str | None
+    vote_hash: str
+    receipt_id: str
+
+
 # ---------------------------------------------------------------------------
 # Policy registry
 # ---------------------------------------------------------------------------

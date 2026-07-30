@@ -21,6 +21,12 @@ PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": True,
         "schema": {"type": "string"},
     },
+    "path:approval_request_id": {
+        "in": "path",
+        "name": "approval_request_id",
+        "required": True,
+        "schema": {"type": "string"},
+    },
     "path:bundle_id": {
         "in": "path",
         "name": "bundle_id",
@@ -394,9 +400,39 @@ EXPECTED_MANAGED_POLICY_PATHS: dict[str, dict[str, dict[str, Any]]] = {
     },
 }
 
+EXPECTED_APPROVAL_PATHS: dict[str, dict[str, dict[str, Any]]] = {
+    "/orgs/{org_id}/approvals/{approval_request_id}/votes": {
+        "post": {
+            "operation_id": "approval.vote",
+            "parameters": _expected_params(
+                "path:approval_request_id",
+                "path:org_id",
+                "header:Idempotency-Key",
+                "header:X-API-Key",
+            ),
+            "responses": ["200", "422"],
+            "tag": "approvals",
+        }
+    },
+    "/orgs/{org_id}/approvals/{approval_request_id}/resume": {
+        "post": {
+            "operation_id": "approval.resume",
+            "parameters": _expected_params(
+                "path:approval_request_id",
+                "path:org_id",
+                "header:Idempotency-Key",
+                "header:X-API-Key",
+            ),
+            "responses": ["201", "422"],
+            "tag": "approvals",
+        }
+    },
+}
+
 EXPECTED_PATHS: dict[str, dict[str, dict[str, Any]]] = {
     **EXPECTED_V0_PATHS,
     **EXPECTED_MANAGED_POLICY_PATHS,
+    **EXPECTED_APPROVAL_PATHS,
     "/v1": {
         "get": {
             "operation_id": "get_v1_metadata",
@@ -424,12 +460,18 @@ EXPECTED_PATHS: dict[str, dict[str, dict[str, Any]]] = {
         f"/v1{path}": {
             method: _v1_operation_contract(operation) for method, operation in methods.items()
         }
-        for path, methods in {**EXPECTED_V0_PATHS, **EXPECTED_MANAGED_POLICY_PATHS}.items()
+        for path, methods in {
+            **EXPECTED_V0_PATHS,
+            **EXPECTED_MANAGED_POLICY_PATHS,
+            **EXPECTED_APPROVAL_PATHS,
+        }.items()
         if path == "/orgs" or path.startswith("/orgs/")
     },
 }
 
 EXPECTED_COMPONENTS = {
+    "ApprovalVoteRequest",
+    "ApprovalVoteResponse",
     "AgentRegisterRequest",
     "AgentResponse",
     "AgentStatusRequest",
@@ -666,13 +708,14 @@ def test_current_openapi_contract_records_missing_beta_contract_boundaries(
 
     assert "/v1" in schema["paths"]
     assert "/v1/orgs" in schema["paths"]
-    # The platform tenant-bootstrap route, governed agent registration, and the
-    # managed policy publish/activate routes accept a per-request
-    # Idempotency-Key header; agent registration (migration 0007) and the
-    # policy registry (migration 0008) also persist it durably. Any other
-    # idempotency surface in the schema still trips the sentinel. The exact set
-    # of /v1 paths is pinned by EXPECTED_PATHS in the contract test above, so
-    # an unexpected /v1 route is caught there rather than here.
+    # The platform tenant-bootstrap route, governed agent registration, managed
+    # policy publish/activate routes, and governed approval vote/resume routes
+    # accept a per-request Idempotency-Key header. Agent registration (migration
+    # 0007), the policy registry (migration 0008), and approvals (migration
+    # 0009) persist it durably. Any other idempotency surface in the schema
+    # still trips the sentinel. The exact set of /v1 paths is pinned by
+    # EXPECTED_PATHS in the contract test above, so an unexpected /v1 route is
+    # caught there rather than here.
     managed_policy_publish_path = (
         "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies"
     )
@@ -687,6 +730,8 @@ def test_current_openapi_contract_records_missing_beta_contract_boundaries(
         del outside_idempotent_routes["paths"][f"{prefix}/orgs/{{org_id}}/agents"]["post"]
         del outside_idempotent_routes["paths"][f"{prefix}{managed_policy_publish_path}"]["post"]
         del outside_idempotent_routes["paths"][f"{prefix}{managed_policy_activate_path}"]["post"]
+        for path in EXPECTED_APPROVAL_PATHS:
+            del outside_idempotent_routes["paths"][f"{prefix}{path}"]["post"]
     serialized_outside_idempotent_routes = json.dumps(outside_idempotent_routes, sort_keys=True)
     assert "Idempotency-Key" not in serialized_outside_idempotent_routes
     assert "idempotency_key" not in serialized_outside_idempotent_routes

@@ -134,6 +134,17 @@ REVIEWED_P0_TRANSCRIPT = (
         ),
     ),
     (
+        "root:P0-EVIDENCE-000-launcher-authority-harness",
+        (
+            "/usr/bin/python3",
+            "-I",
+            "-S",
+            "-",
+            "scripts/evidence/prove_clean_sibling",
+            "1111111111111111111111111111111111111111",
+        ),
+    ),
+    (
         "root:P0-EVIDENCE-000",
         (
             ".venv-evidence/bin/python",
@@ -142,8 +153,6 @@ REVIEWED_P0_TRANSCRIPT = (
             "-q",
             "tests/saas_beta/test_evidence_bootstrap.py::"
             "test_clean_sibling_hash_locked_bootstraps_and_round_trip",
-            "tests/saas_beta/test_evidence_bootstrap.py::"
-            "test_clean_sibling_rejects_loader_and_git_authority_before_mutation",
             "tests/saas_beta/test_evidence_bootstrap.py::"
             "test_environment_identities_exactly_match_assignment",
             "tests/saas_beta/test_evidence_bootstrap.py::"
@@ -160,6 +169,8 @@ P1_MIGRATION_SELECTORS = (
     "tests/integration/test_migrations_postgres.py::test_large_table_online_migration_budget",
     "tests/integration/test_migrations_postgres.py::test_irreversible_restore_rehearsal",
     "tests/integration/test_migrations_postgres.py::test_failed_migration_no_later_state",
+    "tests/integration/test_migrations_postgres.py::"
+    "test_revision_0010_refuses_historical_approval_votes_without_invented_bindings",
 )
 P1_SCOPE_SELECTORS = (
     "tests/test_project_environment_scope.py::"
@@ -288,6 +299,41 @@ P3_MUTATIONS_CP_SELECTORS = (
 P3_MUTATIONS_ROOT_SELECTORS = (
     "tests/saas_beta/test_cross_plane_contracts.py::"
     "test_mutation_inventory_contract_locks_registry_and_actual_routing",
+)
+P3_APPROVAL_CP_SELECTORS = (
+    "tests/integration/test_approval_resume_postgres.py::"
+    "test_pg_escalate_creates_scoped_pending_without_agent_or_consumption",
+    "tests/integration/test_approval_resume_postgres.py::"
+    "test_pg_self_and_wrong_role_approval_are_non_executable",
+    "tests/integration/test_approval_resume_postgres.py::"
+    "test_pg_resume_before_required_vote_is_non_executable",
+    "tests/integration/test_approval_resume_postgres.py::"
+    "test_pg_approved_resume_executes_once_and_replay_is_stable",
+    "tests/integration/test_approval_resume_postgres.py::"
+    "test_pg_rejected_and_expired_requests_resume_zero_side_effects",
+    "tests/integration/test_approval_resume_postgres.py::"
+    "test_pg_concurrent_vote_refusal_replay_records_one_evidence_set",
+    "tests/integration/test_approval_resume_postgres.py::"
+    "test_pg_mixed_refusal_then_allow_same_vote_key_has_one_terminal_artifact",
+    "tests/integration/test_approval_resume_postgres.py::"
+    "test_pg_stale_policy_trust_and_requester_resume_zero_side_effects",
+    "tests/integration/test_approval_resume_postgres.py::"
+    "test_pg_tampered_sealed_payload_resume_zero_side_effects",
+    "tests/integration/test_approval_resume_postgres.py::"
+    "test_pg_multiprocess_resume_race_authorizes_one_agent",
+    "tests/integration/test_approval_resume_postgres.py::"
+    "test_pg_approval_composite_constraints_reject_cross_scope_rows",
+)
+P3_APPROVAL_GZ_SELECTORS = (
+    "packages/gove-zone/tests/test_mcp_gateway_conformance.py::"
+    "test_escalate_approve_resume_single_use",
+    "packages/gove-zone/tests/test_mcp_gateway_conformance.py::test_cross_pending_reuse",
+    "packages/gove-zone/tests/test_receipt_consumption.py::test_resume_replay_blocked_with_ledger",
+    "packages/gove-zone/tests/test_receipt_consumption.py::test_concurrent_consumers_single_winner",
+)
+P3_APPROVAL_ROOT_SELECTORS = (
+    "tests/saas_beta/test_cross_plane_contracts.py::"
+    "test_approval_contract_locks_vote_and_resume_assurance",
 )
 REVIEWED_P1_MIGRATION_TRANSCRIPT = (
     REVIEWED_P0_TRANSCRIPT[0],
@@ -482,6 +528,43 @@ REVIEWED_P3_MUTATIONS_TRANSCRIPT = (
         ),
     ),
 )
+REVIEWED_P3_APPROVAL_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:9],
+    (
+        "packages/acgs-control-plane:P3-APPROVAL-003-postgres-approval-gate",
+        ("./scripts/run_postgres_gate.sh", *P3_APPROVAL_CP_SELECTORS),
+    ),
+    (
+        "packages/gove-zone:P3-APPROVAL-003-escalation-consumption-compatibility",
+        (
+            "uv",
+            "run",
+            "--active",
+            "--no-sync",
+            "--python",
+            "3.11",
+            "--package",
+            "gove-zone",
+            "python",
+            "-m",
+            "pytest",
+            *P3_APPROVAL_GZ_SELECTORS,
+            "--import-mode=importlib",
+            "-q",
+        ),
+    ),
+    (
+        "root:P3-APPROVAL-003-cross-plane-contract",
+        (
+            "packages/acgs-control-plane/.venv/bin/python",
+            "-m",
+            "pytest",
+            "-q",
+            *P3_APPROVAL_ROOT_SELECTORS,
+        ),
+    ),
+)
 REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P0-EVIDENCE-000": REVIEWED_P0_TRANSCRIPT,
     "P1-MIGRATION-001": REVIEWED_P1_MIGRATION_TRANSCRIPT,
@@ -494,6 +577,7 @@ REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P2-VERTICAL-GATE-003": REVIEWED_P2_VERTICAL_GATE_TRANSCRIPT,
     "P3-POLICY-001": REVIEWED_P3_POLICY_TRANSCRIPT,
     "P3-MUTATIONS-002": REVIEWED_P3_MUTATIONS_TRANSCRIPT,
+    "P3-APPROVAL-003": REVIEWED_P3_APPROVAL_TRANSCRIPT,
 }
 REVIEWED_CWD_SCOPES_BY_NODE = {
     "P1-MIGRATION-001": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
@@ -555,6 +639,20 @@ REVIEWED_CWD_SCOPES_BY_NODE = {
     ),
     "P3-POLICY-001": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP", "REPO_ROOT"),
     "P3-MUTATIONS-002": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP", "REPO_ROOT"),
+    "P3-APPROVAL-003": (
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+    ),
 }
 REVIEWED_COMMAND_SELECTORS = {argv: selector for selector, argv in REVIEWED_P0_TRANSCRIPT}
 ALLOWED_ASSIGNMENTS = {
@@ -635,6 +733,15 @@ REVIEWED_RUN_METADATA_BY_NODE["P3-MUTATIONS-002"] = {
     "process_schedule": (
         "single-process-evidence-and-package-gates",
         "postgres-pg6-mutation-inventory-drift",
+    ),
+    "clock_source": "system-utc",
+    "skipped": (),
+    "external": (),
+}
+REVIEWED_RUN_METADATA_BY_NODE["P3-APPROVAL-003"] = {
+    "process_schedule": (
+        "single-process-evidence-and-package-gates",
+        "postgres-pg9-approval-resume-multiprocess",
     ),
     "clock_source": "system-utc",
     "skipped": (),
@@ -1037,6 +1144,7 @@ def validate_secret_free_run(value: Any, *, expected_node: str | None = None) ->
         "P2-VERTICAL-GATE-003",
         "P3-POLICY-001",
         "P3-MUTATIONS-002",
+        "P3-APPROVAL-003",
     } and (determinism.get("seed") != 20260710 or determinism.get("python_hash_seed") != "0"):
         if str(node_id).startswith("P1-"):
             fail("P1 run determinism differs from the reviewed node contract", phase="B6")
