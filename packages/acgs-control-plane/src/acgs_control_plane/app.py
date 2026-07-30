@@ -141,6 +141,7 @@ _TENANT_BOOTSTRAP_PUBLIC_DETAILS = {
     "ESCALATE_PENDING": "tenant bootstrap requires separated approval",
     "TX_ABORTED": "tenant bootstrap transaction aborted",
 }
+_TENANT_BOOTSTRAP_NO_STORE_HEADERS = {"Cache-Control": "no-store"}
 
 # ---------------------------------------------------------------------------
 # Dependencies
@@ -228,15 +229,33 @@ class _TenantBootstrapRequestIdMiddleware:
     assert real disconnect semantics, so that wrapper cannot stay on the stack.
     Pure ASGI middleware seeds the same ``request.state`` value -- ``Request.state``
     is backed by ``scope["state"]`` -- while leaving the channels untouched.
+
+    It also stamps ``Cache-Control: no-store`` on every tenant-bootstrap
+    response at ``http.response.start``, so success bodies carrying bootstrap
+    receipts are never cached, matching the refusal handlers.
     """
 
     def __init__(self, app: Any) -> None:
         self.app = app
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        if scope["type"] == "http" and scope.get("path") == "/v1/tenant-bootstrap":
-            scope.setdefault("state", {})["tenant_bootstrap_request_id"] = secrets.token_hex(16)
-        await self.app(scope, receive, send)
+        if scope["type"] != "http" or scope.get("path") != "/v1/tenant-bootstrap":
+            await self.app(scope, receive, send)
+            return
+        scope.setdefault("state", {})["tenant_bootstrap_request_id"] = secrets.token_hex(16)
+
+        async def send_no_store(message: Any) -> None:
+            if message["type"] == "http.response.start":
+                headers = [
+                    (name, value)
+                    for name, value in message.get("headers", [])
+                    if name.lower() != b"cache-control"
+                ]
+                headers.append((b"cache-control", b"no-store"))
+                message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_no_store)
 
 
 def _record_tenant_bootstrap_refusal(request: Request, exc: TenantBootstrapHttpError) -> None:
@@ -393,6 +412,7 @@ def create_app(
         _record_tenant_bootstrap_refusal(request, exc)
         return JSONResponse(
             status_code=exc.status_code,
+            headers=_TENANT_BOOTSTRAP_NO_STORE_HEADERS,
             content={
                 "code": exc.code,
                 "status": exc.status,
@@ -449,6 +469,7 @@ def create_app(
             )
             return JSONResponse(
                 status_code=400,
+                headers=_TENANT_BOOTSTRAP_NO_STORE_HEADERS,
                 content={
                     "code": "REQUEST_MALFORMED",
                     "status": "request_malformed",
@@ -478,6 +499,7 @@ def create_app(
             _record_tenant_bootstrap_refusal(request, error)
             return JSONResponse(
                 status_code=503,
+                headers=_TENANT_BOOTSTRAP_NO_STORE_HEADERS,
                 content={
                     "code": "TX_ABORTED",
                     "status": "tx_aborted",

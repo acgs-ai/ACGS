@@ -889,6 +889,12 @@
                 "single-process-evidence-and-package-gates",
                 "postgres-100-request-multiprocess-agent-registration-idempotency"
               ]
+            },
+            {
+              "const": [
+                "single-process-evidence-and-package-gates",
+                "postgres-vertical-bootstrap-register"
+              ]
             }
           ]
         }

@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 import acgs_control_plane.tenant_bootstrap as tenant_bootstrap_module  # type: ignore[import-untyped]
 from acgs_control_plane.app import create_app  # type: ignore[import-untyped]
+from acgs_control_plane.auth import hash_api_key  # type: ignore[import-untyped]
 from acgs_control_plane.config import RuntimePosture, Settings  # type: ignore[import-untyped]
 from acgs_control_plane.governance import ROUTE_CONTRACTS  # type: ignore[import-untyped]
 from acgs_control_plane.managed_mutations import (  # type: ignore[import-untyped]
@@ -1031,9 +1032,12 @@ def test_real_api_postgres_bootstrap_allow_atomic(
     response = client.post("/v1/tenant-bootstrap", json=BODY, headers=HEADERS)
 
     assert response.status_code == 201
+    assert response.headers["cache-control"] == "no-store"
     payload = response.json()
     assert payload["assurance_class"] == "native"
     assert payload["idempotency_key"] == HEADERS[BOOTSTRAP_IDEMPOTENCY_HEADER]
+    assert payload["owner_api_key"].startswith("acp_")
+    owner_api_key = payload["owner_api_key"]
     with app.state.session_factory() as session:
         assert _counts(session) == {
             "organizations": 1,
@@ -1056,6 +1060,9 @@ def test_real_api_postgres_bootstrap_allow_atomic(
         invitation = session.scalars(sa.select(PlatformBootstrapInvitation)).one()
         assert invitation.consumed_org_id == payload["org_id"]
         assert invitation.consumed_at is not None
+        owner = session.get(User, payload["owner_user_id"])
+        assert owner is not None
+        assert owner.api_key_hash == hash_api_key(owner_api_key)
         receipt = session.scalars(sa.select(ManagedDecisionReceipt)).one()
         assert receipt.actor == ACTOR
         assert receipt.proposed_action == TENANT_BOOTSTRAP_ACTION
@@ -1070,6 +1077,7 @@ def test_real_api_postgres_bootstrap_allow_atomic(
         assert receipt.projection["assurance_class"] == "native"
         assert receipt.projection["sealed_receipt"]["schema"] == "managed-receipt-artifact-seal/v1"
         assert "alice@example.com" not in str(receipt.projection).lower()
+        assert owner_api_key not in str(receipt.projection)
         assert (
             session.scalar(
                 sa.select(sa.func.count())
@@ -1121,6 +1129,10 @@ def test_real_api_postgres_bootstrap_allow_atomic(
         assert outbox.managed_event_id == event.id
         assert outbox.payload["assurance_class"] == "native"
         assert "alice@example.com" not in str(outbox.payload).lower()
+        assert owner_api_key not in str(event.payload)
+        assert owner_api_key not in str(outbox.payload)
+        idempotency = session.scalars(sa.select(TenantBootstrapIdempotency)).one()
+        assert idempotency.response["owner_api_key"] is None
         session.add(
             ManagedOutboxMessage(
                 id="orphan-outbox-row",
@@ -1144,7 +1156,9 @@ def test_real_api_postgres_bootstrap_allow_atomic(
 
     retry = client.post("/v1/tenant-bootstrap", json=BODY, headers=HEADERS)
     assert retry.status_code == 201
-    assert retry.json() == payload
+    assert retry.headers["cache-control"] == "no-store"
+    retry_payload = retry.json()
+    assert retry_payload == {**payload, "owner_api_key": None}
     with app.state.session_factory() as session:
         counts = _counts(session)
         assert counts["managed_receipts"] == 1
@@ -1206,6 +1220,7 @@ def test_real_api_postgres_bootstrap_refusal_matrix(
         else:
             response = request_client.post("/v1/tenant-bootstrap", content=content, headers=headers)
         assert response.status_code == status_code, (label, response.json())
+        assert response.headers["cache-control"] == "no-store", label
         assert response.json()["code"] == code, label
         _assert_zero_external_attempt_and_callback(
             label=label,
@@ -1873,8 +1888,24 @@ def test_100_request_multiprocess_bootstrap_once(
         results = pool.map(worker, range(100))
 
     assert {status for status, _payload in results} == {201}
-    first_payload = results[0][1]
-    assert all(payload == first_payload for _status, payload in results)
+    raw_owner_keys = [
+        payload.get("owner_api_key")
+        for _status, payload in results
+        if payload.get("owner_api_key") is not None
+    ]
+    assert len(raw_owner_keys) == 1
+    assert isinstance(raw_owner_keys[0], str)
+    assert raw_owner_keys[0].startswith("acp_")
+    replay_payloads = [
+        payload for _status, payload in results if payload.get("owner_api_key") is None
+    ]
+    assert len(replay_payloads) == 99
+    nonsecret_payloads = [
+        {key: value for key, value in payload.items() if key != "owner_api_key"}
+        for _status, payload in results
+    ]
+    first_nonsecret_payload = nonsecret_payloads[0]
+    assert all(payload == first_nonsecret_payload for payload in nonsecret_payloads)
     with app.state.session_factory() as session:
         counts = _counts(session)
         assert counts["organizations"] == 1
@@ -1890,3 +1921,5 @@ def test_100_request_multiprocess_bootstrap_once(
         assert counts["idempotency"] == 1
         assert counts["pending_approvals"] == 0
         assert counts["pending_outbox"] == 0
+        owner = session.scalars(sa.select(User)).one()
+        assert owner.api_key_hash == hash_api_key(raw_owner_keys[0])
