@@ -182,3 +182,8 @@ ds-bundle/
 .design-sync/.cache/
 .design-sync/learnings/
 .design-sync/node_modules
+
+# Jekyll / GitHub Pages build output (see _config.yml)
+/_site/
+.jekyll-cache/
+.jekyll-metadata
