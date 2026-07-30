@@ -1157,12 +1157,15 @@ def test_postgres_gate_binds_fresh_verified_uv_fd_to_inner_sandboxes() -> None:
 
     assert script.count("open_active_verified_uv_fd") == 3
     assert script.count("close_active_uv_fd") == 5
+    assert script.count("close_child_state_dir_fd") == 4
     assert '--perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"' in script
     assert '--tmpfs /run\n  --perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"' in script
+    assert 'if (\n    close_child_state_dir_fd || exit 70\n    env -i "$bwrap_bin" \\' in script
     assert (
         '/bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \\\n'
-        '      "$inner_uv_bin" build --no-build-isolation' in script
+        '        "$inner_uv_bin" build --no-build-isolation' in script
     )
+    assert "(\n  close_child_state_dir_fd || exit 70\n  ulimit -f 131072" in script
     assert (
         '/bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \\\n'
         '      "$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"' in script
@@ -4818,6 +4821,144 @@ def _extract_shell_function(script: str, name: str, next_name: str) -> str:
     return script[start:end]
 
 
+def _extract_shell_function_before_marker(script: str, name: str, marker: str) -> str:
+    start = script.index(f"{name}() {{")
+    end = script.index(marker, start)
+    return script[start:end].rstrip()
+
+
+def test_postgres_gate_child_state_dir_fd_closure_blocks_parent_escape_and_socket_reach() -> None:
+    script = _postgres_gate_script_source()
+    closer_source = _extract_shell_function_before_marker(
+        script,
+        "close_child_state_dir_fd",
+        "\n\n# shellcheck disable=SC2016",
+    )
+    cleanup_start = script.index("cleanup() {")
+    cleanup_end = script.index("\ntrap cleanup EXIT", cleanup_start)
+    cleanup_source = script[cleanup_start:cleanup_end]
+    assert script.count('exec {state_dir_fd}<"$state_dir"') == 1
+    assert script.count("close_child_state_dir_fd") == 4
+    assert "close_child_state_dir_fd" not in cleanup_source
+    assert 'local retained_state_fd="${state_dir_fd:-}"' in closer_source
+    assert '[[ ! "$retained_state_fd" =~ ^[0-9]+$ ]]' in closer_source
+    assert "exec {state_dir_fd}<&-" in closer_source
+    assert '[[ ! -e "/proc/$BASHPID/fd/$retained_state_fd" ]] || return 70' in closer_source
+    assert "state_dir_fd=''" in closer_source
+    assert "unset state_dir_fd" in closer_source
+    assert closer_source.count("return 70") == 2
+    assert closer_source.index("local retained_state_fd=") < closer_source.index(
+        '[[ ! "$retained_state_fd" =~ ^[0-9]+$ ]]'
+    )
+    assert closer_source.index('[[ ! "$retained_state_fd" =~ ^[0-9]+$ ]]') < (
+        closer_source.index("exec {state_dir_fd}<&-")
+    )
+    assert closer_source.index("exec {state_dir_fd}<&-") < closer_source.index(
+        '[[ ! -e "/proc/$BASHPID/fd/$retained_state_fd" ]] || return 70'
+    )
+    assert closer_source.rindex("state_dir_fd=''") < closer_source.rindex("unset state_dir_fd")
+    assert closer_source.rstrip().endswith("  state_dir_fd=''\n  unset state_dir_fd\n}")
+    assert script.count("close_child_state_dir_fd || exit 70") == 3
+
+    with tempfile.TemporaryDirectory(prefix="acgs-pg-fd-", dir="/tmp") as raw_tmp:
+        temp_root = Path(raw_tmp)
+        state_dir = temp_root / "state"
+        state_dir.mkdir(mode=0o700)
+        sibling_path = temp_root / "sibling-created"
+        socket_path = temp_root / "external.sock"
+        harness = temp_root / "child-fd-closure.sh"
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(str(socket_path))
+            listener.listen(1)
+            harness.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -Eeuo pipefail\n"
+                f"{closer_source}\n"
+                f"state_dir={shlex.quote(str(state_dir))}\n"
+                f"sibling_path={shlex.quote(str(sibling_path))}\n"
+                f"external_socket={shlex.quote(str(socket_path))}\n"
+                'exec {state_dir_fd}<"$state_dir"\n'
+                "set +e\n"
+                "(\n"
+                "  state_dir_fd=not-a-number\n"
+                "  close_child_state_dir_fd || exit 70\n"
+                "  exit 37\n"
+                ")\n"
+                "invalid_child_status=$?\n"
+                "set -e\n"
+                '[[ "$invalid_child_status" == 70 ]] || exit 80\n'
+                "set +e\n"
+                "(\n"
+                "  close_child_state_dir_fd || exit 70\n"
+                "  exit 37\n"
+                ")\n"
+                "propagated_child_status=$?\n"
+                "set -e\n"
+                '[[ "$propagated_child_status" == 37 ]] || exit 81\n'
+                '[[ -e "/proc/$BASHPID/fd/$state_dir_fd" ]] || exit 82\n'
+                "(\n"
+                "  close_child_state_dir_fd || exit 70\n"
+                '  /usr/bin/python3 -I -S - "$state_dir" "$sibling_path" '
+                "\"$external_socket\" <<'PY'\n"
+                "from __future__ import annotations\n"
+                "import errno\n"
+                "import os\n"
+                "import socket\n"
+                "import stat\n"
+                "import sys\n"
+                "state_dir, sibling_path, external_socket = sys.argv[1:4]\n"
+                "state_stat = os.stat(state_dir, follow_symlinks=False)\n"
+                "parent_path = os.path.dirname(state_dir)\n"
+                "sibling_name = os.path.basename(sibling_path)\n"
+                "socket_name = os.path.basename(external_socket)\n"
+                "for fd_name in os.listdir('/proc/self/fd'):\n"
+                "    if not fd_name.isdigit():\n"
+                "        continue\n"
+                "    fd_path = f'/proc/self/fd/{fd_name}'\n"
+                "    try:\n"
+                "        fd_stat = os.stat(fd_path)\n"
+                "    except OSError:\n"
+                "        continue\n"
+                "    if stat.S_ISDIR(fd_stat.st_mode) and fd_stat.st_dev == state_stat.st_dev "
+                "and fd_stat.st_ino == state_stat.st_ino:\n"
+                "        raise SystemExit(71)\n"
+                "    if os.path.realpath(os.path.join(fd_path, '..')) != parent_path:\n"
+                "        continue\n"
+                "    try:\n"
+                "        escaped_fd = os.open(os.path.join(fd_path, '..', sibling_name), "
+                "os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)\n"
+                "    except OSError as exc:\n"
+                "        if exc.errno not in {errno.ENOENT, errno.ENOTDIR, errno.EBADF}:\n"
+                "            raise SystemExit(72) from exc\n"
+                "    else:\n"
+                "        os.close(escaped_fd)\n"
+                "        raise SystemExit(73)\n"
+                "    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:\n"
+                "        try:\n"
+                "            client.settimeout(0.1)\n"
+                "            client.connect(os.path.join(fd_path, '..', socket_name))\n"
+                "        except OSError:\n"
+                "            pass\n"
+                "        else:\n"
+                "            raise SystemExit(74)\n"
+                "print('CHILD_STATE_FD_CLOSED')\n"
+                "PY\n"
+                ")\n",
+                encoding="utf-8",
+            )
+            harness.chmod(0o755)
+            result = subprocess.run(
+                [str(harness)],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=10,
+            )
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert "CHILD_STATE_FD_CLOSED" in result.stdout
+        assert not sibling_path.exists()
+
+
 def _postgres_gate_server_launch_and_health_source(script: str) -> str:
     start = script.index("docker_started=1\n")
     end = script.index('\nif [[ ! -S "$postgres_socket_bridge/.s.PGSQL.5432" ]]', start)
@@ -5522,7 +5663,8 @@ def test_postgres_gate_socket_bridge_creation_uncertainty_writes_contract(
             "expected_server_cid=''",
             "recovery_contract_written=0",
             bind_source,
-            "mapfile -t fields < <(bind_state_dir_identity)",
+            'exec {state_dir_fd}<"$state_dir"',
+            'mapfile -t fields < <(bind_state_dir_identity "$state_dir_fd")',
             'state_dir_parent="${fields[0]}"',
             'state_dir_name="${fields[1]}"',
             'state_dir_identity="${fields[2]}"',
@@ -5671,7 +5813,8 @@ def test_postgres_gate_socket_bridge_term_after_mkdir_keeps_uncertain_contract(
             "close_broker_script_fd() { :; }",
             "close_pytest_output_fd() { :; }",
             bind_source,
-            "mapfile -t fields < <(bind_state_dir_identity)",
+            'exec {state_dir_fd}<"$state_dir"',
+            'mapfile -t fields < <(bind_state_dir_identity "$state_dir_fd")',
             'state_dir_parent="${fields[0]}"',
             'state_dir_name="${fields[1]}"',
             'state_dir_identity="${fields[2]}"',
@@ -5813,7 +5956,8 @@ def _run_postgres_recovery_contract_validation(
             f"postgres_socket_bridge_creation_uncertain={bridge_creation_uncertain!r}",
             read_private_source,
             bind_source,
-            "mapfile -t fields < <(bind_state_dir_identity)",
+            'exec {state_dir_fd}<"$state_dir"',
+            'mapfile -t fields < <(bind_state_dir_identity "$state_dir_fd")',
             'state_dir_parent="${fields[0]}"',
             'state_dir_name="${fields[1]}"',
             'state_dir_identity="${fields[2]}"',
@@ -6084,7 +6228,8 @@ def test_postgres_gate_cleanup_refuses_preexisting_recovery_contract_shortcut(
             bind_source,
             write_recovery_source,
             close_sources,
-            "mapfile -t fields < <(bind_state_dir_identity)",
+            'exec {state_dir_fd}<"$state_dir"',
+            'mapfile -t fields < <(bind_state_dir_identity "$state_dir_fd")',
             'state_dir_parent="${fields[0]}"',
             'state_dir_name="${fields[1]}"',
             'state_dir_identity="${fields[2]}"',
@@ -7927,7 +8072,8 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
             f"active_uv_fd_source={str(active_uv_fd_source)!r}",
             read_private_source,
             bind_source,
-            "mapfile -t fields < <(bind_state_dir_identity)",
+            'exec {state_dir_fd}<"$state_dir"',
+            'mapfile -t fields < <(bind_state_dir_identity "$state_dir_fd")',
             'state_dir_parent="${fields[0]}"',
             'state_dir_name="${fields[1]}"',
             'state_dir_identity="${fields[2]}"',
@@ -8027,7 +8173,8 @@ def _run_postgres_gate_state_cleanup(
             *(setup or []),
             bind_source,
             cleanup_source,
-            "mapfile -t fields < <(bind_state_dir_identity)",
+            'exec {state_dir_fd}<"$state_dir"',
+            'mapfile -t fields < <(bind_state_dir_identity "$state_dir_fd")',
             'state_dir_parent="${fields[0]}"',
             'state_dir_name="${fields[1]}"',
             'state_dir_identity="${fields[2]}"',
@@ -8132,6 +8279,7 @@ def test_postgres_gate_state_cleanup_transient_enotempty_settles(tmp_path: Path)
 def test_postgres_gate_state_cleanup_persistent_residue_fails_and_keeps_recovery(
     tmp_path: Path,
 ) -> None:
+    tmp_path.chmod(0o700)
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     state_dir.chmod(0o700)
@@ -8175,7 +8323,8 @@ def test_postgres_gate_state_cleanup_refuses_substituted_state_dir(
             f"state_dir={str(state_dir)!r}",
             bind_source,
             cleanup_source,
-            "mapfile -t fields < <(bind_state_dir_identity)",
+            'exec {state_dir_fd}<"$state_dir"',
+            'mapfile -t fields < <(bind_state_dir_identity "$state_dir_fd")',
             'state_dir_parent="${fields[0]}"',
             'state_dir_name="${fields[1]}"',
             'state_dir_identity="${fields[2]}"',
@@ -8215,6 +8364,77 @@ def test_postgres_gate_state_cleanup_recreation_after_absence_fails(tmp_path: Pa
     assert state_dir.is_dir()
 
 
+@pytest.mark.parametrize(
+    ("case_name", "extra_env", "expected_rc", "state_exists", "parent_mode"),
+    [
+        (
+            "post-rmdir-estale",
+            {"ACGS_POSTGRES_STATE_CLEANUP_ESTALE_AFTER_RMDIR": "1"},
+            0,
+            False,
+            0o700,
+        ),
+        (
+            "pre-rmdir-estale",
+            {"ACGS_POSTGRES_STATE_CLEANUP_ESTALE_BEFORE_RMDIR": "1"},
+            70,
+            True,
+            0o700,
+        ),
+        (
+            "post-rmdir-eio",
+            {"ACGS_POSTGRES_STATE_CLEANUP_EIO_AFTER_RMDIR": "1"},
+            70,
+            False,
+            0o700,
+        ),
+        (
+            "post-rmdir-estale-name-reappears",
+            {
+                "ACGS_POSTGRES_STATE_CLEANUP_ESTALE_AFTER_RMDIR": "1",
+                "ACGS_POSTGRES_STATE_CLEANUP_REAPPEAR_AFTER_RMDIR_ESTALE": "1",
+            },
+            70,
+            True,
+            0o700,
+        ),
+        (
+            "post-rmdir-estale-parent-binding-drift",
+            {
+                "ACGS_POSTGRES_STATE_CLEANUP_ESTALE_AFTER_RMDIR": "1",
+                "ACGS_POSTGRES_STATE_CLEANUP_CHMOD_PARENT_AFTER_RMDIR_ESTALE": "1",
+            },
+            70,
+            False,
+            0o755,
+        ),
+    ],
+)
+def test_postgres_gate_state_cleanup_accepts_only_post_rmdir_estale(
+    tmp_path: Path,
+    case_name: str,
+    extra_env: dict[str, str],
+    expected_rc: int,
+    state_exists: bool,
+    parent_mode: int,
+) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    state_dir.chmod(0o700)
+    (state_dir / "recovery-contract.env").write_text("contract", encoding="ascii")
+
+    result = _run_postgres_gate_state_cleanup(state_dir, env=extra_env)
+
+    assert result.returncode == 0, (case_name, result.stdout, result.stderr)
+    assert f"CLEANUP_RC={expected_rc}\n" in result.stdout, (
+        case_name,
+        result.stdout,
+        result.stderr,
+    )
+    assert state_dir.exists() is state_exists
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == parent_mode
+
+
 def test_postgres_gate_state_cleanup_refuses_mount_binding_drift(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir()
@@ -8226,7 +8446,8 @@ def test_postgres_gate_state_cleanup_refuses_mount_binding_drift(tmp_path: Path)
             f"state_dir={str(state_dir)!r}",
             bind_source,
             cleanup_source,
-            "mapfile -t fields < <(bind_state_dir_identity)",
+            'exec {state_dir_fd}<"$state_dir"',
+            'mapfile -t fields < <(bind_state_dir_identity "$state_dir_fd")',
             'state_dir_parent="${fields[0]}"',
             'state_dir_name="${fields[1]}"',
             'state_dir_identity="${fields[2]}"',
@@ -8335,7 +8556,8 @@ def test_postgres_gate_state_cleanup_refuses_top_level_exchange_after_verify(
     )
     assert result.returncode == 0, result.stderr
     assert "CLEANUP_RC=70\n" in result.stdout
-    assert not state_dir.exists()
+    assert state_dir.is_dir()
+    assert not (state_dir / "original.txt").exists()
     assert substitute.is_dir()
     assert not (substitute / "original.txt").exists()
 
@@ -8480,7 +8702,8 @@ def test_postgres_gate_cleanup_refuses_recovery_write_after_state_recreation(
             bind_source,
             write_recovery_source,
             close_sources,
-            "mapfile -t fields < <(bind_state_dir_identity)",
+            'exec {state_dir_fd}<"$state_dir"',
+            'mapfile -t fields < <(bind_state_dir_identity "$state_dir_fd")',
             'state_dir_parent="${fields[0]}"',
             'state_dir_name="${fields[1]}"',
             'state_dir_identity="${fields[2]}"',
@@ -8497,6 +8720,127 @@ def test_postgres_gate_cleanup_refuses_recovery_write_after_state_recreation(
             '  mkdir -- "$state_dir"',
             '  chmod 700 "$state_dir"',
             '  printf replacement >"$state_dir/replacement.txt"',
+            "  return 70",
+            "}",
+            cleanup_source,
+            "cleanup",
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 70, result.stderr
+    assert "lost original state directory identity" in result.stderr
+    assert not (state_dir / "recovery-contract.env").exists()
+    assert (state_dir / "replacement.txt").read_text(encoding="ascii") == "replacement"
+
+
+def test_postgres_gate_cleanup_refuses_recovery_write_after_spoofed_state_reuse(
+    tmp_path: Path,
+) -> None:
+    script = _postgres_gate_script_source()
+    read_private_source = _extract_shell_function(
+        script,
+        "read_private_container_file",
+        "write_private_container_name_file",
+    )
+    bind_source = _extract_shell_function(
+        script,
+        "bind_state_dir_identity",
+        "validate_postgres_proof_nonce",
+    )
+    write_recovery_source = _extract_shell_function(
+        script,
+        "write_recovery_contract",
+        "verify_junit_report",
+    )
+    validate_recovery_source = _extract_shell_function(
+        script,
+        "validate_recovery_contract",
+        "validate_current_state_dir_identity",
+    )
+    validate_state_source = _extract_shell_function(
+        script,
+        "validate_current_state_dir_identity",
+        "verify_junit_report",
+    )
+    close_active_uv_start = script.index("close_active_uv_fd() {")
+    close_active_uv_end = script.index("\n}\n\n# shellcheck disable=SC2016", close_active_uv_start)
+    close_sources = script[close_active_uv_start : close_active_uv_end + 3]
+    cleanup_start = script.index("cleanup() {")
+    cleanup_end = script.index("\ntrap cleanup EXIT", cleanup_start)
+    cleanup_source = script[cleanup_start:cleanup_end]
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    state_dir.chmod(0o700)
+    proof_nonce = "0123456789abcdef0123456789abcdef"
+    proof_label = f"acp-postgres-gate-{os.getuid()}-{proof_nonce}"
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            f"state_dir={str(state_dir)!r}",
+            f"proof_nonce={proof_nonce!r}",
+            f"proof_label={proof_label!r}",
+            f"container_name={proof_label + '-server'!r}",
+            f"server_cidfile={str(state_dir / 'server.cid')!r}",
+            "postgres_socket_bridge_name=''",
+            "postgres_socket_bridge_identity=''",
+            "postgres_socket_bridge_marker_sha256=''",
+            "postgres_socket_bridge_mnt_id=''",
+            "postgres_recovery_root_mnt_id=''",
+            "postgres_socket_bridge_creation_uncertain=0",
+            "expected_server_cid=''",
+            "recovery_contract_written=0",
+            "active_uv_fd=''",
+            "broker_script_fd=''",
+            "pytest_output_fd=''",
+            "broker_pid=''",
+            "docker_started=0",
+            "postgres_socket_bridge=''",
+            read_private_source,
+            bind_source,
+            write_recovery_source,
+            validate_recovery_source,
+            validate_state_source,
+            close_sources,
+            'exec {state_dir_fd}<"$state_dir"',
+            'mapfile -t fields < <(bind_state_dir_identity "$state_dir_fd")',
+            'state_dir_parent="${fields[0]}"',
+            'state_dir_name="${fields[1]}"',
+            'state_dir_identity="${fields[2]}"',
+            'state_dir_parent_identity="${fields[3]}"',
+            'state_dir_mnt_id="${fields[4]}"',
+            'state_dir_parent_mnt_id="${fields[5]}"',
+            "cleanup_client_containers() { return 99; }",
+            "cleanup_server_container() { return 99; }",
+            "verify_stable_no_proof_labelled_containers() { return 99; }",
+            "cleanup_postgres_socket_bridge() { return 99; }",
+            "unlink_postgres_recovery_intents() { return 0; }",
+            "finalize_state_dir_removal() {",
+            '  rm -rf -- "$state_dir"',
+            '  mkdir -- "$state_dir"',
+            '  chmod 700 "$state_dir"',
+            '  printf replacement >"$state_dir/replacement.txt"',
+            '  state_dir_identity="$(stat -Lc "%d:%i:%u:%a" -- "$state_dir")"',
+            "  state_dir_mnt_id=$(python3 - \"$state_dir\" <<'PY'",
+            "from __future__ import annotations",
+            "import os",
+            "import sys",
+            "fd = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)",
+            "try:",
+            "    with open(f'/proc/self/fdinfo/{fd}', encoding='utf-8') as fdinfo:",
+            "        for line in fdinfo:",
+            "            if line.startswith('mnt_id:'):",
+            "                print(line.split(':', 1)[1].strip())",
+            "                break",
+            "finally:",
+            "    os.close(fd)",
+            "PY",
+            "  )",
             "  return 70",
             "}",
             cleanup_source,

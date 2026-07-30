@@ -361,6 +361,27 @@ close_pytest_output_fd() {
   fi
 }
 
+close_child_state_dir_fd() {
+  local retained_state_fd="${state_dir_fd:-}"
+  if [[ -z "$retained_state_fd" ]]; then
+    unset state_dir_fd
+    return 0
+  fi
+  if [[ ! "$retained_state_fd" =~ ^[0-9]+$ ]]; then
+    state_dir_fd=''
+    unset state_dir_fd
+    return 70
+  fi
+  if ! exec {state_dir_fd}<&-; then
+    state_dir_fd=''
+    unset state_dir_fd
+    [[ ! -e "/proc/$BASHPID/fd/$retained_state_fd" ]] || return 70
+    return 0
+  fi
+  state_dir_fd=''
+  unset state_dir_fd
+}
+
 # shellcheck disable=SC2016
 inner_uv_preflight='set -eu
 uv_path=$1
@@ -445,22 +466,28 @@ fi
 umask 077
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/acp-postgres-gate.XXXXXX")"
 nonce_file="$state_dir/proof-nonce.hex"
+state_dir_fd=''
+exec {state_dir_fd}<"$state_dir"
 
 bind_state_dir_identity() {
-  /usr/bin/python3 -I -S - "$state_dir" <<'PY'
+  local retained_state_fd=$1
+  /usr/bin/python3 -I -S - "$state_dir" "$retained_state_fd" <<'PY'
 from __future__ import annotations
 
 import os
 import stat
 import sys
 
-state_dir = sys.argv[1]
+state_dir, retained_state_fd_text = sys.argv[1:3]
 if not os.path.isabs(state_dir):
+    raise SystemExit(70)
+if not retained_state_fd_text.isdigit():
     raise SystemExit(70)
 parent = os.path.dirname(state_dir)
 name = os.path.basename(state_dir)
 if not name or name in {".", ".."} or "/" in name:
     raise SystemExit(70)
+retained_state_fd = int(retained_state_fd_text)
 
 
 def mnt_id(fd: int) -> str:
@@ -474,36 +501,44 @@ def mnt_id(fd: int) -> str:
     raise SystemExit(70)
 
 
+descriptor_target = os.readlink(f"/proc/self/fd/{retained_state_fd}")
+if descriptor_target != state_dir:
+    raise SystemExit(70)
+state_stat = os.fstat(retained_state_fd)
+if not stat.S_ISDIR(state_stat.st_mode):
+    raise SystemExit(70)
+if state_stat.st_uid != os.getuid() or stat.S_IMODE(state_stat.st_mode) != 0o700:
+    raise SystemExit(70)
+if mnt_id(retained_state_fd) == "":
+    raise SystemExit(70)
 parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
 try:
-    state_fd = os.open(
-        name,
-        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-        dir_fd=parent_fd,
+    parent_stat = os.fstat(parent_fd)
+    if not stat.S_ISDIR(parent_stat.st_mode):
+        raise SystemExit(70)
+    name_stat = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    if (
+        name_stat.st_dev != state_stat.st_dev
+        or name_stat.st_ino != state_stat.st_ino
+        or name_stat.st_uid != state_stat.st_uid
+        or stat.S_IFMT(name_stat.st_mode) != stat.S_IFMT(state_stat.st_mode)
+        or stat.S_IMODE(name_stat.st_mode) != stat.S_IMODE(state_stat.st_mode)
+    ):
+        raise SystemExit(70)
+    parent_identity = (
+        f"{parent_stat.st_dev}:{parent_stat.st_ino}:{parent_stat.st_uid}:"
+        f"{stat.S_IMODE(parent_stat.st_mode)}"
     )
-    try:
-        parent_stat = os.fstat(parent_fd)
-        state_stat = os.fstat(state_fd)
-        if not stat.S_ISDIR(parent_stat.st_mode) or not stat.S_ISDIR(state_stat.st_mode):
-            raise SystemExit(70)
-        if state_stat.st_uid != os.getuid() or stat.S_IMODE(state_stat.st_mode) != 0o700:
-            raise SystemExit(70)
-        parent_identity = (
-            f"{parent_stat.st_dev}:{parent_stat.st_ino}:{parent_stat.st_uid}:"
-            f"{stat.S_IMODE(parent_stat.st_mode)}"
-        )
-        state_identity = (
-            f"{state_stat.st_dev}:{state_stat.st_ino}:{state_stat.st_uid}:"
-            f"{stat.S_IMODE(state_stat.st_mode)}"
-        )
-        print(parent)
-        print(name)
-        print(state_identity)
-        print(parent_identity)
-        print(mnt_id(state_fd))
-        print(mnt_id(parent_fd))
-    finally:
-        os.close(state_fd)
+    state_identity = (
+        f"{state_stat.st_dev}:{state_stat.st_ino}:{state_stat.st_uid}:"
+        f"{stat.S_IMODE(state_stat.st_mode)}"
+    )
+    print(parent)
+    print(name)
+    print(state_identity)
+    print(parent_identity)
+    print(mnt_id(retained_state_fd))
+    print(mnt_id(parent_fd))
 finally:
     os.close(parent_fd)
 PY
@@ -511,7 +546,12 @@ PY
   [[ "$rc" == 0 ]] || return 70
 }
 
-mapfile -t state_dir_binding_fields < <(bind_state_dir_identity) || {
+validate_postgres_proof_nonce() {
+  local nonce=$1
+  [[ "$nonce" =~ ^[0-9a-f]{32}$ ]]
+}
+
+mapfile -t state_dir_binding_fields < <(bind_state_dir_identity "$state_dir_fd") || {
   echo 'failed to bind PostgreSQL evidence gate state directory identity' >&2
   exit 70
 }
@@ -526,11 +566,6 @@ state_dir_parent_identity="${state_dir_binding_fields[3]}"
 state_dir_mnt_id="${state_dir_binding_fields[4]}"
 state_dir_parent_mnt_id="${state_dir_binding_fields[5]}"
 unset state_dir_binding_fields
-
-validate_postgres_proof_nonce() {
-  local nonce=$1
-  [[ "$nonce" =~ ^[0-9a-f]{32}$ ]]
-}
 
 mint_postgres_proof_nonce() {
   local target_file=$1
@@ -1720,7 +1755,8 @@ write_recovery_contract() {
     "$cleanup_rc" "$proof_nonce" "$proof_label" "$container_name" "$server_cid" \
     "$postgres_socket_bridge_name" "$postgres_socket_bridge_identity" \
     "$postgres_socket_bridge_marker_sha256" "$postgres_socket_bridge_mnt_id" \
-    "$postgres_recovery_root_mnt_id" "$postgres_socket_bridge_creation_uncertain" <<'PY'
+    "$postgres_recovery_root_mnt_id" "$postgres_socket_bridge_creation_uncertain" \
+    "$state_dir_fd" <<'PY'
 from __future__ import annotations
 
 import os
@@ -1746,7 +1782,8 @@ import sys
     bridge_mnt_id,
     root_mnt_id,
     bridge_creation_uncertain,
-) = sys.argv[1:18]
+    retained_state_fd_text,
+) = sys.argv[1:19]
 if not os.path.isabs(parent_path):
     raise SystemExit(70)
 if not state_name or state_name in {".", ".."} or "/" in state_name:
@@ -1779,6 +1816,8 @@ if root_mnt_id and not root_mnt_id.isdigit():
     raise SystemExit(70)
 if bridge_creation_uncertain not in {"0", "1"}:
     raise SystemExit(70)
+if not retained_state_fd_text.isdigit():
+    raise SystemExit(70)
 include_bridge_fields = bridge_creation_uncertain == "1" or any(
     (bridge_identity, bridge_marker_sha256, bridge_mnt_id)
 )
@@ -1817,6 +1856,28 @@ def identity(fd: int) -> str:
     )
 
 
+def require_retained_state_path_bound(fd: int) -> None:
+    if identity(fd) != expected_state_identity or mnt_id(fd) != expected_state_mnt_id:
+        raise SystemExit(70)
+    descriptor_target = os.readlink(f"/proc/self/fd/{fd}")
+    expected_path = os.path.join(parent_path, state_name)
+    if descriptor_target != expected_path:
+        raise SystemExit(70)
+
+
+def require_parent_name_points_to_retained(parent_fd: int, retained_fd: int) -> None:
+    retained_stat = os.fstat(retained_fd)
+    name_stat = os.stat(state_name, dir_fd=parent_fd, follow_symlinks=False)
+    if (
+        name_stat.st_dev != retained_stat.st_dev
+        or name_stat.st_ino != retained_stat.st_ino
+        or name_stat.st_uid != retained_stat.st_uid
+        or stat.S_IFMT(name_stat.st_mode) != stat.S_IFMT(retained_stat.st_mode)
+        or stat.S_IMODE(name_stat.st_mode) != stat.S_IMODE(retained_stat.st_mode)
+    ):
+        raise SystemExit(70)
+
+
 lines = [
     "contract_version=2",
     "schema=acgs-postgres-recovery-contract/v2",
@@ -1841,41 +1902,35 @@ if include_bridge_fields:
         ]
     )
 payload = ("\n".join(lines) + "\n").encode("ascii")
+retained_state_fd = int(retained_state_fd_text)
+require_retained_state_path_bound(retained_state_fd)
 parent_fd = os.open(parent_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
 try:
     if identity(parent_fd) != expected_parent_identity or mnt_id(parent_fd) != expected_parent_mnt_id:
         raise SystemExit(70)
-    state_fd = os.open(
-        state_name,
-        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-        dir_fd=parent_fd,
+    require_parent_name_points_to_retained(parent_fd, retained_state_fd)
+    require_retained_state_path_bound(retained_state_fd)
+    fd = os.open(
+        "recovery-contract.env",
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+        0o600,
+        dir_fd=retained_state_fd,
     )
     try:
-        if identity(state_fd) != expected_state_identity or mnt_id(state_fd) != expected_state_mnt_id:
+        stat_result = os.fstat(fd)
+        if not stat.S_ISREG(stat_result.st_mode):
             raise SystemExit(70)
-        fd = os.open(
-            "recovery-contract.env",
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
-            0o600,
-            dir_fd=state_fd,
-        )
-        try:
-            stat_result = os.fstat(fd)
-            if not stat.S_ISREG(stat_result.st_mode):
-                raise SystemExit(70)
-            if stat_result.st_uid != os.getuid() or stat_result.st_nlink != 1:
-                raise SystemExit(70)
-            if stat_result.st_mode & 0o777 != 0o600:
-                raise SystemExit(70)
-            written = os.write(fd, payload)
-            if written != len(payload):
-                raise SystemExit(70)
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-        os.fsync(state_fd)
+        if stat_result.st_uid != os.getuid() or stat_result.st_nlink != 1:
+            raise SystemExit(70)
+        if stat_result.st_mode & 0o777 != 0o600:
+            raise SystemExit(70)
+        written = os.write(fd, payload)
+        if written != len(payload):
+            raise SystemExit(70)
+        os.fsync(fd)
     finally:
-        os.close(state_fd)
+        os.close(fd)
+    os.fsync(retained_state_fd)
     os.fsync(parent_fd)
 finally:
     os.close(parent_fd)
@@ -1896,7 +1951,8 @@ validate_recovery_contract() {
     "$expected_cleanup_rc" "$proof_nonce" "$proof_label" "$container_name" \
     "$expected_server_cid" "$postgres_socket_bridge_name" "$postgres_socket_bridge_identity" \
     "$postgres_socket_bridge_marker_sha256" "$postgres_socket_bridge_mnt_id" \
-    "$postgres_recovery_root_mnt_id" "$postgres_socket_bridge_creation_uncertain" <<'PY'
+    "$postgres_recovery_root_mnt_id" "$postgres_socket_bridge_creation_uncertain" \
+    "$state_dir_fd" <<'PY'
 from __future__ import annotations
 
 import os
@@ -1922,7 +1978,8 @@ import sys
     bridge_mnt_id,
     root_mnt_id,
     bridge_creation_uncertain,
-) = sys.argv[1:18]
+    retained_state_fd_text,
+) = sys.argv[1:19]
 if not os.path.isabs(parent_path):
     raise SystemExit(70)
 if not state_name or state_name in {".", ".."} or "/" in state_name:
@@ -1955,6 +2012,8 @@ if root_mnt_id and not root_mnt_id.isdigit():
     raise SystemExit(70)
 if bridge_creation_uncertain not in {"0", "1"}:
     raise SystemExit(70)
+if not retained_state_fd_text.isdigit():
+    raise SystemExit(70)
 include_bridge_fields = bridge_creation_uncertain == "1" or any(
     (bridge_identity, bridge_marker_sha256, bridge_mnt_id)
 )
@@ -1993,34 +2052,54 @@ def identity(fd: int) -> str:
     )
 
 
+def require_retained_state_path_bound(fd: int) -> None:
+    if identity(fd) != expected_state_identity or mnt_id(fd) != expected_state_mnt_id:
+        raise SystemExit(70)
+    descriptor_target = os.readlink(f"/proc/self/fd/{fd}")
+    expected_path = os.path.join(parent_path, state_name)
+    if descriptor_target != expected_path:
+        raise SystemExit(70)
+
+
+def require_parent_name_points_to_retained(parent_fd: int, retained_fd: int) -> None:
+    retained_stat = os.fstat(retained_fd)
+    name_stat = os.stat(state_name, dir_fd=parent_fd, follow_symlinks=False)
+    if (
+        name_stat.st_dev != retained_stat.st_dev
+        or name_stat.st_ino != retained_stat.st_ino
+        or name_stat.st_uid != retained_stat.st_uid
+        or stat.S_IFMT(name_stat.st_mode) != stat.S_IFMT(retained_stat.st_mode)
+        or stat.S_IMODE(name_stat.st_mode) != stat.S_IMODE(retained_stat.st_mode)
+    ):
+        raise SystemExit(70)
+
+
+retained_state_fd = int(retained_state_fd_text)
+require_retained_state_path_bound(retained_state_fd)
 parent_fd = os.open(parent_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
 try:
     if identity(parent_fd) != expected_parent_identity or mnt_id(parent_fd) != expected_parent_mnt_id:
         raise SystemExit(70)
-    state_fd = os.open(
-        state_name,
-        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-        dir_fd=parent_fd,
+    require_parent_name_points_to_retained(parent_fd, retained_state_fd)
+    require_retained_state_path_bound(retained_state_fd)
+    fd = os.open(
+        "recovery-contract.env",
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        dir_fd=retained_state_fd,
     )
     try:
-        if identity(state_fd) != expected_state_identity or mnt_id(state_fd) != expected_state_mnt_id:
+        stat_result = os.fstat(fd)
+        if not stat.S_ISREG(stat_result.st_mode):
             raise SystemExit(70)
-        fd = os.open("recovery-contract.env", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=state_fd)
-        try:
-            stat_result = os.fstat(fd)
-            if not stat.S_ISREG(stat_result.st_mode):
-                raise SystemExit(70)
-            if stat_result.st_uid != os.getuid() or stat_result.st_nlink != 1:
-                raise SystemExit(70)
-            if stat_result.st_mode & 0o777 != 0o600:
-                raise SystemExit(70)
-            payload = os.read(fd, 8193)
-            if len(payload) > 8192:
-                raise SystemExit(70)
-        finally:
-            os.close(fd)
+        if stat_result.st_uid != os.getuid() or stat_result.st_nlink != 1:
+            raise SystemExit(70)
+        if stat_result.st_mode & 0o777 != 0o600:
+            raise SystemExit(70)
+        payload = os.read(fd, 8193)
+        if len(payload) > 8192:
+            raise SystemExit(70)
     finally:
-        os.close(state_fd)
+        os.close(fd)
 finally:
     os.close(parent_fd)
 try:
@@ -2067,7 +2146,7 @@ PY
 validate_current_state_dir_identity() {
   /usr/bin/python3 -I -S - \
     "$state_dir_parent" "$state_dir_name" "$state_dir_identity" "$state_dir_parent_identity" \
-    "$state_dir_mnt_id" "$state_dir_parent_mnt_id" <<'PY'
+    "$state_dir_mnt_id" "$state_dir_parent_mnt_id" "$state_dir_fd" <<'PY'
 from __future__ import annotations
 
 import os
@@ -2075,7 +2154,7 @@ import re
 import stat
 import sys
 
-parent_path, state_name, expected_state_identity, expected_parent_identity, expected_state_mnt_id, expected_parent_mnt_id = sys.argv[1:7]
+parent_path, state_name, expected_state_identity, expected_parent_identity, expected_state_mnt_id, expected_parent_mnt_id, retained_state_fd_text = sys.argv[1:8]
 if not os.path.isabs(parent_path):
     raise SystemExit(70)
 if not state_name or state_name in {".", ".."} or "/" in state_name:
@@ -2085,6 +2164,8 @@ if not re.fullmatch(r"[0-9]+:[0-9]+:[0-9]+:[0-9]+", expected_state_identity):
 if not re.fullmatch(r"[0-9]+:[0-9]+:[0-9]+:[0-9]+", expected_parent_identity):
     raise SystemExit(70)
 if not expected_state_mnt_id.isdigit() or not expected_parent_mnt_id.isdigit():
+    raise SystemExit(70)
+if not retained_state_fd_text.isdigit():
     raise SystemExit(70)
 
 
@@ -2107,20 +2188,36 @@ def identity(fd: int) -> str:
     )
 
 
+def require_retained_state_path_bound(fd: int) -> None:
+    if identity(fd) != expected_state_identity or mnt_id(fd) != expected_state_mnt_id:
+        raise SystemExit(70)
+    descriptor_target = os.readlink(f"/proc/self/fd/{fd}")
+    expected_path = os.path.join(parent_path, state_name)
+    if descriptor_target != expected_path:
+        raise SystemExit(70)
+
+
+def require_parent_name_points_to_retained(parent_fd: int, retained_fd: int) -> None:
+    retained_stat = os.fstat(retained_fd)
+    name_stat = os.stat(state_name, dir_fd=parent_fd, follow_symlinks=False)
+    if (
+        name_stat.st_dev != retained_stat.st_dev
+        or name_stat.st_ino != retained_stat.st_ino
+        or name_stat.st_uid != retained_stat.st_uid
+        or stat.S_IFMT(name_stat.st_mode) != stat.S_IFMT(retained_stat.st_mode)
+        or stat.S_IMODE(name_stat.st_mode) != stat.S_IMODE(retained_stat.st_mode)
+    ):
+        raise SystemExit(70)
+
+
+retained_state_fd = int(retained_state_fd_text)
+require_retained_state_path_bound(retained_state_fd)
 parent_fd = os.open(parent_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
 try:
     if identity(parent_fd) != expected_parent_identity or mnt_id(parent_fd) != expected_parent_mnt_id:
         raise SystemExit(70)
-    state_fd = os.open(
-        state_name,
-        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-        dir_fd=parent_fd,
-    )
-    try:
-        if identity(state_fd) != expected_state_identity or mnt_id(state_fd) != expected_state_mnt_id:
-            raise SystemExit(70)
-    finally:
-        os.close(state_fd)
+    require_parent_name_points_to_retained(parent_fd, retained_state_fd)
+    require_retained_state_path_bound(retained_state_fd)
 finally:
     os.close(parent_fd)
 PY
@@ -3454,7 +3551,7 @@ PY
 finalize_state_dir_removal() {
   /usr/bin/python3 -I -S - \
     "$state_dir_parent" "$state_dir_name" "$state_dir_identity" "$state_dir_parent_identity" \
-    "$state_dir_mnt_id" "$state_dir_parent_mnt_id" <<'PY'
+    "$state_dir_mnt_id" "$state_dir_parent_mnt_id" "$state_dir_fd" <<'PY'
 from __future__ import annotations
 
 import errno
@@ -3465,7 +3562,7 @@ import sys
 import time
 import ctypes
 
-parent_path, state_name, expected_state_identity, expected_parent_identity, expected_state_mnt_id, expected_parent_mnt_id = sys.argv[1:7]
+parent_path, state_name, expected_state_identity, expected_parent_identity, expected_state_mnt_id, expected_parent_mnt_id, retained_state_fd_text = sys.argv[1:8]
 if not os.path.isabs(parent_path):
     raise SystemExit(70)
 if not state_name or state_name in {".", ".."} or "/" in state_name:
@@ -3476,6 +3573,9 @@ if not re.fullmatch(r"[0-9]+:[0-9]+:[0-9]+:[0-9]+", expected_parent_identity):
     raise SystemExit(70)
 if not expected_state_mnt_id.isdigit() or not expected_parent_mnt_id.isdigit():
     raise SystemExit(70)
+if not retained_state_fd_text.isdigit():
+    raise SystemExit(70)
+expected_state_path = os.path.join(parent_path, state_name)
 
 
 def mnt_id(fd: int) -> str:
@@ -3544,18 +3644,41 @@ def require_state(state_fd: int) -> None:
         raise SystemExit(70)
 
 
-def require_unlinked_directory_fd(fd: int) -> None:
+def require_path_bound_state_fd(fd: int) -> None:
+    require_state(fd)
+    if os.readlink(f"/proc/self/fd/{fd}") != expected_state_path:
+        raise SystemExit(70)
+
+
+def require_parent_name_points_to_retained(parent_fd: int, retained_fd: int) -> None:
+    retained_stat = os.fstat(retained_fd)
+    name_stat = os.stat(state_name, dir_fd=parent_fd, follow_symlinks=False)
+    if (
+        name_stat.st_dev != retained_stat.st_dev
+        or name_stat.st_ino != retained_stat.st_ino
+        or name_stat.st_uid != retained_stat.st_uid
+        or stat.S_IFMT(name_stat.st_mode) != stat.S_IFMT(retained_stat.st_mode)
+        or stat.S_IMODE(name_stat.st_mode) != stat.S_IMODE(retained_stat.st_mode)
+    ):
+        raise SystemExit(70)
+
+
+def require_deleted_directory_fd(fd: int, before_path: str) -> None:
+    try:
+        descriptor_target = os.readlink(f"/proc/self/fd/{fd}")
+    except OSError as exc:
+        raise SystemExit(70) from exc
+    if descriptor_target != f"{before_path} (deleted)":
+        raise SystemExit(70)
+
+
+def require_unlinked_directory_fd(fd: int, before_path: str) -> None:
     observed = os.fstat(fd)
     if not stat.S_ISDIR(observed.st_mode):
         raise SystemExit(70)
     if observed.st_nlink != 0:
         raise SystemExit(70)
-    try:
-        descriptor_target = os.readlink(f"/proc/self/fd/{fd}")
-    except OSError as exc:
-        raise SystemExit(70) from exc
-    if not descriptor_target.endswith(" (deleted)"):
-        raise SystemExit(70)
+    require_deleted_directory_fd(fd, before_path)
 
 
 def unlink_entry(parent_fd: int, name: str) -> None:
@@ -3625,6 +3748,9 @@ def remove_empty_dir(parent_fd: int, name: str, expected_victim_identity: str) -
                 raise SystemExit(70)
             if identity(victim_fd) != expected_victim_identity:
                 raise SystemExit(70)
+            victim_path_before_rmdir = os.readlink(f"/proc/self/fd/{victim_fd}")
+            if os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_ESTALE_BEFORE_RMDIR") == "1":
+                raise OSError(errno.ESTALE, "stale file handle")
             exchange_after_verify = ""
             if name == state_name:
                 exchange_after_verify = os.environ.get(
@@ -3644,7 +3770,23 @@ def remove_empty_dir(parent_fd: int, name: str, expected_victim_identity: str) -
             if exchange_after_verify:
                 rename_exchange(parent_fd, name, exchange_after_verify)
             os.rmdir(name, dir_fd=parent_fd)
-            require_unlinked_directory_fd(victim_fd)
+            if os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_REAPPEAR_AFTER_RMDIR_ESTALE") == "1":
+                os.mkdir(name, 0o700, dir_fd=parent_fd)
+            if (
+                os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_CHMOD_PARENT_AFTER_RMDIR_ESTALE")
+                == "1"
+            ):
+                os.fchmod(parent_fd, 0o755)
+            try:
+                if os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_ESTALE_AFTER_RMDIR") == "1":
+                    raise OSError(errno.ESTALE, "stale file handle")
+                if os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_EIO_AFTER_RMDIR") == "1":
+                    raise OSError(errno.EIO, "I/O error")
+                require_unlinked_directory_fd(victim_fd, victim_path_before_rmdir)
+            except OSError as exc:
+                if exc.errno != errno.ESTALE:
+                    raise
+                require_deleted_directory_fd(victim_fd, victim_path_before_rmdir)
             return
         except OSError as exc:
             if exc.errno != errno.ENOTEMPTY:
@@ -3680,47 +3822,106 @@ def remove_empty_dir(parent_fd: int, name: str, expected_victim_identity: str) -
     raise SystemExit(70)
 
 
-parent_fd = os.open(parent_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
-try:
-    require_parent(parent_fd)
-    try:
-        state_fd = os.open(
-            state_name,
-            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-            dir_fd=parent_fd,
-        )
-    except OSError:
-        raise SystemExit(70) from None
-    try:
-        require_state(state_fd)
-        if os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_REPLACE_WITH_SYMLINK") == "1":
-            os.rmdir(state_name, dir_fd=parent_fd)
-            os.symlink("/tmp", state_name, dir_fd=parent_fd)
+def remove_retained_state_dir(parent_fd: int, retained_fd: int) -> None:
+    for attempt in range(20):
         require_parent(parent_fd)
-        require_state(state_fd)
-        remove_tree_contents(state_fd, preserve_recovery_contract=True)
-        os.fsync(state_fd)
-        if os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_TRANSIENT_ENOTEMPTY") == "1":
-            fd = os.open(
-                ".fuse_hidden_acgs_transient",
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
-                0o600,
-                dir_fd=state_fd,
-            )
-            os.close(fd)
+        require_path_bound_state_fd(retained_fd)
+        require_parent_name_points_to_retained(parent_fd, retained_fd)
+        victim_path_before_rmdir = os.readlink(f"/proc/self/fd/{retained_fd}")
+        if os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_ESTALE_BEFORE_RMDIR") == "1":
+            raise OSError(errno.ESTALE, "stale file handle")
         exchange_top = os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_RENAME_EXCHANGE_TOP", "")
         if exchange_top:
             rename_exchange(parent_fd, state_name, exchange_top)
-        if os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_PERSISTENT_ENOTEMPTY") != "1":
+        exchange_after_verify = os.environ.get(
+            "ACGS_POSTGRES_STATE_CLEANUP_RENAME_EXCHANGE_TOP_AFTER_VERIFY", ""
+        )
+        if exchange_after_verify:
+            rename_exchange(parent_fd, state_name, exchange_after_verify)
+        require_parent(parent_fd)
+        require_path_bound_state_fd(retained_fd)
+        require_parent_name_points_to_retained(parent_fd, retained_fd)
+        try:
+            os.rmdir(state_name, dir_fd=parent_fd)
+            if os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_REAPPEAR_AFTER_RMDIR_ESTALE") == "1":
+                os.mkdir(state_name, 0o700, dir_fd=parent_fd)
+            if (
+                os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_CHMOD_PARENT_AFTER_RMDIR_ESTALE")
+                == "1"
+            ):
+                os.fchmod(parent_fd, 0o755)
             try:
-                os.stat("recovery-contract.env", dir_fd=state_fd, follow_symlinks=False)
-            except FileNotFoundError:
-                pass
-            else:
-                unlink_entry(state_fd, "recovery-contract.env")
-        remove_empty_dir(parent_fd, state_name, expected_state_identity)
-    finally:
-        os.close(state_fd)
+                if os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_ESTALE_AFTER_RMDIR") == "1":
+                    raise OSError(errno.ESTALE, "stale file handle")
+                if os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_EIO_AFTER_RMDIR") == "1":
+                    raise OSError(errno.EIO, "I/O error")
+                require_unlinked_directory_fd(retained_fd, victim_path_before_rmdir)
+            except OSError as exc:
+                if exc.errno != errno.ESTALE:
+                    raise
+                require_deleted_directory_fd(retained_fd, victim_path_before_rmdir)
+            return
+        except OSError as exc:
+            if exc.errno != errno.ENOTEMPTY:
+                raise
+            if (
+                attempt == 0
+                and os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_PERSISTENT_ENOTEMPTY")
+                == "1"
+            ):
+                try:
+                    fd = os.open(
+                        ".fuse_hidden_acgs_persistent",
+                        os.O_WRONLY
+                        | os.O_CREAT
+                        | os.O_EXCL
+                        | os.O_NOFOLLOW
+                        | os.O_CLOEXEC,
+                        0o600,
+                        dir_fd=retained_fd,
+                    )
+                except FileExistsError:
+                    pass
+                else:
+                    os.close(fd)
+                raise SystemExit(70)
+            remove_tree_contents(retained_fd)
+            os.fsync(retained_fd)
+            time.sleep(0.05)
+    raise SystemExit(70)
+
+
+retained_state_fd = int(retained_state_fd_text)
+require_path_bound_state_fd(retained_state_fd)
+parent_fd = os.open(parent_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+try:
+    require_parent(parent_fd)
+    require_parent_name_points_to_retained(parent_fd, retained_state_fd)
+    if os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_REPLACE_WITH_SYMLINK") == "1":
+        os.rmdir(state_name, dir_fd=parent_fd)
+        os.symlink("/tmp", state_name, dir_fd=parent_fd)
+    require_parent(parent_fd)
+    require_path_bound_state_fd(retained_state_fd)
+    require_parent_name_points_to_retained(parent_fd, retained_state_fd)
+    remove_tree_contents(retained_state_fd, preserve_recovery_contract=True)
+    os.fsync(retained_state_fd)
+    if os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_TRANSIENT_ENOTEMPTY") == "1":
+        fd = os.open(
+            ".fuse_hidden_acgs_transient",
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=retained_state_fd,
+        )
+        os.close(fd)
+    if os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_PERSISTENT_ENOTEMPTY") != "1":
+        try:
+            os.stat("recovery-contract.env", dir_fd=retained_state_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            unlink_entry(retained_state_fd, "recovery-contract.env")
+    remove_retained_state_dir(parent_fd, retained_state_fd)
+    require_deleted_directory_fd(retained_state_fd, expected_state_path)
     if os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_RECREATE_AFTER_DELETE") == "1":
         os.mkdir(state_name, 0o700, dir_fd=parent_fd)
     for _ in range(3):
@@ -3731,6 +3932,20 @@ try:
             continue
         raise SystemExit(70)
     require_parent(parent_fd)
+    fresh_parent_fd = os.open(
+        parent_path,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    try:
+        require_parent(fresh_parent_fd)
+        try:
+            os.stat(state_name, dir_fd=fresh_parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise SystemExit(70)
+    finally:
+        os.close(fresh_parent_fd)
     os.fsync(parent_fd)
 finally:
     os.close(parent_fd)
@@ -5945,17 +6160,20 @@ PY
 done
 export PATH="$state_dir/client:$PATH"
 broker_socket="$state_dir/broker/postgresql-client.sock"
-ACP_POSTGRES_CLIENT_BROKER_DOCKER="$docker_bin" \
-ACP_POSTGRES_CLIENT_PROOF_LABEL="$proof_label" \
-ACP_POSTGRES_CLIENT_PROOF_NONCE="$proof_nonce" \
-ACP_POSTGRES_SERVER_NAME="$container_name" \
-ACGS_POSTGRES_RECOVERY_ROOT="$postgres_recovery_root" \
-ACP_POSTGRES_SOCKET_BRIDGE="$postgres_socket_bridge" \
-ACP_POSTGRES_SOCKET_BRIDGE_IDENTITY="$postgres_socket_bridge_identity" \
-ACP_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256="$postgres_socket_bridge_marker_sha256" \
-ACP_POSTGRES_SOCKET_BRIDGE_MNT_ID="$postgres_socket_bridge_mnt_id" \
-ACP_POSTGRES_RECOVERY_ROOT_MNT_ID="$postgres_recovery_root_mnt_id" \
-/usr/bin/python3 -I -S "/proc/$BASHPID/fd/$broker_script_fd" "$broker_socket" "$state_dir" &
+(
+  close_child_state_dir_fd || exit 70
+  ACP_POSTGRES_CLIENT_BROKER_DOCKER="$docker_bin" \
+  ACP_POSTGRES_CLIENT_PROOF_LABEL="$proof_label" \
+  ACP_POSTGRES_CLIENT_PROOF_NONCE="$proof_nonce" \
+  ACP_POSTGRES_SERVER_NAME="$container_name" \
+  ACGS_POSTGRES_RECOVERY_ROOT="$postgres_recovery_root" \
+  ACP_POSTGRES_SOCKET_BRIDGE="$postgres_socket_bridge" \
+  ACP_POSTGRES_SOCKET_BRIDGE_IDENTITY="$postgres_socket_bridge_identity" \
+  ACP_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256="$postgres_socket_bridge_marker_sha256" \
+  ACP_POSTGRES_SOCKET_BRIDGE_MNT_ID="$postgres_socket_bridge_mnt_id" \
+  ACP_POSTGRES_RECOVERY_ROOT_MNT_ID="$postgres_recovery_root_mnt_id" \
+  /usr/bin/python3 -I -S "/proc/$BASHPID/fd/$broker_script_fd" "$broker_socket" "$state_dir"
+) &
 broker_pid=$!
 for _ in {1..50}; do
   [[ -S "$broker_socket" ]] && break
@@ -6070,35 +6288,38 @@ run_sandboxed_uv_build() {
     echo 'failed to open a fresh verified uv FD for the old-wheel build sandbox' >&2
     return 70
   }
-  if env -i "$bwrap_bin" \
-    --unshare-all --unshare-user --die-with-parent --new-session --disable-userns \
-    --proc /proc \
-    --dev /dev \
-    --tmpfs /tmp \
-    --tmpfs /run \
-    --ro-bind /usr /usr \
-    --ro-bind /bin /bin \
-    --ro-bind-try /lib /lib \
-    --ro-bind-try /lib64 /lib64 \
-    --ro-bind "$package_dir" "$package_dir" \
-    --perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin" \
-    --ro-bind "$python_runtime_bind_root" "$python_runtime_bind_root" \
-    --bind "$state_dir" "$state_dir" \
-    --ro-bind "$package_dir/.venv" "$state_dir/acp-old/packages/acgs-control-plane/.venv" \
-    --clearenv \
-    --setenv HOME "$state_dir/home" \
-    --setenv TMPDIR "$state_dir/tmp" \
-    --setenv UV_CACHE_DIR "$state_dir/uv-cache" \
-    --setenv SOURCE_DATE_EPOCH "$SOURCE_DATE_EPOCH" \
-    --setenv UV_BIN "$inner_uv_bin" \
-    --setenv PATH /usr/bin:/bin \
-    --chdir "$package_dir" \
-    -- \
-    /bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \
-      "$inner_uv_bin" build --no-build-isolation \
-      --python "$package_dir/.venv/bin/python" \
-      --offline --no-index --no-cache --wheel --out-dir "$output_dir" \
-      "$state_dir/acp-old/packages/acgs-control-plane"
+  if (
+    close_child_state_dir_fd || exit 70
+    env -i "$bwrap_bin" \
+      --unshare-all --unshare-user --die-with-parent --new-session --disable-userns \
+      --proc /proc \
+      --dev /dev \
+      --tmpfs /tmp \
+      --tmpfs /run \
+      --ro-bind /usr /usr \
+      --ro-bind /bin /bin \
+      --ro-bind-try /lib /lib \
+      --ro-bind-try /lib64 /lib64 \
+      --ro-bind "$package_dir" "$package_dir" \
+      --perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin" \
+      --ro-bind "$python_runtime_bind_root" "$python_runtime_bind_root" \
+      --bind "$state_dir" "$state_dir" \
+      --ro-bind "$package_dir/.venv" "$state_dir/acp-old/packages/acgs-control-plane/.venv" \
+      --clearenv \
+      --setenv HOME "$state_dir/home" \
+      --setenv TMPDIR "$state_dir/tmp" \
+      --setenv UV_CACHE_DIR "$state_dir/uv-cache" \
+      --setenv SOURCE_DATE_EPOCH "$SOURCE_DATE_EPOCH" \
+      --setenv UV_BIN "$inner_uv_bin" \
+      --setenv PATH /usr/bin:/bin \
+      --chdir "$package_dir" \
+      -- \
+      /bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \
+        "$inner_uv_bin" build --no-build-isolation \
+        --python "$package_dir/.venv/bin/python" \
+        --offline --no-index --no-cache --wheel --out-dir "$output_dir" \
+        "$state_dir/acp-old/packages/acgs-control-plane"
+  )
   then
     close_active_uv_fd
   else
@@ -6219,6 +6440,7 @@ if [[ "$selector_mode" == 'p1-migration' || "$selector_mode" == 'p2-immutable-00
 fi
 set +e
 (
+  close_child_state_dir_fd || exit 70
   ulimit -f 131072
   timeout --preserve-status 900s env -i "$bwrap_bin" "${bwrap_args[@]}" -- \
     /bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \

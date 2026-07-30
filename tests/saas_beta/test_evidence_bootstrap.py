@@ -164,8 +164,11 @@ P3_APPROVAL_ROOT_SELECTORS = (
     "tests/saas_beta/test_cross_plane_contracts.py::"
     "test_approval_contract_locks_vote_and_resume_assurance",
 )
-P3_APPROVAL_POSTGRES_RUNNER_SHA256 = (
-    "5700d530d75c8540f2e48655bd092f31185ec2c8d6eb1297545ad99a3a678401"
+P3_APPROVAL_POSTGRES_TRUSTED_RUNNER_SHA256 = (
+    "1afe623226adf06fd27bf859a9f010fb56678b408b7f653dd3437c8b9b2ed676"
+)
+P3_APPROVAL_POSTGRES_REVIEWED_RUNNER_SHA256 = (
+    "1afe623226adf06fd27bf859a9f010fb56678b408b7f653dd3437c8b9b2ed676"
 )
 P2_IDEMPOTENCY_RETIRED_SELECTOR_PATTERNS = (
     "tests/integration/test_production_posture.py",
@@ -4697,7 +4700,8 @@ def _postgres_gate_cleanup_extraction_functions(runner_source: str, cleanup_func
             "cleanup_postgres_socket_bridge() { return 0; }",
             'mkdir -p "$state_dir"',
             'chmod 700 "$state_dir"',
-            "mapfile -t state_dir_binding_fields < <(bind_state_dir_identity)",
+            'exec {state_dir_fd}<"$state_dir"',
+            'mapfile -t state_dir_binding_fields < <(bind_state_dir_identity "$state_dir_fd")',
             'state_dir_parent="${state_dir_binding_fields[0]}"',
             'state_dir_name="${state_dir_binding_fields[1]}"',
             'state_dir_identity="${state_dir_binding_fields[2]}"',
@@ -5245,7 +5249,7 @@ def test_guardian_cleanup_failure_preserves_original_gate_exit_and_authenticates
         "clean_sibling_cleanup() { return 7; }\n"
         "finalize_clean_sibling_output() { printf 'RAW_PROTECTED_OUTPUT\\n'; return 0; }\n"
         f"{cleanup_function}\n"
-        "case \"${1:?}\" in\n"
+        'case "${1:?}" in\n'
         "  original_failure) set +e; (exit 125); cleanup ;;\n"
         "  original_success) set +e; true; cleanup ;;\n"
         "  *) exit 99 ;;\n"
@@ -5264,10 +5268,7 @@ def test_guardian_cleanup_failure_preserves_original_gate_exit_and_authenticates
         original_failure.stdout,
         original_failure.stderr,
     )
-    assert (
-        "CLEAN_SIBLING=FAIL phase=FINAL reason=cleanup-status-7"
-        in original_failure.stderr
-    )
+    assert "CLEAN_SIBLING=FAIL phase=FINAL reason=cleanup-status-7" in original_failure.stderr
     combined = original_failure.stdout + original_failure.stderr
     assert "CLEAN_SIBLING_TECHNICAL=PASS" not in combined
     assert "RAW_PROTECTED_OUTPUT" not in combined
@@ -5286,9 +5287,7 @@ def test_guardian_cleanup_failure_preserves_original_gate_exit_and_authenticates
     namespace: dict[str, Any] = {}
     exec(launcher_source.split("\nlibc = ", 1)[0], namespace)
     monkeypatch.setenv("NODE_ID", "P3-APPROVAL-003")
-    gate_ordinal = namespace["EXPECTED_GATE_IDS"]["P3-APPROVAL-003"].index(
-        "p3-approval-postgres"
-    )
+    gate_ordinal = namespace["EXPECTED_GATE_IDS"]["P3-APPROVAL-003"].index("p3-approval-postgres")
     selector = namespace["EXPECTED_COMMAND_SELECTORS"]["P3-APPROVAL-003"][gate_ordinal]
     selector_sha256 = hashlib.sha256(selector.encode("utf-8")).hexdigest()
     frame = json.dumps(
@@ -20803,6 +20802,7 @@ def _assert_postgres_uv_fd_contract(
     active_fd_closer = _shell_function(runner_source, "close_active_uv_fd")
     broker_fd_closer = _shell_function(runner_source, "close_broker_script_fd")
     pytest_fd_closer = _shell_function(runner_source, "close_pytest_output_fd")
+    child_state_fd_closer = _shell_function(runner_source, "close_child_state_dir_fd")
     state_binder = _shell_function(runner_source, "bind_state_dir_identity")
     recovery_writer = _shell_function(runner_source, "write_recovery_contract")
     recovery_validator = _shell_function(runner_source, "validate_recovery_contract")
@@ -20824,10 +20824,10 @@ def _assert_postgres_uv_fd_contract(
         "'\ncanonical_venv_python=",
     )
     assert (
-        f"local trusted_runner_sha256='{P3_APPROVAL_POSTGRES_RUNNER_SHA256}'" in pg_runner
+        f"local trusted_runner_sha256='{P3_APPROVAL_POSTGRES_TRUSTED_RUNNER_SHA256}'" in pg_runner
     )
     assert '"${ACGS_UV_SNAPSHOT_MOUNT[@]}"' in pg_runner
-    assert 'printf \'%s\\0%s\\0%s\\0%s\\0%s\\0\' --perms 500 --ro-bind-data' in uv_mount
+    assert "printf '%s\\0%s\\0%s\\0%s\\0%s\\0' --perms 500 --ro-bind-data" in uv_mount
     assert '"$ACGS_UV_DATA_FD" "$UV_BIN"' in uv_mount
     canonical_launcher_env = pg_runner.split("        exec env -i \\\n", 1)[1].split(
         '\n          "$6" "${@:7}"',
@@ -20838,7 +20838,7 @@ def _assert_postgres_uv_fd_contract(
 
     if check_digest:
         assert hashlib.sha256(runner_source.encode()).hexdigest() == (
-            P3_APPROVAL_POSTGRES_RUNNER_SHA256
+            P3_APPROVAL_POSTGRES_REVIEWED_RUNNER_SHA256
         )
     assert "inner_uv_bin='/run/acgs-uv'" in runner_source
     assert "active_uv_fd=''" in runner_source
@@ -20875,12 +20875,8 @@ def _assert_postgres_uv_fd_contract(
     assert 'export UV_BIN="$inner_uv_bin"' in runner_source
     assert '--setenv UV_BIN "$inner_uv_bin"' in runner_source
 
-    assert "if digest.hexdigest() != expected_sha256:\n    raise SystemExit(70)" in (
-        uv_fd_verifier
-    )
-    assert "if os.lseek(fd, 0, os.SEEK_CUR) != 0:\n    raise SystemExit(70)" in (
-        uv_fd_verifier
-    )
+    assert "if digest.hexdigest() != expected_sha256:\n    raise SystemExit(70)" in (uv_fd_verifier)
+    assert "if os.lseek(fd, 0, os.SEEK_CUR) != 0:\n    raise SystemExit(70)" in (uv_fd_verifier)
     assert 'descriptor_path = f"/proc/self/fd/{fd}"' in uv_fd_verifier
     assert "os.path.samefile(descriptor_path, expected_path)" in uv_fd_verifier
     assert "os.path.realpath" not in uv_fd_verifier
@@ -20936,15 +20932,54 @@ def _assert_postgres_uv_fd_contract(
     assert pytest_fd_closer.index("exec {pytest_output_fd}<&-") < pytest_fd_closer.index(
         "pytest_output_fd=''"
     )
+    assert child_state_fd_closer.startswith(
+        'close_child_state_dir_fd() {\n  local retained_state_fd="${state_dir_fd:-}"\n'
+    )
+    assert 'if [[ -z "$retained_state_fd" ]]; then' in child_state_fd_closer
+    assert 'if [[ ! "$retained_state_fd" =~ ^[0-9]+$ ]]; then' in child_state_fd_closer
+    assert "exec {state_dir_fd}<&-" in child_state_fd_closer
+    assert '[[ ! -e "/proc/$BASHPID/fd/$retained_state_fd" ]] || return 70' in (
+        child_state_fd_closer
+    )
+    assert "state_dir_fd=''" in child_state_fd_closer
+    assert "unset state_dir_fd" in child_state_fd_closer
+    assert child_state_fd_closer.count("return 70") == 2
+    assert child_state_fd_closer.index("local retained_state_fd=") < (
+        child_state_fd_closer.index('if [[ -z "$retained_state_fd" ]]; then')
+    )
+    assert child_state_fd_closer.index('if [[ -z "$retained_state_fd" ]]; then') < (
+        child_state_fd_closer.index('if [[ ! "$retained_state_fd" =~ ^[0-9]+$ ]]; then')
+    )
+    assert child_state_fd_closer.index(
+        'if [[ ! "$retained_state_fd" =~ ^[0-9]+$ ]]; then'
+    ) < child_state_fd_closer.index("exec {state_dir_fd}<&-")
+    assert child_state_fd_closer.index("exec {state_dir_fd}<&-") < (
+        child_state_fd_closer.index(
+            '[[ ! -e "/proc/$BASHPID/fd/$retained_state_fd" ]] || return 70'
+        )
+    )
+    assert child_state_fd_closer.rindex("state_dir_fd=''") < (
+        child_state_fd_closer.rindex("unset state_dir_fd")
+    )
+    assert child_state_fd_closer.rstrip().endswith("  state_dir_fd=''\n  unset state_dir_fd\n}")
+    assert runner_source.count('exec {state_dir_fd}<"$state_dir"') == 1
+    assert runner_source.count("close_child_state_dir_fd") == 4
+    assert runner_source.count("close_child_state_dir_fd || exit 70") == 3
+    assert "close_child_state_dir_fd" not in cleanup_function
 
+    assert "state_dir, retained_state_fd_text = sys.argv[1:3]" in state_binder
+    assert "retained_state_fd = int(retained_state_fd_text)" in state_binder
+    assert 'descriptor_target = os.readlink(f"/proc/self/fd/{retained_state_fd}")' in state_binder
+    assert "state_stat = os.fstat(retained_state_fd)" in state_binder
     assert "os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)" in (
         state_binder
     )
     assert "dir_fd=parent_fd" in state_binder
     assert "print(state_identity)" in state_binder
     assert "print(parent_identity)" in state_binder
-    assert "print(mnt_id(state_fd))" in state_binder
+    assert "print(mnt_id(retained_state_fd))" in state_binder
     assert "print(mnt_id(parent_fd))" in state_binder
+    assert "os.open(\n        name," not in state_binder
     assert (
         "state_stat.st_uid != os.getuid() or stat.S_IMODE(state_stat.st_mode) != 0o700"
     ) in state_binder
@@ -20952,17 +20987,26 @@ def _assert_postgres_uv_fd_contract(
     assert 'f"{state_stat.st_dev}:{state_stat.st_ino}:{state_stat.st_uid}:"' in state_binder
     assert 'f"{stat.S_IMODE(parent_stat.st_mode)}"' in state_binder
     assert 'f"{stat.S_IMODE(state_stat.st_mode)}"' in state_binder
-    assert "mapfile -t state_dir_binding_fields < <(bind_state_dir_identity)" in runner_source
+    assert (
+        'mapfile -t state_dir_binding_fields < <(bind_state_dir_identity "$state_dir_fd")'
+        in runner_source
+    )
+    state_fd_open = 'exec {state_dir_fd}<"$state_dir"'
+    state_bind = 'mapfile -t state_dir_binding_fields < <(bind_state_dir_identity "$state_dir_fd")'
+    assert runner_source.count(state_fd_open) == 1
+    assert runner_source.index(state_fd_open) < runner_source.index(state_bind)
     assert 'state_dir_parent="${state_dir_binding_fields[0]}"' in runner_source
     assert 'state_dir_name="${state_dir_binding_fields[1]}"' in runner_source
     assert 'state_dir_identity="${state_dir_binding_fields[2]}"' in runner_source
     assert 'state_dir_parent_identity="${state_dir_binding_fields[3]}"' in runner_source
     assert 'state_dir_mnt_id="${state_dir_binding_fields[4]}"' in runner_source
     assert 'state_dir_parent_mnt_id="${state_dir_binding_fields[5]}"' in runner_source
+    assert 'exec {state_dir_fd}<"$state_dir"' in runner_source
 
     for contract_function in (recovery_writer, recovery_validator, state_identity_validator):
         assert '"$state_dir_parent" "$state_dir_name" "$state_dir_identity"' in contract_function
         assert '"$state_dir_mnt_id" "$state_dir_parent_mnt_id"' in contract_function
+        assert '"$state_dir_fd"' in contract_function
         assert (
             "parent_fd = os.open(parent_path, os.O_RDONLY | os.O_DIRECTORY "
             "| os.O_NOFOLLOW | os.O_CLOEXEC)" in contract_function
@@ -20970,8 +21014,17 @@ def _assert_postgres_uv_fd_contract(
         assert "identity(parent_fd) != expected_parent_identity" in contract_function
         assert "mnt_id(parent_fd) != expected_parent_mnt_id" in contract_function
         assert "dir_fd=parent_fd" in contract_function
-        assert "identity(state_fd) != expected_state_identity" in contract_function
-        assert "mnt_id(state_fd) != expected_state_mnt_id" in contract_function
+        assert "retained_state_fd = int(retained_state_fd_text)" in contract_function
+        assert "require_retained_state_path_bound(retained_state_fd)" in contract_function
+        assert 'descriptor_target = os.readlink(f"/proc/self/fd/{fd}")' in contract_function
+        assert "expected_path = os.path.join(parent_path, state_name)" in contract_function
+        assert "def require_parent_name_points_to_retained" in contract_function
+        assert (
+            "require_parent_name_points_to_retained(parent_fd, retained_state_fd)"
+            in contract_function
+        )
+        assert "rebound_state_fd" not in contract_function
+        assert "os.open(\n        state_name," not in contract_function
     assert "os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC" in (
         recovery_writer
     )
@@ -20984,14 +21037,18 @@ def _assert_postgres_uv_fd_contract(
     assert 'expected_server_cid="$server_cid"' in recovery_writer
     assert "recovery_contract_written=1" in recovery_writer
     assert '"recovery-contract.env",' in recovery_writer
-    assert "os.fsync(state_fd)" in recovery_writer
+    assert "dir_fd=retained_state_fd" in recovery_writer
+    assert "os.fsync(retained_state_fd)" in recovery_writer
+    assert recovery_writer.count("require_retained_state_path_bound(retained_state_fd)") == 2
+    assert recovery_writer.rindex(
+        "require_retained_state_path_bound(retained_state_fd)"
+    ) < recovery_writer.index('fd = os.open(\n        "recovery-contract.env",')
     assert recovery_validator.startswith(
         "validate_recovery_contract() {\n  local expected_cleanup_rc=$1\n"
     )
-    assert (
-        'os.open("recovery-contract.env", os.O_RDONLY | os.O_NOFOLLOW '
-        "| os.O_CLOEXEC, dir_fd=state_fd)" in recovery_validator
-    )
+    assert '"recovery-contract.env",' in recovery_validator
+    assert "os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC" in recovery_validator
+    assert "dir_fd=retained_state_fd" in recovery_validator
     assert "expected_lines = [" in recovery_validator
     assert "if expected_server_cid:" in recovery_validator
     assert 'expected_lines.append(f"server_cid={expected_server_cid}")' in recovery_validator
@@ -21001,7 +21058,14 @@ def _assert_postgres_uv_fd_contract(
     assert state_finalizer.startswith(
         "finalize_state_dir_removal() {\n  /usr/bin/python3 -I -S - \\\n"
     )
-    assert "def require_unlinked_directory_fd(fd: int) -> None:" in state_finalizer
+    assert "def require_path_bound_state_fd(fd: int) -> None:" in state_finalizer
+    assert "def require_parent_name_points_to_retained" in state_finalizer
+    assert "def require_deleted_directory_fd(fd: int, before_path: str) -> None:" in (
+        state_finalizer
+    )
+    assert "def require_unlinked_directory_fd(fd: int, before_path: str) -> None:" in (
+        state_finalizer
+    )
     assert (
         "parent_fd = os.open(parent_path, os.O_RDONLY | os.O_DIRECTORY "
         "| os.O_NOFOLLOW | os.O_CLOEXEC)" in state_finalizer
@@ -21010,20 +21074,44 @@ def _assert_postgres_uv_fd_contract(
     assert "if mnt_id(parent_fd) != expected_parent_mnt_id:" in state_finalizer
     assert "if identity(state_fd) != expected_state_identity:" in state_finalizer
     assert "if mnt_id(state_fd) != expected_state_mnt_id:" in state_finalizer
+    assert "remove_retained_state_dir(parent_fd, retained_state_fd)" in state_finalizer
+    assert "os.open(\n            state_name," not in state_finalizer
+    assert (
+        "        require_path_bound_state_fd(retained_fd)\n"
+        "        require_parent_name_points_to_retained(parent_fd, retained_fd)\n"
+        "        try:\n"
+    ) in state_finalizer
+    assert (
+        "    require_path_bound_state_fd(retained_state_fd)\n"
+        "    require_parent_name_points_to_retained(parent_fd, retained_state_fd)\n"
+        "    remove_tree_contents(retained_state_fd, preserve_recovery_contract=True)\n"
+    ) in state_finalizer
     assert "if observed.st_nlink != 0:" in state_finalizer
     assert 'os.readlink(f"/proc/self/fd/{fd}")' in state_finalizer
-    assert 'if not descriptor_target.endswith(" (deleted)"):' in state_finalizer
+    assert 'if descriptor_target != f"{before_path} (deleted)":' in state_finalizer
     assert (
         "def remove_empty_dir(parent_fd: int, name: str, expected_victim_identity: str) -> None:"
     ) in state_finalizer
     assert "if mnt_id(victim_fd) != expected_state_mnt_id:" in state_finalizer
     assert "if identity(victim_fd) != expected_victim_identity:" in state_finalizer
+    assert 'os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_ESTALE_BEFORE_RMDIR")' in (state_finalizer)
+    assert 'os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_ESTALE_AFTER_RMDIR")' in (state_finalizer)
+    assert 'os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_EIO_AFTER_RMDIR")' in (state_finalizer)
     assert (
-        "os.rmdir(name, dir_fd=parent_fd)\n            require_unlinked_directory_fd(victim_fd)"
+        "os.rmdir(name, dir_fd=parent_fd)\n"
+        '            if os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_REAPPEAR_AFTER_RMDIR_ESTALE")'
         in state_finalizer
     )
-    assert "remove_empty_dir(parent_fd, state_name, expected_state_identity)" in state_finalizer
-    assert "remove_tree_contents(state_fd, preserve_recovery_contract=True)" in state_finalizer
+    assert "require_unlinked_directory_fd(victim_fd, victim_path_before_rmdir)" in state_finalizer
+    assert "require_deleted_directory_fd(victim_fd, victim_path_before_rmdir)" in state_finalizer
+    assert "require_path_bound_state_fd(retained_state_fd)" in state_finalizer
+    assert "require_deleted_directory_fd(retained_state_fd, expected_state_path)" in state_finalizer
+    assert "fresh_parent_fd = os.open(" in state_finalizer
+    assert "remove_retained_state_dir(parent_fd, retained_state_fd)" in state_finalizer
+    assert (
+        "remove_tree_contents(retained_state_fd, preserve_recovery_contract=True)"
+        in state_finalizer
+    )
     assert '"ACGS_POSTGRES_STATE_CLEANUP_RENAME_EXCHANGE_TOP_AFTER_VERIFY",' in state_finalizer
     assert (
         'if os.environ.get("ACGS_POSTGRES_STATE_CLEANUP_REPLACE_WITH_SYMLINK") == "1":'
@@ -21071,7 +21159,7 @@ def _assert_postgres_uv_fd_contract(
     assert '[[ "$signal_id" == "$validated_id" ]] || return 70' in exact_container_cleanup
     assert '[[ "$signal_state" == "running" ]] || return 70' in exact_container_cleanup
     assert '[[ "$signal_state" == "exited" ]] || return 70' in exact_container_cleanup
-    assert "rm_args=(rm)\n  elif [[ \"$expected_role\" == \"trusted-broker\" ]]; then" in (
+    assert 'rm_args=(rm)\n  elif [[ "$expected_role" == "trusted-broker" ]]; then' in (
         exact_container_cleanup
     )
     assert "rm_args=(rm -f)" in exact_container_cleanup
@@ -21107,18 +21195,18 @@ def _assert_postgres_uv_fd_contract(
     assert 'return 70\n    fi\n  elif [[ -e "$server_namefile" ]]; then' in server_cleanup
 
     assert inner_preflight.startswith("set -eu\n")
-    assert "mode=$(/usr/bin/stat -c %a -- \"$uv_path\")" in inner_preflight
+    assert 'mode=$(/usr/bin/stat -c %a -- "$uv_path")' in inner_preflight
     assert 'test "$mode" = 500' in inner_preflight
-    assert "digest_line=$(/usr/bin/sha256sum -- \"$uv_path\")" in inner_preflight
+    assert 'digest_line=$(/usr/bin/sha256sum -- "$uv_path")' in inner_preflight
     assert 'test "$digest" = "$expected_sha"' in inner_preflight
     assert inner_preflight.count('exec "$@"') == 1
-    assert inner_preflight.index("mode=$(/usr/bin/stat -c %a -- \"$uv_path\")") < (
+    assert inner_preflight.index('mode=$(/usr/bin/stat -c %a -- "$uv_path")') < (
         inner_preflight.index('test "$mode" = 500')
     )
     assert inner_preflight.index('test "$mode" = 500') < inner_preflight.index(
-        "digest_line=$(/usr/bin/sha256sum -- \"$uv_path\")"
+        'digest_line=$(/usr/bin/sha256sum -- "$uv_path")'
     )
-    assert inner_preflight.index("digest_line=$(/usr/bin/sha256sum -- \"$uv_path\")") < (
+    assert inner_preflight.index('digest_line=$(/usr/bin/sha256sum -- "$uv_path")') < (
         inner_preflight.index('test "$digest" = "$expected_sha"')
     )
     assert inner_preflight.index('test "$digest" = "$expected_sha"') < inner_preflight.index(
@@ -21165,21 +21253,40 @@ def _assert_postgres_uv_fd_contract(
         runner_source.index('verify_junit_report "$state_dir/tmp" "junit.xml"')
     )
 
+    broker_launch = runner_source.split(
+        'broker_socket="$state_dir/broker/postgresql-client.sock"\n', 1
+    )[1].split("\nbroker_pid=$!", 1)[0]
+    assert broker_launch.startswith("(\n  close_child_state_dir_fd || exit 70\n")
+    assert (
+        broker_launch.index("close_child_state_dir_fd")
+        < broker_launch.index("ACP_POSTGRES_CLIENT_BROKER_DOCKER=")
+        < broker_launch.index('/usr/bin/python3 -I -S "/proc/$BASHPID/fd/$broker_script_fd"')
+    )
+    assert (
+        '/usr/bin/python3 -I -S "/proc/$BASHPID/fd/$broker_script_fd" '
+        '"$broker_socket" "$state_dir"\n) &'
+    ) in broker_launch
+
     build_block = runner_source.split("run_sandboxed_uv_build() {\n", 1)[1].split(
         "\n}\nrun_sandboxed_uv_build",
         1,
     )[0]
     assert "open_active_verified_uv_fd" in build_block
-    assert 'if env -i "$bwrap_bin" \\' in build_block
+    assert (
+        'if (\n    close_child_state_dir_fd || exit 70\n    env -i "$bwrap_bin" \\' in build_block
+    )
     assert '--perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"' in build_block
     assert '/bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \\' in (
         build_block
     )
     assert '"$inner_uv_bin" build --no-build-isolation' in build_block
     assert build_block.index("open_active_verified_uv_fd") < build_block.index(
-        'if env -i "$bwrap_bin" \\'
+        'if (\n    close_child_state_dir_fd || exit 70\n    env -i "$bwrap_bin" \\'
     )
-    assert build_block.index('if env -i "$bwrap_bin" \\') < build_block.index(
+    assert build_block.index("close_child_state_dir_fd") < build_block.index(
+        'env -i "$bwrap_bin" \\'
+    )
+    assert build_block.index('env -i "$bwrap_bin" \\') < build_block.index(
         '--perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"'
     )
     assert build_block.index(
@@ -21191,17 +21298,16 @@ def _assert_postgres_uv_fd_contract(
         '/bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \\'
     ) < build_block.index('"$inner_uv_bin" build --no-build-isolation')
     assert build_block.count("close_active_uv_fd") == 2
+    assert build_block.count("close_child_state_dir_fd") == 1
 
-    pytest_setup = runner_source.split("junit_report=\"/run/tmp/junit.xml\"\n", 1)[1].split(
+    pytest_setup = runner_source.split('junit_report="/run/tmp/junit.xml"\n', 1)[1].split(
         "\nset +e\n",
         1,
     )[0]
     assert "open_active_verified_uv_fd" in pytest_setup
     assert "bwrap_args=(" in pytest_setup
     assert '--perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"' in pytest_setup
-    assert pytest_setup.index("open_active_verified_uv_fd") < pytest_setup.index(
-        "bwrap_args=("
-    )
+    assert pytest_setup.index("open_active_verified_uv_fd") < pytest_setup.index("bwrap_args=(")
     assert pytest_setup.index("bwrap_args=(") < pytest_setup.index(
         '--perms 500 --ro-bind-data "$active_uv_fd" "$inner_uv_bin"'
     )
@@ -21217,8 +21323,10 @@ def _assert_postgres_uv_fd_contract(
     )
     assert pytest_execution.index(
         '/bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \\'
-    ) < pytest_execution.index(
-        '"$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"'
+    ) < pytest_execution.index('"$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"')
+    assert pytest_execution.index("close_child_state_dir_fd") < pytest_execution.index("ulimit -f")
+    assert pytest_execution.index("ulimit -f") < pytest_execution.index(
+        'timeout --preserve-status 900s env -i "$bwrap_bin"'
     )
     assert "close_active_uv_fd\nset -e" in pytest_execution
 
@@ -21291,12 +21399,12 @@ def test_clean_sibling_postgres_uv_fd_contract_rejects_inner_bind_mutations() ->
             1,
         ),
         "opener-failure-close-omitted": reviewed_runner_source.replace(
-            "  if ! verify_trusted_uv_fd \"$active_uv_fd\" \"$uv_bin\"; then\n"
+            '  if ! verify_trusted_uv_fd "$active_uv_fd" "$uv_bin"; then\n'
             "    exec {active_uv_fd}<&-\n"
             "    active_uv_fd=''\n"
             "    return 70\n"
             "  fi\n",
-            "  if ! verify_trusted_uv_fd \"$active_uv_fd\" \"$uv_bin\"; then\n"
+            '  if ! verify_trusted_uv_fd "$active_uv_fd" "$uv_bin"; then\n'
             "    active_uv_fd=''\n"
             "    return 70\n"
             "  fi\n",
@@ -21309,7 +21417,7 @@ def test_clean_sibling_postgres_uv_fd_contract_rejects_inner_bind_mutations() ->
         ),
         "missing-inner-build-preflight": reviewed_runner_source.replace(
             '/bin/sh -c "$inner_uv_preflight" sh "$inner_uv_bin" "$pinned_uv_sha256" \\\n'
-            '      "$inner_uv_bin" build --no-build-isolation',
+            '        "$inner_uv_bin" build --no-build-isolation',
             '"$inner_uv_bin" build --no-build-isolation',
             1,
         ),
@@ -21371,7 +21479,7 @@ def test_clean_sibling_postgres_uv_fd_contract_rejects_inner_bind_mutations() ->
         ),
         "close-helper-no-op": reviewed_runner_source.replace(
             "close_active_uv_fd() {\n"
-            "  if [[ -n \"$active_uv_fd\" ]]; then\n"
+            '  if [[ -n "$active_uv_fd" ]]; then\n'
             "    exec {active_uv_fd}<&-\n"
             "    active_uv_fd=''\n"
             "  fi\n"
@@ -21380,12 +21488,8 @@ def test_clean_sibling_postgres_uv_fd_contract_rejects_inner_bind_mutations() ->
             1,
         ),
         "early-inner-exec-before-checks": reviewed_runner_source.replace(
-            "shift 2\n"
-            "mode=$(/usr/bin/stat -c %a -- \"$uv_path\")\n"
-            "test \"$mode\" = 500\n",
-            "shift 2\nexec \"$@\"\n"
-            "mode=$(/usr/bin/stat -c %a -- \"$uv_path\")\n"
-            "test \"$mode\" = 500\n",
+            'shift 2\nmode=$(/usr/bin/stat -c %a -- "$uv_path")\ntest "$mode" = 500\n',
+            'shift 2\nexec "$@"\nmode=$(/usr/bin/stat -c %a -- "$uv_path")\ntest "$mode" = 500\n',
             1,
         ),
         "cleanup-active-fd-close-omitted": reviewed_runner_source.replace(
@@ -21443,6 +21547,121 @@ def test_clean_sibling_postgres_uv_fd_contract_rejects_inner_bind_mutations() ->
             "    exec {pytest_output_fd}<&-\n",
             1,
         ),
+        "child-state-fd-close-helper-no-op": reviewed_runner_source.replace(
+            "close_child_state_dir_fd() {\n"
+            '  local retained_state_fd="${state_dir_fd:-}"\n'
+            '  if [[ -z "$retained_state_fd" ]]; then\n'
+            "    unset state_dir_fd\n"
+            "    return 0\n"
+            "  fi\n"
+            '  if [[ ! "$retained_state_fd" =~ ^[0-9]+$ ]]; then\n'
+            "    state_dir_fd=''\n"
+            "    unset state_dir_fd\n"
+            "    return 70\n"
+            "  fi\n"
+            "  if ! exec {state_dir_fd}<&-; then\n"
+            "    state_dir_fd=''\n"
+            "    unset state_dir_fd\n"
+            '    [[ ! -e "/proc/$BASHPID/fd/$retained_state_fd" ]] || return 70\n'
+            "    return 0\n"
+            "  fi\n"
+            "  state_dir_fd=''\n"
+            "  unset state_dir_fd\n"
+            "}",
+            "close_child_state_dir_fd() {\n  :\n}",
+            1,
+        ),
+        "child-state-fd-close-helper-nonnumeric-accepted": reviewed_runner_source.replace(
+            '  if [[ ! "$retained_state_fd" =~ ^[0-9]+$ ]]; then\n'
+            "    state_dir_fd=''\n"
+            "    unset state_dir_fd\n"
+            "    return 70\n"
+            "  fi\n",
+            "",
+            1,
+        ),
+        "child-state-fd-close-helper-masks-close-failure": reviewed_runner_source.replace(
+            '    [[ ! -e "/proc/$BASHPID/fd/$retained_state_fd" ]] || return 70\n',
+            "    true\n",
+            1,
+        ),
+        "child-state-fd-close-helper-leaves-variable-live": reviewed_runner_source.replace(
+            "  state_dir_fd=''\n  unset state_dir_fd\n",
+            "",
+            1,
+        ),
+        "broker-child-state-fd-close-omitted": reviewed_runner_source.replace(
+            "(\n  close_child_state_dir_fd || exit 70\n  ACP_POSTGRES_CLIENT_BROKER_DOCKER=",
+            "(\n  ACP_POSTGRES_CLIENT_BROKER_DOCKER=",
+            1,
+        ),
+        "broker-child-state-fd-close-status-masked": reviewed_runner_source.replace(
+            "(\n  close_child_state_dir_fd || exit 70\n  ACP_POSTGRES_CLIENT_BROKER_DOCKER=",
+            "(\n  close_child_state_dir_fd\n  ACP_POSTGRES_CLIENT_BROKER_DOCKER=",
+            1,
+        ),
+        "broker-child-state-fd-close-after-python": reviewed_runner_source.replace(
+            "  close_child_state_dir_fd || exit 70\n  ACP_POSTGRES_CLIENT_BROKER_DOCKER=",
+            "  ACP_POSTGRES_CLIENT_BROKER_DOCKER=",
+            1,
+        ).replace(
+            '  /usr/bin/python3 -I -S "/proc/$BASHPID/fd/$broker_script_fd" '
+            '"$broker_socket" "$state_dir"\n'
+            ") &",
+            '  /usr/bin/python3 -I -S "/proc/$BASHPID/fd/$broker_script_fd" '
+            '"$broker_socket" "$state_dir"\n'
+            "  close_child_state_dir_fd || exit 70\n"
+            ") &",
+            1,
+        ),
+        "old-build-child-state-fd-close-omitted": reviewed_runner_source.replace(
+            'if (\n    close_child_state_dir_fd || exit 70\n    env -i "$bwrap_bin" \\',
+            'if (\n    env -i "$bwrap_bin" \\',
+            1,
+        ),
+        "old-build-child-state-fd-close-status-masked": reviewed_runner_source.replace(
+            'if (\n    close_child_state_dir_fd || exit 70\n    env -i "$bwrap_bin" \\',
+            'if (\n    close_child_state_dir_fd\n    env -i "$bwrap_bin" \\',
+            1,
+        ),
+        "old-build-child-state-fd-close-after-bwrap": reviewed_runner_source.replace(
+            'if (\n    close_child_state_dir_fd || exit 70\n    env -i "$bwrap_bin" \\',
+            'if (\n    env -i "$bwrap_bin" \\',
+            1,
+        ).replace(
+            '      "$state_dir/acp-old/packages/acgs-control-plane"\n  )\n',
+            '      "$state_dir/acp-old/packages/acgs-control-plane"\n'
+            "    close_child_state_dir_fd || exit 70\n"
+            "  )\n",
+            1,
+        ),
+        "pytest-child-state-fd-close-omitted": reviewed_runner_source.replace(
+            "(\n  close_child_state_dir_fd || exit 70\n  ulimit -f 131072\n",
+            "(\n  ulimit -f 131072\n",
+            1,
+        ),
+        "pytest-child-state-fd-close-status-masked": reviewed_runner_source.replace(
+            "(\n  close_child_state_dir_fd || exit 70\n  ulimit -f 131072\n",
+            "(\n  close_child_state_dir_fd\n  ulimit -f 131072\n",
+            1,
+        ),
+        "pytest-child-state-fd-close-after-bwrap": reviewed_runner_source.replace(
+            "(\n  close_child_state_dir_fd || exit 70\n  ulimit -f 131072\n",
+            "(\n  ulimit -f 131072\n",
+            1,
+        ).replace(
+            '      "$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"\n'
+            ') >"/proc/$BASHPID/fd/$pytest_output_fd" 2>&1\n',
+            '      "$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"\n'
+            "  close_child_state_dir_fd || exit 70\n"
+            ') >"/proc/$BASHPID/fd/$pytest_output_fd" 2>&1\n',
+            1,
+        ),
+        "parent-cleanup-closes-state-dir-fd": reviewed_runner_source.replace(
+            "cleanup() {\n  local status=$?\n  close_active_uv_fd\n",
+            "cleanup() {\n  local status=$?\n  close_child_state_dir_fd\n  close_active_uv_fd\n",
+            1,
+        ),
         "state-dir-parent-identity-not-bound": reviewed_runner_source.replace(
             'state_dir_parent_identity="${state_dir_binding_fields[3]}"\n',
             'state_dir_parent_identity=""\n',
@@ -21453,22 +21672,51 @@ def test_clean_sibling_postgres_uv_fd_contract_rejects_inner_bind_mutations() ->
             'state_dir_parent_mnt_id=""\n',
             1,
         ),
+        "state-dir-retained-fd-delayed-until-after-bind": reviewed_runner_source.replace(
+            "state_dir_fd=''\nexec {state_dir_fd}<\"$state_dir\"\n\nbind_state_dir_identity() {\n",
+            "state_dir_fd=''\n\nbind_state_dir_identity() {\n",
+            1,
+        ),
+        "state-dir-retained-fd-close-reopen-before-bind": reviewed_runner_source.replace(
+            'exec {state_dir_fd}<"$state_dir"\n',
+            'exec {state_dir_fd}<"$state_dir"\n'
+            "exec {state_dir_fd}<&-\n"
+            'exec {state_dir_fd}<"$state_dir"\n',
+            1,
+        ),
+        "state-dir-contract-reintroduces-second-pathname-open": reviewed_runner_source.replace(
+            "    require_parent_name_points_to_retained(parent_fd, retained_state_fd)\n",
+            "    rebound_state_fd = os.open(\n"
+            "        state_name,\n"
+            "        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,\n"
+            "        dir_fd=parent_fd,\n"
+            "    )\n"
+            "    os.close(rebound_state_fd)\n"
+            "    require_parent_name_points_to_retained(parent_fd, retained_state_fd)\n",
+            1,
+        ),
         "state-dir-identity-drops-uid-mode": reviewed_runner_source.replace(
             'f"{state_stat.st_dev}:{state_stat.st_ino}:{state_stat.st_uid}:"\n'
-            '            f"{stat.S_IMODE(state_stat.st_mode)}"\n',
-            'f"{state_stat.st_dev}:{state_stat.st_ino}:0:"\n            "0"\n',
+            '        f"{stat.S_IMODE(state_stat.st_mode)}"\n',
+            'f"{state_stat.st_dev}:{state_stat.st_ino}:0:"\n        "0"\n',
             1,
         ),
         "state-dir-allows-non-private-owner-mode": reviewed_runner_source.replace(
-            "        if state_stat.st_uid != os.getuid() "
+            "if state_stat.st_uid != os.getuid() "
             "or stat.S_IMODE(state_stat.st_mode) != 0o700:\n"
-            "            raise SystemExit(70)\n",
+            "    raise SystemExit(70)\n",
             "",
             1,
         ),
         "recovery-writer-path-bound-parent-open": reviewed_runner_source.replace(
             parent_open,
             parent_realpath_open,
+            1,
+        ),
+        "recovery-writer-final-path-check-before-io-removed": replace_nth(
+            reviewed_runner_source,
+            "    require_retained_state_path_bound(retained_state_fd)\n",
+            "",
             1,
         ),
         "recovery-validator-path-bound-parent-open": replace_nth(
@@ -21515,6 +21763,16 @@ def test_clean_sibling_postgres_uv_fd_contract_rejects_inner_bind_mutations() ->
             "finalize_state_dir_removal() {\n  return 0\n  /usr/bin/python3 -I -S - \\\n",
             1,
         ),
+        "state-finalizer-removes-final-retained-path-check-before-rmdir": (
+            reviewed_runner_source.replace(
+                "        require_path_bound_state_fd(retained_fd)\n"
+                "        require_parent_name_points_to_retained(parent_fd, retained_fd)\n"
+                "        try:\n",
+                "        require_parent_name_points_to_retained(parent_fd, retained_fd)\n"
+                "        try:\n",
+                1,
+            )
+        ),
         "cleanup-starts-finalization-before-fd-closes": reviewed_runner_source.replace(
             "cleanup() {\n"
             "  local status=$?\n"
@@ -21537,9 +21795,8 @@ def test_clean_sibling_postgres_uv_fd_contract_rejects_inner_bind_mutations() ->
             1,
         ),
         "state-finalizer-rmdir-without-unlinked-fd-proof": reviewed_runner_source.replace(
-            "            os.rmdir(name, dir_fd=parent_fd)\n"
-            "            require_unlinked_directory_fd(victim_fd)\n",
-            "            os.rmdir(name, dir_fd=parent_fd)\n",
+            "                require_unlinked_directory_fd(victim_fd, victim_path_before_rmdir)\n",
+            "",
             1,
         ),
         "state-finalizer-silent-success-after-recreate": reviewed_runner_source.replace(
@@ -21573,8 +21830,8 @@ def test_clean_sibling_postgres_uv_fd_contract_rejects_inner_bind_mutations() ->
             1,
         ),
         "main-container-force-rm-reintroduced": reviewed_runner_source.replace(
-            "    rm_args=(rm)\n  elif [[ \"$expected_role\" == \"trusted-broker\" ]]; then",
-            "    rm_args=(rm -f)\n  elif [[ \"$expected_role\" == \"trusted-broker\" ]]; then",
+            '    rm_args=(rm)\n  elif [[ "$expected_role" == "trusted-broker" ]]; then',
+            '    rm_args=(rm -f)\n  elif [[ "$expected_role" == "trusted-broker" ]]; then',
             1,
         ),
         "trusted-broker-force-rm-removed": reviewed_runner_source.replace(
@@ -21587,14 +21844,14 @@ def test_clean_sibling_postgres_uv_fd_contract_rejects_inner_bind_mutations() ->
             '        signal_record="$(validate_exact_recorded_container "$validated_id" '
             '"$expected_name" "$expected_role")" || return 70\n'
             "        IFS=$'\\t' read -r signal_id signal_state <<<\"$signal_record\"\n"
-            "        [[ \"$signal_id\" == \"$validated_id\" ]] || return 70\n"
-            "        if [[ \"$signal_state\" == \"exited\" ]]; then\n"
+            '        [[ "$signal_id" == "$validated_id" ]] || return 70\n'
+            '        if [[ "$signal_state" == "exited" ]]; then\n'
             "          break\n"
             "        fi\n"
-            "        [[ \"$signal_state\" == \"running\" ]] || return 70\n"
+            '        [[ "$signal_state" == "running" ]] || return 70\n'
             "        sleep 0.2\n"
             "      done\n"
-            "      [[ \"$signal_state\" == \"exited\" ]] || return 70\n",
+            '      [[ "$signal_state" == "exited" ]] || return 70\n',
             "",
             1,
         ),
@@ -21615,11 +21872,11 @@ def test_clean_sibling_postgres_uv_fd_contract_rejects_inner_bind_mutations() ->
             1,
         ),
         "validator-allows-short-hex-ref": reviewed_runner_source.replace(
-            "if re.fullmatch(r\"[0-9A-Fa-f]+\", container_ref):\n"
-            "    if re.fullmatch(r\"[0-9a-f]{64}\", container_ref) is None "
+            'if re.fullmatch(r"[0-9A-Fa-f]+", container_ref):\n'
+            '    if re.fullmatch(r"[0-9a-f]{64}", container_ref) is None '
             "or container_id != container_ref:\n"
             "        raise SystemExit(70)\n",
-            "if re.fullmatch(r\"[0-9A-Fa-f]+\", container_ref):\n"
+            'if re.fullmatch(r"[0-9A-Fa-f]+", container_ref):\n'
             "    if container_id[:12] != container_ref[:12]:\n"
             "        raise SystemExit(70)\n",
             1,
@@ -21636,25 +21893,25 @@ def test_clean_sibling_postgres_uv_fd_contract_rejects_inner_bind_mutations() ->
             1,
         ),
         "validator-accepts-dirty-exited-state": reviewed_runner_source.replace(
-            "elif state == \"exited\":\n"
+            'elif state == "exited":\n'
             "    if running or restarting or paused or dead or oom_killed or exit_code != 0:\n"
             "        raise SystemExit(70)\n",
-            "elif state == \"exited\":\n    pass\n",
+            'elif state == "exited":\n    pass\n',
             1,
         ),
         "validator-accepts-restart-policy": reviewed_runner_source.replace(
-            "if restart_policy != \"no\":\n    raise SystemExit(70)\n",
+            'if restart_policy != "no":\n    raise SystemExit(70)\n',
             "",
             1,
         ),
         "server-cleanup-container-id-fallback-reintroduced": reviewed_runner_source.replace(
-            "      return 70\n    fi\n  elif [[ -e \"$server_cidfile\" ]]; then",
-            "    fi\n  elif [[ -e \"$server_cidfile\" ]]; then",
+            '      return 70\n    fi\n  elif [[ -e "$server_cidfile" ]]; then',
+            '    fi\n  elif [[ -e "$server_cidfile" ]]; then',
             1,
         ),
         "server-cleanup-cid-fallback-reintroduced": reviewed_runner_source.replace(
-            "      return 70\n    fi\n  elif [[ -e \"$server_namefile\" ]]; then",
-            "    fi\n  elif [[ -e \"$server_namefile\" ]]; then",
+            '      return 70\n    fi\n  elif [[ -e "$server_namefile" ]]; then',
+            '    fi\n  elif [[ -e "$server_namefile" ]]; then',
             1,
         ),
         "post-rm-loop-collapsed-to-one-shot": reviewed_runner_source.replace(
@@ -21728,29 +21985,147 @@ def test_clean_sibling_postgres_uv_fd_contract_rejects_inner_bind_mutations() ->
         pytest.fail(f"prover mutation accepted: {name}")
 
 
+def test_postgres_gate_child_state_fd_closure_blocks_parent_escape_and_socket_reach() -> None:
+    runner_source = (ROOT / "packages/acgs-control-plane/scripts/run_postgres_gate.sh").read_text(
+        encoding="utf-8"
+    )
+    child_state_fd_closer = _shell_function(runner_source, "close_child_state_dir_fd")
+    with tempfile.TemporaryDirectory(prefix="acgs-pg-fd-", dir="/tmp") as raw_tmp:
+        temp_root = Path(raw_tmp)
+        state_dir = temp_root / "state"
+        state_dir.mkdir(mode=0o700)
+        sibling_path = temp_root / "sibling-created"
+        socket_path = temp_root / "external.sock"
+        harness = temp_root / "child-fd-closure.sh"
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(str(socket_path))
+            listener.listen(1)
+            harness.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -Eeuo pipefail\n"
+                f"{child_state_fd_closer}\n"
+                f"state_dir={shlex.quote(str(state_dir))}\n"
+                f"sibling_path={shlex.quote(str(sibling_path))}\n"
+                f"external_socket={shlex.quote(str(socket_path))}\n"
+                'exec {state_dir_fd}<"$state_dir"\n'
+                "set +e\n"
+                "(\n"
+                "  state_dir_fd=not-a-number\n"
+                "  close_child_state_dir_fd || exit 70\n"
+                "  exit 37\n"
+                ")\n"
+                "invalid_child_status=$?\n"
+                "set -e\n"
+                '[[ "$invalid_child_status" == 70 ]] || exit 80\n'
+                "set +e\n"
+                "(\n"
+                "  close_child_state_dir_fd || exit 70\n"
+                "  exit 37\n"
+                ")\n"
+                "propagated_child_status=$?\n"
+                "set -e\n"
+                '[[ "$propagated_child_status" == 37 ]] || exit 81\n'
+                '[[ -e "/proc/$BASHPID/fd/$state_dir_fd" ]] || exit 82\n'
+                "(\n"
+                "  close_child_state_dir_fd || exit 70\n"
+                '  /usr/bin/python3 -I -S - "$state_dir" "$sibling_path" '
+                "\"$external_socket\" <<'PY'\n"
+                "from __future__ import annotations\n"
+                "\n"
+                "import errno\n"
+                "import os\n"
+                "import socket\n"
+                "import stat\n"
+                "import sys\n"
+                "\n"
+                "state_dir, sibling_path, external_socket = sys.argv[1:4]\n"
+                "state_stat = os.stat(state_dir, follow_symlinks=False)\n"
+                "parent_path = os.path.dirname(state_dir)\n"
+                "sibling_name = os.path.basename(sibling_path)\n"
+                "socket_name = os.path.basename(external_socket)\n"
+                "for fd_name in os.listdir('/proc/self/fd'):\n"
+                "    if not fd_name.isdigit():\n"
+                "        continue\n"
+                "    fd_path = f'/proc/self/fd/{fd_name}'\n"
+                "    try:\n"
+                "        fd_stat = os.stat(fd_path)\n"
+                "    except OSError:\n"
+                "        continue\n"
+                "    if (\n"
+                "        stat.S_ISDIR(fd_stat.st_mode)\n"
+                "        and fd_stat.st_dev == state_stat.st_dev\n"
+                "        and fd_stat.st_ino == state_stat.st_ino\n"
+                "    ):\n"
+                "        raise SystemExit(71)\n"
+                "    try:\n"
+                "        fd_parent = os.path.realpath(os.path.join(fd_path, '..'))\n"
+                "    except OSError:\n"
+                "        continue\n"
+                "    if fd_parent != parent_path:\n"
+                "        continue\n"
+                "    escape_path = os.path.join(fd_path, '..', sibling_name)\n"
+                "    try:\n"
+                "        escaped_fd = os.open(\n"
+                "            escape_path,\n"
+                "            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,\n"
+                "            0o600,\n"
+                "        )\n"
+                "    except OSError as exc:\n"
+                "        if exc.errno not in {errno.ENOENT, errno.ENOTDIR, errno.EBADF}:\n"
+                "            raise SystemExit(72) from exc\n"
+                "    else:\n"
+                "        os.close(escaped_fd)\n"
+                "        raise SystemExit(73)\n"
+                "    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:\n"
+                "        try:\n"
+                "            client.settimeout(0.1)\n"
+                "            client.connect(os.path.join(fd_path, '..', socket_name))\n"
+                "        except OSError:\n"
+                "            pass\n"
+                "        else:\n"
+                "            raise SystemExit(74)\n"
+                "print('CHILD_STATE_FD_CLOSED')\n"
+                "PY\n"
+                ")\n",
+                encoding="utf-8",
+            )
+            harness.chmod(0o755)
+            completed = subprocess.run(
+                [str(harness)],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=10,
+            )
+        assert completed.returncode == 0, (completed.stdout, completed.stderr)
+        assert "CHILD_STATE_FD_CLOSED" in completed.stdout
+        assert not sibling_path.exists()
+
+
 def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() -> None:
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
     pg_runner = _shell_function(source, "run_trusted_parent_postgres_gate")
     reviewed_runner = ROOT / "packages/acgs-control-plane/scripts/run_postgres_gate.sh"
     reviewed_runner_source = reviewed_runner.read_text(encoding="utf-8")
     reviewed_sha = hashlib.sha256(reviewed_runner.read_bytes()).hexdigest()
-    assert reviewed_sha == P3_APPROVAL_POSTGRES_RUNNER_SHA256
+    assert reviewed_sha == P3_APPROVAL_POSTGRES_REVIEWED_RUNNER_SHA256
+    assert P3_APPROVAL_POSTGRES_TRUSTED_RUNNER_SHA256 == reviewed_sha
+    assert P3_APPROVAL_POSTGRES_TRUSTED_RUNNER_SHA256 == (
+        P3_APPROVAL_POSTGRES_REVIEWED_RUNNER_SHA256
+    )
     _assert_postgres_uv_fd_contract(source, reviewed_runner_source)
 
     def assert_key_only_server_config_verifier(runner_source: str) -> None:
         assert (
             'EnvKeys":[{{range $index, $value := .Config.Env}}{{if $index}},{{end}}'
-            '{{json (index (split $value "=") 0)}}{{end}}]'
-            in runner_source
+            '{{json (index (split $value "=") 0)}}{{end}}]' in runner_source
         )
         assert "{{json $value}}" not in runner_source
         assert "{{json .Config.Env}}" not in runner_source
         assert '"Config":{"Env":' not in runner_source
-        assert "env_keys = config[\"EnvKeys\"]" in runner_source
+        assert 'env_keys = config["EnvKeys"]' in runner_source
         assert 'or "=" in key or "\\0" in key or len(key) > 256' in runner_source
-        assert 'if {"PGHOST", "PGSERVICE", "PGSERVICEFILE"} & seen_env_keys:' in (
-            runner_source
-        )
+        assert 'if {"PGHOST", "PGSERVICE", "PGSERVICEFILE"} & seen_env_keys:' in (runner_source)
         assert "mandatory_env_keys = {" in runner_source
         assert '    "POSTGRES_DB",' in runner_source
         assert '    "POSTGRES_USER",' in runner_source
@@ -21929,7 +22304,9 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
         assert ast.unparse(first_statement.value.func) == "client.sendall"
         assert ast.unparse(first_statement.value.args[0]) == "request"
 
-    assert f"local trusted_runner_sha256='{reviewed_sha}'" in pg_runner
+    assert (
+        f"local trusted_runner_sha256='{P3_APPROVAL_POSTGRES_TRUSTED_RUNNER_SHA256}'" in pg_runner
+    )
     assert 'exec {runner_fd}<"$runner_path"' in pg_runner
     assert "stat -Lc '%d:%i:%u:%a:%h' -- \"$runner_path\"" in pg_runner
     assert "stat -Lc '%d:%i:%u:%a:%h' -- \"/proc/$BASHPID/fd/$runner_fd\"" in pg_runner
@@ -22097,16 +22474,14 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
         server_create_block
     )
     assert '"/var/run/postgresql"' in reviewed_runner_source
-    guard_wrapper = reviewed_runner_source.split("postgres_entrypoint_guard_wrapper='", 1)[
-        1
-    ].split("'\n\n", 1)[0]
+    guard_wrapper = reviewed_runner_source.split("postgres_entrypoint_guard_wrapper='", 1)[1].split(
+        "'\n\n", 1
+    )[0]
     assert 'printf "%s\\n" "PostgreSQL socket bridge guard rejected mounted source"' in (
         guard_wrapper
     )
     assert "exit 70" in guard_wrapper
-    assert 'guard_dir_stat="$(stat -c "%d:%i:%u:%a" "$guard_dir" 2>/dev/null)"' in (
-        guard_wrapper
-    )
+    assert 'guard_dir_stat="$(stat -c "%d:%i:%u:%a" "$guard_dir" 2>/dev/null)"' in (guard_wrapper)
     assert '[ "$guard_dir_stat" = "$guard_expected_identity" ] || guard_fail' in guard_wrapper
     assert 'guard_marker_stat="$(stat -c "%u:%h:%a" "$guard_marker" 2>/dev/null)"' in (
         guard_wrapper
@@ -22178,7 +22553,7 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
         reviewed_runner_source
     )
     assert 'set(config) != {"EnvKeys", "Entrypoint", "Cmd"}' in reviewed_runner_source
-    assert "env_keys = config[\"EnvKeys\"]" in reviewed_runner_source
+    assert 'env_keys = config["EnvKeys"]' in reviewed_runner_source
     assert 'entrypoint = config["Entrypoint"]' in reviewed_runner_source
     assert 'if entrypoint != ["/bin/sh"]:' in reviewed_runner_source
     assert "expected_cmd = [" in reviewed_runner_source
@@ -22318,9 +22693,7 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     assert 'expected = {\n    ".acgs-postgres-socket-bridge.v2": "marker",\n}' in (
         reviewed_runner_source
     )
-    assert 'if not re.fullmatch(r"[0-9]+", expected_artifact_uid_text):' in (
-        reviewed_runner_source
-    )
+    assert 'if not re.fullmatch(r"[0-9]+", expected_artifact_uid_text):' in (reviewed_runner_source)
     assert "os.fchmod(dir_fd, 0o700)" in reviewed_runner_source
     assert "stat.S_IMODE(hardened_stat.st_mode) != 0o700" in reviewed_runner_source
     assert "before.st_uid != os.getuid()" in reviewed_runner_source
@@ -22691,8 +23064,7 @@ def test_clean_sibling_outer_ro_bind_data_can_feed_inner_fd_uv_mount() -> None:
         pytest.fail("nested bwrap smoke timed out after 15s")
     if smoke.returncode != 0:
         pytest.skip(
-            "nested /usr/bin/bwrap unsupported: "
-            f"{smoke.stderr.strip() or smoke.stdout.strip()}"
+            f"nested /usr/bin/bwrap unsupported: {smoke.stderr.strip() or smoke.stdout.strip()}"
         )
 
     uv_fd = os.open(host_uv, os.O_RDONLY)
@@ -24698,7 +25070,7 @@ def test_postgres_gate_socket_cleanup_unlinks_only_exact_descriptor_bound_artifa
         assert 'expected = {\n    ".acgs-postgres-socket-bridge.v2": "marker",\n}' in source
         assert 'if names != [".acgs-postgres-socket-bridge.v2"]:' in source
         assert "if any(name not in expected for name in names):" in source
-        assert "expected_kind == \"marker\"" in source
+        assert 'expected_kind == "marker"' in source
         assert ".s.PGSQL.5432" not in source
         assert ".s.PGSQL.5432.lock" not in source
 
@@ -25362,7 +25734,8 @@ def test_postgres_gate_recovery_contract_rejects_preexisting_or_tampered_target(
             "expected_server_cid=\n"
             "recovery_contract_written=0\n"
             "bind_harness_state() {\n"
-            "  mapfile -t state_dir_binding_fields < <(bind_state_dir_identity)\n"
+            '  exec {state_dir_fd}<"$state_dir"\n'
+            '  mapfile -t state_dir_binding_fields < <(bind_state_dir_identity "$state_dir_fd")\n'
             '  state_dir_parent="${state_dir_binding_fields[0]}"\n'
             '  state_dir_name="${state_dir_binding_fields[1]}"\n'
             '  state_dir_identity="${state_dir_binding_fields[2]}"\n'
