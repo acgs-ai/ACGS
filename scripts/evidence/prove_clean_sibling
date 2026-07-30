@@ -62,12 +62,14 @@ fi
 internal="$repo/scripts/evidence/prove_clean_sibling.sh"
 [ -f "$internal" ] && [ ! -L "$internal" ] || fail 'internal prover is unavailable'
 cleanup="$repo/scripts/evidence/clean_sibling_cleanup.sh"
+start_authority_guard="$repo/scripts/evidence/start_authority_guard.py"
 uv_bin=/home/martin/.local/bin/uv
 
 validated_fd_open "$launcher" 8
 validated_fd_open "$internal" 9
 validated_fd_open "$cleanup" 10
 validated_fd_open "$uv_bin" 11
+validated_fd_open "$start_authority_guard" 12
 
 # Capture only the two reviewed caller inputs before replacing the entire
 # environment. BusyBox is static, so hostile ELF-loader state cannot run while
@@ -153,6 +155,13 @@ exec "$BUSYBOX" env -i \
   ACGS_CLEAN_SIBLING_UV_PATH="$ACGS_FD_11_PATH" \
   ACGS_CLEAN_SIBLING_UV_STAT="$ACGS_FD_11_STAT" \
   ACGS_CLEAN_SIBLING_UV_SHA256="$ACGS_FD_11_SHA256" \
+  ACGS_START_AUTHORITY_ROOT="${ACGS_START_AUTHORITY_ROOT-}" \
+  ACGS_START_AUTHORITY_ID="${ACGS_START_AUTHORITY_ID-}" \
+  ACGS_START_AUTHORITY_ATTEMPT_ID="${ACGS_START_AUTHORITY_ATTEMPT_ID-}" \
+  ACGS_START_AUTHORITY_HELPER_FD=12 \
+  ACGS_START_AUTHORITY_HELPER_PATH="$ACGS_FD_12_PATH" \
+  ACGS_START_AUTHORITY_HELPER_STAT="$ACGS_FD_12_STAT" \
+  ACGS_START_AUTHORITY_HELPER_SHA256="$ACGS_FD_12_SHA256" \
   /usr/bin/python3 -I -S -c '
 import array
 import errno
@@ -169,6 +178,7 @@ import socket
 import stat
 import sys
 import time
+import types
 
 F_ADD_SEALS = 1033
 F_GET_SEALS = 1034
@@ -2357,6 +2367,45 @@ def failure_status_summary(
     return verified_failure_status(status_frames[0], observed_exit_code)
 
 
+def start_authority_guard_module():
+    helper_path = os.environ.get("ACGS_START_AUTHORITY_HELPER_PATH", "")
+    helper_sha256 = os.environ.get("ACGS_START_AUTHORITY_HELPER_SHA256", "")
+    helper_fd = os.environ.get("ACGS_START_AUTHORITY_HELPER_FD", "")
+    if not helper_path or not helper_sha256 or not helper_fd:
+        raise RuntimeError("start authority guard metadata is missing")
+    if not helper_fd.isdigit():
+        raise RuntimeError("start authority guard descriptor is invalid")
+    fd_path = f"/proc/{os.getpid()}/fd/{helper_fd}"
+    if os.path.realpath(fd_path) != helper_path:
+        raise RuntimeError("start authority guard descriptor path changed")
+    if stat.S_IMODE(os.stat(fd_path).st_mode) & 0o022:
+        raise RuntimeError("start authority guard mode is unsafe")
+    with open(fd_path, "rb") as helper_file:
+        helper_source = helper_file.read()
+    actual_helper_sha256 = hashlib.sha256(helper_source).hexdigest()
+    if actual_helper_sha256 != helper_sha256:
+        raise RuntimeError("start authority guard digest changed")
+    module = types.ModuleType("acgs_start_authority_guard")
+    module.__file__ = helper_path
+    exec(compile(helper_source, helper_path, "exec"), module.__dict__)
+    return module
+
+
+start_authority_guard = None
+start_authority_context = None
+if os.environ.get("NODE_ID") == "P3-APPROVAL-003C":
+    try:
+        start_authority_guard = start_authority_guard_module()
+        start_authority_context = start_authority_guard.consume_from_launcher()
+    except BaseException as exc:
+        print(
+            "CLEAN_SIBLING=FAIL phase=B0 "
+            f"reason=start authority rejected: {canonical_failure_reason(exc)}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+
 libc = ctypes.CDLL(None, use_errno=True)
 if libc.prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0:
     raise OSError(ctypes.get_errno(), "guardian prctl(PR_SET_DUMPABLE) failed")
@@ -2767,6 +2816,7 @@ first_failure = None
 signal_exit_code = None
 status_run_fds = []
 scope_cgroup_identity = None
+pass_payload = None
 previous_sigterm = signal.signal(signal.SIGTERM, handle_guardian_signal)
 previous_sigint = signal.signal(signal.SIGINT, handle_guardian_signal)
 try:
@@ -2862,14 +2912,11 @@ try:
     parent, target, run_hash, records, assignments = verified_status(
         status_frames[0], status_run_fds[0]
     )
-    write_all(
-        attest_fd,
-        (
-            "CLEAN_SIBLING_TECHNICAL=PASS "
-            f"P={parent} T={target} R={run_hash} records={records} "
-            f"assignments={assignments} attestations=pending-independent-lanes\n"
-        ).encode(),
-    )
+    pass_payload = (
+        "CLEAN_SIBLING_TECHNICAL=PASS "
+        f"P={parent} T={target} R={run_hash} records={records} "
+        f"assignments={assignments} attestations=pending-independent-lanes\n"
+    ).encode()
 except GuardianInterrupted as exc:
     signal_exit_code = 128 + exc.signum
     if first_failure is None:
@@ -2915,6 +2962,28 @@ finally:
     close_fd_quietly(status_parent.fileno())
     signal.signal(signal.SIGTERM, previous_sigterm)
     signal.signal(signal.SIGINT, previous_sigint)
+if start_authority_context is not None:
+    terminal_reason = first_failure or "clean sibling proof completed"
+    terminal_outcome = "SUCCEEDED"
+    terminal_exit_code = 0
+    if signal_exit_code is not None:
+        terminal_outcome = "UNKNOWN"
+        terminal_exit_code = signal_exit_code
+    elif first_failure is not None:
+        terminal_outcome = "FAILED"
+        terminal_exit_code = 2
+    try:
+        start_authority_guard.terminal_from_launcher(
+            start_authority_context,
+            terminal_outcome,
+            terminal_exit_code,
+            terminal_reason,
+        )
+    except BaseException as exc:
+        if first_failure is None:
+            first_failure = f"start authority terminal record failed: {exc}"
+if first_failure is None and pass_payload is not None:
+    write_all(attest_fd, pass_payload)
 if first_failure is not None:
     failure_status = emit_failure(first_failure, read_memfd())
     raise SystemExit(signal_exit_code if signal_exit_code is not None else failure_status)
