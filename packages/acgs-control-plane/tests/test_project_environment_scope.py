@@ -128,7 +128,9 @@ def test_orm_models_use_the_same_composite_parent_join() -> None:
     assert "projects.id = environments.project_id" in str(Project.environments.property.primaryjoin)
 
 
-def test_public_api_exposes_no_project_or_environment_mutation_routes(tmp_path: Path) -> None:
+def test_public_api_exposes_only_managed_policy_project_environment_routes(
+    tmp_path: Path,
+) -> None:
     settings = Settings(
         database_url=f"sqlite:///{tmp_path / 'control-plane.sqlite3'}",
         audit_dir=tmp_path / "audit",
@@ -146,6 +148,25 @@ def test_public_api_exposes_no_project_or_environment_mutation_routes(tmp_path: 
             if "/projects" in route.path or "/environments" in route.path
         ]
 
-        assert project_or_environment_routes == []
+        # Each managed policy route is also served under its /v1 alias, like
+        # every other org route.
+        assert sorted(project_or_environment_routes) == sorted(
+            (method, f"{prefix}{path}")
+            for prefix in ("", "/v1")
+            for method, path in (
+                (
+                    "GET",
+                    "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies",
+                ),
+                (
+                    "POST",
+                    "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies",
+                ),
+                (
+                    "POST",
+                    "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies/{policy_version_id}/activate",
+                ),
+            )
+        )
     finally:
         app.state.engine.dispose()

@@ -134,13 +134,23 @@ class AgentStatusRequest(BaseModel):
 
 
 class PolicyPublishRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     policy_id: str = Field(min_length=1, max_length=200)
     rules: list[dict[str, Any]] = Field(min_length=1)
+
+
+class PolicyActivateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_generation: int = Field(ge=0)
 
 
 class PolicyResponse(BaseModel):
     bundle_id: str
     org_id: str
+    project_id: str | None = None
+    environment_id: str | None = None
     policy_id: str
     version: str
     status: str
@@ -148,6 +158,11 @@ class PolicyResponse(BaseModel):
     created_at: datetime
     activated_at: datetime | None
     receipt_id: str | None = None
+    generation: int | None = None
+    content_hash: str | None = None
+    key_id: str | None = None
+    signature_algorithm: str | None = None
+    trust_epoch: int | None = None
 
 
 class SimulateRequest(BaseModel):

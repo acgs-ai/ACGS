@@ -49,6 +49,8 @@ from sqlalchemy.orm import Session
 from acgs_control_plane.auth import Principal
 from acgs_control_plane.managed_mutations import (
     CONTROL_PLANE_AGENT_CREATE_ACTION,
+    CONTROL_PLANE_POLICY_ACTIVATE_ACTION,
+    CONTROL_PLANE_POLICY_PUBLISH_ACTION,
     TENANT_BOOTSTRAP_ACTION,
 )
 from acgs_control_plane.models import Organization, PolicyBundle, ReceiptRow
@@ -129,6 +131,52 @@ ROUTE_CONTRACTS: tuple[RouteContract, ...] = (
         True,
         False,
         False,
+    ),
+    RouteContract(
+        "POST",
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies",
+        ExecutionClass.CANONICAL_MANAGED_WRITE,
+        CONTROL_PLANE_POLICY_PUBLISH_ACTION,
+        True,
+        False,
+        False,
+    ),
+    RouteContract(
+        "POST",
+        "/v1/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies",
+        ExecutionClass.CANONICAL_MANAGED_WRITE,
+        CONTROL_PLANE_POLICY_PUBLISH_ACTION,
+        True,
+        False,
+        False,
+    ),
+    RouteContract(
+        "POST",
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies/{policy_version_id}/activate",
+        ExecutionClass.CANONICAL_MANAGED_WRITE,
+        CONTROL_PLANE_POLICY_ACTIVATE_ACTION,
+        True,
+        False,
+        False,
+    ),
+    RouteContract(
+        "POST",
+        "/v1/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies/{policy_version_id}/activate",
+        ExecutionClass.CANONICAL_MANAGED_WRITE,
+        CONTROL_PLANE_POLICY_ACTIVATE_ACTION,
+        True,
+        False,
+        False,
+    ),
+    RouteContract(
+        "GET",
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies",
+        ExecutionClass.READ_ONLY_OPERATION,
+    ),
+    RouteContract(
+        "GET",
+        "/v1/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies",
+        ExecutionClass.READ_ONLY_OPERATION,
     ),
     *(RouteContract(m, p, ExecutionClass.READ_ONLY_OPERATION) for m, p in _READ_PATHS),
     *(RouteContract(m, f"/v1{p}", ExecutionClass.READ_ONLY_OPERATION) for m, p in _READ_PATHS),

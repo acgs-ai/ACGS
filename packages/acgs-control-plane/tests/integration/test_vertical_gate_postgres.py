@@ -17,6 +17,7 @@ from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.governance import ROUTE_CONTRACTS, ExecutionClass, ProductionPostureBlocked
 from acgs_control_plane.managed_mutations import (
     CONTROL_PLANE_AGENT_CREATE_ACTION,
+    CONTROL_PLANE_POLICY_ACTIVATE_ACTION,
     TENANT_BOOTSTRAP_ACTION,
 )
 from acgs_control_plane.migrations import DatabaseSchemaState, upgrade_database
@@ -32,6 +33,10 @@ from acgs_control_plane.models import (
     TenantBootstrapIdempotency,
     User,
     utcnow,
+)
+from acgs_control_plane.policy_registry import (
+    POLICY_ENVELOPE_PURPOSE,
+    local_policy_registry_issuer,
 )
 from acgs_control_plane.tenant_bootstrap import BOOTSTRAP_IDEMPOTENCY_HEADER
 from acgs_control_plane.trust import ManagedTrustLifecycleService, public_spki_der_from_signer
@@ -103,20 +108,36 @@ def test_real_postgres_tenant_bootstrap_then_customer_agent_register(
             assert _count(session, ManagedGovernanceEvent) == 2
             assert _count(session, ManagedOutboxMessage) == 2
             assert _count(session, ManagedMutationAttempt) == 2
-            assert _count_legacy_agent_receipts(session, tenant["org_id"]) == 0
-            actions = {
-                row.proposed_action
-                for row in session.scalars(
+            # The managed spine owns the authoritative receipt; the legacy
+            # receipts table carries exactly one mirror of the successful
+            # registration for the explorer/dashboard/export consumers.
+            assert _count_legacy_agent_receipts(session, tenant["org_id"]) == 1
+            receipts = list(
+                session.scalars(
                     sa.select(ManagedDecisionReceipt).order_by(ManagedDecisionReceipt.created_at)
                 )
+            )
+            actions = {row.proposed_action for row in receipts}
+            # Setup seeds exactly one policy-head fixture receipt per activated environment.
+            assert actions == {
+                TENANT_BOOTSTRAP_ACTION,
+                CONTROL_PLANE_AGENT_CREATE_ACTION,
+                CONTROL_PLANE_POLICY_ACTIVATE_ACTION,
             }
-            assert actions == {TENANT_BOOTSTRAP_ACTION, CONTROL_PLANE_AGENT_CREATE_ACTION}
-            for receipt in session.scalars(sa.select(ManagedDecisionReceipt)):
+            assert len(receipts) == 3
+            minted = [
+                receipt
+                for receipt in receipts
+                if receipt.proposed_action != CONTROL_PLANE_POLICY_ACTIVATE_ACTION
+            ]
+            assert len(minted) == 2
+            for receipt in minted:
                 assert receipt.decision == "allow"
                 assert receipt.assurance_class == "native"
                 assert receipt.source_system == "gove-zone"
                 assert receipt.receipt_schema_version == "gove-zone/decision-receipt/v2"
                 assert receipt.signature_algorithm == "ed25519"
+            for receipt in receipts:
                 assert tenant["owner_api_key"] not in str(receipt.projection)
     finally:
         app.state.engine.dispose()
@@ -162,7 +183,10 @@ def test_real_postgres_vertical_negative_oracles_and_production_legacy_reachabil
             },
         )
         assert denied_register.status_code == 403, denied_register.text
-        assert denied_register.json()["code"] == "POLICY_DENIED"
+        denied_body = denied_register.json()
+        assert denied_body["status"] == "denied"
+        assert denied_body["decision"] == "deny"
+        assert denied_body["receipt_id"]
 
         with app.state.session_factory() as session:
             assert _count_agents(session, denied["org_id"], "wrong-tenant-agent") == 0
@@ -170,7 +194,8 @@ def test_real_postgres_vertical_negative_oracles_and_production_legacy_reachabil
             assert _count(session, TenantBootstrapIdempotency) == 2
             assert _count(session, AgentRegistrationIdempotency) == 1
             assert _count(session, ManagedReceiptConsumption) == 2
-            assert _count(session, ManagedDecisionReceipt) == 3
+            # 2 tenant bootstraps + 1 denied agent-create + 2 seeded policy-head fixtures.
+            assert _count(session, ManagedDecisionReceipt) == 5
             denied_receipt = session.scalars(
                 sa.select(ManagedDecisionReceipt).where(
                     ManagedDecisionReceipt.proposed_action == CONTROL_PLANE_AGENT_CREATE_ACTION
@@ -185,7 +210,8 @@ def test_real_postgres_vertical_negative_oracles_and_production_legacy_reachabil
             for contract in ROUTE_CONTRACTS
             if contract.execution_class is ExecutionClass.LEGACY_UNSIGNED_WRITE
         ]
-        assert len(legacy_contracts) == 6
+        # Each legacy unsigned write appears twice: unversioned and /v1 alias.
+        assert len(legacy_contracts) == 12
         with pytest.raises(ProductionPostureBlocked) as blocked:
             create_app(
                 Settings(
@@ -196,7 +222,7 @@ def test_real_postgres_vertical_negative_oracles_and_production_legacy_reachabil
                 ),
                 production_providers=(),
             )
-        assert len([b for b in blocked.value.blockers if b.code == "LEGACY_UNSIGNED_WRITE"]) == 6
+        assert len([b for b in blocked.value.blockers if b.code == "LEGACY_UNSIGNED_WRITE"]) == 12
     finally:
         app.state.engine.dispose()
         _reset_postgres_schema(database_url)
@@ -214,7 +240,7 @@ def _vertical_app(tmp_path: Path) -> tuple[Any, TestClient, str]:
 
     _reset_postgres_schema(database_url)
     result = upgrade_database(database_url, expected_database=EXPECTED_DATABASE)
-    assert result.after.state is DatabaseSchemaState.VERSION_0007
+    assert result.after.state is DatabaseSchemaState.VERSION_0008
     app = create_app(
         Settings(
             database_url=database_url,
@@ -282,16 +308,34 @@ def _bootstrap_registration_trust_for_tenant(app: Any, tenant: dict[str, Any]) -
             public_key_spki_der=public_spki_der_from_signer(signer),
             not_after=utcnow() + timedelta(days=1),
         )
-        assert (
-            session.scalar(
-                sa.select(sa.func.count())
-                .select_from(ManagedTrustKey)
-                .where(
-                    ManagedTrustKey.org_id == tenant["org_id"],
-                    ManagedTrustKey.project_id == tenant["project_id"],
-                    ManagedTrustKey.environment_id == tenant["environment_id"],
-                    ManagedTrustKey.purpose == DECISION_RECEIPT_PURPOSE,
-                )
-            )
-            == 1
+        policy_scope = ReceiptTrustScope(
+            tenant_id=tenant["org_id"],
+            project_id=tenant["project_id"],
+            environment_id=tenant["environment_id"],
+            purpose=POLICY_ENVELOPE_PURPOSE,
         )
+        policy_signer = local_policy_registry_issuer().signer_for_scope(
+            policy_scope,
+            trust_epoch=1,
+        )
+        ManagedTrustLifecycleService(session).bootstrap(
+            scope=policy_scope,
+            key_id=policy_signer.key_id,
+            algorithm=policy_signer.algorithm,
+            public_key_spki_der=public_spki_der_from_signer(policy_signer),
+            not_after=utcnow() + timedelta(days=1),
+        )
+        for purpose in (DECISION_RECEIPT_PURPOSE, POLICY_ENVELOPE_PURPOSE):
+            assert (
+                session.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(ManagedTrustKey)
+                    .where(
+                        ManagedTrustKey.org_id == tenant["org_id"],
+                        ManagedTrustKey.project_id == tenant["project_id"],
+                        ManagedTrustKey.environment_id == tenant["environment_id"],
+                        ManagedTrustKey.purpose == purpose,
+                    )
+                )
+                == 1
+            )
