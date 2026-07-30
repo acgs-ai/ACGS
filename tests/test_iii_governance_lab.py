@@ -23,11 +23,17 @@ def test_iii_governance_lab_is_isolated_from_production_surfaces():
         "scripts/smoke.sh",
         "workers/governance-worker/governance_worker.py",
         "workers/governance-worker/requirements.txt",
-        "workers/caller-worker/package-lock.json",
-        "workers/caller-worker/package.json",
-        "workers/caller-worker/tsconfig.json",
-        "workers/caller-worker/src/worker.ts",
     ]
+
+    # The TypeScript caller-worker was removed: its only dependency, iii-sdk,
+    # pins @opentelemetry/core ^1.30.0 transitively, and the last 1.x release
+    # (1.30.1) carries CVE-2026-54285 and CVE-2026-59892 with fixes published
+    # only on the 2.x majors. Assert it stays gone so the vulnerable lockfile
+    # is not reintroduced without a deliberate decision.
+    assert not (LAB / "workers" / "caller-worker").exists(), (
+        "caller-worker was removed to drop a vulnerable transitive npm tree; "
+        "reintroducing it needs an iii-sdk release built on OpenTelemetry 2.x"
+    )
 
     missing = [rel for rel in expected_files if not (LAB / rel).is_file()]
     assert not missing, f"iii governance lab missing files: {missing}"
@@ -67,13 +73,9 @@ def test_iii_governance_lab_declares_stable_worker_contracts():
     assert "request_schema=request_schema" not in python_worker
     assert "response_schema=response_schema" not in python_worker
 
-    ts_worker = _read("workers/caller-worker/src/worker.ts")
-    assert "governance::evaluate_request" in ts_worker
-    assert "governance::evaluate_policy" in ts_worker
-    assert "http::evaluate_request" in ts_worker
-    assert "/governance/evaluate" in ts_worker
-    assert "new InitOptions" not in ts_worker
-    assert 'registerWorker(process.env.III_URL ?? "ws://localhost:49134", {' in ts_worker
+    # The TypeScript half of this contract (governance::evaluate_request and the
+    # /governance/evaluate HTTP trigger) went away with the caller-worker. What
+    # remains is the Python policy worker asserted above.
 
 
 def test_iii_governance_lab_does_not_modify_deploy_workflows():
@@ -146,9 +148,6 @@ def test_iii_governance_lab_static_workflow_does_not_run_live_iii_engine():
                 ".venv/bin/python -m py_compile "
                 "experiments/iii-governance-lab/workers/governance-worker/governance_worker.py",
                 "bash -n experiments/iii-governance-lab/scripts/smoke.sh",
-                "npm ci --prefix experiments/iii-governance-lab/workers/caller-worker "
-                "--ignore-scripts",
-                "npm run --prefix experiments/iii-governance-lab/workers/caller-worker typecheck",
             ]
         ),
         ".venv/bin/python -m pytest tests/test_iii_governance_lab.py -q",
