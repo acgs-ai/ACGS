@@ -1,7 +1,7 @@
 # HIPAA Readiness Gap Analysis — ACGS
 
 > **Scope, read this first.** This is an **honest internal punch list** of what
-> stands between ACGS / gove-zone today and a deployment that could *credibly*
+> stands between ACGS today and a deployment that could *credibly*
 > support a covered entity or business associate under the HIPAA Security Rule.
 > It is **not** a compliance assessment, a readiness attestation, or a HIPAA
 > certification, and completing every ACGS-side item below would still **not**

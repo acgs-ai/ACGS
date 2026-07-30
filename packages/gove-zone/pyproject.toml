@@ -30,8 +30,10 @@ acgs = "gove_zone.proofpack_cli:main"
 [project.urls]
 Homepage = "https://acgs.ai"
 Documentation = "https://acgs.ai"
-Repository = "https://github.com/dislovelhl/ACGS"
-Issues = "https://github.com/dislovelhl/ACGS/issues"
+# See the note in packages/acgs-proofpack-verifier/pyproject.toml: the old
+# dislovelhl/ path survives only as a GitHub rename redirect.
+Repository = "https://github.com/acgs-ai/ACGS"
+Issues = "https://github.com/acgs-ai/ACGS/issues"
 
 [project.optional-dependencies]
 schema = ["pydantic>=2.0"]

@@ -1,10 +1,12 @@
-# ACGS / gove-zone — Agent Operating Manual
+# ACGS — Agent Operating Manual
 
-This file is the operating contract for AI coding agents working in this repository and adjacent ACGS / govern-zone checkouts.
+This file is the operating contract for AI coding agents working in this repository and adjacent ACGS checkouts.
 
 ## Project purpose
 
-ACGS / gove-zone is a receipt-gated governance layer for AI-agent side effects. It enforces policy before execution, emits a verifiable Decision Receipt, and makes executors fail closed without a valid receipt.
+ACGS is a governed agent infrastructure project. Its core enforcement kernel is `gove-zone` (`packages/gove-zone`), a receipt-gated governance layer for AI-agent side effects: it enforces policy before execution, emits a verifiable Decision Receipt, and makes executors fail closed without a valid receipt.
+
+The rest of the repository — control plane, adapters, evaluation and policy tooling — are separate components outside the enforcement boundary. Do not attribute the kernel's guarantees to them.
 
 **Core invariant: No valid Decision Receipt, no side effect.**
 

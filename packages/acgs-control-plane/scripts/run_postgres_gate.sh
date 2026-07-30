@@ -158,6 +158,21 @@ docker image inspect --format '{{json .RepoDigests}}' "$postgres_image" \
 mkdir -p "$state_dir/client" "$state_dir/acp-old" "$state_dir/old-1" "$state_dir/old-2"
 chmod 0700 "$state_dir" "$state_dir/client"
 
+# `max_connections` is raised from the image default of 100 because
+# test_100_request_multiprocess_bootstrap_once spawns 100 processes that each build
+# their own engine and connect concurrently.
+#
+# Sizing: the bootstrap handler opens its sessions sequentially, not nested, and the
+# default QueuePool hands the same pooled connection back for each one, so a worker
+# holds 1 connection at any instant. Worst case is therefore
+#   100 workers x 1 + the parent app engine's pool (5 + 10 overflow) ~= 115.
+# The image default leaves 97 usable slots (100 minus superuser_reserved_connections=3),
+# i.e. below the worst case, so the gate sits *below* the concurrency it is required to
+# prove and fails as "sorry, too many clients already" whenever the runner is slow
+# enough for the workers to overlap. 200 clears 115 with ~1.7x margin.
+#
+# Do not fix that by lowering the process count: 100-way contention is the property
+# this selector attests to. Raise the ceiling instead.
 container_id="$(
   docker run -d \
     --pull=never \
@@ -171,7 +186,8 @@ container_id="$(
     --health-timeout 5s \
     --health-retries 60 \
     --tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,nodev \
-    "$postgres_image"
+    "$postgres_image" \
+    -c max_connections=200
 )"
 
 for _ in {1..90}; do

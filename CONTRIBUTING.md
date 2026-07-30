@@ -1,6 +1,6 @@
-# Contributing to ACGS / gove-zone
+# Contributing to ACGS
 
-Thanks for considering a contribution. ACGS / gove-zone is a **receipt-gated
+Thanks for considering a contribution. ACGS is a **receipt-gated
 governance layer for AI-agent side effects** — the enforcement membrane an
 agent, MCP tool, workflow engine, or CI runner calls *before* it acts.
 

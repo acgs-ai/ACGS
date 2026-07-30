@@ -5,7 +5,9 @@ analyzer observer attached.  This matches SC-005's "bus dispatch latency"
 wording and avoids the false denominator from comparing the observer hot path
 against an unrealistically tiny no-op coroutine.
 
-Median over ≥ 1 000 events dampens GC / context-switch noise.
+Median over ≥ 1 000 events dampens GC / context-switch noise. Baseline and
+observed rounds are interleaved so slow load drift on a shared CI runner
+biases both phases equally instead of inflating the overhead ratio.
 
 Run with ``-m benchmark`` to include, or ``-m 'not benchmark'`` to skip.
 """
@@ -29,6 +31,7 @@ from agent_bus_analyzer.capture import CaptureQueue
 from agent_bus_analyzer.observer import Observer
 
 _SAMPLE_SIZE = 1_000
+_ROUNDS = 5  # interleaved baseline/observer rounds; 5 000 samples per side total
 _SC005_OVERHEAD_THRESHOLD = 0.05  # 5 %
 _CONST_HASH = "a1b2c3d4e5f60718"
 
@@ -70,15 +73,20 @@ async def _run_bus_samples(n: int, *, attach_observer: bool) -> list[float]:
 def test_observer_overhead_within_sc005() -> None:
     """SC-005: observer per-event overhead must be ≤ 5 % over the no-op baseline.
 
-    Uses median over 1 000 bus sends to dampen noise. The comparison is:
+    Uses the median over ``_ROUNDS`` interleaved rounds of ``_SAMPLE_SIZE`` bus
+    sends per side to dampen noise. Interleaving baseline and observed rounds
+    keeps runner load drift from landing entirely on one phase. The comparison is:
         overhead_ratio = (observed_bus_median - baseline_bus_median) / baseline_bus_median
     and must be ≤ 0.05.
 
-    If this flakes on heavily-loaded CI, increase _SAMPLE_SIZE or run with
-    ``-m 'not benchmark'`` to skip — do not delete the test.
+    If this flakes on heavily-loaded CI, increase _SAMPLE_SIZE / _ROUNDS or run
+    with ``-m 'not benchmark'`` to skip — do not delete the test.
     """
-    baseline_samples = asyncio.run(_run_bus_samples(_SAMPLE_SIZE, attach_observer=False))
-    observed_samples = asyncio.run(_run_bus_samples(_SAMPLE_SIZE, attach_observer=True))
+    baseline_samples: list[float] = []
+    observed_samples: list[float] = []
+    for _ in range(_ROUNDS):
+        baseline_samples.extend(asyncio.run(_run_bus_samples(_SAMPLE_SIZE, attach_observer=False)))
+        observed_samples.extend(asyncio.run(_run_bus_samples(_SAMPLE_SIZE, attach_observer=True)))
 
     baseline = statistics.median(baseline_samples)
     observed = statistics.median(observed_samples)

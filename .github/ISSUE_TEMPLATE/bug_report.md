@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a defect in ACGS / gove-zone (NOT a security vulnerability)
+about: Report a defect in ACGS (NOT a security vulnerability)
 title: "[bug] "
 labels: bug
 assignees: ''

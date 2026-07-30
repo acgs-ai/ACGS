@@ -1,6 +1,6 @@
 # gove-zone FAQ
 
-Short, citable answers about ACGS / gove-zone. Every answer traces to
+Short, citable answers about ACGS. Every answer traces to
 [`CLAIMS.md`](CLAIMS.md) (claim-to-evidence ledger and safe wording) and
 [`COMPARISON.md`](COMPARISON.md). Current `gove-zone` source metadata is
 `1.0.0rc1` with a Beta classifier; tag, PyPI publication, production, and

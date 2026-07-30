@@ -9,7 +9,7 @@ receipt-gated governance layer is packaged, deployed, sold, and onboarded.
 
 **Status: internal product draft.** Nothing here is a certification, a shipped
 managed service, or a public price list. Every technical claim inherits the
-claim discipline of [`docs/CLAIMS.md`](../CLAIMS.md); anything beyond current
+claim discipline of [`docs/CLAIMS.md`](../../CLAIMS.md); anything beyond current
 code and tests is explicitly labeled *proposed* or *roadmap*. ACGS is not
 production-certified, compliance-certified, or regulator-approved.
 
@@ -22,8 +22,10 @@ production-certified, compliance-certified, or regulator-approved.
 | [03-customer-onboarding.md](03-customer-onboarding.md) | Customer onboarding flow, from install to auditor-ready proof pack |
 | [04-api-documentation.md](04-api-documentation.md) | API documentation: Python API, CLI, receipt schema, MCP gateway |
 | [05-security-whitepaper-outline.md](05-security-whitepaper-outline.md) | Security whitepaper outline |
-| [06-pricing-model.md](06-pricing-model.md) | Pricing model: Starter, Enterprise, Regulated Industry |
-| [07-investor-brief.md](07-investor-brief.md) | Investor technical brief: problem, moat, market, business model, risks, thesis |
+
+Pricing and investor material are **not kept in this repository**. This repository
+is public, so a directory name cannot make a document private. Those docs live in
+the maintainers' private store.
 
 ## What ACGS is (one paragraph)
 
@@ -41,10 +43,10 @@ below it.
 
 Product docs here summarize; these govern:
 
-- [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) — runtime architecture
-- [`docs/DECISION_RECEIPT_SPEC.md`](../DECISION_RECEIPT_SPEC.md) — receipt format
-- [`docs/SECURITY_MODEL.md`](../SECURITY_MODEL.md) — threat table + adversary model (ADV1–ADV14)
-- [`docs/CLAIMS.md`](../CLAIMS.md) — the claim ledger (public wording rule)
-- [`docs/INTEGRATION_MATRIX.md`](../INTEGRATION_MATRIX.md) — per-runtime support tiers
-- [`docs/COMPLIANCE_CROSSWALK.md`](../COMPLIANCE_CROSSWALK.md) — NIST AI RMF / CSF 2.0 / ATLAS / OWASP mapping (self-assessment)
-- [`docs/PRODUCT_STRATEGY.md`](../PRODUCT_STRATEGY.md) — strategy canvas
+- [`docs/ARCHITECTURE.md`](../../ARCHITECTURE.md) — runtime architecture
+- [`docs/DECISION_RECEIPT_SPEC.md`](../../DECISION_RECEIPT_SPEC.md) — receipt format
+- [`docs/SECURITY_MODEL.md`](../../SECURITY_MODEL.md) — threat table + adversary model (ADV1–ADV14)
+- [`docs/CLAIMS.md`](../../CLAIMS.md) — the claim ledger (public wording rule)
+- [`docs/INTEGRATION_MATRIX.md`](../../INTEGRATION_MATRIX.md) — per-runtime support tiers
+- [`docs/COMPLIANCE_CROSSWALK.md`](../../COMPLIANCE_CROSSWALK.md) — NIST AI RMF / CSF 2.0 / ATLAS / OWASP mapping (self-assessment)
+- [`docs/PRODUCT_STRATEGY.md`](../../PRODUCT_STRATEGY.md) — strategy canvas

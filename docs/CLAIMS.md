@@ -4,7 +4,7 @@ Purpose: prevent marketing drift. Every public claim should be traceable to code
 
 | Claim | Status | Evidence source | Test or demo | Limitation | Safe public wording |
 |---|---|---|---|---|---|
-| ACGS / gove-zone is receipt-gated governance for AI-agent side effects. | implemented | `packages/gove-zone/src/gove_zone/*` | `gove-zone smoke`, receipt-gated demo | Local kernel, not a managed production service. | "Local receipt-gated governance layer for AI-agent side effects." |
+| ACGS is receipt-gated governance for AI-agent side effects. | implemented | `packages/gove-zone/src/gove_zone/*` | `gove-zone smoke`, receipt-gated demo | Local kernel, not a managed production service. | "Local receipt-gated governance layer for AI-agent side effects." |
 | No valid Decision Receipt, no side effect. | tested | `executor.py`, `receipt.py` | `test_executor_guard.py`, `examples/tamper_demo`, `proofpack` | Only true for paths wired through the governed executor. | "The governed executor fails closed without a valid receipt." |
 | Policy is evaluated before execution. | tested | `kernel.py` | `test_fail_closed.py`, smoke demo | Direct raw-tool calls can bypass if integrator exposes them. | "Kernel dispatch evaluates policy before the registered tool runs." |
 | Denied action leaves evidence and does not run. | tested | `kernel.py`, `audit.py` | smoke demo, `test_fail_closed.py` | Local JSONL only. | "Denied local actions are audited and blocked before side effects." |

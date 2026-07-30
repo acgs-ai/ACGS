@@ -1,6 +1,6 @@
 # Support
 
-Thanks for using ACGS / gove-zone. Here is where to get help.
+Thanks for using ACGS. Here is where to get help.
 
 ## Start here
 

@@ -1,6 +1,6 @@
-# ACGS / gove-zone llms.txt
+# ACGS llms.txt
 
-Project summary: ACGS / gove-zone is a receipt-gated governance layer for AI-agent side effects. It enforces policy before execution, emits a verifiable Decision Receipt, and makes executors fail closed without a valid receipt.
+Project summary: ACGS is a governed agent infrastructure project. Its core enforcement kernel is gove-zone (packages/gove-zone), a receipt-gated governance layer for AI-agent side effects: it enforces policy before execution, emits a verifiable Decision Receipt, and makes executors fail closed without a valid receipt. Other packages in the repository are separate components and are not part of the enforcement boundary.
 
 Core invariant: No valid Decision Receipt, no side effect.
 

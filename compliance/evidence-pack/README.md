@@ -33,8 +33,8 @@ One self-contained, auditor-facing bundle. It ties mapped requirements from thre
 ## The governed action
 
 - **Actor**: `compliance-officer`  ·  **Action**: `runtime.file.write`
-- **Decision**: **ALLOW**  ·  **Receipt**: `ev_91173c10c1094a6c`  ·  **Signature**: UNSIGNED (development posture)
-- **Audit chain**: 2 event(s), last hash `f60fc833e4e04366…`
+- **Decision**: **ALLOW**  ·  **Receipt**: `ev_2d7706aca68740c4`  ·  **Signature**: UNSIGNED (development posture)
+- **Audit chain**: 2 event(s), last hash `1ca1c6a38e600fee…`
 - **Replay**: verified at generation (generator attestation); offline `acgs proofpack verify` reports it as `recorded` unless the out-of-band policy bundle + side store are supplied to re-derive it
 
 ## How to verify this pack
