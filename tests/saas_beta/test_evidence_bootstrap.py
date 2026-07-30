@@ -612,15 +612,15 @@ def _reviewed_p3_mutations_records() -> list[dict[str, Any]]:
     ]
 
 
-def _reviewed_p3_approval_records() -> list[dict[str, Any]]:
+def _reviewed_p3_approval_records(node_id: str = "P3-APPROVAL-003") -> list[dict[str, Any]]:
     return [
         {
             **_transcript_record(list(argv), selector),
             "cwd_scope": cwd_scope,
         }
         for (selector, argv), cwd_scope in zip(
-            _common.REVIEWED_P3_APPROVAL_TRANSCRIPT,
-            _common.REVIEWED_CWD_SCOPES_BY_NODE["P3-APPROVAL-003"],
+            _common.REVIEWED_TRANSCRIPTS_BY_NODE[node_id],
+            _common.REVIEWED_CWD_SCOPES_BY_NODE[node_id],
             strict=True,
         )
     ]
@@ -716,12 +716,14 @@ def _write_reviewed_p3_mutations_transcript(path: Path) -> None:
         )
 
 
-def _write_reviewed_p3_approval_transcript(path: Path) -> None:
-    for record in _reviewed_p3_approval_records():
+def _write_reviewed_p3_approval_transcript(
+    path: Path, node_id: str = "P3-APPROVAL-003"
+) -> None:
+    for record in _reviewed_p3_approval_records(node_id):
         _common.append_safe_transcript_record(
             path,
             record,
-            expected_node="P3-APPROVAL-003",
+            expected_node=node_id,
         )
 
 
@@ -4448,15 +4450,39 @@ def test_p3_approval_command_corpus_is_node_cwd_bound_and_exact_ordered(
     assert _common.P3_APPROVAL_GZ_SELECTORS == P3_APPROVAL_GZ_SELECTORS
     assert _common.P3_APPROVAL_ROOT_SELECTORS == P3_APPROVAL_ROOT_SELECTORS
     assert _common.EXPECTED_BOOTSTRAP_MAP["P3-APPROVAL-003"] == "EVID+CP+GZ"
+    assert _common.EXPECTED_BOOTSTRAP_MAP["P3-APPROVAL-003B"] == "EVID+CP+GZ"
     assert _common.REVIEWED_RUN_METADATA_BY_NODE["P3-APPROVAL-003"]["process_schedule"] == (
         "single-process-evidence-and-package-gates",
         "postgres-pg9-approval-resume-multiprocess",
+    )
+    assert _common.REVIEWED_RUN_METADATA_BY_NODE["P3-APPROVAL-003B"] == (
+        _common.REVIEWED_RUN_METADATA_BY_NODE["P3-APPROVAL-003"]
     )
 
     transcript = tmp_path / "P3-APPROVAL-003/transcript.jsonl"
     _write_reviewed_p3_approval_transcript(transcript)
     loaded = generate_run._read_transcript(transcript, expected_node="P3-APPROVAL-003")
     _common.validate_transcript_sequence(loaded, expected_node="P3-APPROVAL-003")
+    retry_records = _reviewed_p3_approval_records("P3-APPROVAL-003B")
+    assert len(retry_records) == 12
+    assert [record["argv"] for record in retry_records] == [record["argv"] for record in records]
+    assert retry_records[-3]["selectors"] == [
+        "packages/acgs-control-plane:P3-APPROVAL-003B-postgres-approval-gate"
+    ]
+    assert retry_records[-2]["selectors"] == [
+        "packages/gove-zone:P3-APPROVAL-003B-escalation-consumption-compatibility"
+    ]
+    assert retry_records[-1]["selectors"] == ["root:P3-APPROVAL-003B-cross-plane-contract"]
+    retry_transcript = tmp_path / "P3-APPROVAL-003B/transcript.jsonl"
+    _write_reviewed_p3_approval_transcript(retry_transcript, "P3-APPROVAL-003B")
+    retry_loaded = generate_run._read_transcript(
+        retry_transcript, expected_node="P3-APPROVAL-003B"
+    )
+    _common.validate_transcript_sequence(retry_loaded, expected_node="P3-APPROVAL-003B")
+    with pytest.raises(_common.EvidenceError):
+        _common.validate_transcript_sequence(retry_loaded, expected_node="P3-APPROVAL-003")
+    with pytest.raises(_common.EvidenceError):
+        _common.validate_transcript_sequence(records, expected_node="P3-APPROVAL-003B")
 
     mutations_cp_final = _reviewed_p3_mutations_records()[-2]
     policy_cp_final = _reviewed_p3_policy_records()[-2]
@@ -4562,6 +4588,16 @@ def test_p3_approval_run_validation_rejects_forged_corpus_metadata_before_output
     for forged in forged_runs:
         with pytest.raises(_common.EvidenceError):
             _common.validate_secret_free_run(forged, expected_node="P3-APPROVAL-003")
+
+    retry_records = _reviewed_p3_approval_records("P3-APPROVAL-003B")
+    retry_run = run_with(node_id="P3-APPROVAL-003B", commands=retry_records)
+    _common.validate_secret_free_run(retry_run, expected_node="P3-APPROVAL-003B")
+    for reused in (
+        run_with(node_id="P3-APPROVAL-003B", commands=records),
+        run_with(commands=retry_records),
+    ):
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_secret_free_run(reused, expected_node="P3-APPROVAL-003B")
 
 
 def test_run_evidence_schema_closes_reviewed_process_schedules() -> None:
@@ -5332,6 +5368,16 @@ def test_launcher_failure_status_authenticates_exit_ordinal_selector_and_gate_id
         "p3-approval-runtime",
         "p3-approval-cross-plane",
     ]
+    p3b_gate_ids = namespace["EXPECTED_GATE_IDS"]["P3-APPROVAL-003B"]
+    assert p3b_gate_ids == p3_gate_ids
+    assert namespace["EXPECTED_COMMAND_SELECTORS"]["P3-APPROVAL-003B"][-3:] == [
+        "packages/acgs-control-plane:P3-APPROVAL-003B-postgres-approval-gate",
+        "packages/gove-zone:P3-APPROVAL-003B-escalation-consumption-compatibility",
+        "root:P3-APPROVAL-003B-cross-plane-contract",
+    ]
+    assert namespace["EXPECTED_COMMAND_SELECTORS"]["P3-APPROVAL-003B"][:-3] == (
+        namespace["EXPECTED_COMMAND_SELECTORS"]["P3-APPROVAL-003"][:-3]
+    )
     selector = "packages/gove-zone:local-gate"
     selector_hash = hashlib.sha256(selector.encode("utf-8")).hexdigest()
     payload = {
@@ -14428,6 +14474,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "P3-POLICY-001)" in source
     assert "P3-MUTATIONS-002)" in source
     assert "P3-APPROVAL-003)" in source
+    assert "P3-APPROVAL-003B" in source
     assert "P1_SCOPE_REVIEWED_BASE='40781e1200289507fcfbcedf6ab14c120ac6aae8'" in source
     assert "P1_LEDGER_REVIEWED_BASE='9450db249e4428021c4d98b2f1b81d414693d9af'" in source
     assert "P1_TRUST_REVIEWED_BASE='f113d9bc7263ba2607ff9800da9881a3ff624441'" in source
@@ -14453,6 +14500,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "TMP_BASENAME='acgs-p3-policy'" in source
     assert "TMP_BASENAME='acgs-p3-mutations'" in source
     assert "TMP_BASENAME='acgs-p3-approval'" in source
+    assert "TMP_BASENAME='acgs-p3-approval-003b'" in source
     assert "P1_MIGRATION_GATE=(./scripts/run_postgres_gate.sh" in source
     assert "run_trusted_parent_postgres_gate CP" in source
     assert "packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate" in source
@@ -14548,7 +14596,11 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "packages/acgs-control-plane:P3-APPROVAL-003-postgres-approval-gate" in source
     assert "packages/gove-zone:P3-APPROVAL-003-escalation-consumption-compatibility" in source
     assert "root:P3-APPROVAL-003-cross-plane-contract" in source
+    assert "packages/acgs-control-plane:P3-APPROVAL-003B-postgres-approval-gate" in source
+    assert "packages/gove-zone:P3-APPROVAL-003B-escalation-consumption-compatibility" in source
+    assert "root:P3-APPROVAL-003B-cross-plane-contract" in source
     assert "'root:P3-APPROVAL-003-cross-plane-contract' REPO_ROOT 1" in source
+    assert "P3_APPROVAL_ROOT_SELECTOR='root:P3-APPROVAL-003B-cross-plane-contract'" in source
     assert "p3-approval-postgres" in source
     assert "p3-approval-runtime" in source
     assert "p3-approval-cross-plane" in source
@@ -20164,6 +20216,30 @@ exit $?
     assert "cleanup refused for unowned path" not in completed.stderr
     assert not accepted_p3_approval.exists()
 
+    accepted_p3_approval_003b = parent / "acgs-p3-approval-003b.accepted"
+    accepted_p3_approval_003b.mkdir(mode=0o700)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(accepted_p3_approval_003b),
+            "P3-APPROVAL-003B",
+            "EVID+CP+GZ",
+            "12",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "cleanup refused for unowned path" not in completed.stderr
+    assert not accepted_p3_approval_003b.exists()
+
     refused_p3_approval_prefix = parent / "acgs-p3-approvalish.refused"
     refused_p3_approval_prefix.mkdir(mode=0o700)
     completed = subprocess.run(
@@ -20306,7 +20382,7 @@ def test_p1_clean_sibling_rejects_unassigned_retained_runtime_paths_before_outpu
     assert "P2-IDEMPOTENCY-002)" in pre_b1
     assert "P3-POLICY-001)" in pre_b1
     assert "P3-MUTATIONS-002)" in pre_b1
-    assert "P3-APPROVAL-003)" in pre_b1
+    assert "P3-APPROVAL-003 | P3-APPROVAL-003B)" in pre_b1
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP'" in pre_b1
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP+GZ'" in pre_b1
     assert "PREEXISTING_REJECT_PATHS=(" in pre_b1
@@ -20345,6 +20421,7 @@ def test_p1_clean_sibling_rejects_wrong_reviewed_parent_before_mutation(tmp_path
         ("P3-POLICY-001", "647385084d974322b0f8b9b82738d7b820044ece"),
         ("P3-MUTATIONS-002", "014fe1806600d52d55f06875a8c30c0b8a5b973b"),
         ("P3-APPROVAL-003", "a2299d510d792dd04646204653e405e0485204a6"),
+        ("P3-APPROVAL-003B", "a2299d510d792dd04646204653e405e0485204a6"),
     )
     for node_id, reviewed_parent in cases:
         wrong_parent = "1" * 40
