@@ -52,7 +52,7 @@ langchain = ["langchain-core>=0.1"]
 # `mcp.shared.memory.create_connected_server_and_client_session`, which the
 # gateway's FastMCP entry point and its conformance tests depend on. Lift the
 # cap only alongside a deliberate 2.x migration of the gateway and tests.
-mcp = ["mcp>=1.27,<2"]
+mcp = ["mcp>=1.28.1,<2"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
