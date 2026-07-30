@@ -8,7 +8,10 @@ on:
       - master
       - 'beta/**'
     paths:
-      - 'packages/acgs-control-plane/**'
+      # acgs-control-plane is a private submodule: parent-side changes are
+      # gitlink bumps (bare path) or .gitmodules edits, not in-tree files.
+      - 'packages/acgs-control-plane'
+      - '.gitmodules'
       - 'packages/gove-zone/**'
       - 'requirements/saas-beta/cp-test.in'
       - 'requirements/saas-beta/cp-test.lock'
@@ -17,7 +20,8 @@ on:
   push:
     branches: [master]
     paths:
-      - 'packages/acgs-control-plane/**'
+      - 'packages/acgs-control-plane'
+      - '.gitmodules'
       - 'packages/gove-zone/**'
       - 'requirements/saas-beta/cp-test.in'
       - 'requirements/saas-beta/cp-test.lock'
@@ -48,6 +52,26 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+          submodules: false
+
+      # acgs-control-plane is a private submodule; this whole lane tests it,
+      # so a missing/underscoped SUBMODULE_TOKEN must fail loudly, not skip.
+      - name: Init control-plane submodule (hard requirement)
+        working-directory: ${{ github.workspace }}
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        run: |
+          # Ephemeral global gitconfig: self-hosted runner runs as the
+          # operator's user; keep the token out of the real ~/.gitconfig
+          # (see python-clinicalguard.yml for rationale).
+          export GIT_CONFIG_GLOBAL="${RUNNER_TEMP}/submodule-gitconfig"
+          if [ -z "${SUBMODULE_TOKEN}" ]; then
+            echo "::error::SUBMODULE_TOKEN is required: acgs-control-plane is a private submodule and this lane runs its tests." >&2
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git submodule sync -- packages/acgs-control-plane
+          git submodule update --init --recursive -- packages/acgs-control-plane
 
       - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
         with:
@@ -102,6 +126,23 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          submodules: false
+
+      # acgs-control-plane is a private submodule; the migration suites live
+      # inside it, so token failures must be loud (see the test job above).
+      - name: Init control-plane submodule (hard requirement)
+        working-directory: ${{ github.workspace }}
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        run: |
+          export GIT_CONFIG_GLOBAL="${RUNNER_TEMP}/submodule-gitconfig"
+          if [ -z "${SUBMODULE_TOKEN}" ]; then
+            echo "::error::SUBMODULE_TOKEN is required: acgs-control-plane is a private submodule and this lane runs its migration suites." >&2
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git submodule sync -- packages/acgs-control-plane
+          git submodule update --init --recursive -- packages/acgs-control-plane
 
       - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
         with:
