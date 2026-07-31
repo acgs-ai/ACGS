@@ -685,13 +685,17 @@ case "$REQUESTED_NODE_ID" in
     EXPECTED_TRANSCRIPT_RECORDS=7
     TMP_BASENAME='acgs-p3-mutations'
     ;;
-  P3-APPROVAL-003)
+  P3-APPROVAL-003 | P3-APPROVAL-003B)
     [[ "$P" == "$P3_APPROVAL_REVIEWED_BASE" ]] ||
-      die "P3-APPROVAL-003 reviewed parent must be exact $P3_APPROVAL_REVIEWED_BASE"
+      die "$REQUESTED_NODE_ID reviewed parent must be exact $P3_APPROVAL_REVIEWED_BASE"
     ASSIGNED_BOOTSTRAPS='EVID+CP+GZ'
     INCLUDE_GZ=1
     EXPECTED_TRANSCRIPT_RECORDS=12
-    TMP_BASENAME='acgs-p3-approval'
+    if [[ "$REQUESTED_NODE_ID" == P3-APPROVAL-003B ]]; then
+      TMP_BASENAME='acgs-p3-approval-003b'
+    else
+      TMP_BASENAME='acgs-p3-approval'
+    fi
     ;;
   *)
     die "unsupported clean-sibling node: $REQUESTED_NODE_ID"
@@ -2858,7 +2862,7 @@ elif [[ "$NODE_ID" == P3-POLICY-001 ]]; then
   export ACGS_PROCESS_SCHEDULE='["single-process-evidence-and-package-gates","postgres-pg6-policy-registry-lifecycle"]'
 elif [[ "$NODE_ID" == P3-MUTATIONS-002 ]]; then
   export ACGS_PROCESS_SCHEDULE='["single-process-evidence-and-package-gates","postgres-pg6-mutation-inventory-drift"]'
-elif [[ "$NODE_ID" == P3-APPROVAL-003 ]]; then
+elif [[ "$NODE_ID" == P3-APPROVAL-003 || "$NODE_ID" == P3-APPROVAL-003B ]]; then
   export ACGS_PROCESS_SCHEDULE='["single-process-evidence-and-package-gates","postgres-pg9-approval-resume-multiprocess"]'
 fi
 unset UV_OFFLINE UV_NO_INDEX UV_NO_CACHE RUFF_NO_CACHE
@@ -3139,7 +3143,8 @@ check_artifact() {
   [[ -f "$path" && ! -L "$path" ]] || exit 126
   actual_size="$(stat -Lc "%s" -- "$path")" || exit 126
   [[ "$actual_size" == "$expected_size" ]] || exit 126
-  actual_sha="$(sha256sum "$path" | awk "{print \$1}")" || exit 126
+  actual_sha="$(sha256sum "$path")" || exit 126
+  actual_sha="${actual_sha%% *}"
   [[ "$actual_sha" == "$expected_sha" ]] || exit 126
 }
 check_artifact "${ACGS_PREFLIGHT_LAUNCHER:-}" launcher
@@ -4251,7 +4256,7 @@ run_trusted_parent_p0_launcher_authority_gate() {
   shift 5
   local started finished stdout_file stderr_file gate_status
   local launcher_path launcher_fd launcher_path_stat launcher_fd_stat launcher_sha
-  local trusted_launcher_sha256='bda70bc471f9399ddc4750ccb1b57011920a9cb9e79c67d5b79b020e9cec878b'
+  local trusted_launcher_sha256='4edc226d5981fd55f8ee20cf20caaa5246f5345dcb6f6a0c6068eadc0365e963'
   local target_sha='1111111111111111111111111111111111111111'
   [[ "$scope" == P0 ]] || die 'trusted parent P0 launcher gate is P0-only'
   [[ "$cwd" == "$WORKTREE" ]] || die 'trusted parent P0 launcher gate cwd must be repository root'
@@ -4846,7 +4851,7 @@ node_cwd_scope() {
     P1-MIGRATION-001 | P1-SCOPE-002 | P1-LEDGER-003 | P1-TRUST-004 | \
     P2-TENANT-BOOTSTRAP-000 | P2-REGISTER-001 | P2-IDEMPOTENCY-002 | \
       P2-VERTICAL-GATE-003 | P3-POLICY-001 | P3-MUTATIONS-002 | \
-      P3-APPROVAL-003)
+      P3-APPROVAL-003 | P3-APPROVAL-003B)
       printf '%s' "$default_scope"
       ;;
     *) printf __NONE__ ;;
@@ -5087,7 +5092,16 @@ elif [[ "$NODE_ID" == P3-MUTATIONS-002 ]]; then
   run_recorded_exact_pytest_gate P3 "$WORKTREE" p3-mutations-cross-plane \
     'root:P3-MUTATIONS-002-cross-plane-contract' REPO_ROOT 1 \
     "${P3_MUTATIONS_ROOT_GATE[@]}"
-elif [[ "$NODE_ID" == P3-APPROVAL-003 ]]; then
+elif [[ "$NODE_ID" == P3-APPROVAL-003 || "$NODE_ID" == P3-APPROVAL-003B ]]; then
+  if [[ "$NODE_ID" == P3-APPROVAL-003B ]]; then
+    P3_APPROVAL_CP_SELECTOR='packages/acgs-control-plane:P3-APPROVAL-003B-postgres-approval-gate'
+    P3_APPROVAL_GZ_SELECTOR='packages/gove-zone:P3-APPROVAL-003B-escalation-consumption-compatibility'
+    P3_APPROVAL_ROOT_SELECTOR='root:P3-APPROVAL-003B-cross-plane-contract'
+  else
+    P3_APPROVAL_CP_SELECTOR='packages/acgs-control-plane:P3-APPROVAL-003-postgres-approval-gate'
+    P3_APPROVAL_GZ_SELECTOR='packages/gove-zone:P3-APPROVAL-003-escalation-consumption-compatibility'
+    P3_APPROVAL_ROOT_SELECTOR='root:P3-APPROVAL-003-cross-plane-contract'
+  fi
   P3_APPROVAL_CP_GATE=(./scripts/run_postgres_gate.sh \
     tests/integration/test_approval_resume_postgres.py::test_pg_escalate_creates_scoped_pending_without_agent_or_consumption \
     tests/integration/test_approval_resume_postgres.py::test_pg_self_and_wrong_role_approval_are_non_executable \
@@ -5102,7 +5116,7 @@ elif [[ "$NODE_ID" == P3-APPROVAL-003 ]]; then
     tests/integration/test_approval_resume_postgres.py::test_pg_approval_composite_constraints_reject_cross_scope_rows)
   run_trusted_parent_postgres_gate CP \
     "$WORKTREE/packages/acgs-control-plane" p3-approval-postgres \
-    'packages/acgs-control-plane:P3-APPROVAL-003-postgres-approval-gate' CP \
+    "$P3_APPROVAL_CP_SELECTOR" CP \
     "${P3_APPROVAL_CP_GATE[@]}"
   P3_APPROVAL_GZ_GATE=("$UV_BIN" run --active --no-sync --python 3.11 --package gove-zone \
     python -m pytest \
@@ -5112,12 +5126,12 @@ elif [[ "$NODE_ID" == P3-APPROVAL-003 ]]; then
     packages/gove-zone/tests/test_receipt_consumption.py::test_concurrent_consumers_single_winner \
     --import-mode=importlib -q)
   run_recorded_exact_pytest_gate GZ "$WORKTREE" p3-approval-runtime \
-    'packages/gove-zone:P3-APPROVAL-003-escalation-consumption-compatibility' REPO_ROOT 4 \
+    "$P3_APPROVAL_GZ_SELECTOR" REPO_ROOT 4 \
     "${P3_APPROVAL_GZ_GATE[@]}"
   P3_APPROVAL_ROOT_GATE=(packages/acgs-control-plane/.venv/bin/python -m pytest -q \
     tests/saas_beta/test_cross_plane_contracts.py::test_approval_contract_locks_vote_and_resume_assurance)
   run_recorded_exact_pytest_gate P3 "$WORKTREE" p3-approval-cross-plane \
-    'root:P3-APPROVAL-003-cross-plane-contract' REPO_ROOT 1 \
+    "$P3_APPROVAL_ROOT_SELECTOR" REPO_ROOT 1 \
     "${P3_APPROVAL_ROOT_GATE[@]}"
 else
   die "unsupported clean-sibling node at product gate: $NODE_ID"
@@ -5411,6 +5425,7 @@ process_by_node = {
     "P3-POLICY-001": ["single-process-evidence-and-package-gates", "postgres-pg6-policy-registry-lifecycle"],
     "P3-MUTATIONS-002": ["single-process-evidence-and-package-gates", "postgres-pg6-mutation-inventory-drift"],
     "P3-APPROVAL-003": ["single-process-evidence-and-package-gates", "postgres-pg9-approval-resume-multiprocess"],
+    "P3-APPROVAL-003B": ["single-process-evidence-and-package-gates", "postgres-pg9-approval-resume-multiprocess"],
 }
 run = {
     "schema_version": "acgs-run-evidence/v1",

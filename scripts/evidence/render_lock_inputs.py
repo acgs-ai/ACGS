@@ -36,7 +36,7 @@ ALLOWED_ASSIGNMENTS = {
     "EVID+UI",
     "EVID+CP+GZ+UI",
 }
-NODE_COUNTS = {"P0": 4, "P1": 4, "P2": 4, "P3": 3, "P4": 3, "P5": 3, "P6": 3, "P7": 4}
+NODE_COUNTS = {"P0": 4, "P1": 4, "P2": 4, "P3": 4, "P4": 3, "P5": 3, "P6": 3, "P7": 4}
 EXPECTED_BOOTSTRAP_MAP = {
     "P0-EVIDENCE-000": "EVID+CP+GZ",
     "P0-MEMBRANE-001": "EVID+CP",
@@ -53,6 +53,7 @@ EXPECTED_BOOTSTRAP_MAP = {
     "P3-POLICY-001": "EVID+CP",
     "P3-MUTATIONS-002": "EVID+CP",
     "P3-APPROVAL-003": "EVID+CP+GZ",
+    "P3-APPROVAL-003B": "EVID+CP+GZ",
     "P4-ENROLLMENT-001": "EVID+CP+GZ",
     "P4-POLICY-SYNC-002": "EVID+CP+GZ",
     "P4-OUTAGE-003": "EVID+CP+GZ",
@@ -235,6 +236,7 @@ def _validate_bootstrap_map(raw: Any) -> dict[str, str]:
             raise ConfigError(f"assignment must start with exactly one EVID: {node}={assignment}")
         mapping[node] = assignment
     if mapping != EXPECTED_BOOTSTRAP_MAP:
+        expected_count = len(EXPECTED_BOOTSTRAP_MAP)
         missing = sorted(set(EXPECTED_BOOTSTRAP_MAP) - set(mapping))
         extra = sorted(set(mapping) - set(EXPECTED_BOOTSTRAP_MAP))
         changed = sorted(
@@ -243,7 +245,7 @@ def _validate_bootstrap_map(raw: Any) -> dict[str, str]:
             if mapping[node] != EXPECTED_BOOTSTRAP_MAP[node]
         )
         raise ConfigError(
-            f"bootstrap map differs from exact reviewed 28-node map; "
+            f"bootstrap map differs from exact reviewed {expected_count}-node map; "
             f"missing={missing} extra={extra} changed={changed}"
         )
     return mapping

@@ -129,8 +129,12 @@ def _exact_keys(value: Any, keys: set[str], label: str) -> dict[str, Any]:
 
 def _load_assignment_map(path: Path) -> dict[str, str]:
     value = load_json(path)
-    if not isinstance(value, dict) or len(value) != 28:
-        fail("bootstrap assignment map must be a direct closed 28-node object", phase="B5")
+    expected_count = len(EXPECTED_BOOTSTRAP_MAP)
+    if not isinstance(value, dict) or len(value) != expected_count:
+        fail(
+            f"bootstrap assignment map must be a direct closed {expected_count}-node object",
+            phase="B5",
+        )
     result: dict[str, str] = {}
     for node, assignment in value.items():
         if (
@@ -142,7 +146,7 @@ def _load_assignment_map(path: Path) -> dict[str, str]:
         assignment_tokens(assignment)
         result[node] = assignment
     if result != EXPECTED_BOOTSTRAP_MAP:
-        fail("bootstrap map differs from exact reviewed 28-node map", phase="B5")
+        fail(f"bootstrap map differs from exact reviewed {expected_count}-node map", phase="B5")
     return result
 
 

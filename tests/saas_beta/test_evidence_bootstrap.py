@@ -170,6 +170,14 @@ P3_APPROVAL_POSTGRES_TRUSTED_RUNNER_SHA256 = (
 P3_APPROVAL_POSTGRES_REVIEWED_RUNNER_SHA256 = (
     "1afe623226adf06fd27bf859a9f010fb56678b408b7f653dd3437c8b9b2ed676"
 )
+TRUSTED_STATIC_BUSYBOX = Path("/usr/bin/busybox")
+TRUSTED_STATIC_BUSYBOX_SHA256 = "98d9040015eb17931e17b45e00b5f49f2451326372d5107a3a280f1cb3aaf3fc"
+REAL_QUOTA_FUSE_TOOLS = (
+    Path("/usr/bin/fuse2fs"),
+    Path("/usr/bin/mkfs.ext4"),
+    Path("/usr/bin/fusermount3"),
+    Path("/usr/bin/mountpoint"),
+)
 P2_IDEMPOTENCY_RETIRED_SELECTOR_PATTERNS = (
     "tests/integration/test_production_posture.py",
     "tests/test_agent_registration_managed_route.py",
@@ -423,6 +431,29 @@ def _mounted_artifact_preflight_assignment(source: str) -> str:
     return assignment + "readonly ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT\n"
 
 
+def _has_exact_trusted_static_busybox() -> bool:
+    try:
+        st = TRUSTED_STATIC_BUSYBOX.lstat()
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode):
+        return False
+    if not os.access(TRUSTED_STATIC_BUSYBOX, os.X_OK):
+        return False
+    return hashlib.sha256(TRUSTED_STATIC_BUSYBOX.read_bytes()).hexdigest() == (
+        TRUSTED_STATIC_BUSYBOX_SHA256
+    )
+
+
+def _missing_real_quota_fuse_prerequisite() -> str | None:
+    if not Path("/dev/fuse").is_char_device():
+        return "/dev/fuse char device unavailable"
+    for tool in REAL_QUOTA_FUSE_TOOLS:
+        if not tool.is_absolute() or not tool.is_file() or not os.access(tool, os.X_OK):
+            return f"{tool} unavailable or not executable"
+    return None
+
+
 def _clean_sibling_gitfile_witness(path: Path) -> dict[str, str]:
     st = path.stat(follow_symlinks=False)
     payload = path.read_bytes()
@@ -612,15 +643,15 @@ def _reviewed_p3_mutations_records() -> list[dict[str, Any]]:
     ]
 
 
-def _reviewed_p3_approval_records() -> list[dict[str, Any]]:
+def _reviewed_p3_approval_records(node_id: str = "P3-APPROVAL-003") -> list[dict[str, Any]]:
     return [
         {
             **_transcript_record(list(argv), selector),
             "cwd_scope": cwd_scope,
         }
         for (selector, argv), cwd_scope in zip(
-            _common.REVIEWED_P3_APPROVAL_TRANSCRIPT,
-            _common.REVIEWED_CWD_SCOPES_BY_NODE["P3-APPROVAL-003"],
+            _common.REVIEWED_TRANSCRIPTS_BY_NODE[node_id],
+            _common.REVIEWED_CWD_SCOPES_BY_NODE[node_id],
             strict=True,
         )
     ]
@@ -716,12 +747,14 @@ def _write_reviewed_p3_mutations_transcript(path: Path) -> None:
         )
 
 
-def _write_reviewed_p3_approval_transcript(path: Path) -> None:
-    for record in _reviewed_p3_approval_records():
+def _write_reviewed_p3_approval_transcript(
+    path: Path, node_id: str = "P3-APPROVAL-003"
+) -> None:
+    for record in _reviewed_p3_approval_records(node_id):
         _common.append_safe_transcript_record(
             path,
             record,
-            expected_node="P3-APPROVAL-003",
+            expected_node=node_id,
         )
 
 
@@ -883,6 +916,7 @@ def test_lock_model_and_assignment_map_are_exact_closed_contracts() -> None:
         "python_platform": "x86_64-manylinux_2_28",
         "exclude_newer": "2026-07-10T00:00:00Z",
     }
+    assert render_lock_inputs.NODE_COUNTS["P3"] == 4
     assert config["bootstrap_by_scope"] == _common.EXPECTED_BOOTSTRAP_MAP
     assert _json(LOCK_ROOT / "bootstrap-by-scope.json") == _common.EXPECTED_BOOTSTRAP_MAP
     for code in ("CP", "GZ"):
@@ -4448,15 +4482,39 @@ def test_p3_approval_command_corpus_is_node_cwd_bound_and_exact_ordered(
     assert _common.P3_APPROVAL_GZ_SELECTORS == P3_APPROVAL_GZ_SELECTORS
     assert _common.P3_APPROVAL_ROOT_SELECTORS == P3_APPROVAL_ROOT_SELECTORS
     assert _common.EXPECTED_BOOTSTRAP_MAP["P3-APPROVAL-003"] == "EVID+CP+GZ"
+    assert _common.EXPECTED_BOOTSTRAP_MAP["P3-APPROVAL-003B"] == "EVID+CP+GZ"
     assert _common.REVIEWED_RUN_METADATA_BY_NODE["P3-APPROVAL-003"]["process_schedule"] == (
         "single-process-evidence-and-package-gates",
         "postgres-pg9-approval-resume-multiprocess",
+    )
+    assert _common.REVIEWED_RUN_METADATA_BY_NODE["P3-APPROVAL-003B"] == (
+        _common.REVIEWED_RUN_METADATA_BY_NODE["P3-APPROVAL-003"]
     )
 
     transcript = tmp_path / "P3-APPROVAL-003/transcript.jsonl"
     _write_reviewed_p3_approval_transcript(transcript)
     loaded = generate_run._read_transcript(transcript, expected_node="P3-APPROVAL-003")
     _common.validate_transcript_sequence(loaded, expected_node="P3-APPROVAL-003")
+    retry_records = _reviewed_p3_approval_records("P3-APPROVAL-003B")
+    assert len(retry_records) == 12
+    assert [record["argv"] for record in retry_records] == [record["argv"] for record in records]
+    assert retry_records[-3]["selectors"] == [
+        "packages/acgs-control-plane:P3-APPROVAL-003B-postgres-approval-gate"
+    ]
+    assert retry_records[-2]["selectors"] == [
+        "packages/gove-zone:P3-APPROVAL-003B-escalation-consumption-compatibility"
+    ]
+    assert retry_records[-1]["selectors"] == ["root:P3-APPROVAL-003B-cross-plane-contract"]
+    retry_transcript = tmp_path / "P3-APPROVAL-003B/transcript.jsonl"
+    _write_reviewed_p3_approval_transcript(retry_transcript, "P3-APPROVAL-003B")
+    retry_loaded = generate_run._read_transcript(
+        retry_transcript, expected_node="P3-APPROVAL-003B"
+    )
+    _common.validate_transcript_sequence(retry_loaded, expected_node="P3-APPROVAL-003B")
+    with pytest.raises(_common.EvidenceError):
+        _common.validate_transcript_sequence(retry_loaded, expected_node="P3-APPROVAL-003")
+    with pytest.raises(_common.EvidenceError):
+        _common.validate_transcript_sequence(records, expected_node="P3-APPROVAL-003B")
 
     mutations_cp_final = _reviewed_p3_mutations_records()[-2]
     policy_cp_final = _reviewed_p3_policy_records()[-2]
@@ -4562,6 +4620,16 @@ def test_p3_approval_run_validation_rejects_forged_corpus_metadata_before_output
     for forged in forged_runs:
         with pytest.raises(_common.EvidenceError):
             _common.validate_secret_free_run(forged, expected_node="P3-APPROVAL-003")
+
+    retry_records = _reviewed_p3_approval_records("P3-APPROVAL-003B")
+    retry_run = run_with(node_id="P3-APPROVAL-003B", commands=retry_records)
+    _common.validate_secret_free_run(retry_run, expected_node="P3-APPROVAL-003B")
+    for reused in (
+        run_with(node_id="P3-APPROVAL-003B", commands=records),
+        run_with(commands=retry_records),
+    ):
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_secret_free_run(reused, expected_node="P3-APPROVAL-003B")
 
 
 def test_run_evidence_schema_closes_reviewed_process_schedules() -> None:
@@ -5332,6 +5400,16 @@ def test_launcher_failure_status_authenticates_exit_ordinal_selector_and_gate_id
         "p3-approval-runtime",
         "p3-approval-cross-plane",
     ]
+    p3b_gate_ids = namespace["EXPECTED_GATE_IDS"]["P3-APPROVAL-003B"]
+    assert p3b_gate_ids == p3_gate_ids
+    assert namespace["EXPECTED_COMMAND_SELECTORS"]["P3-APPROVAL-003B"][-3:] == [
+        "packages/acgs-control-plane:P3-APPROVAL-003B-postgres-approval-gate",
+        "packages/gove-zone:P3-APPROVAL-003B-escalation-consumption-compatibility",
+        "root:P3-APPROVAL-003B-cross-plane-contract",
+    ]
+    assert namespace["EXPECTED_COMMAND_SELECTORS"]["P3-APPROVAL-003B"][:-3] == (
+        namespace["EXPECTED_COMMAND_SELECTORS"]["P3-APPROVAL-003"][:-3]
+    )
     selector = "packages/gove-zone:local-gate"
     selector_hash = hashlib.sha256(selector.encode("utf-8")).hexdigest()
     payload = {
@@ -8231,7 +8309,7 @@ def test_clean_sibling_launcher_empty_run_refuses_authenticated_bus_without_trac
             "TMPDIR": str(caller),
         }
     )
-    if Path("/usr/bin/bwrap").exists():
+    if Path("/usr/bin/bwrap").exists() and _has_exact_trusted_static_busybox():
         command = [
             "/usr/bin/bwrap",
             "--die-with-parent",
@@ -8343,6 +8421,8 @@ def test_clean_sibling_static_target_validation_is_deterministic_before_mutation
     tmp_path: Path,
     target: str,
 ) -> None:
+    if not _has_exact_trusted_static_busybox():
+        pytest.skip("trusted static /usr/bin/busybox unavailable")
     caller = tmp_path / "caller"
     caller.mkdir(mode=0o700)
     marker = caller / "hostile-marker"
@@ -8832,6 +8912,8 @@ exec /bin/bash --noprofile --norc {shlex.quote(str(internal))} {"0" * 40}
 def test_clean_sibling_static_launcher_rejects_wrong_argv_and_hardlink(
     tmp_path: Path,
 ) -> None:
+    if not _has_exact_trusted_static_busybox():
+        pytest.skip("trusted static /usr/bin/busybox unavailable")
     env = _evidence_env(tmp_path / "unused")
     env.update({"P": "26d11c2c7a8da37937a7c50c642f18edc75c9345", "TMPDIR": str(tmp_path)})
     wrong_argv = subprocess.run(
@@ -10811,6 +10893,8 @@ def test_clean_sibling_guardian_child_limits_split_as_from_cgroup_memory(
 def test_clean_sibling_quota_fuse_mount_enforces_byte_inode_and_detaches(
     tmp_path: Path,
 ) -> None:
+    if missing := _missing_real_quota_fuse_prerequisite():
+        pytest.skip(missing)
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
     functions = "\n".join(
         (
@@ -11034,8 +11118,8 @@ def test_clean_sibling_quota_partial_hardening_failure_detaches_exact_mount(
     tmp_path: Path,
     fault: str,
 ) -> None:
-    if not Path("/dev/fuse").is_char_device():
-        pytest.skip("/dev/fuse unavailable")
+    if missing := _missing_real_quota_fuse_prerequisite():
+        pytest.skip(missing)
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
     functions = "\n".join(
         (
@@ -14227,7 +14311,10 @@ fi
 def test_p0_launcher_authority_gate_authenticates_outer_target_not_nested_negative_target(
     tmp_path: Path,
 ) -> None:
+    if not _has_exact_trusted_static_busybox():
+        pytest.skip("trusted static /usr/bin/busybox unavailable")
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    recorded_gate_selector_sha256 = _shell_function(source, "recorded_gate_selector_sha256")
     gate = _shell_function(source, "run_trusted_parent_p0_launcher_authority_gate")
     node_evidence = tmp_path / "node"
     tmp_root = tmp_path / "tmp"
@@ -14306,6 +14393,8 @@ ACGS_AUTH_TARGET={"2" * 40}
 AUTH_LOG={shlex.quote(str(auth_log))}
 DBUS_SESSION_BUS_ADDRESS=
 XDG_RUNTIME_DIR=
+TRANSCRIPT_RECORDS=0
+{recorded_gate_selector_sha256}
 {gate}
 run_trusted_parent_p0_launcher_authority_gate P0 "$WORKTREE" p0-launcher-authority \\
   root:P0-EVIDENCE-000-launcher-authority-harness __NONE__ \\
@@ -14427,7 +14516,9 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "P2-VERTICAL-GATE-003)" in source
     assert "P3-POLICY-001)" in source
     assert "P3-MUTATIONS-002)" in source
-    assert "P3-APPROVAL-003)" in source
+    assert "P3-APPROVAL-003 | P3-APPROVAL-003B)" in source
+    assert "P3_APPROVAL_REVIEWED_BASE='a2299d510d792dd04646204653e405e0485204a6'" in source
+    assert "P3-APPROVAL-003B" in source
     assert "P1_SCOPE_REVIEWED_BASE='40781e1200289507fcfbcedf6ab14c120ac6aae8'" in source
     assert "P1_LEDGER_REVIEWED_BASE='9450db249e4428021c4d98b2f1b81d414693d9af'" in source
     assert "P1_TRUST_REVIEWED_BASE='f113d9bc7263ba2607ff9800da9881a3ff624441'" in source
@@ -14453,6 +14544,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "TMP_BASENAME='acgs-p3-policy'" in source
     assert "TMP_BASENAME='acgs-p3-mutations'" in source
     assert "TMP_BASENAME='acgs-p3-approval'" in source
+    assert "TMP_BASENAME='acgs-p3-approval-003b'" in source
     assert "P1_MIGRATION_GATE=(./scripts/run_postgres_gate.sh" in source
     assert "run_trusted_parent_postgres_gate CP" in source
     assert "packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate" in source
@@ -14548,7 +14640,12 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "packages/acgs-control-plane:P3-APPROVAL-003-postgres-approval-gate" in source
     assert "packages/gove-zone:P3-APPROVAL-003-escalation-consumption-compatibility" in source
     assert "root:P3-APPROVAL-003-cross-plane-contract" in source
-    assert "'root:P3-APPROVAL-003-cross-plane-contract' REPO_ROOT 1" in source
+    assert "packages/acgs-control-plane:P3-APPROVAL-003B-postgres-approval-gate" in source
+    assert "packages/gove-zone:P3-APPROVAL-003B-escalation-consumption-compatibility" in source
+    assert "root:P3-APPROVAL-003B-cross-plane-contract" in source
+    assert '"$P3_APPROVAL_ROOT_SELECTOR" REPO_ROOT 1' in source
+    assert "P3_APPROVAL_ROOT_SELECTOR='root:P3-APPROVAL-003-cross-plane-contract'" in source
+    assert "P3_APPROVAL_ROOT_SELECTOR='root:P3-APPROVAL-003B-cross-plane-contract'" in source
     assert "p3-approval-postgres" in source
     assert "p3-approval-runtime" in source
     assert "p3-approval-cross-plane" in source
@@ -20164,6 +20261,30 @@ exit $?
     assert "cleanup refused for unowned path" not in completed.stderr
     assert not accepted_p3_approval.exists()
 
+    accepted_p3_approval_003b = parent / "acgs-p3-approval-003b.accepted"
+    accepted_p3_approval_003b.mkdir(mode=0o700)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(accepted_p3_approval_003b),
+            "P3-APPROVAL-003B",
+            "EVID+CP+GZ",
+            "12",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "cleanup refused for unowned path" not in completed.stderr
+    assert not accepted_p3_approval_003b.exists()
+
     refused_p3_approval_prefix = parent / "acgs-p3-approvalish.refused"
     refused_p3_approval_prefix.mkdir(mode=0o700)
     completed = subprocess.run(
@@ -20306,7 +20427,7 @@ def test_p1_clean_sibling_rejects_unassigned_retained_runtime_paths_before_outpu
     assert "P2-IDEMPOTENCY-002)" in pre_b1
     assert "P3-POLICY-001)" in pre_b1
     assert "P3-MUTATIONS-002)" in pre_b1
-    assert "P3-APPROVAL-003)" in pre_b1
+    assert "P3-APPROVAL-003 | P3-APPROVAL-003B)" in pre_b1
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP'" in pre_b1
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP+GZ'" in pre_b1
     assert "PREEXISTING_REJECT_PATHS=(" in pre_b1
@@ -20345,6 +20466,7 @@ def test_p1_clean_sibling_rejects_wrong_reviewed_parent_before_mutation(tmp_path
         ("P3-POLICY-001", "647385084d974322b0f8b9b82738d7b820044ece"),
         ("P3-MUTATIONS-002", "014fe1806600d52d55f06875a8c30c0b8a5b973b"),
         ("P3-APPROVAL-003", "a2299d510d792dd04646204653e405e0485204a6"),
+        ("P3-APPROVAL-003B", "a2299d510d792dd04646204653e405e0485204a6"),
     )
     for node_id, reviewed_parent in cases:
         wrong_parent = "1" * 40
@@ -24000,7 +24122,7 @@ def _external_intent_cleanup_helper(
 ) -> str:
     source = (ROOT / "scripts/evidence/clean_sibling_cleanup.sh").read_text(encoding="utf-8")
     assert hashlib.sha256(source.encode("utf-8")).hexdigest() == (
-        "68d996434a6a92b4695872b8ec6dbe7792e3a03d6a791bcaae35a3851e7787be"
+        "eeddca259d38529f3d6ea584b81ee6abf2435e6cfe63c17aa0ee68afd863a06f"
     )
     helper = _shell_function(source, "clean_sibling_retain_recovery_contracts")
     helper = (
@@ -26414,6 +26536,51 @@ def test_clean_sibling_trusted_network_resolver_rejects_unsafe_inputs_before_uv(
         assert completed.returncode == 2, (name, completed.stdout, completed.stderr)
         assert "HARNESS_DIE=trusted network resolver" in completed.stderr
         assert not uv_marker.exists(), name
+
+
+def test_clean_sibling_mounted_artifact_preflight_validates_digest_without_awk(
+    tmp_path: Path,
+) -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    preflight_assignment = _mounted_artifact_preflight_assignment(source)
+    assert "| awk" not in preflight_assignment
+    artifact = tmp_path / "mounted-artifact"
+    artifact.write_bytes(b"trusted-mounted-artifact\n")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "stat").symlink_to("/usr/bin/stat")
+    (fake_bin / "sha256sum").symlink_to("/usr/bin/sha256sum")
+    harness = tmp_path / "mounted-preflight-no-awk.sh"
+    artifact_record = (
+        f"{artifact}|{hashlib.sha256(artifact.read_bytes()).hexdigest()}|{artifact.stat().st_size}"
+    )
+    bad_artifact_record = f"{artifact}|{'0' * 64}|{artifact.stat().st_size}"
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        f"PATH={shlex.quote(str(fake_bin))}\n"
+        f"ACGS_PREFLIGHT_UV={shlex.quote(artifact_record)}\n"
+        "export ACGS_PREFLIGHT_UV\n"
+        f"{preflight_assignment}"
+        '/bin/bash --noprofile --norc -c "$ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT" '
+        "_ /usr/bin/true\n"
+        f"ACGS_PREFLIGHT_UV={shlex.quote(bad_artifact_record)}\n"
+        "export ACGS_PREFLIGHT_UV\n"
+        "if /bin/bash --noprofile --norc -c "
+        '"$ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT" _ /usr/bin/true; then exit 80; fi\n'
+        "printf 'PREFLIGHT_DIGEST_VALIDATED_WITHOUT_AWK\\n'\n",
+        encoding="utf-8",
+    )
+    harness.chmod(0o755)
+    completed = subprocess.run(
+        [str(harness)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert "PREFLIGHT_DIGEST_VALIDATED_WITHOUT_AWK" in completed.stdout
+    assert not (fake_bin / "awk").exists()
 
 
 def test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_sockets(

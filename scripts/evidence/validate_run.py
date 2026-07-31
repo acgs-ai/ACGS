@@ -31,14 +31,15 @@ from _common import (
 
 def _load_map(path: Path) -> dict[str, str]:
     value = load_json(path)
-    if not isinstance(value, dict) or len(value) != 28:
-        fail("assignment map must be the exact closed 28-node map", phase="B6")
+    expected_count = len(EXPECTED_BOOTSTRAP_MAP)
+    if not isinstance(value, dict) or len(value) != expected_count:
+        fail(f"assignment map must be the exact closed {expected_count}-node map", phase="B6")
     for node, assignment in value.items():
         if not isinstance(node, str) or not isinstance(assignment, str):
             fail("assignment map contains non-string data", phase="B6")
         assignment_tokens(assignment)
     if value != EXPECTED_BOOTSTRAP_MAP:
-        fail("assignment map differs from exact reviewed 28-node map", phase="B6")
+        fail(f"assignment map differs from exact reviewed {expected_count}-node map", phase="B6")
     return value
 
 

@@ -104,7 +104,8 @@ case "$requested_node:$reviewed_parent" in
     P2-VERTICAL-GATE-003:7d81e853b56352822286eb08d592d9e87256868e | \
     P3-POLICY-001:647385084d974322b0f8b9b82738d7b820044ece | \
     P3-MUTATIONS-002:014fe1806600d52d55f06875a8c30c0b8a5b973b | \
-    P3-APPROVAL-003:a2299d510d792dd04646204653e405e0485204a6)
+    P3-APPROVAL-003:a2299d510d792dd04646204653e405e0485204a6 | \
+    P3-APPROVAL-003B:a2299d510d792dd04646204653e405e0485204a6)
     ;;
   P0-EVIDENCE-000:*) fail 'P0 reviewed parent must be exact 26d11c2c7a8da37937a7c50c642f18edc75c9345' ;;
   P1-MIGRATION-001:*) fail 'P1-MIGRATION-001 reviewed parent must be exact 79a3c39f841cfc5a6c79e85973887814caf0e694' ;;
@@ -118,6 +119,7 @@ case "$requested_node:$reviewed_parent" in
   P3-POLICY-001:*) fail 'P3-POLICY-001 reviewed parent must be exact 647385084d974322b0f8b9b82738d7b820044ece' ;;
   P3-MUTATIONS-002:*) fail 'P3-MUTATIONS-002 reviewed parent must be exact 014fe1806600d52d55f06875a8c30c0b8a5b973b' ;;
   P3-APPROVAL-003:*) fail 'P3-APPROVAL-003 reviewed parent must be exact a2299d510d792dd04646204653e405e0485204a6' ;;
+  P3-APPROVAL-003B:*) fail 'P3-APPROVAL-003B reviewed parent must be exact a2299d510d792dd04646204653e405e0485204a6' ;;
   *) fail "unsupported clean-sibling node: $requested_node" ;;
 esac
 exec "$BUSYBOX" env -i \
@@ -257,6 +259,14 @@ EXPECTED_STATUS = {
             "postgres-pg9-approval-resume-multiprocess",
         ],
     ),
+    "P3-APPROVAL-003B": (
+        "EVID+CP+GZ",
+        "12",
+        [
+            "single-process-evidence-and-package-gates",
+            "postgres-pg9-approval-resume-multiprocess",
+        ],
+    ),
 }
 EXPECTED_COMMAND_SELECTORS = {
     "P0-EVIDENCE-000": [
@@ -389,6 +399,20 @@ EXPECTED_COMMAND_SELECTORS = {
         "packages/gove-zone:P3-APPROVAL-003-escalation-consumption-compatibility",
         "root:P3-APPROVAL-003-cross-plane-contract",
     ],
+    "P3-APPROVAL-003B": [
+        "root:EVID-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/acgs-control-plane:P3-APPROVAL-003B-postgres-approval-gate",
+        "packages/gove-zone:P3-APPROVAL-003B-escalation-consumption-compatibility",
+        "root:P3-APPROVAL-003B-cross-plane-contract",
+    ],
 }
 EXPECTED_GATE_IDS = {
     "P0-EVIDENCE-000": [
@@ -508,6 +532,20 @@ EXPECTED_GATE_IDS = {
         "p3-mutations-cross-plane",
     ],
     "P3-APPROVAL-003": [
+        "evid-gate",
+        "cp-ruff-check",
+        "cp-ruff-format",
+        "cp-mypy",
+        "cp-pytest",
+        "gz-ruff-check",
+        "gz-ruff-format",
+        "gz-mypy",
+        "gz-pytest",
+        "p3-approval-postgres",
+        "p3-approval-runtime",
+        "p3-approval-cross-plane",
+    ],
+    "P3-APPROVAL-003B": [
         "evid-gate",
         "cp-ruff-check",
         "cp-ruff-format",
@@ -659,6 +697,19 @@ def expected_command_argv(selector, index):
             "tests/integration/test_approval_resume_postgres.py::test_pg_multiprocess_resume_race_authorizes_one_agent",
             "tests/integration/test_approval_resume_postgres.py::test_pg_approval_composite_constraints_reject_cross_scope_rows",
         ],
+        "packages/acgs-control-plane:P3-APPROVAL-003B-postgres-approval-gate": [
+            "tests/integration/test_approval_resume_postgres.py::test_pg_escalate_creates_scoped_pending_without_agent_or_consumption",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_self_and_wrong_role_approval_are_non_executable",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_resume_before_required_vote_is_non_executable",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_approved_resume_executes_once_and_replay_is_stable",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_rejected_and_expired_requests_resume_zero_side_effects",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_concurrent_vote_refusal_replay_records_one_evidence_set",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_mixed_refusal_then_allow_same_vote_key_has_one_terminal_artifact",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_stale_policy_trust_and_requester_resume_zero_side_effects",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_tampered_sealed_payload_resume_zero_side_effects",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_multiprocess_resume_race_authorizes_one_agent",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_approval_composite_constraints_reject_cross_scope_rows",
+        ],
     }
     if selector in postgres_tests:
         return ["./scripts/run_postgres_gate.sh", *postgres_tests[selector]]
@@ -712,6 +763,9 @@ def expected_command_argv(selector, index):
         "root:P3-APPROVAL-003-cross-plane-contract": [
             "tests/saas_beta/test_cross_plane_contracts.py::test_approval_contract_locks_vote_and_resume_assurance",
         ],
+        "root:P3-APPROVAL-003B-cross-plane-contract": [
+            "tests/saas_beta/test_cross_plane_contracts.py::test_approval_contract_locks_vote_and_resume_assurance",
+        ],
     }
     if selector in root_pytest_tests:
         return [
@@ -762,6 +816,12 @@ def expected_command_argv(selector, index):
             "packages/gove-zone/tests/test_mcp_binding.py::test_runtime_registered_tool_is_gated_with_zero_binding_changes",
         ],
         "packages/gove-zone:P3-APPROVAL-003-escalation-consumption-compatibility": [
+            "packages/gove-zone/tests/test_mcp_gateway_conformance.py::test_escalate_approve_resume_single_use",
+            "packages/gove-zone/tests/test_mcp_gateway_conformance.py::test_cross_pending_reuse",
+            "packages/gove-zone/tests/test_receipt_consumption.py::test_resume_replay_blocked_with_ledger",
+            "packages/gove-zone/tests/test_receipt_consumption.py::test_concurrent_consumers_single_winner",
+        ],
+        "packages/gove-zone:P3-APPROVAL-003B-escalation-consumption-compatibility": [
             "packages/gove-zone/tests/test_mcp_gateway_conformance.py::test_escalate_approve_resume_single_use",
             "packages/gove-zone/tests/test_mcp_gateway_conformance.py::test_cross_pending_reuse",
             "packages/gove-zone/tests/test_receipt_consumption.py::test_resume_replay_blocked_with_ledger",
