@@ -55,7 +55,7 @@ EXPECTED_DIRECT = (
     "rfc8785==0.1.4",
     "cryptography>=42",
     "jsonschema>=4.23,<5",
-    "pytest>=8.3,<9",
+    "pytest>=9.0.3,<10",
 )
 P2_REGISTER_RETIRED_CP_STUB_SELECTORS = (
     "tests/integration/test_production_posture.py::"
@@ -14167,6 +14167,16 @@ def test_clean_sibling_guardian_revalidates_retained_run_json_semantics(
     target = "2" * 40
     assignment = "EVID+CP+GZ"
     records = "12"
+    evid_locked = _common.parse_lock(LOCK_ROOT / "evidence-test.lock")
+    locked_pytest_version = evid_locked["pytest"]["version"]
+
+    def numeric_version(version: str) -> tuple[int, int, int]:
+        parts = version.split(".")
+        assert len(parts) == 3 and all(part.isdecimal() for part in parts)
+        return int(parts[0]), int(parts[1]), int(parts[2])
+
+    assert numeric_version("9.0.2") < (9, 0, 3)
+    assert numeric_version(locked_pytest_version) >= (9, 0, 3)
     monkeypatch.setenv("NODE_ID", node_id)
     monkeypatch.setenv("P", parent)
     monkeypatch.setattr(sys, "argv", ["guardian", target])
@@ -14260,7 +14270,7 @@ def test_clean_sibling_guardian_revalidates_retained_run_json_semantics(
                         },
                         "pytest": {
                             "distribution": "pytest",
-                            "version": "8.4.2",
+                            "version": locked_pytest_version,
                             "path": "/repo/.venv-evidence/lib/python3.11/site-packages/pytest",
                         },
                     },
@@ -26737,7 +26747,7 @@ def test_clean_sibling_trusted_network_resolver_uses_exact_uv_compile_and_scrubb
     quoted_network_python_cache = shlex.quote(
         str(cache / "trusted-network-uv-cache/uv-python-cache")
     )
-    (trusted / input_relative).write_text("pytest>=8.3,<9\n", encoding="utf-8")
+    (trusted / input_relative).write_text("pytest>=9.0.3,<10\n", encoding="utf-8")
     (trusted / output_relative).write_text("placeholder\n", encoding="utf-8")
     bwrap_argv = tmp_path / "bwrap.argv"
     uv_argv = tmp_path / "uv.argv"
