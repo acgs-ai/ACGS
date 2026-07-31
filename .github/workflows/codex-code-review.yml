@@ -54,6 +54,31 @@ jobs:
             "$PR_BASE_REF" \
             "+refs/pull/$PR_NUMBER/head"
 
+      # openai/codex-action's default `drop-sudo` safety strategy revokes sudo by
+      # removing the runner user from the `sudo` group and stripping `<user> ...`
+      # lines from the sudoers files, then verifies that `sudo -n true` fails. On
+      # Blacksmith runners passwordless sudo comes from a group rule
+      # (`%sudo ... NOPASSWD`), which survives both: the already-running job keeps
+      # the `sudo` gid in its process group vector even after `deluser`, so the
+      # action's verification fails and this required gate goes red on every run.
+      # Move the grant to a user-level rule (which drop-sudo does strip) and
+      # comment out every group-based rule, so drop-sudo can fully revoke sudo.
+      # If sudo were granted through yet another mechanism, the action would keep
+      # failing closed exactly as before, so this step cannot weaken the gate.
+      - name: Make sudo revocable for the drop-sudo safety strategy
+        if: ${{ env.OPENAI_API_KEY != '' && env.IS_INTERNAL == 'true' }}
+        run: |
+          set -euo pipefail
+          echo "$(id -un) ALL=(ALL) NOPASSWD:ALL" \
+            | sudo tee /etc/sudoers.d/zz-drop-sudo-shim >/dev/null
+          sudo chmod 0440 /etc/sudoers.d/zz-drop-sudo-shim
+          sudo find /etc/sudoers.d -maxdepth 1 -type f ! -name zz-drop-sudo-shim \
+            -exec sed -i -E 's/^[[:space:]]*%/#&/' '{}' +
+          sudo sed -i -E 's/^[[:space:]]*%/#&/' /etc/sudoers
+          sudo visudo -c
+          sudo -K
+          sudo -n true
+
       - name: Run Codex Code Review
         if: ${{ env.OPENAI_API_KEY != '' && env.IS_INTERNAL == 'true' }}
         id: codex-review
