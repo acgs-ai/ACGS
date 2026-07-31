@@ -86,6 +86,7 @@ from gove_zone.profile import GovernanceProfile
 from gove_zone.receipt import DecisionReceipt, Validator
 from gove_zone.rejection import HUMAN_APPROVAL, REVISE_AND_RETRY, rejection_dict
 from gove_zone.tool import ToolCall, normalize_path_context
+from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustRegistry
 
 __all__ = [
     "BypassAttemptError",
@@ -229,6 +230,9 @@ class GatewayResult:
             "audit_hash": self.audit_hash,
             "policy_hash": self.receipt.policy_hash,
             "signature_algorithm": self.receipt.signature_algorithm,
+            # Schema version, so a transport surface can tell a scoped (v2)
+            # authorization from an unscoped (v1) one without the receipt body.
+            "receipt_schema_version": self.receipt.receipt_schema_version,
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -265,6 +269,20 @@ class UniversalGateway:
     The single-use consumption ledger is always on: every executed receipt is
     burned, so one decision authorizes at most one side effect through this
     gateway even when the profile is not strict.
+
+    **Scoped trust (receipt-v2).** Supplying ``project_id`` + ``environment_id``
+    + ``trust_epoch`` + ``trust_registry`` puts every surface of this gateway on
+    the scoped receipt-v2 contract: receipts are minted with
+    :meth:`~gove_zone.receipt.DecisionReceipt.from_record_v2` and the gate
+    resolves the signing key through the registry for the full
+    tenant/project/environment/purpose scope before any side effect (see
+    :mod:`gove_zone.trust`). Scoped mode is all-or-nothing and fail-closed at
+    construction: a partial scope, a missing ``trust_registry``, a profile with
+    no ``signer``, or no ``receipt_ttl_seconds`` raises ``ValueError`` rather
+    than silently downgrading to unscoped v1 receipts. There is no bypass flag —
+    ``trust_registry`` is threaded into the gate unconditionally, so a v2
+    receipt presented to an unscoped gateway is refused by
+    :func:`~gove_zone.executor.execute_with_receipt`.
     """
 
     def __init__(
@@ -282,6 +300,11 @@ class UniversalGateway:
         ledger_path: str | Path | None = None,
         receipt_ttl_seconds: float | None = None,
         allowed_actors: frozenset[str] | set[str] | None = None,
+        project_id: str = "",
+        environment_id: str = "",
+        trust_epoch: int | None = None,
+        trust_registry: ReceiptTrustRegistry | None = None,
+        trust_purpose: str = DECISION_RECEIPT_PURPOSE,
     ) -> None:
         self.tenant_id = tenant_id
         self.execution_boundary = execution_boundary
@@ -292,6 +315,12 @@ class UniversalGateway:
         self.policy_bundle_id = policy_bundle_id or policy.version
         self.receipt_ttl_seconds = receipt_ttl_seconds
         self.allowed_actors = frozenset(allowed_actors) if allowed_actors is not None else None
+        self.project_id = project_id
+        self.environment_id = environment_id
+        self.trust_epoch = trust_epoch
+        self.trust_registry = trust_registry
+        self.trust_purpose = trust_purpose
+        self.scoped_trust = self._resolve_scoped_trust()
 
         if profile.require_expiry and receipt_ttl_seconds is None:
             # Fail loud at construction instead of rejecting 100% of calls at
@@ -330,6 +359,46 @@ class UniversalGateway:
         self._openai_specs: dict[str, dict[str, Any]] = {}
         self._kernels: dict[str, Kernel] = {}
         self._bypass_attempts: list[dict[str, Any]] = []
+
+    def _resolve_scoped_trust(self) -> bool:
+        """Decide (and validate) whether this gateway runs the v2 scoped contract.
+
+        Fail loud at construction rather than at every call, matching the
+        ``require_expiry`` precedent above: a gateway configured for a scope it
+        cannot satisfy would mint receipts that are refused 100% of the time —
+        or, worse, quietly fall back to unscoped v1. Scoped trust is
+        all-or-nothing: naming any part of the scope commits to all of it.
+        """
+        requested = (
+            bool(self.project_id)
+            or bool(self.environment_id)
+            or self.trust_epoch is not None
+            or self.trust_registry is not None
+        )
+        if not requested:
+            return False
+
+        missing: list[str] = []
+        if not self.project_id or not self.project_id.strip():
+            missing.append("project_id")
+        if not self.environment_id or not self.environment_id.strip():
+            missing.append("environment_id")
+        if type(self.trust_epoch) is not int or self.trust_epoch <= 0:
+            missing.append("trust_epoch (a positive integer)")
+        if self.trust_registry is None:
+            missing.append("trust_registry")
+        if self.profile.signer is None:
+            missing.append("a profile signer (receipt v2 must carry a trusted signature)")
+        if self.receipt_ttl_seconds is None:
+            missing.append("receipt_ttl_seconds (receipt v2 requires expires_at)")
+        if not isinstance(self.trust_purpose, str) or not self.trust_purpose.strip():
+            missing.append("trust_purpose")
+        if missing:
+            raise ValueError(
+                "scoped receipt-v2 trust is all-or-nothing and fail-closed; this "
+                "gateway names a scoped-trust setting but is missing: " + ", ".join(missing)
+            )
+        return True
 
     # -- registry ----------------------------------------------------------- #
 
@@ -463,20 +532,7 @@ class UniversalGateway:
             else dict(call.args)
         )
 
-        receipt = DecisionReceipt.from_record(
-            record,
-            audit_hash=audit_hash,
-            previous_audit_hash=previous_audit_hash,
-            tenant_id=self.tenant_id,
-            execution_boundary=self.execution_boundary,
-            policy_bundle_id=self.policy_bundle_id,
-            policy_hash=self.policy.version,
-            request_id=record.decision_request_hash or record.event_id,
-            validator=self.validator,
-            authority=self.authority,
-            expires_at=self._receipt_expires_at(),
-            signer=self.profile.signer,
-        )
+        receipt = self._mint_receipt(record, audit_hash, previous_audit_hash)
 
         grant = _GateGrant(self._tools[tool])
         token = _ACTIVE_GRANT.set(grant)
@@ -592,6 +648,36 @@ class UniversalGateway:
             return ""
         return (datetime.now(UTC) + timedelta(seconds=self.receipt_ttl_seconds)).isoformat()
 
+    def _mint_receipt(
+        self, record: DecisionRecord, audit_hash: str, previous_audit_hash: str
+    ) -> DecisionReceipt:
+        """Mint the receipt for one decision — v2 under scoped trust, else v1."""
+        common: dict[str, Any] = {
+            "audit_hash": audit_hash,
+            "previous_audit_hash": previous_audit_hash,
+            "tenant_id": self.tenant_id,
+            "execution_boundary": self.execution_boundary,
+            "policy_bundle_id": self.policy_bundle_id,
+            "policy_hash": self.policy.version,
+            "request_id": record.decision_request_hash or record.event_id,
+            "validator": self.validator,
+            "authority": self.authority,
+            "expires_at": self._receipt_expires_at(),
+        }
+        if not self.scoped_trust:
+            return DecisionReceipt.from_record(record, signer=self.profile.signer, **common)
+        signer = self.profile.signer
+        if signer is None or self.trust_epoch is None:  # pragma: no cover - guarded at __init__
+            raise ValueError("scoped receipt-v2 minting requires a signer and a trust epoch")
+        return DecisionReceipt.from_record_v2(
+            record,
+            project_id=self.project_id,
+            environment_id=self.environment_id,
+            trust_epoch=self.trust_epoch,
+            signer=signer,
+            **common,
+        )
+
     def _gate_kwargs(self) -> dict[str, Any]:
         # The strict profile's as_gate_kwargs() already emits
         # consumption_ledger; __init__ guarantees self._ledger IS that ledger,
@@ -599,6 +685,14 @@ class UniversalGateway:
         # adapters.mcp_gateway._gate_kwargs).
         kwargs = dict(self.profile.as_gate_kwargs())
         kwargs["consumption_ledger"] = self._ledger
+        # Threaded unconditionally (``None`` when unscoped) so the executor's
+        # fail-closed v2 branch is load-bearing on this path: a receipt-v2
+        # presented to a gateway with no registry is refused, never executed.
+        kwargs["trust_registry"] = self.trust_registry
+        if self.scoped_trust:
+            kwargs["trust_purpose"] = self.trust_purpose
+            kwargs["expected_project_id"] = self.project_id
+            kwargs["expected_environment_id"] = self.environment_id
         return kwargs
 
     # -- MCP surface ---------------------------------------------------------- #
@@ -849,20 +943,7 @@ class UniversalGateway:
 
         anchors: list[dict[str, Any]] = []
         for record, audit_hash, previous_audit_hash in decided:
-            receipt = DecisionReceipt.from_record(
-                record,
-                audit_hash=audit_hash,
-                previous_audit_hash=previous_audit_hash,
-                tenant_id=self.tenant_id,
-                execution_boundary=self.execution_boundary,
-                policy_bundle_id=self.policy_bundle_id,
-                policy_hash=self.policy.version,
-                request_id=record.decision_request_hash or record.event_id,
-                validator=self.validator,
-                authority=self.authority,
-                expires_at=self._receipt_expires_at(),
-                signer=self.profile.signer,
-            )
+            receipt = self._mint_receipt(record, audit_hash, previous_audit_hash)
             anchors.append(
                 {
                     "tool": record.tool,
@@ -870,6 +951,7 @@ class UniversalGateway:
                     "audit_hash": audit_hash,
                     "policy_hash": self.policy.version,
                     "signature_algorithm": receipt.signature_algorithm,
+                    "receipt_schema_version": receipt.receipt_schema_version,
                 }
             )
         response = _hook_response(action_kind, "allow", "allowed by policy")
