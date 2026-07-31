@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://acgs.ai/schema/proof-pack/v1.1/decision-receipt.schema.json",
   "title": "ACGS proof pack v1.1 — decision-receipt.json artifact",
-  "description": "The Decision Receipt carried verbatim inside an acgs/proof-pack/v1.1 bundle: the exact serialization of gove_zone.receipt.DecisionReceipt.to_dict(). receipt_hash is a SHA-256 over the canonical JSON of the bound fields; signature (when not 'unsigned_local') is an Ed25519 signature over receipt_hash. Frozen format: unknown keys are rejected. This v1.1 schema is structurally identical to its v1 counterpart: the two pack versions differ only in the summary-template revision bound to the pack's verification-summary.md, so v1.1 ships as distinct schema files with distinct $id values instead of widening the frozen v1 schemas in place.",
+  "description": "The Decision Receipt carried verbatim inside an acgs/proof-pack/v1.1 bundle: the exact serialization of gove_zone.receipt.DecisionReceipt.to_dict(). receipt_hash is a SHA-256 over the canonical JSON of the bound fields; signature (when not 'unsigned_local') is an Ed25519 signature over receipt_hash. Frozen format: unknown keys are rejected. Unlike the frozen v1 counterpart, this v1.1 schema also admits the scoped-trust Decision Receipt v2 serialization, exactly as to_dict() emits it: receipt_schema_version, project_id, environment_id, and trust_epoch appear all-or-none (absent for receipt v1, all four present for 'gove-zone/decision-receipt/v2'). The two pack versions otherwise differ only in the summary-template revision bound to the pack's verification-summary.md; v1.1 ships as distinct schema files with distinct $id values instead of widening the frozen v1 schemas in place.",
   "type": "object",
   "properties": {
     "receipt_id": { "type": "string", "minLength": 1 },
@@ -32,7 +32,11 @@
     "signature_algorithm": { "type": "string", "minLength": 1 },
     "signing_key_id": { "type": "string" },
     "receipt_hash": { "$ref": "#/$defs/sha256" },
-    "signature": { "type": "string", "minLength": 1 }
+    "signature": { "type": "string", "minLength": 1 },
+    "receipt_schema_version": { "const": "gove-zone/decision-receipt/v2" },
+    "project_id": { "type": "string", "minLength": 1 },
+    "environment_id": { "type": "string", "minLength": 1 },
+    "trust_epoch": { "type": "integer", "minimum": 1 }
   },
   "required": [
     "receipt_id",
@@ -65,6 +69,12 @@
     "signature"
   ],
   "additionalProperties": false,
+  "dependentRequired": {
+    "receipt_schema_version": ["project_id", "environment_id", "trust_epoch"],
+    "project_id": ["receipt_schema_version"],
+    "environment_id": ["receipt_schema_version"],
+    "trust_epoch": ["receipt_schema_version"]
+  },
   "$defs": {
     "sha256": {
       "type": "string",

@@ -279,6 +279,56 @@ def test_receipt_unknown_key_fails() -> None:
     _assert_invalid(RECEIPT_FILE, doc)
 
 
+# The scoped-trust receipt v2 fields DecisionReceipt.to_dict() emits all-or-none
+# on top of the v1 serialization. generate_proof_pack accepts a v2 receipt and
+# mints an acgs/proof-pack/v1.1 bundle, so the v1.1 receipt schema must accept
+# genuine generator output carrying them — while the FROZEN v1 schema keeps
+# rejecting them (no v1-era generator ever packaged a v2 receipt).
+_RECEIPT_V2_FIELDS = {
+    "receipt_schema_version": "gove-zone/decision-receipt/v2",
+    "project_id": "proj-1",
+    "environment_id": "env-1",
+    "trust_epoch": 1,
+}
+
+
+def test_receipt_v2_scoped_trust_fields_validate_under_v1_1() -> None:
+    doc = _golden_doc(RECEIPT_FILE)
+    doc.update(_RECEIPT_V2_FIELDS)
+    _assert_valid(RECEIPT_FILE, doc)
+
+
+def test_receipt_v2_scoped_trust_fields_stay_rejected_by_frozen_v1() -> None:
+    doc = json.loads((GOLDEN_V1 / RECEIPT_FILE).read_text(encoding="utf-8"))
+    _assert_valid(RECEIPT_FILE, doc, version="acgs/proof-pack/v1")  # guard
+    doc.update(_RECEIPT_V2_FIELDS)
+    _assert_invalid(RECEIPT_FILE, doc, version="acgs/proof-pack/v1")
+
+
+@pytest.mark.parametrize("dropped", sorted(_RECEIPT_V2_FIELDS))
+def test_receipt_v2_partial_scoped_trust_fields_fail(dropped: str) -> None:
+    """DecisionReceipt.from_dict enforces the four v2 fields all-or-none; the
+    v1.1 schema mirrors that instead of accepting a half-v2 receipt."""
+    doc = _golden_doc(RECEIPT_FILE)
+    doc.update(_RECEIPT_V2_FIELDS)
+    del doc[dropped]
+    _assert_invalid(RECEIPT_FILE, doc)
+
+
+def test_receipt_v2_unknown_receipt_schema_version_fails() -> None:
+    doc = _golden_doc(RECEIPT_FILE)
+    doc.update(_RECEIPT_V2_FIELDS)
+    doc["receipt_schema_version"] = "gove-zone/decision-receipt/v3"
+    _assert_invalid(RECEIPT_FILE, doc)
+
+
+def test_receipt_v2_nonpositive_trust_epoch_fails() -> None:
+    doc = _golden_doc(RECEIPT_FILE)
+    doc.update(_RECEIPT_V2_FIELDS)
+    doc["trust_epoch"] = 0
+    _assert_invalid(RECEIPT_FILE, doc)
+
+
 def test_audit_chain_event_missing_event_hash_fails() -> None:
     doc = _golden_doc(AUDIT_CHAIN_FILE)
     _assert_valid(AUDIT_CHAIN_FILE, doc)

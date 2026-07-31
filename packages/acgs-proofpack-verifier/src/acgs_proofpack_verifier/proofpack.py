@@ -467,12 +467,26 @@ def generate_proof_pack(
 #   (recomputing the unauthenticated digests) is caught because
 #   audit-chain.json and replay-report.json still declare the newer version.
 #
-# Residual limit: schema_version is itself an unauthenticated declaration, so
-# an editor who rewrites the ENTIRE pack self-consistently under an older
-# schema produces a pack indistinguishable from genuinely historical evidence.
-# That is whole-pack forgery — exactly the power unsigned packs already
-# disclaim in the summary's signature caveats — and the result at least
-# presents itself to the relying party under the older, superseded
+# Residual limit: schema_version is an unauthenticated envelope declaration,
+# for SIGNED packs too. The only signed artifact in a pack is the receipt: its
+# Ed25519 signature covers the receipt's bound fields (and, through
+# audit_event_hash, the chain prefix it anchors to), never evidence.json,
+# audit-chain.json, replay-report.json, or the summary. An editor who rewrites
+# those envelope artifacts self-consistently under an older SUPPORTED schema,
+# leaving the signed receipt untouched, produces a pack that verifies with
+# signature_verified=True (the signature verdict attests the receipt, not the
+# envelope) and is indistinguishable from what the still-supported older
+# generator legitimately emits for the same receipt: pack generation is
+# deliberately key-free, so anyone holding a receipt + chain can mint a pack
+# under any supported schema version without forging anything. Binding the
+# pack schema/template revision into a signed artifact would require a
+# generation-time pack-level signature, a format change v1/v1.1 do not have;
+# an opt-in one could not close the gap, since a downgrader strips optional
+# artifacts along with the version. What the revision binding above
+# guarantees is narrower: the summary prose is EXACTLY the trusted template
+# revision bound to the declared schema_version (all accepted revisions are
+# generator-authored, byte-pinned templates differing only in auditor
+# wording), and the pack presents itself under that older, superseded
 # schema_version instead of passing as current evidence.
 #
 # Revisions differ ONLY in auditor wording — every substantive fact (receipt,
