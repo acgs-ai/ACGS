@@ -42,11 +42,19 @@ pack's `status` vocabulary and per-row limitations govern for Annex A rows.
 when a receipt passes the full executor gate: it exists; was issued for *this*
 caller (actor anchor); is hash-intact (and signature-valid when it claims a
 signature); is ALLOW/TRANSFORM (not DENY/ESCALATE/expired); and its tenant,
-boundary, action, *exact arguments*, policy hash + bundle, and audit-event hash
-all match what the executor is about to do — minted by a validator distinct from
-the proposer. Any failure raises `ReceiptValidationError` **before** the tool
-runs. Independently, the kernel guarantees policy-runs-before-effect and
-fail-closes (synthesized DENY / `AuditError`) on policy or audit failure.
+boundary, action, and *exact arguments* all match what the executor is about to
+do — minted by a validator distinct from the proposer. The receipt's carried
+policy hash, policy bundle id, and audit-event hash are compared **only against
+caller-supplied expectations** (`expected_policy_hash`,
+`expected_policy_bundle_id`, `expected_audit_hash`, all defaulting to `None`,
+in which case those comparisons are skipped): a `GovernedExecutor` bound to a
+policy derives `expected_policy_hash` automatically, and the escalation gateway
+/ governed-MCP gateway pin `expected_audit_hash` at resume, but an integration
+relying on the bare defaults gets hash-bound *carried claims*, not
+independently gate-enforced bindings. Any failed check raises
+`ReceiptValidationError` **before** the tool runs. Independently, the kernel
+guarantees policy-runs-before-effect and fail-closes (synthesized DENY /
+`AuditError`) on policy or audit failure.
 
 Evidence: `packages/gove-zone/src/gove_zone/{receipt,executor,kernel,audit,policy,signing,consumption}.py`.
 
@@ -95,12 +103,14 @@ authoritative for public wording.)
 
 ## Mapping to ISO/IEC 42001:2023 clauses
 
-Clause titles are the public ISO harmonized-structure (HS) titles shared with
-ISO 9001 / ISO 27001. **The full ISO/IEC 42001:2023 published text was not
-consulted** — no verbatim clause text is reproduced or paraphrased from the
-standard, and sub-clause numbering (particularly within Clause 8) is not verified
-against the published document. Every row is therefore a mapping to the *clause
-theme*, not to verified normative requirement text. See "Limitations and gaps".
+Clause numbers and titles follow the publicly available ISO/IEC 42001:2023
+table of contents (Clause 6 ends at 6.3 *planning of changes*; Clause 8
+comprises 8.1–8.4 and ends at 8.4 *AI system impact assessment* — there is no
+Clause 8.5). **The full ISO/IEC 42001:2023 published text was not consulted** —
+no verbatim clause text is reproduced or paraphrased from the standard, and the
+normative requirement wording behind each clause title is not verified against
+the published document. Every row is therefore a mapping to the *clause theme*,
+not to verified normative requirement text. See "Limitations and gaps".
 
 | Clause | Clause theme | Mapped gove-zone control(s) | Evidence | Limitation |
 |---|---|---|---|---|
@@ -113,31 +123,30 @@ theme*, not to verified normative requirement text. See "Limitations and gaps".
 | **5.3** | Roles, responsibilities and authorities | MACI-VALIDATOR-SEP, ACTOR-ANCHOR | `receipt.py`, `tenant.py`; `tests/test_maci_role_separation.py`, `tests/test_executor_guard.py` | Evidence toward the clause theme only. Proposer ≠ validator is machine-enforced at issuance and again at the gate, and the caller identity must equal `receipt.actor` (no self-authorization). Identity is opaque strings supplied by the integrator runtime — the check proves *distinctness of identifiers*, not authenticated persons or org-chart authority (gap 5). Consistent with `ISO42001-A3.2`. |
 | **6.1** | Actions to address risks and opportunities | FAILCLOSED-POLICY/AUDIT, DECISION-GATE | `kernel.py`, `receipt.py`; `tests/test_fail_closed.py`, `tests/test_fail_closed_gaps.py` | Evidence toward the clause theme only. Fail-closed synthesis of DENY on policy exception/timeout and `AuditError` on audit-append failure are *implemented risk responses at the action boundary*; identifying and prioritizing the risks themselves is organizational planning the gate does not perform. |
 | **6.2** | AI objectives and planning to achieve them | — | — | No direct mapping identified. Objective-setting is organizational; gove-zone records decisions, not objectives, and forcing a mapping here would overstate. |
-| **6.3** | AI system impact assessment | — | — | No direct mapping identified. Impact assessment is a design-time organizational activity on the AI system as a whole; gove-zone governs individual side effects at execution time and performs no assessment of impacts on individuals or society. |
+| **6.3** | Planning of changes | HASH-INTEGRITY, POLICY/TENANT/BOUNDARY/ACTION/AUDIT-BIND | `receipt.py`, `policy.py`; `tests/test_policy_bundle_io.py`, `tests/test_decision_receipt.py` | Evidence toward the clause theme only. Binding `policy_bundle_id` + `policy_version` + `policy_hash` into every receipt blocks *unauthorized policy substitution at decision time* and makes a policy change visible as a hash change in the audit chain. There is **no policy lifecycle, approval, or revocation registry** beyond id + hash binding (gap 8), so planning and controlling the change itself is operator-owned. |
 | **7.1** | Resources | — | — | No runtime evidence — organizational control, outside gove-zone's scope. |
 | **7.2** | Competence | — | — | No runtime evidence — organizational control, outside gove-zone's scope. Competence of personnel is not observable at the executor boundary. |
 | **7.3** | Awareness | — | — | No runtime evidence — organizational control, outside gove-zone's scope. |
 | **7.4** | Communication | — | — | No direct mapping identified. Structured rejection reason codes (`rejection.py`, `tests/test_structured_rejection.py`, `tests/test_gate_reason_codes.py`) communicate a governance outcome to the *calling runtime*, which is caller-facing decision feedback — not the internal/external AIMS communication this clause concerns. Mapping it would be a forced fit. |
-| **7.5** | Documented information (creation, update, and control of) | AUDIT-HASHCHAIN, RECEIPT-REQUIRED, HASH-INTEGRITY, SIG-VERIFY, SIG-REQUIRED | `audit.py`, `receipt.py`, `signing.py`, `_locking.py`; `tests/test_audit_chain.py`, `tests/test_audit_chain_corruption.py`, `tests/test_decision_receipt.py`, `tests/test_receipt_signing.py`, `tests/test_profile.py` | Evidence toward the clause theme only, and only for the decision record it produces. Append-only JSONL with `previous_hash`→`event_hash`, `flock` + fsync, and `verify_chain()` re-walk gives *controlled, tamper-evident* documented information; receipt-hash recomputation rejects any field edit, and a claimed signature must verify (Ed25519). It is tamper-**evident**, not tamper-**proof**: retention, off-host/WORM durability, and custody are operator-owned (gap 6). |
+| **7.5** | Documented information (creation, update, and control of) | AUDIT-HASHCHAIN, RECEIPT-REQUIRED, HASH-INTEGRITY, SIG-VERIFY, SIG-REQUIRED, REPLAY-VERIFY | `audit.py`, `receipt.py`, `signing.py`, `_locking.py`, `replay.py`, `replay_store.py`; `tests/test_audit_chain.py`, `tests/test_audit_chain_corruption.py`, `tests/test_decision_receipt.py`, `tests/test_receipt_signing.py`, `tests/test_profile.py`, `tests/test_replay.py`, `tests/test_replay_store.py` | Evidence toward the clause theme only, and only for the decision record it produces. Append-only JSONL with `previous_hash`→`event_hash`, `flock` + fsync, and `verify_chain()` re-walk gives *controlled, tamper-evident* documented information; receipt-hash recomputation rejects any field edit, and a claimed signature must verify (Ed25519). Each governed side effect leaves a hash-chained operational record from which the decision can be re-derived — audit-only replay is policy-version-only; strong replay of full arguments requires the opt-in side store (`docs/CLAIMS.md` row 17), and raw arguments are hashed, not stored, by design (gap 9). It is tamper-**evident**, not tamper-**proof**: retention, off-host/WORM durability, and custody are operator-owned (gap 7). |
 | **8.1** | Operational planning and control | RECEIPT-REQUIRED, POLICY-BEFORE-EXEC, DECISION-GATE, ARG-BIND | `executor.py`, `kernel.py`, `receipt.py`; `tests/test_executor_guard.py`, `tests/test_argument_binding.py`, `tests/test_kernel_dispatch.py` | Evidence toward the clause theme only, and the strongest fit in this document. Policy is evaluated and audited before any tool runs; DENY/ESCALATE/unknown decisions cannot authorize execution; executed arguments must hash to `argument_hash` (ALLOW) or equal the approved transformed set (TRANSFORM). Bounded by the executor-bypass gap (gap 3). |
 | **8.2** | AI risk assessment | — | — | No direct mapping identified. Performing risk assessments at planned intervals is an organizational process; the gate consumes a policy that encodes risk decisions, it does not assess risk. |
-| **8.3** | AI risk treatment | FAILCLOSED-POLICY/AUDIT, DECISION-GATE, ESCALATE-HUMAN, EXPIRY, ANTI-REPLAY | `kernel.py`, `receipt.py`, `escalation.py`, `consumption.py`; `tests/test_fail_closed.py`, `tests/test_escalation_resume.py`, `tests/test_receipt_expiry.py`, `tests/test_receipt_consumption.py` | Evidence toward the clause theme only. The receipt membrane *is* a treatment control: DENY is non-executable, ESCALATE routes to a distinct human approver whose approval is itself a governed, audit-chained decision, expiries fail closed when set, and single-use enforcement burns a receipt's audit anchor before execution. EXPIRY is an opt-in field and ANTI-REPLAY is an opt-in ledger (gap 4); selecting treatments and accepting residual risk are organizational. `ESCALATE-HUMAN` is a `control-mapping.json` identifier — see the alias map. |
-| **8.4** | Management of change | HASH-INTEGRITY, POLICY/TENANT/BOUNDARY/ACTION/AUDIT-BIND | `receipt.py`, `policy.py`; `tests/test_policy_bundle_io.py`, `tests/test_decision_receipt.py` | Evidence toward the clause theme only. Binding `policy_bundle_id` + `policy_version` + `policy_hash` into every receipt blocks *unauthorized policy substitution at decision time* and makes a policy change visible as a hash change in the audit chain. There is **no policy lifecycle, approval, or revocation registry** beyond id + hash binding (gap 7), so the change-control process itself is operator-owned. |
-| **8.5** | Documented information for AI systems (operational records) | AUDIT-HASHCHAIN, RECEIPT-REQUIRED, REPLAY-VERIFY | `audit.py`, `executor.py`, `replay.py`, `replay_store.py`; `tests/test_audit_chain.py`, `tests/test_replay.py`, `tests/test_replay_store.py` | Evidence toward the clause theme only. Each governed side effect leaves a hash-chained operational record from which the decision can be re-derived. Audit-only replay is policy-version-only; strong replay of full arguments requires the opt-in side store (`docs/CLAIMS.md` row 17). Raw arguments are hashed, not stored, by design (gap 8). |
+| **8.3** | AI risk treatment | FAILCLOSED-POLICY/AUDIT, DECISION-GATE, ESCALATE-HUMAN, EXPIRY, ANTI-REPLAY | `kernel.py`, `receipt.py`, `escalation.py`, `consumption.py`; `tests/test_fail_closed.py`, `tests/test_escalation_resume.py`, `tests/test_receipt_expiry.py`, `tests/test_receipt_consumption.py` | Evidence toward the clause theme only. The receipt membrane *is* a treatment control: DENY is non-executable, ESCALATE is non-executable until resolved and routes to an *integrator-supplied distinct validator* whose approval is itself a governed, audit-chained decision — the runtime enforces only that the approver's opaque `validator_id` differs from the proposer's (no authentication or credential-type check, so proving a *person* approved is an explicit operator-owned requirement; gap 6) — expiries fail closed when set, and single-use enforcement burns a receipt's audit anchor before execution. EXPIRY is an opt-in field and ANTI-REPLAY is an opt-in ledger (gap 4); selecting treatments and accepting residual risk are organizational. `ESCALATE-HUMAN` is a `control-mapping.json` identifier — see the alias map. |
+| **8.4** | AI system impact assessment | — | — | No direct mapping identified. Impact assessment is a design-time organizational activity on the AI system as a whole; gove-zone governs individual side effects at execution time and performs no assessment of impacts on individuals or society. |
 | **9.1** | Monitoring, measurement, analysis and evaluation | AUDIT-HASHCHAIN, REPLAY-VERIFY | `audit.py`, `replay.py`, `metrics.py`; `tests/test_audit_chain.py`, `tests/test_replay.py`, `tests/test_metrics.py` | Evidence toward the clause theme only. The hash chain plus replay supply the measurable, verifiable inputs a monitoring programme consumes; `metrics.py` derives receipt-emission signals but is **default-OFF** (enabled by `GOVE_ZONE_METRICS`) and deliberately leak-safe (timestamp, decision, tool, `argument_hash`, `event_id` only). Dashboards, alerting thresholds, evaluation criteria, and review cadence are operator-owned. Consistent with `ISO42001-A6.2.6`. |
 | **9.2** | Internal audit | AUDIT-HASHCHAIN, REPLAY-VERIFY, HASH-INTEGRITY | `audit.py`, `cli.py`, `verifier.py`, `proofpack.py`; `tests/test_cli.py`, `tests/test_audit_chain_corruption.py`, `tests/test_proofpack_schema.py` | Evidence toward the clause theme only, and narrower than it first appears. What an internal auditor can independently re-check **without system access** is receipt-hash binding and audit-chain integrity. Offline replay is **not** in that set: `compliance/evidence-pack/frameworks/iso-42001.md` records that the shipped pack omits the policy bundle and side store, so offline `acgs proofpack verify` reports the replay as `recorded` — a generator attestation, not an independent re-derivation — unless the material is supplied via `--policy-bundle` / `--side-store`. The same source lists REPLAY-VERIFY, DECISION-GATE, ESCALATE-HUMAN and FAILCLOSED among the controls that ALLOW-only pack does not independently demonstrate. These are **point-in-time local evaluations**; the internal audit programme, auditor independence, and audit scheduling are organizational. |
 | **9.3** | Management review | — | — | No runtime evidence — organizational control, outside gove-zone's scope. The audit chain can be an *input* to a management review, but the review itself is a leadership activity the gate neither performs nor records. |
 | **10.1** | Improvement (general) | — | — | No direct mapping identified. |
-| **10.2** | Nonconformity and corrective action | FAILCLOSED-POLICY/AUDIT, DECISION-GATE, ESCALATE-HUMAN, AUDIT-HASHCHAIN, HASH-INTEGRITY | `kernel.py`, `escalation.py`, `audit.py`, `revocation.py`; `tests/test_fail_closed.py`, `tests/test_audit_chain_corruption.py`, `tests/test_escalation_resume.py`, `tests/test_revocation.py` | Evidence toward the clause theme only. A nonconforming action is *detected and blocked at the boundary* rather than corrected after the fact: chain corruption and receipt-hash mismatch are detectable on verify, ESCALATE routes to human resolution, and a compromised signing key can be revoked at the gate independently of verifier-map membership. Detection is **on-verify, not continuous**; the corrective-action process, root-cause analysis, and nonconformity register are operator-owned. |
+| **10.2** | Nonconformity and corrective action | FAILCLOSED-POLICY/AUDIT, DECISION-GATE, ESCALATE-HUMAN, AUDIT-HASHCHAIN, HASH-INTEGRITY | `kernel.py`, `escalation.py`, `audit.py`, `revocation.py`; `tests/test_fail_closed.py`, `tests/test_audit_chain_corruption.py`, `tests/test_escalation_resume.py`, `tests/test_revocation.py` | Evidence toward the clause theme only. A nonconforming action is *detected and blocked at the boundary* rather than corrected after the fact: chain corruption and receipt-hash mismatch are detectable on verify, ESCALATE routes to resolution by an integrator-supplied distinct validator (human involvement is operator-owned; gap 6), and a compromised signing key can be revoked at the gate independently of verifier-map membership. Detection is **on-verify, not continuous**; the corrective-action process, root-cause analysis, and nonconformity register are operator-owned. |
 | **10.3** | Continual improvement | — | — | No runtime evidence — organizational control, outside gove-zone's scope. |
 | **Annex A.2** | AI policy (control group) | POLICY/TENANT/BOUNDARY/ACTION/AUDIT-BIND, POLICY-BEFORE-EXEC | `compliance/control-mapping.json` row `ISO42001-A2.2`; `policy.py`; `tests/test_policy_bundle_io.py` | Mapped in the generated evidence pack at status **partial**. See `compliance/evidence-pack/frameworks/iso-42001.md` for the authoritative row and its `verification_method`. Only the `A.2.2` identifier is attested by an in-repo source; other controls in this group are not enumerated (gap 2). |
 | **Annex A.3** | Internal organization / AI roles and responsibilities (control group) | MACI-VALIDATOR-SEP, ACTOR-ANCHOR | `compliance/control-mapping.json` row `ISO42001-A3.2`; `receipt.py`, `tenant.py`; `tests/test_maci_role_separation.py`, `tests/test_tenant_safety.py` | Mapped in the generated evidence pack at status **implemented**. Only `A.3.2` is attested in-repo. |
 | **Annex A.6** | AI system life cycle (control group) | AUDIT-HASHCHAIN, REPLAY-VERIFY, FAILCLOSED-POLICY/AUDIT, RECEIPT-REQUIRED | `compliance/control-mapping.json` rows `ISO42001-A6.2.6` (partial), `ISO42001-A6.2.8` (implemented); `audit.py`, `replay.py`, `kernel.py` | Mapped in the generated evidence pack. Life-cycle coverage is operation-and-logging only — gove-zone contributes nothing to design, data management, or verification-and-validation controls within this group. Only `A.6.2.6` and `A.6.2.8` are attested in-repo. |
 | **Annex A.8** | Information for interested parties (control group) | — *(documentation evidence, no runtime control)* | `compliance/control-mapping.json` row `ISO42001-A8.2`; `docs/DECISION_RECEIPT_SPEC.md`, `docs/SECURITY_MODEL.md`, `docs/CLAIMS.md` | Mapped in the generated evidence pack at status **implemented** with **no ACGS runtime controls** — the evidence is documentation review, not enforcement. Documentation covers the governance component only; whole-system documentation for users is the integrator's. |
-| **Annex A.9** | Use of AI systems (control group) | DECISION-GATE, ESCALATE-HUMAN | `compliance/control-mapping.json` row `ISO42001-A9.2`; `receipt.py`, `escalation.py`; `tests/test_escalation_resume.py` | Mapped in the generated evidence pack at status **partial**. Non-executable DENY and ESCALATE-to-human are enforcement primitives *inside* a responsible-use process the organization must define. Only `A.9.2` is attested in-repo. |
+| **Annex A.9** | Use of AI systems (control group) | DECISION-GATE, ESCALATE-HUMAN | `compliance/control-mapping.json` row `ISO42001-A9.2`; `receipt.py`, `escalation.py`; `tests/test_escalation_resume.py` | Mapped in the generated evidence pack at status **partial**. Non-executable DENY and ESCALATE-to-distinct-validator (authenticated human involvement is operator-owned; gap 6) are enforcement primitives *inside* a responsible-use process the organization must define. Only `A.9.2` is attested in-repo. |
 
-**Row totals.** 31 rows: 18 with a mapping, 13 with none (`4.1`, `4.2`, `5.1`,
-`6.2`, `6.3`, `7.1`, `7.2`, `7.3`, `7.4`, `8.2`, `9.3`, `10.1`, `10.3`).
+**Row totals.** 30 rows: 17 with a mapping, 13 with none (`4.1`, `4.2`, `5.1`,
+`6.2`, `7.1`, `7.2`, `7.3`, `7.4`, `8.2`, `8.4`, `9.3`, `10.1`, `10.3`).
 
 ## Limitations and gaps — do not overstate (read before citing this doc)
 
@@ -146,12 +155,13 @@ clause theme," bounded by all of the following.
 
 1. **Clause-level theme mapping, not verified against the full ISO 42001
    published text.** The ISO/IEC 42001:2023 standard is a paid publication and
-   was not consulted. Clause titles are the public ISO harmonized-structure
-   titles; no normative requirement text is reproduced or paraphrased. Sub-clause
-   numbering — particularly within Clause 8 — is taken from the harmonized
-   structure and is **not** verified against the published document. Any row
-   could be mis-numbered relative to the standard even where the theme is right.
-   Verify against a licensed copy before relying on a specific clause reference.
+   its full text was not consulted. Clause numbers and titles follow the
+   publicly available ISO/IEC 42001:2023 table of contents (6.3 is *planning of
+   changes*; Clause 8 is 8.1–8.4, ending at *AI system impact assessment*); no
+   normative requirement text is reproduced or paraphrased, and the requirement
+   wording behind each title is **not** verified against the published
+   document. Verify against a licensed copy before relying on a specific clause
+   reference.
 2. **Annex A is not fully enumerated.** Only the five control groups whose
    identifiers are attested by an in-repo source (`compliance/control-mapping.json`:
    `A.2.2`, `A.3.2`, `A.6.2.6`, `A.6.2.8`, `A.8.2`, `A.9.2`) are listed. ISO 42001
@@ -184,7 +194,7 @@ clause theme," bounded by all of the following.
    durability, retention periods, and custody are operator concerns. Tamper
    detection is **on-verify**, not continuous monitoring.
 8. **No policy lifecycle, approval, or revocation registry** beyond id + hash
-   binding — a material bound on the Clause 8.4 (management of change) row.
+   binding — a material bound on the Clause 6.3 (planning of changes) row.
 9. **Raw input data is hashed, not stored.** `argument_hash` proves *which*
    inputs produced a decision without retaining them (data minimisation). Where a
    clause is read to require retention of the inputs themselves, the receipt is
@@ -207,11 +217,11 @@ ISO/IEC 42001 describes.
 ## Safe public wording
 
 "gove-zone's enforced runtime controls produce evidence toward the operational
-and record-keeping themes of ISO/IEC 42001:2023 (notably Clauses 8.1, 8.3, 8.5,
-9.1 and 9.2, and the Annex A controls listed in the ACGS Compliance Evidence
-Pack); it is a self-assessment clause-theme mapping, not verified against the
-published ISO text, and it is neither an ISO 42001 certification nor a claim that
-an adopting organization's AI management system is conformant."
+and record-keeping themes of ISO/IEC 42001:2023 (notably Clauses 6.3, 7.5, 8.1,
+8.3, 9.1 and 9.2, and the Annex A controls listed in the ACGS Compliance
+Evidence Pack); it is a self-assessment clause-theme mapping, not verified
+against the published ISO text, and it is neither an ISO 42001 certification nor
+a claim that an adopting organization's AI management system is conformant."
 
 ## Sources
 
@@ -225,6 +235,6 @@ an adopting organization's AI management system is conformant."
 - Control evidence: `packages/gove-zone/src/gove_zone/*.py`;
   `packages/gove-zone/tests/test_*.py`; `docs/SECURITY_MODEL.md`;
   `docs/DECISION_RECEIPT_SPEC.md`.
-- Framework structure: ISO harmonized-structure clause titles (Clauses 4–10),
-  shared with ISO 9001 / ISO 27001. The ISO/IEC 42001:2023 published text was not
-  consulted.
+- Framework structure: the publicly available ISO/IEC 42001:2023 table of
+  contents (Clauses 4–10, harmonized-structure lineage shared with ISO 9001 /
+  ISO 27001). The full ISO/IEC 42001:2023 published text was not consulted.

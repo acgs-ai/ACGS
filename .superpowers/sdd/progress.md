@@ -1,5 +1,5 @@
 # SDD ledger — kernel-unification Phase 0-1 (2026-07-10)
-Plan: docs/superpowers/plans/2026-07-10-kernel-unification-program.md
+Plan: 2026-07-10-kernel-unification-program — SOURCE UNAVAILABLE. The plan was a local scratchpad artifact (`docs/superpowers/plans/2026-07-10-kernel-unification-program.md` in a since-removed worktree) and was never checked in; no copy exists in this repo. Surviving evidence for the phase's scope and acceptance criteria: `docs/adr/0009-kernel-of-record-gove-zone.md` (merged via PR #253, master `b71de0b`) and the per-task commit trail below.
 Worktrees: parent-ADR=/tmp/claude-1000/-home-martin-Documents-ACGS/134686cf-19b8-4a8f-9c7b-9b84d111cf1b/scratchpad/acgs-parent-adr (feat/kernel-unification-adr); acgs-lite=/tmp/claude-1000/-home-martin-Documents-ACGS/134686cf-19b8-4a8f-9c7b-9b84d111cf1b/scratchpad/acgs-lite-gove (feat/gove-kernel-bridge @c49b1027)
 Env: acgs-lite worktree .venv (py3.11) has acgs_lite + gove_zone (editable, gove-zone from /home/martin/Documents/ACGS-master/packages/gove-zone [crypto]) — run tests via .venv/bin/python -m pytest
 Bases: parent-ADR base=a87c8f7; acgs-lite base=c49b1027
@@ -19,7 +19,7 @@ Pointer bump: PR #256 (chore/bump-acgs-lite-pointer, gitlink c49b1027→4233e351
 #256 MERGED → master c35c35c. PHASE 0-1 FULLY CLOSED (ADR + bridge + pointer all on default branches). Worktrees removed.
 
 ## Phase 2: gove-zone 1.0 release prep (2026-07-11)
-Plan: docs/superpowers/plans/2026-07-11-gove-zone-1.0-release-prep.md
+Plan: 2026-07-11-gove-zone-1.0-release-prep — SOURCE UNAVAILABLE (local scratchpad plan, never checked in; no `docs/superpowers/plans/` path exists in this repo). Surviving evidence for the phase's scope and outcomes: `packages/gove-zone/docs/RELEASING.md`, `.github/workflows/release-gove-zone.yml` (single publish lane, Task 5), and the per-task commit trail below.
 Worktree: /tmp/claude-1000/-home-martin-Documents-ACGS/134686cf-19b8-4a8f-9c7b-9b84d111cf1b/scratchpad/gove-zone-release
 Branch: feat/gove-zone-release-prep off origin/master c35c35c
 Baseline: 971 tests 0 fail 4 skip (uv run --package gove-zone --extra dev --extra schema --extra crypto)
