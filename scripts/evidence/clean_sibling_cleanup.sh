@@ -4421,6 +4421,9 @@ clean_sibling_cleanup() {
         acgs-p3-approval-003c.postgres-recovery.*)
           postgres_recovery_suffix="${postgres_recovery_basename#acgs-p3-approval-003c.postgres-recovery.}"
           ;;
+        acgs-p4-enrollment.postgres-recovery.*)
+          postgres_recovery_suffix="${postgres_recovery_basename#acgs-p4-enrollment.postgres-recovery.}"
+          ;;
         *)
           postgres_recovery_suffix=''
           ;;
@@ -4459,7 +4462,8 @@ clean_sibling_cleanup() {
         "$TMP_PARENT"/acgs-p3-policy.* | "$TMP_PARENT"/acgs-p3-mutations.* | \
         "$TMP_PARENT"/acgs-p3-approval.* | \
         "$TMP_PARENT"/acgs-p3-approval-003b.* | \
-        "$TMP_PARENT"/acgs-p3-approval-003c.*)
+        "$TMP_PARENT"/acgs-p3-approval-003c.* | \
+        "$TMP_PARENT"/acgs-p4-enrollment.*)
         if [[ -n "${ACGS_QUOTA_RECOVERY_BUNDLE_NAME:-}" ]]; then
           quota_recovery_ledger_relpath="trusted-ledger/quota-artifact-recovery-${ACGS_QUOTA_RECOVERY_BUNDLE_NAME#.acgs-quota-artifact-recovery-}"
         fi

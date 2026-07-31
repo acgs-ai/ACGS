@@ -807,6 +807,7 @@
       "additionalProperties": false,
       "required": [
         "argv",
+        "cwd",
         "exit_code",
         "stdout_sha256",
         "stderr_sha256",
@@ -825,6 +826,12 @@
             "pattern": "^[^\\u0000-\\u001F\\u007F]*$"
           },
           "maxItems": 256
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^(?![\\s\\S]*[\\u0000-\\u001F\\u007F])(?!.*(?:/\\.\\.?)(?:/|$))/(?!/)(?:[^/]+/)*[^/]+$(?![\\s\\S])"
         },
         "exit_code": {
           "const": 0

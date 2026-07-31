@@ -201,6 +201,7 @@ def _evidence_env(evidence_root: Path) -> dict[str, str]:
         "PYTHONHOME",
         "UV_PROJECT_ENVIRONMENT",
         "ACGS_P0_LITERAL_PROVER_INNER_T",
+        "NODE_ID",
     ):
         env.pop(name, None)
     env.update(
@@ -484,12 +485,36 @@ def _now(offset: timedelta = timedelta()) -> str:
     return (datetime.now(UTC) + offset).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _transcript_record(argv: list[str], selector: str | None = None) -> dict[str, Any]:
+def _cwd_for_scope(scope: str, *, repo_root: Path = ROOT) -> str:
+    if scope in {"REPO_ROOT", "GZ"}:
+        return str(repo_root)
+    if scope == "CP":
+        return str(repo_root / "packages/acgs-control-plane")
+    if scope == "UI":
+        return str(repo_root / "acgi-ai")
+    raise AssertionError(f"unreviewed test cwd scope: {scope}")
+
+
+def _cwd_for_selector(selector: str, *, repo_root: Path = ROOT) -> str:
+    if selector.startswith("packages/acgs-control-plane:"):
+        return _cwd_for_scope("CP", repo_root=repo_root)
+    if selector.startswith("root:") or selector.startswith("packages/gove-zone:"):
+        return _cwd_for_scope("REPO_ROOT", repo_root=repo_root)
+    return _cwd_for_scope("REPO_ROOT", repo_root=repo_root)
+
+
+def _transcript_record(
+    argv: list[str],
+    selector: str | None = None,
+    *,
+    repo_root: Path = ROOT,
+) -> dict[str, Any]:
     now = _now()
     if selector is None:
         selector = _common.REVIEWED_COMMAND_SELECTORS.get(tuple(argv), "rejected-command-metadata")
     return {
         "argv": argv,
+        "cwd": _cwd_for_selector(selector, repo_root=repo_root),
         "exit_code": 0,
         "stdout_sha256": hashlib.sha256(b"stdout").hexdigest(),
         "stderr_sha256": hashlib.sha256(b"stderr").hexdigest(),
@@ -515,6 +540,7 @@ def _reviewed_p1_migration_records() -> list[dict[str, Any]]:
     return [
         {
             **_transcript_record(list(argv), selector),
+            "cwd": _cwd_for_scope(cwd_scope),
             "cwd_scope": cwd_scope,
         }
         for (selector, argv), cwd_scope in zip(
@@ -529,6 +555,7 @@ def _reviewed_p1_scope_records() -> list[dict[str, Any]]:
     return [
         {
             **_transcript_record(list(argv), selector),
+            "cwd": _cwd_for_scope(cwd_scope),
             "cwd_scope": cwd_scope,
         }
         for (selector, argv), cwd_scope in zip(
@@ -543,6 +570,7 @@ def _reviewed_p1_ledger_records() -> list[dict[str, Any]]:
     return [
         {
             **_transcript_record(list(argv), selector),
+            "cwd": _cwd_for_scope(cwd_scope),
             "cwd_scope": cwd_scope,
         }
         for (selector, argv), cwd_scope in zip(
@@ -557,6 +585,7 @@ def _reviewed_p1_trust_records() -> list[dict[str, Any]]:
     return [
         {
             **_transcript_record(list(argv), selector),
+            "cwd": _cwd_for_scope(cwd_scope),
             "cwd_scope": cwd_scope,
         }
         for (selector, argv), cwd_scope in zip(
@@ -571,6 +600,7 @@ def _reviewed_p2_tenant_bootstrap_records() -> list[dict[str, Any]]:
     return [
         {
             **_transcript_record(list(argv), selector),
+            "cwd": _cwd_for_scope(cwd_scope),
             "cwd_scope": cwd_scope,
         }
         for (selector, argv), cwd_scope in zip(
@@ -585,6 +615,7 @@ def _reviewed_p2_register_records() -> list[dict[str, Any]]:
     return [
         {
             **_transcript_record(list(argv), selector),
+            "cwd": _cwd_for_scope(cwd_scope),
             "cwd_scope": cwd_scope,
         }
         for (selector, argv), cwd_scope in zip(
@@ -599,6 +630,7 @@ def _reviewed_p2_idempotency_records() -> list[dict[str, Any]]:
     return [
         {
             **_transcript_record(list(argv), selector),
+            "cwd": _cwd_for_scope(cwd_scope),
             "cwd_scope": cwd_scope,
         }
         for (selector, argv), cwd_scope in zip(
@@ -613,6 +645,7 @@ def _reviewed_p2_vertical_gate_records() -> list[dict[str, Any]]:
     return [
         {
             **_transcript_record(list(argv), selector),
+            "cwd": _cwd_for_scope(cwd_scope),
             "cwd_scope": cwd_scope,
         }
         for (selector, argv), cwd_scope in zip(
@@ -627,6 +660,7 @@ def _reviewed_p3_policy_records() -> list[dict[str, Any]]:
     return [
         {
             **_transcript_record(list(argv), selector),
+            "cwd": _cwd_for_scope(cwd_scope),
             "cwd_scope": cwd_scope,
         }
         for (selector, argv), cwd_scope in zip(
@@ -641,6 +675,7 @@ def _reviewed_p3_mutations_records() -> list[dict[str, Any]]:
     return [
         {
             **_transcript_record(list(argv), selector),
+            "cwd": _cwd_for_scope(cwd_scope),
             "cwd_scope": cwd_scope,
         }
         for (selector, argv), cwd_scope in zip(
@@ -655,6 +690,7 @@ def _reviewed_p3_approval_records(node_id: str = "P3-APPROVAL-003") -> list[dict
     return [
         {
             **_transcript_record(list(argv), selector),
+            "cwd": _cwd_for_scope(cwd_scope),
             "cwd_scope": cwd_scope,
         }
         for (selector, argv), cwd_scope in zip(
@@ -669,6 +705,7 @@ def _reviewed_p4_runtime_enrollment_records() -> list[dict[str, Any]]:
     return [
         {
             **_transcript_record(list(argv), selector),
+            "cwd": _cwd_for_scope(cwd_scope),
             "cwd_scope": cwd_scope,
         }
         for (selector, argv), cwd_scope in zip(
@@ -2662,6 +2699,31 @@ def test_closed_p0_command_corpus_is_exact_ordered_and_contains_no_shell_compoun
     ):
         with pytest.raises(_common.EvidenceError, match="reviewed ordered command corpus"):
             _common.validate_p0_transcript_sequence(mutation)
+    for forged in (
+        {key: value for key, value in records[0].items() if key != "cwd"},
+        {**records[0], "cwd": "relative"},
+        {**records[0], "cwd": str(ROOT) + "/"},
+        {**records[0], "cwd": str(ROOT / "../ACGS")},
+        {**records[0], "cwd": "//tmp/acgs"},
+        {**records[0], "cwd": str(ROOT), "cwd_scope": "REPO_ROOT"},
+        {**records[0], "cwd": str(ROOT), "unexpected": True},
+    ):
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_transcript_record(forged, expected_node="P0-EVIDENCE-000")
+    for forged_sequence in (
+        [{**records[0], "cwd": str(ROOT / "packages/acgs-control-plane")}, *records[1:]],
+        [{**records[0], "cwd": str(ROOT)}, {**records[1], "cwd": str(ROOT)}, *records[2:]],
+    ):
+        with pytest.raises(_common.EvidenceError, match="reviewed ordered command corpus"):
+            _common.validate_p0_transcript_sequence(forged_sequence)
+
+    historical_root = tmp_path / "deleted-clean-sibling-root/product"
+    historical_records = [
+        _transcript_record(list(argv), selector, repo_root=historical_root)
+        for selector, argv in _common.REVIEWED_P0_TRANSCRIPT
+    ]
+    assert not historical_root.exists()
+    _common.validate_p0_transcript_sequence(historical_records)
 
 
 def test_p1_migration_command_corpus_is_node_cwd_bound_and_exact_ordered(
@@ -2700,6 +2762,9 @@ def test_p1_migration_command_corpus_is_node_cwd_bound_and_exact_ordered(
         [*records, records[-1]],
         [records[1], records[0], *records[2:]],
         [*records[:5], {**records[-1], "cwd_scope": "REPO_ROOT"}],
+        [*records[:5], {**records[-1], "cwd": str(ROOT)}],
+        [*records[:5], {**records[-1], "cwd": "packages/acgs-control-plane"}],
+        [*records[:5], {**records[-1], "cwd": str(ROOT / "packages/acgs-control-plane") + "/"}],
         [*records[:5], {**records[-1], "argv": [*records[-1]["argv"], "-q"]}],
         [
             *records[:5],
@@ -8015,7 +8080,7 @@ def test_actual_p6_evid_ui_capture_aggregate_generate_and_final_validation(
     safe_argv = list(reviewed_argv)
     _common.append_safe_transcript_record(
         node / "transcript.jsonl",
-        _transcript_record(safe_argv, safe_selector),
+        _transcript_record(safe_argv, safe_selector, repo_root=product_repo),
     )
     run_script(
         "generate_run.py",
@@ -8286,6 +8351,31 @@ def test_schema_rejects_extra_fields_mode_role_mismatch_and_noncanonical_values(
             validator.validate(mutated)
     with pytest.raises(jsonschema.ValidationError):
         validator.validate({**valid, "extra": True})
+
+
+def test_run_schema_requires_absolute_command_cwd_and_rejects_extra_command_fields() -> None:
+    schema = _json(SCHEMA_ROOT / "acgs-run-evidence-v1.schema.json")
+    validator = jsonschema.Draft202012Validator(
+        {"$defs": schema["$defs"], **schema["$defs"]["command"]}
+    )
+    valid = _reviewed_p4_runtime_enrollment_records()[0]
+    validator.validate(valid)
+    for mutated in (
+        {key: value for key, value in valid.items() if key != "cwd"},
+        {**valid, "cwd": "relative"},
+        {**valid, "cwd": "/tmp/has\ncontrol"},
+        {**valid, "cwd": "/."},
+        {**valid, "cwd": "/.."},
+        {**valid, "cwd": "/a\n"},
+        {**valid, "cwd": "/tmp/../etc"},
+        {**valid, "cwd": "/tmp/./x"},
+        {**valid, "cwd": "/tmp//x"},
+        {**valid, "cwd": "/tmp/x/"},
+        {**valid, "cwd": "//tmp/x"},
+        {**valid, "extra": True},
+    ):
+        with pytest.raises(jsonschema.ValidationError):
+            validator.validate(mutated)
 
 
 def test_clean_sibling_snapshot_binds_caller_entries(tmp_path: Path) -> None:
@@ -15498,6 +15588,7 @@ exit $?
             env.update(
                 {
                     "P": reviewed_parent,
+                    "NODE_ID": "P0-EVIDENCE-000",
                     "TMPDIR": str(caller.resolve(strict=True)),
                     "ACGS_PROCESS_SCHEDULE": json.dumps([f"env AUTH={sentinel}"]),
                     "ACGS_CLOCK_SOURCE": f"https://user:{sentinel}@example.invalid",
@@ -15831,6 +15922,7 @@ def _init_cleanup_source_repo(path: Path) -> str:
         ("acgs-p3-approval.postgres-recovery.reviewed", True),
         ("acgs-p3-approval-003b.postgres-recovery.reviewed", True),
         ("acgs-p3-approval-003c.postgres-recovery.reviewed", True),
+        ("acgs-p4-enrollment.postgres-recovery.A1b2C3d4", True),
     ),
 )
 def test_clean_sibling_cleanup_accepts_exact_created_postgres_recovery_basenames_only(
@@ -17763,9 +17855,9 @@ def test_clean_sibling_cleanup_namespaced_remove_succeeds_after_retained_fd_clea
     )
     parent = tmp_path / "caller"
     parent.mkdir(mode=0o700)
-    cleanup_root = parent / "acgs-p0-evidence.retained-gitfile-first-remove"
+    cleanup_root = parent / "acgs-p4-enrollment.retained-gitfile-first-remove"
     cleanup_worktree = cleanup_root / "product"
-    recovery_root = parent / "acgs-p3-approval.postgres-recovery.12345678"
+    recovery_root = parent / "acgs-p4-enrollment.postgres-recovery.12345678"
     failure_state = tmp_path / "first-remove-failed"
     source_common_gitdir = subprocess.run(
         ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -17853,7 +17945,7 @@ RETAINED_WORKTREE_GITFILE_FD="$WORKTREE_GITFILE_FD"
 PROOF_COMPLETE=1
 TRANSCRIPT_RECORDS=10
 ASSIGNED_BOOTSTRAPS=EVID+CP+GZ
-NODE_ID=P0-EVIDENCE-000
+NODE_ID=P4-ENROLLMENT-001
 P=1111111111111111111111111111111111111111
 T=2222222222222222222222222222222222222222
 	R=3333333333333333333333333333333333333333333333333333333333333333
@@ -19916,7 +20008,7 @@ exit $?
         timeout=10,
     )
     assert scanner_result.returncode == 2
-    assert "gitdir target is unreadable" in scanner_result.stderr
+    assert "worktree registry gitdir target is unreadable" in scanner_result.stderr
     assert scanner_result.stdout == ""
     shutil.rmtree(copied_admin, ignore_errors=True)
     subprocess.run(
@@ -20549,6 +20641,78 @@ exit $?
     assert completed.returncode == 2
     assert "cleanup refused for unowned path" not in completed.stderr
     assert not accepted_p3_approval_003c.exists()
+
+    accepted_p4_enrollment = parent / "acgs-p4-enrollment.accepted"
+    accepted_p4_enrollment.mkdir(mode=0o700)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(accepted_p4_enrollment),
+            "P4-ENROLLMENT-001",
+            "EVID+CP",
+            "7",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "cleanup refused for unowned path" not in completed.stderr
+    assert not accepted_p4_enrollment.exists()
+
+    refused_p4_enrollment_prefix = parent / "acgs-p4-enrollmentish.refused"
+    refused_p4_enrollment_prefix.mkdir(mode=0o700)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(refused_p4_enrollment_prefix),
+            "P4-ENROLLMENT-001",
+            "EVID+CP",
+            "7",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "cleanup refused for unowned path" in completed.stderr
+    assert refused_p4_enrollment_prefix.exists()
+
+    refused_p4_recovery_prefix = parent / "acgs-p4-enrollmentish.postgres-recovery.A1b2C3d4"
+    refused_p4_recovery_prefix.mkdir(mode=0o700)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(refused_p4_recovery_prefix),
+            "P4-ENROLLMENT-001",
+            "EVID+CP",
+            "7",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "cleanup refused for unowned path" in completed.stderr
+    assert refused_p4_recovery_prefix.exists()
 
     refused_p3_approval_prefix = parent / "acgs-p3-approvalish.refused"
     refused_p3_approval_prefix.mkdir(mode=0o700)
@@ -24390,7 +24554,7 @@ def _external_intent_cleanup_helper(
 ) -> str:
     source = (ROOT / "scripts/evidence/clean_sibling_cleanup.sh").read_text(encoding="utf-8")
     assert hashlib.sha256(source.encode("utf-8")).hexdigest() == (
-        "68a30a6130ff7203fe5ec928689728ad378eca00bcce7215f8811cf2641dca53"
+        "449a80282a63635aaa8ff1823da51faf00c5ca8d5e453558123591f4abac0e53"
     )
     helper = _shell_function(source, "clean_sibling_retain_recovery_contracts")
     helper = (

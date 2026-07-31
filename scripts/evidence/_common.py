@@ -9,6 +9,7 @@ import importlib.metadata
 import json
 import math
 import os
+import posixpath
 import re
 import site
 import stat
@@ -16,7 +17,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -33,6 +34,7 @@ CANONICAL_POSITIVE_DECIMAL_RE = re.compile(r"^[1-9][0-9]*$")
 MAX_CANONICAL_DECIMAL_DIGITS = 32
 TRANSCRIPT_RECORD_KEYS = {
     "argv",
+    "cwd",
     "exit_code",
     "stdout_sha256",
     "stderr_sha256",
@@ -1169,6 +1171,46 @@ def _reviewed_gate(argv: Any, *, expected_node: str | None = None) -> tuple[list
     return argv, selector
 
 
+def _cwd_scope_path(scope: str, *, repo: str) -> str:
+    if scope in {"REPO_ROOT", "GZ"}:
+        return repo
+    if scope == "CP":
+        return f"{repo}/packages/acgs-control-plane"
+    if scope == "UI":
+        return f"{repo}/acgi-ai"
+    fail("command cwd differs from the reviewed node contract", phase="B6")
+
+
+def _legacy_cwd_scope(selector: str) -> str:
+    if selector.startswith("packages/acgs-control-plane:"):
+        return "CP"
+    if selector.startswith("root:") or selector.startswith("packages/gove-zone:"):
+        return "REPO_ROOT"
+    fail("command cwd differs from the reviewed node contract", phase="B6")
+
+
+def _validate_transcript_cwd(raw: Any) -> str:
+    if (
+        not isinstance(raw, str)
+        or not raw.startswith("/")
+        or len(raw) < 2
+        or len(raw) > MAX_COMMAND_ARGUMENT_LENGTH
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in raw)
+    ):
+        fail("command cwd differs from the reviewed node contract", phase="B6")
+    path = PurePosixPath(raw)
+    if (
+        not path.is_absolute()
+        or raw.startswith("//")
+        or raw.endswith("/")
+        or "." in path.parts
+        or ".." in path.parts
+        or posixpath.normpath(raw) != raw
+    ):
+        fail("command cwd differs from the reviewed node contract", phase="B6")
+    return raw
+
+
 def validate_safe_argv(argv: Any) -> list[str]:
     """Return argv only for the exact reviewed, non-shell gate vocabulary."""
 
@@ -1216,6 +1258,7 @@ def validate_transcript_record(value: Any, *, expected_node: str | None = None) 
         }
         if value.get("cwd_scope") != expected_scopes.get(observed):
             fail("command cwd differs from the reviewed node contract", phase="B6")
+    _validate_transcript_cwd(value.get("cwd"))
     value["argv"] = argv
     return value
 
@@ -1227,20 +1270,37 @@ def validate_transcript_sequence(commands: Any, *, expected_node: str) -> None:
         fail("transcript differs from the reviewed ordered command corpus", phase="B6")
     expected = _reviewed_transcript(expected_node)
     expected_cwd_scopes = REVIEWED_CWD_SCOPES_BY_NODE.get(expected_node)
-    observed: list[tuple[str, tuple[str, ...], str | None]] = []
+    reviewed_scopes = tuple(
+        _legacy_cwd_scope(selector) if expected_cwd_scopes is None else expected_cwd_scopes[index]
+        for index, (selector, _) in enumerate(expected)
+    )
+    observed: list[tuple[str, tuple[str, ...], str, str | None]] = []
     for command in commands:
         validated = validate_transcript_record(command, expected_node=expected_node)
         observed.append(
             (
                 validated["selectors"][0],
                 tuple(validated["argv"]),
+                validated["cwd"],
                 validated.get("cwd_scope"),
             )
         )
+    if (
+        len(observed) != len(expected)
+        or not reviewed_scopes
+        or reviewed_scopes[0]
+        not in {
+            "REPO_ROOT",
+            "GZ",
+        }
+    ):
+        fail("transcript differs from the reviewed ordered command corpus", phase="B6")
+    root_cwd = observed[0][2]
     expected_observed = tuple(
         (
             selector,
             argv,
+            _cwd_scope_path(reviewed_scopes[index], repo=root_cwd),
             None if expected_cwd_scopes is None else expected_cwd_scopes[index],
         )
         for index, (selector, argv) in enumerate(expected)
