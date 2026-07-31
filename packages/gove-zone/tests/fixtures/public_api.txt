@@ -2,6 +2,7 @@
 # Regenerate ONLY for an intentional surface change:
 #   uv run --package gove-zone python -c 'import gove_zone; print("\n".join(sorted(gove_zone.__all__)))' >> this file (below the header)
 AllowAllPolicy
+AtomicJsonRuntimeIdentityStore
 AuditChainError
 AuditError
 AuditEvent
@@ -36,6 +37,7 @@ ExecutionBoundary
 GENESIS_HASH
 GateMode
 GateModeError
+GateScope
 GatewayResult
 GoveZoneError
 GovernanceDAG
@@ -47,8 +49,10 @@ GovernedExecutor
 IdentityError
 IdentityProviderAdapter
 IdentityRejectionReason
+InMemoryEd25519WorkloadKeyProvider
 Kernel
 LedgerObservability
+LocalDevelopmentFileWorkloadKeyProvider
 LocalProcessSandbox
 ManagedAgent
 MockAzureADAdapter
@@ -91,10 +95,16 @@ RiskTier
 RiskTierPolicy
 RoleDefinition
 RuleSetPolicy
+RuntimeEnrollmentClient
+RuntimeHttpRequest
+RuntimeHttpResponse
+RuntimeIdentityDescriptor
+RuntimeIdentityError
 SCHEMA_VERSION
 SandboxError
 SandboxProvider
 SealedTool
+SignedRequestClient
 SigningError
 StaticReceiptTrustRegistry
 TenantPolicyBinding
@@ -114,6 +124,7 @@ WorkflowDAG
 WorkflowExecutor
 WorkflowStep
 WorkflowStepReceipt
+WorkloadKeyProvider
 YAMLPolicy
 YAMLRiskTierPolicy
 __version__
@@ -121,7 +132,11 @@ agentdojo_scenarios_from_fixture
 alternative_from_record
 approve_escalation
 authz_enforce_from_env
+b64url_decode
+b64url_encode
+canonical_enrollment_request_bytes
 canonical_json
+canonical_signed_runtime_request_bytes
 discover_alternatives
 emit_receipt_for_hook
 emit_receipts_for_hook
@@ -141,6 +156,7 @@ mcp_tools_call
 mcp_tools_list
 new_event_id
 normalize_path_context
+public_key_thumbprint
 receipt_to_governed_action
 record_to_governed_action
 rejection_dict
@@ -153,10 +169,14 @@ resolve_effective_scopes
 resume_with_receipt
 run_smoke
 safe_result_hash
+sha256_bytes
 sha256_json
+sha256_text
 tool_call_from_hook_payload
 tool_calls_from_hook_payload
 validate_authority
 verify_dag_replay
+verify_enrollment_pop
 verify_proof_pack
+verify_signed_runtime_request
 verify_workflow_replay

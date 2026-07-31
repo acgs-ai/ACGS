@@ -9,6 +9,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shlex
 import shutil
 import socket
@@ -36,6 +37,7 @@ from acgs_control_plane.db import Base, make_engine
 from acgs_control_plane.migrations import (
     HEAD_REVISION,
     LEGACY_V0_REVISION,
+    RUNTIME_ENROLLMENT_REVISION,
     SCOPED_REVISION,
     DatabaseSchemaState,
     MigrationPreflightError,
@@ -104,8 +106,8 @@ def test_revision_0006_scopes_agents_without_fabricating_legacy_scope(
 ) -> None:
     database_url = _database_url(tmp_path)
     result = upgrade_database(database_url)
-    assert result.after.state is DatabaseSchemaState.VERSION_0010
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
+    assert result.after.state is DatabaseSchemaState.VERSION_0011
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0011
 
     engine = make_engine(database_url)
     try:
@@ -588,6 +590,7 @@ def test_wheel_ships_and_resolves_the_canonical_alembic_resources(tmp_path: Path
             "acgs_control_plane/migrations/versions/0008_policy_registry.py",
             "acgs_control_plane/migrations/versions/0009_approval_substrate.py",
             "acgs_control_plane/migrations/versions/0010_approval_vote_binding.py",
+            "acgs_control_plane/migrations/versions/0011_runtime_enrollment.py",
         } <= names
         archive.extractall(extracted_root)
 
@@ -613,8 +616,8 @@ assert Path(config.config_file_name).resolve() == package_root / "alembic.ini"
 assert Path(config.get_main_option("script_location")).resolve() == package_root / "migrations"
 result = upgrade_database(database_url)
 assert result.before.state is DatabaseSchemaState.EMPTY
-assert result.after.state is DatabaseSchemaState.VERSION_0010
-assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
+assert result.after.state is DatabaseSchemaState.VERSION_0011
+assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0011
 engine = sa.create_engine(database_url)
 try:
     assert set(sa.inspect(engine).get_table_names()) == {
@@ -645,6 +648,13 @@ try:
         "policy_versions",
         "projects",
         "receipts",
+        "runtime_credential_generations",
+        "runtime_enrollment_bootstraps",
+        "runtime_enrollment_idempotency",
+        "runtime_identities",
+        "runtime_identity_gates",
+        "runtime_operation_idempotency",
+        "runtime_request_nonces",
         "tenant_bootstrap_idempotency",
         "tenant_bootstrap_pending_outbox",
         "tenant_bootstrap_policy_artifacts",
@@ -676,7 +686,7 @@ def test_empty_database_migrates_to_head_through_alembic(tmp_path: Path) -> None
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.EMPTY
-    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert result.after.state is DatabaseSchemaState.VERSION_0011
     assert _table_names(database_url) == {
         "agent_registration_idempotency",
         "agents",
@@ -705,6 +715,13 @@ def test_empty_database_migrates_to_head_through_alembic(tmp_path: Path) -> None
         "policy_versions",
         "projects",
         "receipts",
+        "runtime_credential_generations",
+        "runtime_enrollment_bootstraps",
+        "runtime_enrollment_idempotency",
+        "runtime_identities",
+        "runtime_identity_gates",
+        "runtime_operation_idempotency",
+        "runtime_request_nonces",
         "tenant_bootstrap_idempotency",
         "tenant_bootstrap_pending_outbox",
         "tenant_bootstrap_policy_artifacts",
@@ -757,6 +774,71 @@ def test_empty_database_migrates_to_head_through_alembic(tmp_path: Path) -> None
     assert resume_response.type.compile(dialect=sqlite.dialect()) == "JSON"
     assert resume_replay_seal.type.compile(dialect=sqlite.dialect()) == "JSON"
     assert vote_replay_seal.type.compile(dialect=sqlite.dialect()) == "JSON"
+
+
+def test_stamped_0011_without_runtime_tables_is_unknown(tmp_path: Path) -> None:
+    database_url = _database_url(tmp_path)
+    engine = make_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(sa.text("CREATE TABLE alembic_version (version_num VARCHAR(32))"))
+            connection.execute(
+                sa.text("INSERT INTO alembic_version(version_num) VALUES (:revision)"),
+                {"revision": RUNTIME_ENROLLMENT_REVISION},
+            )
+    finally:
+        engine.dispose()
+
+    assert inspect_schema(database_url).state is DatabaseSchemaState.UNKNOWN
+
+
+def test_revision_0010_upgrades_to_0011_runtime_enrollment_tables(tmp_path: Path) -> None:
+    database_url = _database_url(tmp_path)
+    config = migration_config(database_url)
+    migration_module._run_controlled_operation(  # type: ignore[attr-defined]
+        config,
+        migration_module._SCOPE_RESUME_TOKEN,  # type: ignore[attr-defined]
+        DatabaseSchemaState.EMPTY,
+        lambda: command.upgrade(config, "0010"),
+    )
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
+
+    result = upgrade_database(database_url)
+
+    assert result.before.state is DatabaseSchemaState.VERSION_0010
+    assert result.after.state is DatabaseSchemaState.VERSION_0011
+    assert {
+        "runtime_credential_generations",
+        "runtime_enrollment_bootstraps",
+        "runtime_enrollment_idempotency",
+        "runtime_identities",
+        "runtime_identity_gates",
+        "runtime_operation_idempotency",
+        "runtime_request_nonces",
+    } <= _table_names(database_url)
+
+
+def test_runtime_enrollment_timestamp_columns_are_not_nullable(tmp_path: Path) -> None:
+    database_url = _database_url(tmp_path)
+    upgrade_database(database_url)
+    engine = make_engine(database_url)
+    try:
+        inspector = sa.inspect(engine)
+        for table_name, column_name in {
+            ("runtime_identity_gates", "created_at"),
+            ("runtime_identity_gates", "updated_at"),
+            ("runtime_identities", "created_at"),
+            ("runtime_identities", "updated_at"),
+            ("runtime_enrollment_bootstraps", "created_at"),
+            ("runtime_credential_generations", "created_at"),
+            ("runtime_enrollment_idempotency", "created_at"),
+            ("runtime_operation_idempotency", "created_at"),
+            ("runtime_request_nonces", "observed_at"),
+        }:
+            columns = {column["name"]: column for column in inspector.get_columns(table_name)}
+            assert columns[column_name]["nullable"] is False
+    finally:
+        engine.dispose()
 
 
 def test_revision_0010_refuses_historical_approval_votes_without_backfill(
@@ -1034,6 +1116,48 @@ def test_postgres_gate_wrapper_exports_exact_reproducibility_environment() -> No
     assert "export PYTHONHASHSEED=0" in script
     assert script.index("export ACGS_TEST_SEED=20260710") > script.index(reset_line)
     assert script.index("export PYTHONHASHSEED=0") > script.index(reset_line)
+
+
+def test_postgres_gate_wrapper_locks_runtime_enrollment_selector() -> None:
+    package_dir = Path(__file__).resolve().parents[1]
+    script = (package_dir / "scripts" / "run_postgres_gate.sh").read_text(encoding="utf-8")
+    integration_source = (
+        package_dir / "tests" / "integration" / "test_runtime_enrollment_postgres.py"
+    ).read_text(encoding="utf-8")
+    expected_tests = [
+        "test_100_identical_runtime_enrollments_converge_to_one_identity",
+        "test_runtime_enrollment_conflict_and_cross_scope_idempotency_are_isolated",
+        "test_runtime_renew_replay_revoke_and_expired_paths_are_nonduplicating",
+    ]
+    expected_selectors = [
+        f"tests/integration/test_runtime_enrollment_postgres.py::{name}" for name in expected_tests
+    ]
+    actual_tests = re.findall(r"^def (test_[a-zA-Z0-9_]+)\(", integration_source, re.M)
+
+    assert actual_tests == expected_tests
+    assert "p4_runtime_enrollment_selectors=(" in script
+    for selector in expected_selectors:
+        assert f"  '{selector}'" in script
+    assert (
+        'if [[ -z "$selector_mode" && $# == "${#p4_runtime_enrollment_selectors[@]}" ]]; then'
+        in script
+    )
+    assert "  selector_mode='p4-runtime-enrollment'" in script
+    assert "  junit_expected_tests=3" in script
+    assert (
+        'for index in "${!p4_runtime_enrollment_selectors[@]}"; do\n'
+        '    if [[ "${actual_selectors[index]}" != '
+        '"${p4_runtime_enrollment_selectors[index]}" ]]; then' in script
+    )
+    assert (
+        "the exact ordered PostgreSQL migration, P2 tenant-bootstrap, P2 register, "
+        "P2 idempotency, P2 vertical-gate, P3 policy, P3 mutations, P3 approval, "
+        "P4 runtime-enrollment, or immutable-0004 selector is required" in script
+    )
+    selector_block_index = script.index("p4_runtime_enrollment_selectors=(")
+    mode_index = script.index("selector_mode='p4-runtime-enrollment'")
+    export_index = script.index('export ACP_TEST_POSTGRES_SELECTOR_MODE="$selector_mode"')
+    assert selector_block_index < mode_index < export_index
 
 
 def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
@@ -9161,7 +9285,7 @@ def test_exact_legacy_schema_is_stamped_only_after_preflight_then_upgraded(tmp_p
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert result.after.state is DatabaseSchemaState.VERSION_0011
 
 
 def test_prior_0002_schema_upgrade_to_0003_preserves_scoped_rows(tmp_path: Path) -> None:
@@ -9179,8 +9303,8 @@ def test_prior_0002_schema_upgrade_to_0003_preserves_scoped_rows(tmp_path: Path)
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0002
-    assert result.after.state is DatabaseSchemaState.VERSION_0010
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
+    assert result.after.state is DatabaseSchemaState.VERSION_0011
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0011
     assert _version_number(database_url) == HEAD_REVISION
     assert _scoped_0002_rows(database_url) == (
         ("project-prior-0002", "org-prior-0002"),
@@ -9213,7 +9337,7 @@ def test_current_legacy_create_all_contract_is_adoptable_by_the_guard(tmp_path: 
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert result.after.state is DatabaseSchemaState.VERSION_0011
 
 
 @pytest.mark.parametrize("table_name", ["unowned_explicit_table", "organizations"])
@@ -9475,7 +9599,7 @@ def test_app_create_tables_rejects_a_versioned_schema_until_startup_migration_in
             )
         )
 
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0011
     assert _table_names(database_url) == table_names_before
 
 
@@ -9706,6 +9830,14 @@ def test_check_constraint_signature_matches_postgresql_native_reflection_without
     status_expected = _check_constraint_signature(
         "status IN ('in_progress', 'succeeded', 'failed')"
     )
+    pending_status_expected = _check_constraint_signature("status IN ('pending')")
+    active_revoked_status_expected = _check_constraint_signature("status IN ('active', 'revoked')")
+    active_revoked_retired_status_expected = _check_constraint_signature(
+        "status IN ('active', 'retired', 'revoked')"
+    )
+    four_value_status_expected = _check_constraint_signature(
+        "status IN ('active', 'consumed', 'revoked', 'expired')"
+    )
     trust_retired_epoch_expected = _check_constraint_signature(
         "(status = 'retired' AND retired_epoch IS NOT NULL "
         "AND retired_epoch > activated_epoch) OR "
@@ -9716,6 +9848,14 @@ def test_check_constraint_signature_matches_postgresql_native_reflection_without
     assert _check_constraint_signature("source_system='gove-zone'") == _check_constraint_signature(
         "(source_system)::text = 'gove-zone'::text"
     )
+    assert pending_status_expected == 'status:["pending"]'
+    for reflected_pending_sql in (
+        "status = 'pending'",
+        "(status)::text = 'pending'::text",
+        "((status)::text = 'pending'::text)",
+        "(\"status\")::text = ('pending'::character varying)",
+    ):
+        assert _check_constraint_signature(reflected_pending_sql) == pending_status_expected
     assert (
         _check_constraint_signature(
             "(status)::text = ANY "
@@ -9724,6 +9864,26 @@ def test_check_constraint_signature_matches_postgresql_native_reflection_without
             "('failed'::character varying)::text])"
         )
         == status_expected
+    )
+    assert (
+        _check_constraint_signature(
+            "(status)::text = ANY "
+            "((ARRAY['active'::character varying, "
+            "'revoked'::character varying])::text[])"
+        )
+        == active_revoked_status_expected
+    )
+    assert (
+        _check_constraint_signature(
+            "((status)::text = ANY "
+            "(ARRAY[('active'::character varying)::text, "
+            "('revoked'::character varying)::text]))"
+        )
+        == active_revoked_status_expected
+    )
+    assert (
+        _check_constraint_signature("((\"status\")::text = ANY (ARRAY['active', 'revoked']))")
+        == active_revoked_status_expected
     )
     assert (
         _check_constraint_signature(
@@ -9770,6 +9930,72 @@ def test_check_constraint_signature_matches_postgresql_native_reflection_without
         != status_expected
     )
     assert (
+        _check_constraint_signature("status IN ('active', 'retired', 'revoked')")
+        != active_revoked_status_expected
+    )
+    assert (
+        _check_constraint_signature("status IN ('revoked', 'active')")
+        != active_revoked_status_expected
+    )
+    for mutated_literal in (
+        "status IN ('ACTIVE', 'revoked')",
+        "status IN ('act ive', 'revoked')",
+        "status IN ('active::text', 'revoked')",
+        "status IN ('act\"ive', 'revoked')",
+    ):
+        assert _check_constraint_signature(mutated_literal) != active_revoked_status_expected
+    assert (
+        _check_constraint_signature("status IN ('active,revoked')")
+        != active_revoked_status_expected
+    )
+    assert (
+        _check_constraint_signature("status IN ('active,retired', 'revoked')")
+        != active_revoked_retired_status_expected
+    )
+    assert (
+        _check_constraint_signature("status IN ('active', 'retired,revoked')")
+        != active_revoked_retired_status_expected
+    )
+    assert (
+        _check_constraint_signature("status IN ('active,consumed', 'revoked', 'expired')")
+        != four_value_status_expected
+    )
+    assert (
+        _check_constraint_signature("status IN ('active', 'consumed,revoked', 'expired')")
+        != four_value_status_expected
+    )
+    assert (
+        _check_constraint_signature("status IN ('active', 'consumed', 'revoked,expired')")
+        != four_value_status_expected
+    )
+    assert _check_constraint_signature("other_status IN ('active', 'revoked')") != (
+        active_revoked_status_expected
+    )
+    assert (
+        _check_constraint_signature("status IN ('active', 'active')")
+        != active_revoked_status_expected
+    )
+    assert _check_constraint_signature("status IN ('', 'revoked')") != (
+        active_revoked_status_expected
+    )
+    assert (
+        _check_constraint_signature("status IN ('active'::text, 'revoked'::text) OR TRUE")
+        != active_revoked_status_expected
+    )
+    for invalid_cast_sql in (
+        "status::text[] IN ('active', 'revoked')",
+        "status IN ('active'::text[], 'revoked')",
+        "status = ANY (ARRAY['active', 'revoked']::text)",
+        "status::text[ IN ('active', 'revoked')",
+        "status IN ('active'::text[, 'revoked')",
+        "status = ANY (ARRAY['active', 'revoked']::text[)",
+    ):
+        assert _check_constraint_signature(invalid_cast_sql) != active_revoked_status_expected
+    assert (
+        _check_constraint_signature("status IN ('active::text', 'revoked')")
+        != active_revoked_status_expected
+    )
+    assert (
         _check_constraint_signature(
             "(status IN ('in_progress', 'succeeded', 'failed'))::boolean OR TRUE"
         )
@@ -9796,6 +10022,254 @@ def test_check_constraint_signature_matches_postgresql_native_reflection_without
         != expected
     )
     assert _check_constraint_signature("other_column='native'") != expected
+    for rejected_pending_sql in (
+        "other_status = 'pending'",
+        "status = 'PENDING'",
+        "status = 'pen ding'",
+        "status = 'pend,ing'",
+        "status = 'pend\"ing'",
+        "status = 'pending::text'",
+        "status::text[] = 'pending'",
+        "status = 'pending'::text[]",
+        "status = 'pending'::text::text",
+        "(status::text)::text = 'pending'",
+        "status = ('pending'::character varying)::text",
+        "status = ARRAY['pending']",
+        "status = 'pending' OR TRUE",
+        "(status = 'pending')::boolean OR TRUE",
+        "status = 'pending' AND FALSE",
+        "'pending' = status",
+        "status = current_setting('acgs.status')",
+        "status = ('pending')::text::text",
+        "status::text[ = 'pending'",
+        "status = 'pending'::text[",
+    ):
+        assert _check_constraint_signature(rejected_pending_sql) != pending_status_expected
+
+
+def test_schema_detail_accepts_postgresql_reflected_runtime_gate_status_check() -> None:
+    class RuntimeGateStatusInspector:
+        bind = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+        def __init__(self, sqltext: str) -> None:
+            self.sqltext = sqltext
+
+        def get_columns(
+            self, table_name: str, *, schema: str | None = None
+        ) -> list[dict[str, object]]:
+            assert table_name == "runtime_identity_gates"
+            assert schema == "public"
+            return [
+                {"name": "id", "nullable": False, "default": None, "type": postgresql.VARCHAR(64)},
+                {
+                    "name": "status",
+                    "nullable": False,
+                    "default": None,
+                    "type": postgresql.VARCHAR(16),
+                },
+            ]
+
+        def get_pk_constraint(
+            self, table_name: str, *, schema: str | None = None
+        ) -> dict[str, object]:
+            assert table_name == "runtime_identity_gates"
+            assert schema == "public"
+            return {"constrained_columns": ["id"]}
+
+        def get_foreign_keys(
+            self, table_name: str, *, schema: str | None = None
+        ) -> list[dict[str, object]]:
+            assert table_name == "runtime_identity_gates"
+            assert schema == "public"
+            return []
+
+        def get_unique_constraints(
+            self, table_name: str, *, schema: str | None = None
+        ) -> list[dict[str, object]]:
+            assert table_name == "runtime_identity_gates"
+            assert schema == "public"
+            return []
+
+        def get_indexes(
+            self, table_name: str, *, schema: str | None = None
+        ) -> list[dict[str, object]]:
+            assert table_name == "runtime_identity_gates"
+            assert schema == "public"
+            return []
+
+        def get_check_constraints(
+            self, table_name: str, *, schema: str | None = None
+        ) -> list[dict[str, object]]:
+            assert table_name == "runtime_identity_gates"
+            assert schema == "public"
+            return [{"name": "ck_runtime_identity_gate_status", "sqltext": self.sqltext}]
+
+    expected_columns = {
+        "runtime_identity_gates": (
+            _ColumnSpec("id", "string", False, 64),
+            _ColumnSpec("status", "string", False, 16),
+        )
+    }
+    expected_checks = {
+        "runtime_identity_gates": frozenset(
+            {("ck_runtime_identity_gate_status", "status IN ('active', 'revoked')")}
+        )
+    }
+    shared_kwargs = {
+        "actual_tables": {"runtime_identity_gates"},
+        "expected_columns": expected_columns,
+        "expected_primary_keys": {"runtime_identity_gates": ("id",)},
+        "expected_foreign_keys": {"runtime_identity_gates": frozenset()},
+        "expected_uniques": {"runtime_identity_gates": frozenset()},
+        "expected_non_unique_indexes": {"runtime_identity_gates": frozenset()},
+        "expected_checks": expected_checks,
+    }
+
+    assert (
+        migration_module._schema_detail(
+            RuntimeGateStatusInspector("status IN ('active', 'revoked')"),
+            **shared_kwargs,
+        )
+        is None
+    )
+    assert (
+        migration_module._schema_detail(
+            RuntimeGateStatusInspector(
+                "(status)::text = ANY "
+                "((ARRAY['active'::character varying, "
+                "'revoked'::character varying])::text[])"
+            ),
+            **shared_kwargs,
+        )
+        is None
+    )
+    assert (
+        migration_module._schema_detail(
+            RuntimeGateStatusInspector("status IN ('active', 'retired', 'revoked')"),
+            **shared_kwargs,
+        )
+        == "runtime_identity_gates has unexpected check constraints"
+    )
+    for rejected_sqltext in (
+        "status IN ('ACTIVE', 'revoked')",
+        "status IN ('act ive', 'revoked')",
+        "status IN ('active::text', 'revoked')",
+        "status IN ('act\"ive', 'revoked')",
+        "status IN ('active,revoked')",
+        "status IN ('active,retired', 'revoked')",
+        "status IN ('revoked', 'active')",
+        "status IN ('active', 'retired', 'revoked')",
+        "(status IN ('active', 'revoked'))::boolean OR TRUE",
+        "other_status IN ('active', 'revoked')",
+        "status IN ('active', 'active')",
+        "status IN ('', 'revoked')",
+        "status IN ('active::text', 'revoked')",
+        "status::text[] IN ('active', 'revoked')",
+        "status IN ('active'::text[], 'revoked')",
+        "status = ANY (ARRAY['active', 'revoked']::text)",
+        "status::text[ IN ('active', 'revoked')",
+        "status IN ('active'::text[, 'revoked')",
+        "status = ANY (ARRAY['active', 'revoked']::text[)",
+    ):
+        assert (
+            migration_module._schema_detail(
+                RuntimeGateStatusInspector(rejected_sqltext),
+                **shared_kwargs,
+            )
+            == "runtime_identity_gates has unexpected check constraints"
+        )
+
+
+def test_schema_detail_accepts_postgresql_reflected_pending_approval_status_check() -> None:
+    class PendingApprovalsStatusInspector:
+        bind = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+        def __init__(self, sqltext: str) -> None:
+            self.sqltext = sqltext
+
+        def get_columns(
+            self, table_name: str, *, schema: str | None = None
+        ) -> list[dict[str, object]]:
+            assert table_name == "pending_approvals"
+            assert schema == "public"
+            return [
+                {"name": "id", "nullable": False, "default": None, "type": postgresql.VARCHAR(64)},
+                {
+                    "name": "status",
+                    "nullable": False,
+                    "default": None,
+                    "type": postgresql.VARCHAR(16),
+                },
+            ]
+
+        def get_pk_constraint(
+            self, table_name: str, *, schema: str | None = None
+        ) -> dict[str, object]:
+            assert table_name == "pending_approvals"
+            assert schema == "public"
+            return {"constrained_columns": ["id"]}
+
+        def get_foreign_keys(
+            self, table_name: str, *, schema: str | None = None
+        ) -> list[dict[str, object]]:
+            assert table_name == "pending_approvals"
+            assert schema == "public"
+            return []
+
+        def get_unique_constraints(
+            self, table_name: str, *, schema: str | None = None
+        ) -> list[dict[str, object]]:
+            assert table_name == "pending_approvals"
+            assert schema == "public"
+            return []
+
+        def get_indexes(
+            self, table_name: str, *, schema: str | None = None
+        ) -> list[dict[str, object]]:
+            assert table_name == "pending_approvals"
+            assert schema == "public"
+            return []
+
+        def get_check_constraints(
+            self, table_name: str, *, schema: str | None = None
+        ) -> list[dict[str, object]]:
+            assert table_name == "pending_approvals"
+            assert schema == "public"
+            return [{"name": "ck_pending_approvals_status", "sqltext": self.sqltext}]
+
+    expected_columns = {
+        "pending_approvals": (
+            _ColumnSpec("id", "string", False, 64),
+            _ColumnSpec("status", "string", False, 16),
+        )
+    }
+    expected_checks = {
+        "pending_approvals": frozenset({("ck_pending_approvals_status", "status IN ('pending')")})
+    }
+    shared_kwargs = {
+        "actual_tables": {"pending_approvals"},
+        "expected_columns": expected_columns,
+        "expected_primary_keys": {"pending_approvals": ("id",)},
+        "expected_foreign_keys": {"pending_approvals": frozenset()},
+        "expected_uniques": {"pending_approvals": frozenset()},
+        "expected_non_unique_indexes": {"pending_approvals": frozenset()},
+        "expected_checks": expected_checks,
+    }
+
+    assert (
+        migration_module._schema_detail(
+            PendingApprovalsStatusInspector("(status)::text = 'pending'::text"),
+            **shared_kwargs,
+        )
+        is None
+    )
+    assert (
+        migration_module._schema_detail(
+            PendingApprovalsStatusInspector("status = 'pending'::text::text"),
+            **shared_kwargs,
+        )
+        == "pending_approvals has unexpected check constraints"
+    )
 
 
 def test_upgrade_can_be_retried_after_a_completed_run(tmp_path: Path) -> None:
@@ -9804,9 +10278,9 @@ def test_upgrade_can_be_retried_after_a_completed_run(tmp_path: Path) -> None:
     first = upgrade_database(database_url)
     second = upgrade_database(database_url)
 
-    assert first.after.state is DatabaseSchemaState.VERSION_0010
-    assert second.before.state is DatabaseSchemaState.VERSION_0010
-    assert second.after.state is DatabaseSchemaState.VERSION_0010
+    assert first.after.state is DatabaseSchemaState.VERSION_0011
+    assert second.before.state is DatabaseSchemaState.VERSION_0011
+    assert second.after.state is DatabaseSchemaState.VERSION_0011
 
 
 def test_retry_after_failure_immediately_after_legacy_stamp_preserves_evidence(
@@ -9890,7 +10364,7 @@ def test_retry_after_failure_immediately_after_legacy_stamp_preserves_evidence(
 
     result = upgrade_database(database_url)
     assert result.before.state is DatabaseSchemaState.VERSION_0001
-    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert result.after.state is DatabaseSchemaState.VERSION_0011
 
 
 def test_0002_projects_only_interruption_retries_without_rewriting_legacy_evidence(
@@ -9914,7 +10388,7 @@ def test_0002_projects_only_interruption_retries_without_rewriting_legacy_eviden
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0001_PARTIAL_PROJECTS
-    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert result.after.state is DatabaseSchemaState.VERSION_0011
     assert _receipt_payload(database_url, "receipt-0002-projects") == (
         "org-0002-resume",
         json.dumps({"preserve": "0002-resume"}),
@@ -9936,7 +10410,7 @@ def test_0002_full_scope_interruption_retries_when_both_empty_tables_are_exact(
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0001_PARTIAL_SCOPE
-    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert result.after.state is DatabaseSchemaState.VERSION_0011
 
 
 def test_0002_data_bearing_partial_scope_is_rejected_without_resuming(

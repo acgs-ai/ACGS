@@ -13,12 +13,16 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from gove_zone.runtime_identity import InMemoryEd25519WorkloadKeyProvider
 
 from acgs_control_plane.app import create_app
 from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.migrations import upgrade_database
 
 BOOTSTRAP_TOKEN = "test-bootstrap-token"
+_RUNTIME_DESCRIPTOR_SIGNER_SEED = bytes.fromhex(
+    "9a7f6b7a5d4f7b4cb5823d39d0917c2c9d0c678013dd40595e63ecfe18d0a4d2"
+)
 
 
 @pytest.fixture()
@@ -32,7 +36,21 @@ def audit_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def client(tmp_path: Path, audit_dir: Path) -> TestClient:
+def runtime_descriptor_signer() -> InMemoryEd25519WorkloadKeyProvider:
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    return InMemoryEd25519WorkloadKeyProvider(
+        key_id="test-runtime-descriptor",
+        private_key=ed25519.Ed25519PrivateKey.from_private_bytes(_RUNTIME_DESCRIPTOR_SIGNER_SEED),
+    )
+
+
+@pytest.fixture()
+def client(
+    tmp_path: Path,
+    audit_dir: Path,
+    runtime_descriptor_signer: InMemoryEd25519WorkloadKeyProvider,
+) -> TestClient:
     database_url = f"sqlite:///{tmp_path / 'acp.sqlite3'}"
     upgrade_database(database_url)
     settings = Settings(
@@ -42,7 +60,7 @@ def client(tmp_path: Path, audit_dir: Path) -> TestClient:
         create_tables=False,
         runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
     )
-    app = create_app(settings)
+    app = create_app(settings, runtime_descriptor_signer=runtime_descriptor_signer)
     # raise_server_exceptions=False: policy DENY/ESCALATE map to HTTP via
     # exception handlers; tests assert status codes, not tracebacks.
     return TestClient(app, raise_server_exceptions=False)

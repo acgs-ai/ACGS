@@ -17,6 +17,20 @@ environment scope, external receipt ingestion, signed policy sync, and browser-
 to-upstream boundary. Current routes and fixtures must not be relabeled as this
 contract without the corresponding implementation and integration evidence.
 
+Current-local exception for G201: branch `beta/p4-enrollment-001` adds a
+local/test runtime enrollment slice for `/runtime-enrollment-bootstraps`,
+`/v1/runtime-enrollments`, `/v1/runtime-identities/{identity_id}/renew`, and
+`/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/runtime-identities/{identity_id}/revoke`.
+The slice is narrower than this target contract. It provides one-time
+environment-bound bootstrap issuance, workload proof of possession, signed
+runtime identity descriptor exchange, credential-generation
+renewal/supersession, revocation, idempotent replay, cross-scope isolation, and
+PostgreSQL active-bootstrap and active-credential invariants. It does not
+implement heartbeat, capability or version reporting, workload-key rotation,
+policy sync, proven-wired or evidence-current fleet state, accepted evidence
+ingestion, browser/BFF wiring, hosted providers, production deployment, or final
+canonical run evidence.
+
 This contract implements the product-level target in
 [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md), preserves provenance in
 [ASSURANCE_CLASSES.md](ASSURANCE_CLASSES.md), and is governed by

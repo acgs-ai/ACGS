@@ -39,6 +39,12 @@ PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": True,
         "schema": {"type": "string"},
     },
+    "path:identity_id": {
+        "in": "path",
+        "name": "identity_id",
+        "required": True,
+        "schema": {"type": "string"},
+    },
     "path:export_id": {
         "in": "path",
         "name": "export_id",
@@ -144,6 +150,78 @@ PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
     "header:Idempotency-Key": {
         "in": "header",
         "name": "Idempotency-Key",
+        "required": False,
+        "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    },
+    "header:X-ACGS-Bootstrap-ID": {
+        "in": "header",
+        "name": "X-ACGS-Bootstrap-ID",
+        "required": False,
+        "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    },
+    "header:X-ACGS-Runtime-PoP-Signature": {
+        "in": "header",
+        "name": "X-ACGS-Runtime-PoP-Signature",
+        "required": False,
+        "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    },
+    "header:X-ACGS-Runtime-PoP-Key-ID": {
+        "in": "header",
+        "name": "X-ACGS-Runtime-PoP-Key-ID",
+        "required": False,
+        "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    },
+    "header:X-ACGS-Runtime-Identity-ID": {
+        "in": "header",
+        "name": "X-ACGS-Runtime-Identity-ID",
+        "required": False,
+        "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    },
+    "header:X-ACGS-Runtime-Key-ID": {
+        "in": "header",
+        "name": "X-ACGS-Runtime-Key-ID",
+        "required": False,
+        "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    },
+    "header:X-ACGS-Runtime-Audience": {
+        "in": "header",
+        "name": "X-ACGS-Runtime-Audience",
+        "required": False,
+        "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    },
+    "header:X-ACGS-Runtime-Credential-ID": {
+        "in": "header",
+        "name": "X-ACGS-Runtime-Credential-ID",
+        "required": False,
+        "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    },
+    "header:X-ACGS-Runtime-Credential-Generation": {
+        "in": "header",
+        "name": "X-ACGS-Runtime-Credential-Generation",
+        "required": False,
+        "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    },
+    "header:X-ACGS-Runtime-Timestamp": {
+        "in": "header",
+        "name": "X-ACGS-Runtime-Timestamp",
+        "required": False,
+        "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    },
+    "header:X-ACGS-Runtime-Nonce": {
+        "in": "header",
+        "name": "X-ACGS-Runtime-Nonce",
+        "required": False,
+        "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    },
+    "header:X-ACGS-Runtime-Body-Sha256": {
+        "in": "header",
+        "name": "X-ACGS-Runtime-Body-Sha256",
+        "required": False,
+        "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    },
+    "header:X-ACGS-Runtime-Signature": {
+        "in": "header",
+        "name": "X-ACGS-Runtime-Signature",
         "required": False,
         "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
     },
@@ -429,10 +507,86 @@ EXPECTED_APPROVAL_PATHS: dict[str, dict[str, dict[str, Any]]] = {
     },
 }
 
+EXPECTED_RUNTIME_IDENTITY_PATHS: dict[str, dict[str, dict[str, Any]]] = {
+    (
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}"
+        "/runtime-enrollment-bootstraps"
+    ): {
+        "post": {
+            "operation_id": "runtime-enrollment-bootstrap.issue",
+            "parameters": _expected_params(
+                "path:project_id",
+                "path:environment_id",
+                "path:org_id",
+                "header:X-API-Key",
+            ),
+            "responses": ["201", "422"],
+            "tag": "runtime-identities",
+        }
+    },
+    (
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}"
+        "/runtime-identities/{identity_id}/revoke"
+    ): {
+        "post": {
+            "operation_id": "runtime-identity.revoke",
+            "parameters": _expected_params(
+                "path:project_id",
+                "path:environment_id",
+                "path:identity_id",
+                "path:org_id",
+                "header:Idempotency-Key",
+                "header:X-API-Key",
+            ),
+            "responses": ["200", "422"],
+            "tag": "runtime-identities",
+        }
+    },
+}
+
+EXPECTED_RUNTIME_PLATFORM_PATHS: dict[str, dict[str, dict[str, Any]]] = {
+    "/v1/runtime-enrollments": {
+        "post": {
+            "operation_id": "runtime-identity.enroll",
+            "parameters": _expected_params(
+                "header:Authorization",
+                "header:Idempotency-Key",
+                "header:X-ACGS-Bootstrap-ID",
+                "header:X-ACGS-Runtime-PoP-Signature",
+                "header:X-ACGS-Runtime-PoP-Key-ID",
+            ),
+            "responses": ["201", "422"],
+            "tag": "runtime-identities",
+        }
+    },
+    "/v1/runtime-identities/{identity_id}/renew": {
+        "post": {
+            "operation_id": "runtime-identity.renew",
+            "parameters": _expected_params(
+                "path:identity_id",
+                "header:X-ACGS-Runtime-Identity-ID",
+                "header:X-ACGS-Runtime-Key-ID",
+                "header:X-ACGS-Runtime-Audience",
+                "header:X-ACGS-Runtime-Credential-ID",
+                "header:X-ACGS-Runtime-Credential-Generation",
+                "header:X-ACGS-Runtime-Timestamp",
+                "header:X-ACGS-Runtime-Nonce",
+                "header:X-ACGS-Runtime-Body-Sha256",
+                "header:X-ACGS-Runtime-Signature",
+                "header:Idempotency-Key",
+            ),
+            "responses": ["200", "422"],
+            "tag": "runtime-identities",
+        }
+    },
+}
+
 EXPECTED_PATHS: dict[str, dict[str, dict[str, Any]]] = {
     **EXPECTED_V0_PATHS,
     **EXPECTED_MANAGED_POLICY_PATHS,
     **EXPECTED_APPROVAL_PATHS,
+    **EXPECTED_RUNTIME_IDENTITY_PATHS,
+    **EXPECTED_RUNTIME_PLATFORM_PATHS,
     "/v1": {
         "get": {
             "operation_id": "get_v1_metadata",
@@ -464,6 +618,7 @@ EXPECTED_PATHS: dict[str, dict[str, dict[str, Any]]] = {
             **EXPECTED_V0_PATHS,
             **EXPECTED_MANAGED_POLICY_PATHS,
             **EXPECTED_APPROVAL_PATHS,
+            **EXPECTED_RUNTIME_IDENTITY_PATHS,
         }.items()
         if path == "/orgs" or path.startswith("/orgs/")
     },
@@ -491,6 +646,12 @@ EXPECTED_COMPONENTS = {
     "ReceiptSummary",
     "ReceiptVerifyResponse",
     "Role",
+    "RuntimeEnrollmentBootstrapCreateRequest",
+    "RuntimeEnrollmentBootstrapCreateResponse",
+    "RuntimeEnrollmentRequest",
+    "RuntimeEnrollmentResponse",
+    "RuntimeIdentityDescriptor",
+    "RuntimeIdentityRevokeRequest",
     "SimulateRequest",
     "SimulateResponse",
     PLATFORM_BOOTSTRAP_RESPONSE_COMPONENT,
@@ -557,6 +718,147 @@ EXPECTED_SELECTED_COMPONENTS: dict[str, dict[str, Any]] = {
     "Role": {
         "enum": ["org_admin", "policy_author", "agent_operator", "auditor", "viewer"],
         "type": "string",
+    },
+    "RuntimeEnrollmentBootstrapCreateRequest": {
+        "properties": {
+            "public_key_thumbprint": {"type": "string"},
+            "ttl_seconds": {
+                "default": 600,
+                "maximum": 900.0,
+                "minimum": 1.0,
+                "type": "integer",
+            },
+            "workload_key_id": {"type": "string"},
+        },
+        "required": ["workload_key_id", "public_key_thumbprint"],
+        "type": "object",
+    },
+    "RuntimeEnrollmentBootstrapCreateResponse": {
+        "properties": {
+            "audience": {"type": "string"},
+            "bootstrap_id": {"type": "string"},
+            "bootstrap_token": {"type": "string"},
+            "environment_id": {"type": "string"},
+            "expires_at": {"format": "date-time", "type": "string"},
+            "gate_id": {"type": "string"},
+            "org_id": {"type": "string"},
+            "project_id": {"type": "string"},
+            "public_key_thumbprint": {"type": "string"},
+            "receipt_id": {"type": "string"},
+            "runtime_identity_id": {"type": "string"},
+            "server_challenge": {"type": "string"},
+            "workload_key_id": {"type": "string"},
+        },
+        "required": [
+            "bootstrap_id",
+            "org_id",
+            "project_id",
+            "environment_id",
+            "gate_id",
+            "runtime_identity_id",
+            "audience",
+            "workload_key_id",
+            "public_key_thumbprint",
+            "bootstrap_token",
+            "server_challenge",
+            "expires_at",
+            "receipt_id",
+        ],
+        "type": "object",
+    },
+    "RuntimeEnrollmentRequest": {
+        "properties": {
+            "audience": {"type": "string"},
+            "bootstrap_id": {"type": "string"},
+            "client_nonce": {"type": "string"},
+            "environment": {"type": "string"},
+            "gate_id": {"type": "string"},
+            "idempotency_key_digest": {"type": "string"},
+            "org_id": {"type": "string"},
+            "project_id": {"type": "string"},
+            "public_key": {"type": "string"},
+            "public_key_thumbprint": {"type": "string"},
+            "runtime_identity_id": {"type": "string"},
+            "server_challenge": {"type": "string"},
+            "timestamp": {"type": "string"},
+        },
+        "required": [
+            "audience",
+            "bootstrap_id",
+            "gate_id",
+            "idempotency_key_digest",
+            "org_id",
+            "project_id",
+            "environment",
+            "runtime_identity_id",
+            "public_key",
+            "public_key_thumbprint",
+            "client_nonce",
+            "timestamp",
+            "server_challenge",
+        ],
+        "type": "object",
+    },
+    "RuntimeEnrollmentResponse": {
+        "properties": {
+            "descriptor": {"$ref": "#/components/schemas/RuntimeIdentityDescriptor"},
+            "environment_id": {"type": "string"},
+            "generation": {"type": "integer"},
+            "identity_id": {"type": "string"},
+            "org_id": {"type": "string"},
+            "project_id": {"type": "string"},
+            "receipt_id": {"type": "string"},
+        },
+        "required": [
+            "identity_id",
+            "org_id",
+            "project_id",
+            "environment_id",
+            "generation",
+            "descriptor",
+            "receipt_id",
+        ],
+        "type": "object",
+    },
+    "RuntimeIdentityDescriptor": {
+        "properties": {
+            "audience": {"type": "string"},
+            "credential_generation": {"type": "integer"},
+            "credential_id": {"type": "string"},
+            "expires_at": {"format": "date-time", "type": "string"},
+            "issued_at": {"format": "date-time", "type": "string"},
+            "issuer": {"type": "string"},
+            "public_key": {"type": "string"},
+            "public_key_thumbprint": {"type": "string"},
+            "runtime_identity_id": {"type": "string"},
+            "schema_version": {"type": "string"},
+            "scope": {"type": "object"},
+            "signature": {"type": "string"},
+            "signature_algorithm": {"type": "string"},
+            "signing_key_id": {"type": "string"},
+        },
+        "required": [
+            "schema_version",
+            "scope",
+            "runtime_identity_id",
+            "credential_id",
+            "credential_generation",
+            "public_key",
+            "public_key_thumbprint",
+            "issuer",
+            "audience",
+            "issued_at",
+            "expires_at",
+            "signature_algorithm",
+            "signing_key_id",
+            "signature",
+        ],
+        "type": "object",
+    },
+    "RuntimeIdentityRevokeRequest": {
+        "properties": {"expected_credential_generation": {"minimum": 1.0, "type": "integer"}},
+        "required": ["expected_credential_generation"],
+        "type": "object",
     },
 }
 
@@ -723,15 +1025,31 @@ def test_current_openapi_contract_records_missing_beta_contract_boundaries(
         "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}"
         "/policies/{policy_version_id}/activate"
     )
+    runtime_bootstrap_path = (
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}"
+        "/runtime-enrollment-bootstraps"
+    )
+    runtime_revoke_path = (
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}"
+        "/runtime-identities/{identity_id}/revoke"
+    )
     outside_idempotent_routes = copy.deepcopy(schema)
     del outside_idempotent_routes["paths"][PLATFORM_BOOTSTRAP_PATH]
     del outside_idempotent_routes["components"]["schemas"][PLATFORM_BOOTSTRAP_RESPONSE_COMPONENT]
+    del outside_idempotent_routes["paths"]["/v1/runtime-enrollments"]
+    del outside_idempotent_routes["components"]["schemas"]["RuntimeEnrollmentRequest"]
+    del outside_idempotent_routes["paths"]["/v1/runtime-identities/{identity_id}/renew"]
     for prefix in ("", "/v1"):
         del outside_idempotent_routes["paths"][f"{prefix}/orgs/{{org_id}}/agents"]["post"]
         del outside_idempotent_routes["paths"][f"{prefix}{managed_policy_publish_path}"]["post"]
         del outside_idempotent_routes["paths"][f"{prefix}{managed_policy_activate_path}"]["post"]
+        del outside_idempotent_routes["paths"][f"{prefix}{runtime_revoke_path}"]["post"]
         for path in EXPECTED_APPROVAL_PATHS:
             del outside_idempotent_routes["paths"][f"{prefix}{path}"]["post"]
+    assert "Idempotency-Key" not in json.dumps(
+        outside_idempotent_routes["paths"][runtime_bootstrap_path],
+        sort_keys=True,
+    )
     serialized_outside_idempotent_routes = json.dumps(outside_idempotent_routes, sort_keys=True)
     assert "Idempotency-Key" not in serialized_outside_idempotent_routes
     assert "idempotency_key" not in serialized_outside_idempotent_routes

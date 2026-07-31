@@ -25,6 +25,7 @@ production governance membrane. In the local development profile:
 | Agent registry | `POST/GET /orgs/{org}/agents`, lifecycle status changes governed |
 | Policy registry | `POST /orgs/{org}/policies` (content-addressed versions via `RuleSetPolicy`), governed activation, dry-run `POST .../policies/simulate`; managed registry tables were added in revision `0008` |
 | Managed approvals | `POST /orgs/{org}/approvals/{approval_request_id}/votes`, `POST .../resume` for the `agent.register` ESCALATE path only |
+| Runtime enrollment | Local/test one-time runtime gate bootstrap, proof-of-possession enrollment, credential renewal, and revocation for a scoped org/project/environment gate |
 | Receipt explorer | `GET /orgs/{org}/receipts` (filter: decision/tool/actor/time, paginated), `GET .../receipts/{id}`, `POST .../receipts/{id}/verify` |
 | Audit dashboard | `GET /orgs/{org}/dashboard` — decision mix, top tools/actors, agent gauges, live chain verification |
 | Compliance export | `POST /orgs/{org}/exports` — hash-manifested evidence bundle (org, policies, agents, receipts, raw audit chain), externally recomputable via `exports.verify_export_bundle` |
@@ -62,9 +63,10 @@ projection and remain invisible to the explorer and export bundle. Native
 receipt-v2 explorer/export support remains future work.
 
 Agent registration idempotency is part of Alembic revision `0007`. The current
-schema head is `0010`: revision `0008` adds the managed policy registry,
-revision `0009` adds the approval request/vote/outcome/resume substrate, and
-revision `0010` binds approval votes to the approved resume action.
+schema head is `0011`: revision `0008` adds the managed policy registry,
+revision `0009` adds the approval request/vote/outcome/resume substrate,
+revision `0010` binds approval votes to the approved resume action, and revision
+`0011` adds the runtime enrollment identity tables.
 `POST /orgs/{org}/agents` requires an `Idempotency-Key` header before
 receipt issuance or persistence. Reusing the same key with the same canonical
 request replays the original terminal outcome after validating the stored row
@@ -73,6 +75,41 @@ different canonical request returns `IDEMPOTENCY_CONFLICT`. DENY and ESCALATE ar
 terminal idempotent outcomes too: they persist exactly one non-executable
 managed receipt/event/outbox row and replay the canonical 403/202 response
 without creating an agent or receipt-consumption row.
+
+Runtime enrollment is the first local/test slice for enrolling a colocated
+runtime gate into the control-plane scope model. An org admin can issue one
+active bootstrap for an org/project/environment gate; the response returns a
+one-time bearer token once, with `Cache-Control: no-store`, and the database
+stores only an HMAC digest plus locator metadata. The runtime exchanges the
+token at `/v1/runtime-enrollments` with proof of possession over its workload
+public key, server challenge, canonical request body, idempotency key, and
+server-bound org/project/environment/gate identity. A successful exchange
+consumes the bootstrap, creates exactly one active runtime identity and
+credential generation, and returns a descriptor signed by the local/test runtime
+descriptor signer.
+
+The tested local profile keeps runtime operations idempotent and scope-bound:
+
+- exact enrollment replay returns the sealed terminal descriptor without adding
+  another identity, credential, receipt, consumption, or outbox row;
+- idempotency-key reuse with a different request returns
+  `IDEMPOTENCY_CONFLICT`;
+- wrong bearer token, wrong PoP signature, stale timestamp, wrong audience,
+  wrong scope, wrong runtime identity, wrong gate, wrong key thumbprint, expired
+  bootstrap, consumed bootstrap, revoked gate, stale policy head, and revoked
+  trust material execute zero side effects;
+- renewal rotates to the next credential generation and retires the prior active
+  credential; exact renewal replay returns the same terminal response;
+- revocation marks the runtime identity and active credential revoked; exact
+  revocation replay is stable and nonduplicating.
+
+The PostgreSQL gate for this slice runs disposable-database concurrency checks:
+100 identical enrollments converge to one identity, cross-scope idempotency keys
+remain isolated, renew/replay/revoke/expired paths are nonduplicating, and the
+database rejects duplicate active bootstrap or credential rows with the expected
+unique constraints. This is runtime enrollment evidence only; it is not hosted
+fleet management, policy sync, evidence ingestion, production deployment, or an
+external security assessment.
 
 When the active managed policy returns ESCALATE for `agent.register`, the
 control plane now creates a scoped pending approval request in the same managed
@@ -134,7 +171,7 @@ uv run --package acgs-control-plane uvicorn --factory acgs_control_plane.app:cre
 
 This posture is deliberately non-production: its legacy bootstrap may create only the frozen
 pre-Alembic v0 tables, and `/readyz` always returns 503. For a migration-managed database, run the
-secret-safe operator CLI to the current head (`0010` at this writing), then set
+secret-safe operator CLI to the current head (`0011` at this writing), then set
 `ACP_CREATE_TABLES=0`. Schema currency is reported separately from production readiness.
 `ACP_RUNTIME_POSTURE=production` currently refuses before constructing a database engine because
 legacy mutation routes still exist; an exact current schema does not weaken that blocker.
@@ -208,10 +245,15 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
   managed receipt-v2 evidence and a SQL single-use ledger, but the remaining legacy routes still
   differ from gove-zone's secure `require_signature=True` profile. Production posture refuses while
   those legacy mutation routes remain.
-- **Schema mutation is operator-only**: Alembic revisions `0001` through `0010` are advanced
+- **Schema mutation is operator-only**: Alembic revisions `0001` through `0011` are advanced
   through `python -m acgs_control_plane.migration_cli`; schema-managed startup performs an exact,
   read-only revision preflight and never migrates. The legacy `create_all` bootstrap remains
   available only under the explicit local-development posture above.
+- **Runtime enrollment is local/test only**: revision `0011` proves scoped
+  bootstrap issuance, proof-of-possession enrollment, descriptor signing,
+  renewal, revocation, replay refusal, and PostgreSQL concurrency behavior under
+  local providers. It does not prove hosted fleet operations, policy sync,
+  evidence ingestion, customer runtime deployment, or production custody.
 - **Approval payload custody is local/test only**: the default approval payload
   sealer is a deterministic local AES-GCM provider. Non-local posture must inject
   production custody providers or startup fails loudly.

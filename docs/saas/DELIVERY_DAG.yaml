@@ -1126,31 +1126,44 @@
         "G401"
       ],
       "likely_interfaces_files": [
-        "packages/gove-zone",
-        "packages/acgs-control-plane",
-        "gate enrollment API"
+        "packages/gove-zone/src/gove_zone/runtime_identity.py",
+        "packages/gove-zone/tests/test_runtime_identity.py",
+        "packages/gove-zone/tests/fixtures/public_api.txt",
+        "packages/acgs-control-plane/src/acgs_control_plane/runtime_enrollment.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/schemas.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/models.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0011_runtime_enrollment.py",
+        "packages/acgs-control-plane/scripts/run_postgres_gate.sh",
+        "packages/acgs-control-plane/tests/test_runtime_enrollment_routes.py",
+        "packages/acgs-control-plane/tests/integration/test_runtime_enrollment_postgres.py",
+        "packages/acgs-control-plane/tests/test_migrations.py"
       ],
       "risk_class": "red",
       "positive_tests": [
-        "Bootstrap single-use, environment binding, rotation, revocation, heartbeat, and capability tests pass."
+        "Current-local runtime enrollment slice issues one-time environment-bound bootstraps, exchanges them for signed runtime identity descriptors using workload proof of possession, performs credential-generation renewal/supersession, revokes active credentials, and replays idempotent terminal results without duplicate SQL effects.",
+        "Disposable PostgreSQL concurrency evidence covers 100 identical enrollment requests converging to one identity, conflict and cross-scope idempotency isolation, renewal/replay/revocation/expired-bootstrap nonduplication, and exact database constraints uq_runtime_enrollment_active_bootstrap_scope and uq_runtime_credential_active_identity."
       ],
       "forbidden_side_effect_negative_tests": [
-        "Reused bootstrap, revoked gate, or wrong-environment identity cannot sync or ingest."
+        "Reused, expired, wrong-scope, wrong-challenge, wrong-workload-key, denied, escalated, tampered, or replay-substituted runtime enrollment artifacts create zero runtime identity side effects.",
+        "A revoked identity or superseded credential cannot authenticate the implemented signed renewal endpoint; registration alone does not establish proven-wired, policy-current, or evidence-current status."
       ],
       "validation_commands": [
         "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "cd packages/acgs-control-plane && ./scripts/run_postgres_gate.sh tests/integration/test_runtime_enrollment_postgres.py::test_100_identical_runtime_enrollments_converge_to_one_identity tests/integration/test_runtime_enrollment_postgres.py::test_runtime_enrollment_conflict_and_cross_scope_idempotency_are_isolated tests/integration/test_runtime_enrollment_postgres.py::test_runtime_renew_replay_revoke_and_expired_paths_are_nonduplicating",
         "uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q",
+        "uv run python -m pytest tests/saas_beta/test_evidence_bootstrap.py -q",
         "git diff --check"
       ],
-      "evidence_artifact": "Gate enrollment conformance artifact",
-      "branch": null,
-      "worktree": null,
+      "evidence_artifact": "Current-local P4 runtime enrollment evidence: control-plane package 874 passed/83 skipped; disposable PostgreSQL direct gate 3 passed; authoritative wrapper JUnit totals 3 tests, 0 failures, 0 errors, 0 skipped; evidence bootstrap subset 372 passed/6 deselected; final canonical run.json not generated.",
+      "branch": "beta/p4-enrollment-001",
+      "worktree": "saas-beta/p4-enrollment-001",
       "pr": null,
-      "status": "planned",
-      "implementation_state": "missing",
-      "evidence_state": "unverified",
+      "status": "in_progress",
+      "implementation_state": "partial",
+      "evidence_state": "local_verified",
       "blocker": null,
-      "next_safe_action": "Survey and freeze the environment-bound gate enrollment contract before implementation.",
+      "next_safe_action": "Complete heartbeat, capability/version reporting, fleet status, proven-wired attestation, signed policy sync, and accepted evidence-ingestion wiring before marking G201 completed.",
       "mandatory": true,
       "completion_scope": "non_external"
     },

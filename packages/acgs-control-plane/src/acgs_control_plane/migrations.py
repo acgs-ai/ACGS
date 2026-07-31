@@ -15,6 +15,7 @@ for deployment orchestration or recovery procedures.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -44,7 +45,8 @@ AGENT_REGISTRATION_IDEMPOTENCY_REVISION: Final = "0007"
 POLICY_REGISTRY_REVISION: Final = "0008"
 APPROVAL_SUBSTRATE_REVISION: Final = "0009"
 APPROVAL_VOTE_BINDING_REVISION: Final = "0010"
-HEAD_REVISION: Final = APPROVAL_VOTE_BINDING_REVISION
+RUNTIME_ENROLLMENT_REVISION: Final = "0011"
+HEAD_REVISION: Final = RUNTIME_ENROLLMENT_REVISION
 _VERSION_TABLE = "alembic_version"
 _ALEMBIC_VERSION_TABLE: Final = sa.table(_VERSION_TABLE, sa.column("version_num"))
 _SCOPE_TABLES: Final = MappingProxyType(
@@ -88,6 +90,7 @@ class DatabaseSchemaState(StrEnum):
     VERSION_0008 = "version_0008"
     VERSION_0009 = "version_0009"
     VERSION_0010 = "version_0010"
+    VERSION_0011 = "version_0011"
     UNKNOWN = "unknown"
 
 
@@ -112,7 +115,7 @@ class StartupSchemaPreflightError(RuntimeError):
     def __init__(self, preflight: SchemaPreflight) -> None:
         self.schema_state = preflight.state
         super().__init__(
-            f"{self.code}: expected {DatabaseSchemaState.VERSION_0010.value}; "
+            f"{self.code}: expected {DatabaseSchemaState.VERSION_0011.value}; "
             f"found {preflight.state.value}. Run the acgs-control-plane migration CLI."
         )
 
@@ -703,6 +706,115 @@ _APPROVAL_VOTE_BINDING_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("vote_replay_seal", "json", False),
     ),
 }
+_RUNTIME_ENROLLMENT_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_APPROVAL_VOTE_BINDING_COLUMNS,
+    "runtime_identity_gates": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("status", "string", False, 16),
+        _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("updated_at", "datetime", False),
+    ),
+    "runtime_identities": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("gate_id", "string", False, 64),
+        _ColumnSpec("name", "string", False, 200),
+        _ColumnSpec("actor", "string", False, 240),
+        _ColumnSpec("workload_key_id", "string", False, 128),
+        _ColumnSpec("public_key", "text", False),
+        _ColumnSpec("public_key_thumbprint", "string", False, 64),
+        _ColumnSpec("descriptor", "json", False),
+        _ColumnSpec("status", "string", False, 16),
+        _ColumnSpec("current_generation", "integer", False),
+        _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("updated_at", "datetime", False),
+        _ColumnSpec("revoked_at", "datetime", True),
+    ),
+    "runtime_enrollment_bootstraps": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("gate_id", "string", False, 64),
+        _ColumnSpec("bootstrap_digest", "string", False, 64),
+        _ColumnSpec("bootstrap_locator", "string", False, 64),
+        _ColumnSpec("pepper_key_id", "string", False, 128),
+        _ColumnSpec("server_challenge", "string", False, 256),
+        _ColumnSpec("runtime_identity_id", "string", False, 64),
+        _ColumnSpec("audience", "string", False, 128),
+        _ColumnSpec("workload_key_id", "string", False, 128),
+        _ColumnSpec("public_key_thumbprint", "string", False, 64),
+        _ColumnSpec("status", "string", False, 16),
+        _ColumnSpec("created_by_actor", "string", False, 200),
+        _ColumnSpec("consumed_by_identity_id", "string", True, 64),
+        _ColumnSpec("policy_head_generation", "integer", False),
+        _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("expires_at", "datetime", False),
+        _ColumnSpec("consumed_at", "datetime", True),
+        _ColumnSpec("revoked_at", "datetime", True),
+    ),
+    "runtime_credential_generations": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("identity_id", "string", False, 64),
+        _ColumnSpec("generation", "integer", False),
+        _ColumnSpec("workload_key_id", "string", False, 128),
+        _ColumnSpec("public_key_thumbprint", "string", False, 64),
+        _ColumnSpec("not_before", "datetime", False),
+        _ColumnSpec("not_after", "datetime", False),
+        _ColumnSpec("status", "string", False, 16),
+        _ColumnSpec("descriptor", "json", False),
+        _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("superseded_at", "datetime", True),
+        _ColumnSpec("revoked_at", "datetime", True),
+    ),
+    "runtime_enrollment_idempotency": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("idempotency_key_hash", "string", False, 64),
+        _ColumnSpec("request_hash", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("identity_id", "string", False, 64),
+        _ColumnSpec("receipt_id", "string", False, 200),
+        _ColumnSpec("response", "json", False),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+    "runtime_request_nonces": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("identity_id", "string", False, 64),
+        _ColumnSpec("nonce", "string", False, 128),
+        _ColumnSpec("idempotency_key_hash", "string", False, 64),
+        _ColumnSpec("request_hash", "string", False, 64),
+        _ColumnSpec("purpose", "string", False, 64),
+        _ColumnSpec("receipt_id", "string", True, 200),
+        _ColumnSpec("response", "json", True),
+        _ColumnSpec("observed_at", "datetime", False),
+    ),
+    "runtime_operation_idempotency": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("idempotency_key_hash", "string", False, 64),
+        _ColumnSpec("request_hash", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("identity_id", "string", False, 64),
+        _ColumnSpec("operation", "string", False, 64),
+        _ColumnSpec("receipt_id", "string", False, 200),
+        _ColumnSpec("response", "json", False),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+}
 _PROJECTS_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
     **_LEGACY_COLUMNS,
     "projects": _SCOPED_COLUMNS["projects"],
@@ -757,6 +869,16 @@ _APPROVAL_SUBSTRATE_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     "approval_votes": ("id",),
     "approval_outcomes": ("id",),
     "approval_resume_authorizations": ("id",),
+}
+_RUNTIME_ENROLLMENT_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
+    **_APPROVAL_SUBSTRATE_PRIMARY_KEYS,
+    "runtime_identity_gates": ("id",),
+    "runtime_identities": ("id",),
+    "runtime_enrollment_bootstraps": ("id",),
+    "runtime_credential_generations": ("id",),
+    "runtime_enrollment_idempotency": ("id",),
+    "runtime_request_nonces": ("id",),
+    "runtime_operation_idempotency": ("id",),
 }
 _PROJECTS_ONLY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     table_name: ("id",) for table_name in _PROJECTS_ONLY_COLUMNS
@@ -855,6 +977,13 @@ _DEFERRABLE_MANAGED_MUTATION_FK_TABLES: Final = frozenset(
         "policy_versions",
         "environment_policy_heads",
         "policy_registry_idempotency",
+        "runtime_identity_gates",
+        "runtime_identities",
+        "runtime_enrollment_bootstraps",
+        "runtime_credential_generations",
+        "runtime_enrollment_idempotency",
+        "runtime_request_nonces",
+        "runtime_operation_idempotency",
     }
 )
 _TRUST_SCOPE_FK: Final[_ForeignKeySpec] = (
@@ -1075,6 +1204,69 @@ _APPROVAL_VOTE_BINDING_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]
     "approval_votes": _APPROVAL_SUBSTRATE_FOREIGN_KEYS["approval_votes"]
     | frozenset({_APPROVAL_VOTE_RECEIPT_FK}),
 }
+_RUNTIME_GATE_SCOPE_FK: Final[_ForeignKeySpec] = (
+    ("org_id", "project_id", "environment_id", "gate_id"),
+    None,
+    "runtime_identity_gates",
+    ("org_id", "project_id", "environment_id", "id"),
+)
+_RUNTIME_IDENTITY_SCOPE_FK: Final[_ForeignKeySpec] = (
+    ("org_id", "project_id", "environment_id", "identity_id"),
+    None,
+    "runtime_identities",
+    ("org_id", "project_id", "environment_id", "id"),
+)
+_RUNTIME_RECEIPT_SCOPE_FK: Final[_ForeignKeySpec] = (
+    ("org_id", "project_id", "environment_id", "receipt_id"),
+    None,
+    "managed_decision_receipts",
+    ("org_id", "project_id", "environment_id", "receipt_id"),
+)
+_RUNTIME_ENROLLMENT_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
+    **_APPROVAL_VOTE_BINDING_FOREIGN_KEYS,
+    "runtime_identity_gates": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            _SCOPE_ENVIRONMENT_FK,
+        }
+    ),
+    "runtime_identities": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            _SCOPE_ENVIRONMENT_FK,
+            _RUNTIME_GATE_SCOPE_FK,
+        }
+    ),
+    "runtime_enrollment_bootstraps": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            _SCOPE_ENVIRONMENT_FK,
+            _RUNTIME_GATE_SCOPE_FK,
+            (
+                ("org_id", "project_id", "environment_id", "consumed_by_identity_id"),
+                None,
+                "runtime_identities",
+                ("org_id", "project_id", "environment_id", "id"),
+            ),
+        }
+    ),
+    "runtime_credential_generations": frozenset(
+        {(("org_id",), None, "organizations", ("id",)), _RUNTIME_IDENTITY_SCOPE_FK}
+    ),
+    "runtime_enrollment_idempotency": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            _RUNTIME_IDENTITY_SCOPE_FK,
+            _RUNTIME_RECEIPT_SCOPE_FK,
+        }
+    ),
+    "runtime_request_nonces": frozenset(
+        {(("org_id",), None, "organizations", ("id",)), _RUNTIME_IDENTITY_SCOPE_FK}
+    ),
+    "runtime_operation_idempotency": frozenset(
+        {(("org_id",), None, "organizations", ("id",)), _RUNTIME_RECEIPT_SCOPE_FK}
+    ),
+}
 _PROJECTS_ONLY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     **_LEGACY_FOREIGN_KEYS,
     "projects": _SCOPED_FOREIGN_KEYS["projects"],
@@ -1291,6 +1483,53 @@ _APPROVAL_VOTE_BINDING_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
         }
     ),
 }
+_RUNTIME_ENROLLMENT_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_APPROVAL_VOTE_BINDING_UNIQUES,
+    "runtime_identity_gates": frozenset(
+        {
+            ("org_id", "project_id", "environment_id"),
+            ("org_id", "project_id", "environment_id", "id"),
+        }
+    ),
+    "runtime_identities": frozenset(
+        {
+            ("org_id", "project_id", "environment_id", "id"),
+            ("org_id", "project_id", "environment_id", "name"),
+            ("org_id", "project_id", "environment_id", "public_key_thumbprint"),
+        }
+    ),
+    "runtime_enrollment_bootstraps": frozenset({("bootstrap_digest",), ("bootstrap_locator",)}),
+    "runtime_credential_generations": frozenset(
+        {("org_id", "project_id", "environment_id", "identity_id", "generation")}
+    ),
+    "runtime_enrollment_idempotency": frozenset(
+        {
+            (
+                "org_id",
+                "project_id",
+                "environment_id",
+                "identity_id",
+                "idempotency_key_hash",
+            ),
+            ("org_id", "project_id", "environment_id", "identity_id"),
+        }
+    ),
+    "runtime_request_nonces": frozenset(
+        {("org_id", "project_id", "environment_id", "identity_id", "nonce")}
+    ),
+    "runtime_operation_idempotency": frozenset(
+        {
+            (
+                "org_id",
+                "project_id",
+                "environment_id",
+                "identity_id",
+                "operation",
+                "idempotency_key_hash",
+            )
+        }
+    ),
+}
 _TRUST_V2_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
     **{table_name: frozenset() for table_name in _TRUST_V2_COLUMNS},
     "managed_trust_keys": frozenset(
@@ -1349,6 +1588,30 @@ _APPROVAL_SUBSTRATE_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]
     "approval_votes": frozenset(),
     "approval_outcomes": frozenset(),
     "approval_resume_authorizations": frozenset(),
+}
+_RUNTIME_ENROLLMENT_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
+    **_APPROVAL_SUBSTRATE_UNIQUE_INDEXES,
+    "runtime_identity_gates": frozenset(),
+    "runtime_identities": frozenset(),
+    "runtime_enrollment_bootstraps": frozenset(
+        {
+            (
+                ("org_id", "project_id", "environment_id", "gate_id"),
+                "status:active",
+            )
+        }
+    ),
+    "runtime_credential_generations": frozenset(
+        {
+            (
+                ("org_id", "project_id", "environment_id", "identity_id"),
+                "status:active",
+            )
+        }
+    ),
+    "runtime_enrollment_idempotency": frozenset(),
+    "runtime_request_nonces": frozenset(),
+    "runtime_operation_idempotency": frozenset(),
 }
 _PROJECTS_ONLY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
@@ -1415,6 +1678,16 @@ _APPROVAL_SUBSTRATE_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...
     "approval_votes": frozenset({("org_id",)}),
     "approval_outcomes": frozenset({("org_id",)}),
     "approval_resume_authorizations": frozenset({("org_id",)}),
+}
+_RUNTIME_ENROLLMENT_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_APPROVAL_SUBSTRATE_NON_UNIQUE_INDEXES,
+    "runtime_identity_gates": frozenset({("org_id",)}),
+    "runtime_identities": frozenset({("org_id",)}),
+    "runtime_enrollment_bootstraps": frozenset({("org_id",)}),
+    "runtime_credential_generations": frozenset({("org_id",)}),
+    "runtime_enrollment_idempotency": frozenset({("org_id",)}),
+    "runtime_request_nonces": frozenset({("org_id",)}),
+    "runtime_operation_idempotency": frozenset({("org_id",)}),
 }
 _MANAGED_MUTATION_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
     **{table_name: frozenset() for table_name in _SCOPED_COLUMNS},
@@ -1550,6 +1823,34 @@ _APPROVAL_SUBSTRATE_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
         }
     ),
     "approval_resume_authorizations": frozenset(),
+}
+_RUNTIME_ENROLLMENT_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
+    **_APPROVAL_SUBSTRATE_CHECKS,
+    "runtime_identity_gates": frozenset(
+        {("ck_runtime_identity_gate_status", "status IN ('active', 'revoked')")}
+    ),
+    "runtime_identities": frozenset(
+        {("ck_runtime_identities_status", "status IN ('active', 'revoked')")}
+    ),
+    "runtime_enrollment_bootstraps": frozenset(
+        {
+            (
+                "ck_runtime_enrollment_bootstrap_status",
+                "status IN ('active', 'consumed', 'revoked', 'expired')",
+            )
+        }
+    ),
+    "runtime_credential_generations": frozenset(
+        {
+            (
+                "ck_runtime_credential_generation_status",
+                "status IN ('active', 'superseded', 'revoked', 'expired')",
+            )
+        }
+    ),
+    "runtime_enrollment_idempotency": frozenset(),
+    "runtime_request_nonces": frozenset(),
+    "runtime_operation_idempotency": frozenset(),
 }
 _PROJECTS_ONLY_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_NON_UNIQUE_INDEXES,
@@ -1824,7 +2125,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0009, "known Alembic revision 0009")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
-    if versions == [HEAD_REVISION]:
+    if versions == [APPROVAL_VOTE_BINDING_REVISION]:
         detail = _schema_detail(
             inspector,
             user_tables,
@@ -1838,6 +2139,21 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         )
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0010, "known Alembic revision 0010")
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
+    if versions == [HEAD_REVISION]:
+        detail = _schema_detail(
+            inspector,
+            user_tables,
+            _RUNTIME_ENROLLMENT_COLUMNS,
+            _RUNTIME_ENROLLMENT_PRIMARY_KEYS,
+            _RUNTIME_ENROLLMENT_FOREIGN_KEYS,
+            _RUNTIME_ENROLLMENT_UNIQUES,
+            _RUNTIME_ENROLLMENT_NON_UNIQUE_INDEXES,
+            _RUNTIME_ENROLLMENT_CHECKS,
+            _RUNTIME_ENROLLMENT_UNIQUE_INDEXES,
+        )
+        if detail is None:
+            return SchemaPreflight(DatabaseSchemaState.VERSION_0011, "known Alembic revision 0011")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
 
     return SchemaPreflight(
@@ -1853,7 +2169,7 @@ def assert_current_startup_schema(connection: Connection) -> SchemaPreflight:
     stamps, upgrades, creates, repairs, or otherwise mutates schema or data.
     """
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0010:
+    if preflight.state is not DatabaseSchemaState.VERSION_0011:
         raise StartupSchemaPreflightError(preflight)
     return preflight
 
@@ -1956,7 +2272,7 @@ def _upgrade_database_with_independent_connections(database_url: str) -> Migrati
             lambda: command.upgrade(config, "head"),
         )
     after = inspect_schema(database_url)
-    if after.state is not DatabaseSchemaState.VERSION_0010:
+    if after.state is not DatabaseSchemaState.VERSION_0011:
         msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
         raise MigrationPreflightError(msg)
     return MigrationResult(before=before, after=after)
@@ -2018,7 +2334,7 @@ def _upgrade_postgresql_database(
                         )
 
                     after = inspect_connection(connection)
-                    if after.state is not DatabaseSchemaState.VERSION_0010:
+                    if after.state is not DatabaseSchemaState.VERSION_0011:
                         msg = (
                             "Migration ended in unexpected schema state: "
                             f"{after.state} ({after.detail})"
@@ -2609,6 +2925,14 @@ def _normalized_constraint_sql(value: object) -> str:
 
 
 def _check_constraint_signature(value: object) -> str:
+    singleton_status_signature = _singleton_status_signature_from_sql(value)
+    if singleton_status_signature is not None:
+        return singleton_status_signature
+
+    status_set_signature = _status_set_signature_from_sql(value)
+    if status_set_signature is not None:
+        return status_set_signature
+
     raw = str(value or "").lower()
     compact = _normalized_constraint_sql(
         re.sub(
@@ -2639,7 +2963,6 @@ def _check_constraint_signature(value: object) -> str:
     }:
         return "status:active,retired,revoked"
     if compact in {
-        "status='active'",
         "statusin('active')",
         "statusin'active'",
         "status=any(array['active'])",
@@ -2647,7 +2970,6 @@ def _check_constraint_signature(value: object) -> str:
     }:
         return "status:active"
     if compact in {
-        "status='pending'",
         "statusin('pending')",
         "statusin'pending'",
         "status=any(array['pending'])",
@@ -2761,6 +3083,377 @@ def _check_constraint_signature(value: object) -> str:
     }:
         return "retired_epoch:retired-only-and-terminal-null"
     return compact
+
+
+_SqlToken = tuple[str, str]
+
+
+def _singleton_status_signature_from_sql(value: object) -> str | None:
+    tokens = _tokenize_constraint_sql(str(value or ""))
+    if not tokens:
+        return None
+    tokens = _strip_outer_token_parentheses(tokens)
+    singleton = _SingletonStatusParser(tokens).parse()
+    if singleton is None:
+        return None
+    return "status:" + json.dumps((singleton,), ensure_ascii=True, separators=(",", ":"))
+
+
+def _status_set_signature_from_sql(value: object) -> str | None:
+    tokens = _tokenize_constraint_sql(str(value or ""))
+    if not tokens:
+        return None
+    tokens = _strip_outer_token_parentheses(tokens)
+    values = _StatusSetParser(tokens).parse()
+    if values is None or len(values) != len(set(values)) or any(not item for item in values):
+        return None
+    return "status:" + json.dumps(values, ensure_ascii=True, separators=(",", ":"))
+
+
+def _tokenize_constraint_sql(value: str) -> list[_SqlToken] | None:
+    tokens: list[_SqlToken] = []
+    index = 0
+    while index < len(value):
+        character = value[index]
+        if character.isspace():
+            index += 1
+            continue
+        if character == "'":
+            index += 1
+            literal: list[str] = []
+            while index < len(value):
+                if value[index] == "'":
+                    if index + 1 < len(value) and value[index + 1] == "'":
+                        literal.append("'")
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                literal.append(value[index])
+                index += 1
+            else:
+                return None
+            tokens.append(("string", "".join(literal)))
+            continue
+        if character == '"':
+            index += 1
+            identifier: list[str] = []
+            while index < len(value):
+                if value[index] == '"':
+                    if index + 1 < len(value) and value[index + 1] == '"':
+                        identifier.append('"')
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                identifier.append(value[index])
+                index += 1
+            else:
+                return None
+            tokens.append(("identifier", "".join(identifier)))
+            continue
+        if value.startswith("::", index):
+            tokens.append(("symbol", "::"))
+            index += 2
+            continue
+        if character in "(),=[]":
+            tokens.append(("symbol", character))
+            index += 1
+            continue
+        if character.isalpha() or character == "_":
+            start = index
+            index += 1
+            while index < len(value) and (value[index].isalnum() or value[index] == "_"):
+                index += 1
+            tokens.append(("word", value[start:index]))
+            continue
+        return None
+    return tokens
+
+
+def _strip_outer_token_parentheses(tokens: list[_SqlToken]) -> list[_SqlToken]:
+    result = tokens
+    while (
+        len(result) >= 2
+        and result[0] == ("symbol", "(")
+        and result[-1] == ("symbol", ")")
+        and _outer_tokens_enclose_expression(result)
+    ):
+        result = result[1:-1]
+    return result
+
+
+def _outer_tokens_enclose_expression(tokens: list[_SqlToken]) -> bool:
+    depth = 0
+    for index, token in enumerate(tokens):
+        if token == ("symbol", "("):
+            depth += 1
+        elif token == ("symbol", ")"):
+            depth -= 1
+            if depth == 0 and index != len(tokens) - 1:
+                return False
+        if depth < 0:
+            return False
+    return depth == 0
+
+
+class _StatusSetParser:
+    def __init__(self, tokens: list[_SqlToken]) -> None:
+        self._tokens = tokens
+        self._pos = 0
+
+    def parse(self) -> tuple[str, ...] | None:
+        values = self._parse_expression()
+        if values is None or self._pos != len(self._tokens):
+            return None
+        return tuple(values)
+
+    def _parse_expression(self) -> list[str] | None:
+        if not self._parse_status_expression():
+            return None
+        if self._consume_word("in"):
+            if not self._consume_symbol("("):
+                return None
+            values = self._parse_literal_list(end_symbol=")")
+            if values is None or not self._consume_symbol(")"):
+                return None
+            return values
+        if not self._consume_symbol("=") or not self._consume_word("any"):
+            return None
+        return self._parse_any_array()
+
+    def _parse_status_expression(self) -> bool:
+        if self._consume_symbol("("):
+            if not self._parse_status_expression() or not self._consume_symbol(")"):
+                return False
+        elif not self._consume_status_identifier():
+            return False
+        return self._consume_scalar_casts()
+
+    def _consume_status_identifier(self) -> bool:
+        token = self._peek()
+        if token is None:
+            return False
+        kind, text = token
+        if kind == "word" and text.lower() == "status":
+            self._pos += 1
+            return True
+        if kind == "identifier" and text == "status":
+            self._pos += 1
+            return True
+        return False
+
+    def _parse_any_array(self) -> list[str] | None:
+        wrappers = 0
+        while self._consume_symbol("("):
+            wrappers += 1
+        if not self._consume_word("array") or not self._consume_symbol("["):
+            return None
+        values = self._parse_literal_list(end_symbol="]")
+        if values is None or not self._consume_symbol("]"):
+            return None
+        if not self._consume_any_rhs_casts():
+            return None
+        while wrappers:
+            if not self._consume_symbol(")"):
+                return None
+            if not self._consume_any_rhs_casts():
+                return None
+            wrappers -= 1
+        return values
+
+    def _parse_literal_list(self, *, end_symbol: str) -> list[str] | None:
+        values: list[str] = []
+        while True:
+            value = self._parse_literal_expression()
+            if value is None:
+                return None
+            values.append(value)
+            if self._peek_is_symbol(end_symbol):
+                return values
+            if not self._consume_symbol(","):
+                return None
+
+    def _parse_literal_expression(self) -> str | None:
+        if self._consume_symbol("("):
+            value = self._parse_literal_expression()
+            if value is None or not self._consume_symbol(")"):
+                return None
+            if not self._consume_scalar_casts():
+                return None
+            return value
+        token = self._peek()
+        if token is None or token[0] != "string":
+            return None
+        self._pos += 1
+        if not self._consume_scalar_casts():
+            return None
+        return token[1]
+
+    def _consume_scalar_casts(self) -> bool:
+        while self._consume_symbol("::"):
+            if not self._consume_type_name(allow_array=False):
+                return False
+        return True
+
+    def _consume_any_rhs_casts(self) -> bool:
+        if not self._consume_symbol("::"):
+            return True
+        if not self._consume_array_type_name():
+            return False
+        return not self._peek_is_symbol("::")
+
+    def _consume_type_name(self, *, allow_array: bool) -> bool:
+        if self._consume_word("text") or self._consume_word("varchar"):
+            return self._consume_optional_array_suffix(allow_array=allow_array)
+        if self._consume_word("character") and self._consume_word("varying"):
+            return self._consume_optional_array_suffix(allow_array=allow_array)
+        return False
+
+    def _consume_optional_array_suffix(self, *, allow_array: bool) -> bool:
+        if not self._consume_symbol("["):
+            return True
+        if not allow_array or not self._consume_symbol("]"):
+            return False
+        return True
+
+    def _consume_array_type_name(self) -> bool:
+        if self._consume_word("text") or self._consume_word("varchar"):
+            return self._consume_required_array_suffix()
+        if self._consume_word("character") and self._consume_word("varying"):
+            return self._consume_required_array_suffix()
+        return False
+
+    def _consume_required_array_suffix(self) -> bool:
+        return self._consume_symbol("[") and self._consume_symbol("]")
+
+    def _consume_word(self, value: str) -> bool:
+        token = self._peek()
+        if token is not None and token[0] == "word" and token[1].lower() == value:
+            self._pos += 1
+            return True
+        return False
+
+    def _consume_symbol(self, value: str) -> bool:
+        if self._peek_is_symbol(value):
+            self._pos += 1
+            return True
+        return False
+
+    def _peek_is_symbol(self, value: str) -> bool:
+        token = self._peek()
+        return token is not None and token == ("symbol", value)
+
+    def _peek(self) -> _SqlToken | None:
+        if self._pos >= len(self._tokens):
+            return None
+        return self._tokens[self._pos]
+
+
+class _SingletonStatusParser:
+    def __init__(self, tokens: list[_SqlToken]) -> None:
+        self._tokens = tokens
+        self._pos = 0
+
+    def parse(self) -> str | None:
+        if self._parse_status_expression() is None:
+            return None
+        if not self._consume_symbol("="):
+            return None
+        value = self._parse_literal_expression()
+        if value is None or self._pos != len(self._tokens):
+            return None
+        return value[0]
+
+    def _parse_status_expression(self) -> int | None:
+        cast_count = 0
+        if self._consume_symbol("("):
+            nested_cast_count = self._parse_status_expression()
+            if nested_cast_count is None or not self._consume_symbol(")"):
+                return None
+            cast_count += nested_cast_count
+        elif not self._consume_status_identifier():
+            return None
+        optional_cast_count = self._consume_optional_scalar_cast()
+        if optional_cast_count is None:
+            return None
+        cast_count += optional_cast_count
+        if cast_count > 1:
+            return None
+        return cast_count
+
+    def _parse_literal_expression(self) -> tuple[str, int] | None:
+        cast_count = 0
+        if self._consume_symbol("("):
+            nested = self._parse_literal_expression()
+            if nested is None or not self._consume_symbol(")"):
+                return None
+            value, nested_cast_count = nested
+            cast_count += nested_cast_count
+        else:
+            token = self._peek()
+            if token is None or token[0] != "string":
+                return None
+            value = token[1]
+            self._pos += 1
+        optional_cast_count = self._consume_optional_scalar_cast()
+        if optional_cast_count is None:
+            return None
+        cast_count += optional_cast_count
+        if cast_count > 1:
+            return None
+        return value, cast_count
+
+    def _consume_status_identifier(self) -> bool:
+        token = self._peek()
+        if token is None:
+            return False
+        kind, text = token
+        if kind == "word" and text.lower() == "status":
+            self._pos += 1
+            return True
+        if kind == "identifier" and text == "status":
+            self._pos += 1
+            return True
+        return False
+
+    def _consume_optional_scalar_cast(self) -> int | None:
+        if not self._consume_symbol("::"):
+            return 0
+        if not self._consume_type_name():
+            return None
+        if self._peek_is_symbol("::"):
+            return None
+        return 1
+
+    def _consume_type_name(self) -> bool:
+        if self._consume_word("text") or self._consume_word("varchar"):
+            return not self._consume_symbol("[")
+        if self._consume_word("character") and self._consume_word("varying"):
+            return not self._consume_symbol("[")
+        return False
+
+    def _consume_word(self, value: str) -> bool:
+        token = self._peek()
+        if token is not None and token[0] == "word" and token[1].lower() == value:
+            self._pos += 1
+            return True
+        return False
+
+    def _consume_symbol(self, value: str) -> bool:
+        if self._peek_is_symbol(value):
+            self._pos += 1
+            return True
+        return False
+
+    def _peek_is_symbol(self, value: str) -> bool:
+        token = self._peek()
+        return token is not None and token == ("symbol", value)
+
+    def _peek(self) -> _SqlToken | None:
+        if self._pos >= len(self._tokens):
+            return None
+        return self._tokens[self._pos]
 
 
 def _index_where_signature(index: Mapping[str, object], dialect_name: str) -> str | None:

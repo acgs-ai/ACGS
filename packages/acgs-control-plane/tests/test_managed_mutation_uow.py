@@ -10,7 +10,8 @@ from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from threading import Barrier
+from typing import Any, cast
 
 import pytest
 import sqlalchemy as sa
@@ -33,6 +34,7 @@ from acgs_control_plane.managed_mutations import (
     ASSURANCE_CLASS_NATIVE,
     AesGcmReceiptArtifactSealer,
     ManagedMutationContext,
+    ManagedMutationReplayResult,
     ManagedMutationUnitOfWork,
     managed_mutation_execution_boundary,
     managed_receipt_artifact_aad,
@@ -52,6 +54,7 @@ from acgs_control_plane.models import (
 )
 from acgs_control_plane.trust import (
     InProcessPlatformIssuer,
+    ManagedReceiptContext,
     ManagedTrustError,
     ManagedTrustLifecycleService,
     SqlReceiptTrustRegistry,
@@ -185,6 +188,7 @@ def test_allow_mutation_commits_consumption_receipt_event_and_outbox_atomically(
         args=_agent_args("governed-agent"),
     )
 
+    assert not isinstance(result, ManagedMutationReplayResult)
     assert result.result["agent_name_hash"] == sha256_json("governed-agent")
     with session_factory() as session:
         assert _count(session, AgentRecord) == 1
@@ -326,6 +330,153 @@ def test_injected_failure_before_commit_rolls_back_consumption_receipt_event_out
             "events": 0,
             "outbox": 0,
         }
+        assert _count(session, ManagedMutationAttempt) == 1
+
+
+def test_default_before_execute_failure_persists_attempt_and_blocks_retry(
+    session_factory: sessionmaker[Session],
+    signer: Ed25519Signer,
+    receipt_sealer: AesGcmReceiptArtifactSealer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    receipt = _receipt(
+        "default-before-execute-fails",
+        args=_agent_args("default-failed-agent"),
+        signer=signer,
+    )
+
+    with pytest.raises(RuntimeError, match="pre-execute failure"):
+        _signed_uow(session_factory, signer, receipt_sealer).execute(
+            context=_context(),
+            receipt=receipt,
+            args=_agent_args("default-failed-agent"),
+            before_execute=lambda _session: (_ for _ in ()).throw(
+                RuntimeError("pre-execute failure")
+            ),
+        )
+
+    with session_factory() as session:
+        attempt = session.scalars(sa.select(ManagedMutationAttempt)).one()
+        assert attempt.status == "failed"
+        assert _counts(session) == {
+            "agents": 0,
+            "receipts": 0,
+            "consumptions": 0,
+            "events": 0,
+            "outbox": 0,
+        }
+
+    def retry_must_not_execute(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("failed before_execute retry reached the side-effect executor")
+
+    monkeypatch.setattr(
+        managed_mutations_module,
+        "_execute_verified_operation",
+        retry_must_not_execute,
+    )
+    with pytest.raises(ReceiptAlreadyUsedError):
+        _signed_uow(session_factory, signer, receipt_sealer).execute(
+            context=_context(),
+            receipt=receipt,
+            args=_agent_args("default-failed-agent"),
+        )
+
+
+def test_opt_in_before_attempt_replay_creates_zero_mutation_rows(
+    session_factory: sessionmaker[Session],
+    signer: Ed25519Signer,
+    receipt_sealer: AesGcmReceiptArtifactSealer,
+) -> None:
+    receipt = _receipt(
+        "opt-in-replay-zero-delta",
+        args=_agent_args("replayed-agent"),
+        signer=signer,
+    )
+
+    def operation_must_not_run(_session: Session, _args: dict[str, Any]) -> None:
+        pytest.fail("opt-in replay reached the side-effect executor")
+
+    result = _signed_uow(session_factory, signer, receipt_sealer).execute(
+        context=_context(),
+        receipt=receipt,
+        args=_agent_args("replayed-agent"),
+        before_attempt_reservation=lambda _session: ManagedMutationReplayResult(
+            {"status": "replayed"}
+        ),
+        operation_effect=operation_must_not_run,
+    )
+
+    assert isinstance(result, ManagedMutationReplayResult)
+    assert result.result == {"status": "replayed"}
+    with session_factory() as session:
+        assert _counts(session) == {
+            "agents": 0,
+            "receipts": 0,
+            "consumptions": 0,
+            "events": 0,
+            "outbox": 0,
+        }
+        assert _count(session, ManagedMutationAttempt) == 0
+
+
+def test_opt_in_failure_after_attempt_reservation_marks_attempt_and_blocks_retry(
+    session_factory: sessionmaker[Session],
+    signer: Ed25519Signer,
+    receipt_sealer: AesGcmReceiptArtifactSealer,
+) -> None:
+    receipt = _receipt(
+        "opt-in-failed-tombstone",
+        args=_agent_args("opt-in-failed-agent"),
+        signer=signer,
+    )
+    effects: list[str] = []
+
+    def failing_effect(_session: Session, _args: dict[str, Any]) -> None:
+        effects.append("called")
+        raise RuntimeError("opt-in transactional failure")
+
+    with pytest.raises(RuntimeError, match="opt-in transactional failure"):
+        _signed_uow(session_factory, signer, receipt_sealer).execute(
+            context=_context(),
+            receipt=receipt,
+            args=_agent_args("opt-in-failed-agent"),
+            before_attempt_reservation=lambda _session: None,
+            operation_effect=failing_effect,
+        )
+
+    with session_factory() as session:
+        attempt = session.scalars(sa.select(ManagedMutationAttempt)).one()
+        assert attempt.status == "failed"
+        assert attempt.receipt_hash == receipt.receipt_hash
+        assert attempt.audit_event_hash == receipt.audit_event_hash
+        assert attempt.action == receipt.proposed_action
+        assert attempt.actor_hash == sha256_json(receipt.actor)
+        assert attempt.argument_hash == receipt.argument_hash
+        assert attempt.failure_class_hash is not None
+        assert attempt.failure_digest is not None
+        assert _counts(session) == {
+            "agents": 0,
+            "receipts": 0,
+            "consumptions": 0,
+            "events": 0,
+            "outbox": 0,
+        }
+
+    def retry_must_not_execute(_session: Session, _args: dict[str, Any]) -> None:
+        effects.append("retry")
+        pytest.fail("failed opt-in retry reached the side-effect executor")
+
+    with pytest.raises(ReceiptAlreadyUsedError):
+        _signed_uow(session_factory, signer, receipt_sealer).execute(
+            context=_context(),
+            receipt=receipt,
+            args=_agent_args("opt-in-failed-agent"),
+            before_attempt_reservation=lambda _session: None,
+            operation_effect=retry_must_not_execute,
+        )
+
+    assert effects == ["called"]
+    with session_factory() as session:
         assert _count(session, ManagedMutationAttempt) == 1
 
 
@@ -629,6 +780,55 @@ def test_concurrent_receipt_consumption_has_single_committed_winner(
         assert attempt.status == "succeeded"
 
 
+def test_opt_in_concurrent_same_receipt_reaches_effect_once(
+    session_factory: sessionmaker[Session],
+    signer: Ed25519Signer,
+    receipt_sealer: AesGcmReceiptArtifactSealer,
+) -> None:
+    receipt = _receipt(
+        "opt-in-concurrent-single-effect",
+        args=_agent_args("opt-in-concurrent-agent"),
+        signer=signer,
+    )
+    _bootstrap_trust_root(session_factory, signer)
+    barrier = Barrier(2)
+    effects: list[str] = []
+
+    def before_attempt(_session: Session) -> None:
+        barrier.wait(timeout=5)
+
+    def effect(_session: Session, _args: dict[str, Any]) -> dict[str, Any]:
+        effects.append("called")
+        return {
+            "agent_id": "opt-in-concurrent-agent",
+            "agent_name_hash": sha256_json("opt-in-concurrent-agent"),
+        }
+
+    def run_once() -> str:
+        try:
+            _signed_uow(session_factory, signer, receipt_sealer).execute(
+                context=_context(),
+                receipt=receipt,
+                args=_agent_args("opt-in-concurrent-agent"),
+                before_attempt_reservation=before_attempt,
+                operation_effect=effect,
+            )
+            return "committed"
+        except Exception as exc:
+            return type(exc).__name__
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(lambda _: run_once(), range(2)))
+
+    assert outcomes.count("committed") == 1
+    assert "ReceiptAlreadyUsedError" in outcomes
+    assert effects == ["called"]
+    with session_factory() as session:
+        assert _count(session, ManagedMutationAttempt) == 1
+        attempt = session.scalars(sa.select(ManagedMutationAttempt)).one()
+        assert attempt.status == "succeeded"
+
+
 def test_outbox_rows_appear_only_after_sql_commit(
     session_factory: sessionmaker[Session],
     signer: Ed25519Signer,
@@ -819,7 +1019,7 @@ def test_uow_has_no_caller_supplied_sql_or_result_surface(
                 allowed_tools=[],
                 status="active",
             ),  # type: ignore[call-arg]
-            result={"agent_name_hash": "attacker-controlled"},  # type: ignore[call-arg]
+            result={"agent_name_hash": "attacker-controlled"},
         )
     with pytest.raises(TypeError):
         _signed_uow(session_factory, signer, receipt_sealer).execute(
@@ -910,7 +1110,7 @@ def test_mint_managed_decision_receipt_v2_rejects_agent_controlled_actor(
     with pytest.raises(ReceiptValidationError, match="actor does not match"):
         mint_managed_decision_receipt_v2(
             issuer=InProcessPlatformIssuer(signer),
-            context=_context(),
+            context=cast(ManagedReceiptContext, _context()),
             record=record,
             audit_hash=sha256_json({"audit": "mint-actor-mismatch"}),
             previous_audit_hash="0" * 64,

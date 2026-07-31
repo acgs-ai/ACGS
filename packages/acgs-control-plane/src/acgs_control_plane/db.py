@@ -54,6 +54,13 @@ _ALEMBIC_MANAGED_TABLE_NAMES = frozenset(
         "approval_votes",
         "approval_outcomes",
         "approval_resume_authorizations",
+        "runtime_identity_gates",
+        "runtime_identities",
+        "runtime_enrollment_bootstraps",
+        "runtime_credential_generations",
+        "runtime_enrollment_idempotency",
+        "runtime_operation_idempotency",
+        "runtime_request_nonces",
     }
 )
 _LEGACY_CREATE_ALL_TABLE_NAMES = frozenset(

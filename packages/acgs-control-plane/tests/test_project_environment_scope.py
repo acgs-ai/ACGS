@@ -148,8 +148,9 @@ def test_public_api_exposes_only_managed_policy_project_environment_routes(
             if "/projects" in route.path or "/environments" in route.path
         ]
 
-        # Each managed policy route is also served under its /v1 alias, like
-        # every other org route.
+        # Each managed policy/runtime-management route is also served under its
+        # /v1 alias, like every other org route. Runtime enrollment and renewal
+        # are platform /v1 routes and intentionally do not appear here.
         assert sorted(project_or_environment_routes) == sorted(
             (method, f"{prefix}{path}")
             for prefix in ("", "/v1")
@@ -165,6 +166,14 @@ def test_public_api_exposes_only_managed_policy_project_environment_routes(
                 (
                     "POST",
                     "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies/{policy_version_id}/activate",
+                ),
+                (
+                    "POST",
+                    "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/runtime-enrollment-bootstraps",
+                ),
+                (
+                    "POST",
+                    "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/runtime-identities/{identity_id}/revoke",
                 ),
             )
         )

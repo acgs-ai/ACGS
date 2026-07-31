@@ -592,6 +592,7 @@ P2_VERTICAL_GATE_REVIEWED_BASE='7d81e853b56352822286eb08d592d9e87256868e'
 P3_POLICY_REVIEWED_BASE='647385084d974322b0f8b9b82738d7b820044ece'
 P3_MUTATIONS_REVIEWED_BASE='014fe1806600d52d55f06875a8c30c0b8a5b973b'
 P3_APPROVAL_REVIEWED_BASE='a2299d510d792dd04646204653e405e0485204a6'
+P4_ENROLLMENT_REVIEWED_BASE='dba1da463edeb1b80f3f1d25e8c1c84726da1a4e'
 ASSIGNED_BOOTSTRAPS=''
 INCLUDE_GZ=0
 EXPECTED_TRANSCRIPT_RECORDS=''
@@ -698,6 +699,14 @@ case "$REQUESTED_NODE_ID" in
     else
       TMP_BASENAME='acgs-p3-approval'
     fi
+    ;;
+  P4-ENROLLMENT-001)
+    [[ "$P" == "$P4_ENROLLMENT_REVIEWED_BASE" ]] ||
+      die "P4-ENROLLMENT-001 reviewed parent must be exact $P4_ENROLLMENT_REVIEWED_BASE"
+    ASSIGNED_BOOTSTRAPS='EVID+CP+GZ'
+    INCLUDE_GZ=1
+    EXPECTED_TRANSCRIPT_RECORDS=10
+    TMP_BASENAME='acgs-p4-enrollment'
     ;;
   *)
     die "unsupported clean-sibling node: $REQUESTED_NODE_ID"
@@ -2866,6 +2875,8 @@ elif [[ "$NODE_ID" == P3-MUTATIONS-002 ]]; then
   export ACGS_PROCESS_SCHEDULE='["single-process-evidence-and-package-gates","postgres-pg6-mutation-inventory-drift"]'
 elif [[ "$NODE_ID" == P3-APPROVAL-003 || "$NODE_ID" == P3-APPROVAL-003B || "$NODE_ID" == P3-APPROVAL-003C ]]; then
   export ACGS_PROCESS_SCHEDULE='["single-process-evidence-and-package-gates","postgres-pg9-approval-resume-multiprocess"]'
+elif [[ "$NODE_ID" == P4-ENROLLMENT-001 ]]; then
+  export ACGS_PROCESS_SCHEDULE='["single-process-evidence-and-package-gates","postgres-p4-runtime-enrollment-disposable-concurrency"]'
 fi
 unset UV_OFFLINE UV_NO_INDEX UV_NO_CACHE RUFF_NO_CACHE
 unset VIRTUAL_ENV PYTHONPATH PYTHONHOME UV_PROJECT_ENVIRONMENT
@@ -4091,7 +4102,7 @@ run_trusted_parent_postgres_gate() {
   shift 5
   local started finished stdout_file stderr_file gate_status tmpdir
   local runner_path runner_fd runner_path_stat runner_fd_stat runner_sha runner_size
-  local trusted_runner_sha256='1afe623226adf06fd27bf859a9f010fb56678b408b7f653dd3437c8b9b2ed676'
+  local trusted_runner_sha256='6379f47195191cdc7c1ccd90afebdee31b6c9afd95991b851ac3b039be23eaf1'
   [[ "$scope" == CP ]] || die 'trusted parent PostgreSQL gate is CP-only'
   [[ "$cwd" == "$WORKTREE/packages/acgs-control-plane" ]] ||
     die 'trusted parent PostgreSQL gate cwd must be the control-plane package'
@@ -4258,7 +4269,7 @@ run_trusted_parent_p0_launcher_authority_gate() {
   shift 5
   local started finished stdout_file stderr_file gate_status
   local launcher_path launcher_fd launcher_path_stat launcher_fd_stat launcher_sha
-  local trusted_launcher_sha256='72b57a94ecdf8763cce1768a664942dc19dfef25ac1c3ec03f4ae4fe99537244'
+  local trusted_launcher_sha256='00bf1db22797ea41b1391f006b8cc180549d9990300246926837b4dd31f559f9'
   local target_sha='1111111111111111111111111111111111111111'
   [[ "$scope" == P0 ]] || die 'trusted parent P0 launcher gate is P0-only'
   [[ "$cwd" == "$WORKTREE" ]] || die 'trusted parent P0 launcher gate cwd must be repository root'
@@ -4853,7 +4864,8 @@ node_cwd_scope() {
     P1-MIGRATION-001 | P1-SCOPE-002 | P1-LEDGER-003 | P1-TRUST-004 | \
     P2-TENANT-BOOTSTRAP-000 | P2-REGISTER-001 | P2-IDEMPOTENCY-002 | \
       P2-VERTICAL-GATE-003 | P3-POLICY-001 | P3-MUTATIONS-002 | \
-      P3-APPROVAL-003 | P3-APPROVAL-003B | P3-APPROVAL-003C)
+      P3-APPROVAL-003 | P3-APPROVAL-003B | P3-APPROVAL-003C | \
+      P4-ENROLLMENT-001)
       printf '%s' "$default_scope"
       ;;
     *) printf __NONE__ ;;
@@ -5139,6 +5151,15 @@ elif [[ "$NODE_ID" == P3-APPROVAL-003 || "$NODE_ID" == P3-APPROVAL-003B || "$NOD
   run_recorded_exact_pytest_gate P3 "$WORKTREE" p3-approval-cross-plane \
     "$P3_APPROVAL_ROOT_SELECTOR" REPO_ROOT 1 \
     "${P3_APPROVAL_ROOT_GATE[@]}"
+elif [[ "$NODE_ID" == P4-ENROLLMENT-001 ]]; then
+  P4_RUNTIME_ENROLLMENT_CP_GATE=(./scripts/run_postgres_gate.sh \
+    tests/integration/test_runtime_enrollment_postgres.py::test_100_identical_runtime_enrollments_converge_to_one_identity \
+    tests/integration/test_runtime_enrollment_postgres.py::test_runtime_enrollment_conflict_and_cross_scope_idempotency_are_isolated \
+    tests/integration/test_runtime_enrollment_postgres.py::test_runtime_renew_replay_revoke_and_expired_paths_are_nonduplicating)
+  run_trusted_parent_postgres_gate CP \
+    "$WORKTREE/packages/acgs-control-plane" p4-runtime-enrollment-postgres \
+    'packages/acgs-control-plane:P4-ENROLLMENT-001-postgres-runtime-enrollment-gate' CP \
+    "${P4_RUNTIME_ENROLLMENT_CP_GATE[@]}"
 else
   die "unsupported clean-sibling node at product gate: $NODE_ID"
 fi
@@ -5433,6 +5454,7 @@ process_by_node = {
     "P3-APPROVAL-003": ["single-process-evidence-and-package-gates", "postgres-pg9-approval-resume-multiprocess"],
     "P3-APPROVAL-003B": ["single-process-evidence-and-package-gates", "postgres-pg9-approval-resume-multiprocess"],
     "P3-APPROVAL-003C": ["single-process-evidence-and-package-gates", "postgres-pg9-approval-resume-multiprocess"],
+    "P4-ENROLLMENT-001": ["single-process-evidence-and-package-gates", "postgres-p4-runtime-enrollment-disposable-concurrency"],
 }
 run = {
     "schema_version": "acgs-run-evidence/v1",

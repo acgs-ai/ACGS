@@ -165,10 +165,18 @@ P3_APPROVAL_ROOT_SELECTORS = (
     "test_approval_contract_locks_vote_and_resume_assurance",
 )
 P3_APPROVAL_POSTGRES_TRUSTED_RUNNER_SHA256 = (
-    "1afe623226adf06fd27bf859a9f010fb56678b408b7f653dd3437c8b9b2ed676"
+    "6379f47195191cdc7c1ccd90afebdee31b6c9afd95991b851ac3b039be23eaf1"
 )
 P3_APPROVAL_POSTGRES_REVIEWED_RUNNER_SHA256 = (
-    "1afe623226adf06fd27bf859a9f010fb56678b408b7f653dd3437c8b9b2ed676"
+    "6379f47195191cdc7c1ccd90afebdee31b6c9afd95991b851ac3b039be23eaf1"
+)
+P4_RUNTIME_ENROLLMENT_SELECTORS = (
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_100_identical_runtime_enrollments_converge_to_one_identity",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_enrollment_conflict_and_cross_scope_idempotency_are_isolated",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_renew_replay_revoke_and_expired_paths_are_nonduplicating",
 )
 TRUSTED_STATIC_BUSYBOX = Path("/usr/bin/busybox")
 TRUSTED_STATIC_BUSYBOX_SHA256 = "98d9040015eb17931e17b45e00b5f49f2451326372d5107a3a280f1cb3aaf3fc"
@@ -657,6 +665,20 @@ def _reviewed_p3_approval_records(node_id: str = "P3-APPROVAL-003") -> list[dict
     ]
 
 
+def _reviewed_p4_runtime_enrollment_records() -> list[dict[str, Any]]:
+    return [
+        {
+            **_transcript_record(list(argv), selector),
+            "cwd_scope": cwd_scope,
+        }
+        for (selector, argv), cwd_scope in zip(
+            _common.REVIEWED_P4_RUNTIME_ENROLLMENT_TRANSCRIPT,
+            _common.REVIEWED_CWD_SCOPES_BY_NODE["P4-ENROLLMENT-001"],
+            strict=True,
+        )
+    ]
+
+
 def _write_reviewed_p1_migration_transcript(path: Path) -> None:
     for record in _reviewed_p1_migration_records():
         _common.append_safe_transcript_record(
@@ -753,6 +775,15 @@ def _write_reviewed_p3_approval_transcript(path: Path, node_id: str = "P3-APPROV
             path,
             record,
             expected_node=node_id,
+        )
+
+
+def _write_reviewed_p4_runtime_enrollment_transcript(path: Path) -> None:
+    for record in _reviewed_p4_runtime_enrollment_records():
+        _common.append_safe_transcript_record(
+            path,
+            record,
+            expected_node="P4-ENROLLMENT-001",
         )
 
 
@@ -4658,6 +4689,140 @@ def test_p3_approval_run_validation_rejects_forged_corpus_metadata_before_output
             )
 
 
+def test_p4_runtime_enrollment_command_corpus_is_node_cwd_bound_and_exact_ordered(
+    tmp_path: Path,
+) -> None:
+    records = _reviewed_p4_runtime_enrollment_records()
+    assert len(records) == 10
+    assert [record["cwd_scope"] for record in records] == [
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "CP",
+    ]
+    assert records[-1]["argv"] == [
+        "./scripts/run_postgres_gate.sh",
+        *P4_RUNTIME_ENROLLMENT_SELECTORS,
+    ]
+    assert records[-1]["selectors"] == [
+        "packages/acgs-control-plane:P4-ENROLLMENT-001-postgres-runtime-enrollment-gate"
+    ]
+    assert _common.P4_RUNTIME_ENROLLMENT_SELECTORS == P4_RUNTIME_ENROLLMENT_SELECTORS
+    assert _common.EXPECTED_BOOTSTRAP_MAP["P4-ENROLLMENT-001"] == "EVID+CP+GZ"
+    assert _common.REVIEWED_RUN_METADATA_BY_NODE["P4-ENROLLMENT-001"]["process_schedule"] == (
+        "single-process-evidence-and-package-gates",
+        "postgres-p4-runtime-enrollment-disposable-concurrency",
+    )
+
+    transcript = tmp_path / "P4-ENROLLMENT-001/transcript.jsonl"
+    _write_reviewed_p4_runtime_enrollment_transcript(transcript)
+    loaded = generate_run._read_transcript(transcript, expected_node="P4-ENROLLMENT-001")
+    _common.validate_transcript_sequence(loaded, expected_node="P4-ENROLLMENT-001")
+
+    p3_approval_final = _reviewed_p3_approval_records()[-3]
+    unsafe_cases: list[list[dict[str, Any]]] = [
+        records[:-1],
+        [*records, records[-1]],
+        [records[1], records[0], *records[2:]],
+        [*records[:9], {**records[-1], "cwd_scope": "REPO_ROOT"}],
+        [
+            *records[:9],
+            {**records[-1], "argv": [*records[-1]["argv"], "-k", "runtime"]},
+        ],
+        [
+            *records[:9],
+            {
+                **records[-1],
+                "argv": [records[-1]["argv"][0], *reversed(P4_RUNTIME_ENROLLMENT_SELECTORS)],
+            },
+        ],
+        [*records[:9], p3_approval_final],
+    ]
+    for unsafe in unsafe_cases:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_transcript_sequence(unsafe, expected_node="P4-ENROLLMENT-001")
+
+    with pytest.raises(_common.EvidenceError):
+        _common.validate_transcript_sequence(records, expected_node="P3-APPROVAL-003")
+
+
+def test_p4_runtime_enrollment_run_validation_rejects_forged_corpus_metadata_before_output() -> (
+    None
+):
+    reviewed_schedule = [
+        "single-process-evidence-and-package-gates",
+        "postgres-p4-runtime-enrollment-disposable-concurrency",
+    ]
+
+    def run_with(**overrides: Any) -> dict[str, Any]:
+        run = {
+            "node_id": "P4-ENROLLMENT-001",
+            "commands": _reviewed_p4_runtime_enrollment_records(),
+            "determinism": {
+                "seed": 20260710,
+                "python_hash_seed": "0",
+                "process_schedule": reviewed_schedule,
+            },
+            "clock": {"source": "system-utc", "skew_ms": 0},
+            "skipped": [],
+            "external": [],
+        }
+        run.update(overrides)
+        return run
+
+    _common.validate_secret_free_run(run_with(), expected_node="P4-ENROLLMENT-001")
+
+    for determinism in (
+        {"seed": 20260711, "python_hash_seed": "0", "process_schedule": reviewed_schedule},
+        {"seed": 20260710, "python_hash_seed": "1", "process_schedule": reviewed_schedule},
+        {"seed": 20260710, "python_hash_seed": "0", "process_schedule": ["single-process"]},
+        {
+            "seed": 20260710,
+            "python_hash_seed": "0",
+            "process_schedule": [*reversed(reviewed_schedule)],
+        },
+    ):
+        with pytest.raises(_common.EvidenceError, match=r"run .*differs|outside the reviewed"):
+            _common.validate_secret_free_run(
+                run_with(determinism=determinism),
+                expected_node="P4-ENROLLMENT-001",
+            )
+
+    records = _reviewed_p4_runtime_enrollment_records()
+    forged_runs = (
+        run_with(node_id="P4-POLICY-SYNC-002"),
+        run_with(commands=records[:-1]),
+        run_with(commands=[records[1], records[0], *records[2:]]),
+        run_with(commands=[*records[:9], {**records[-1], "cwd_scope": "REPO_ROOT"}]),
+        run_with(
+            commands=[
+                *records[:9],
+                {
+                    **records[-1],
+                    "argv": [
+                        "bash",
+                        "-c",
+                        "./scripts/run_postgres_gate.sh "
+                        "tests/integration/test_runtime_enrollment_postgres.py",
+                    ],
+                },
+            ]
+        ),
+        run_with(skipped=[{"reason": "runtime enrollment checked elsewhere"}]),
+        run_with(external=[{"reason": "postgres run delegated"}]),
+        run_with(clock={"source": "localtime", "skew_ms": 0}),
+    )
+    for forged in forged_runs:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_secret_free_run(forged, expected_node="P4-ENROLLMENT-001")
+
+
 def test_run_evidence_schema_closes_reviewed_process_schedules() -> None:
     schema = _json(SCHEMA_ROOT / "acgs-run-evidence-v1.schema.json")
     validator = jsonschema.Draft202012Validator(schema["$defs"]["determinism"])
@@ -4681,6 +4846,10 @@ def test_run_evidence_schema_closes_reviewed_process_schedules() -> None:
         "single-process-evidence-and-package-gates",
         "postgres-pg9-approval-resume-multiprocess",
     ]
+    p4_runtime_enrollment_schedule = [
+        "single-process-evidence-and-package-gates",
+        "postgres-p4-runtime-enrollment-disposable-concurrency",
+    ]
 
     for process_schedule in (
         ["single-process"],
@@ -4689,6 +4858,7 @@ def test_run_evidence_schema_closes_reviewed_process_schedules() -> None:
         p3_policy_schedule,
         p3_mutations_schedule,
         p3_approval_schedule,
+        p4_runtime_enrollment_schedule,
     ):
         validator.validate(
             {
@@ -4704,11 +4874,13 @@ def test_run_evidence_schema_closes_reviewed_process_schedules() -> None:
         [*reversed(p3_policy_schedule)],
         [*reversed(p3_mutations_schedule)],
         [*reversed(p3_approval_schedule)],
+        [*reversed(p4_runtime_enrollment_schedule)],
         [*p2_schedule, "unreviewed-extra-process"],
         [*vertical_schedule, "unreviewed-extra-process"],
         [*p3_policy_schedule, "unreviewed-extra-process"],
         [*p3_mutations_schedule, "unreviewed-extra-process"],
         [*p3_approval_schedule, "unreviewed-extra-process"],
+        [*p4_runtime_enrollment_schedule, "unreviewed-extra-process"],
         ["unreviewed-process"],
     ):
         with pytest.raises(jsonschema.ValidationError):
@@ -5430,6 +5602,24 @@ def test_launcher_failure_status_authenticates_exit_ordinal_selector_and_gate_id
     assert p3b_gate_ids == p3_gate_ids
     p3c_gate_ids = namespace["EXPECTED_GATE_IDS"]["P3-APPROVAL-003C"]
     assert p3c_gate_ids == p3_gate_ids
+    p4_gate_ids = namespace["EXPECTED_GATE_IDS"]["P4-ENROLLMENT-001"]
+    assert p4_gate_ids[5:9] == ["gz-ruff-check", "gz-ruff-format", "gz-mypy", "gz-pytest"]
+    assert p4_gate_ids[9:] == ["p4-runtime-enrollment-postgres"]
+    assert namespace["EXPECTED_STATUS"]["P4-ENROLLMENT-001"] == (
+        "EVID+CP+GZ",
+        "10",
+        [
+            "single-process-evidence-and-package-gates",
+            "postgres-p4-runtime-enrollment-disposable-concurrency",
+        ],
+    )
+    assert namespace["EXPECTED_COMMAND_SELECTORS"]["P4-ENROLLMENT-001"][-1] == (
+        "packages/acgs-control-plane:P4-ENROLLMENT-001-postgres-runtime-enrollment-gate"
+    )
+    assert namespace["expected_command_argv"](
+        "packages/acgs-control-plane:P4-ENROLLMENT-001-postgres-runtime-enrollment-gate",
+        9,
+    ) == ["./scripts/run_postgres_gate.sh", *P4_RUNTIME_ENROLLMENT_SELECTORS]
     for retry_node in ("P3-APPROVAL-003B", "P3-APPROVAL-003C"):
         assert namespace["EXPECTED_COMMAND_SELECTORS"][retry_node][-3:] == [
             f"packages/acgs-control-plane:{retry_node}-postgres-approval-gate",
@@ -14497,7 +14687,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "bash -c" not in source and "sh -c" not in source and "python -c" not in source
     assert "'root:EVID-gate'" in source
     assert source.count("run_recorded_gate CP") == 7
-    assert source.count("run_trusted_parent_postgres_gate CP") == 7
+    assert source.count("run_trusted_parent_postgres_gate CP") == 8
     assert source.count("run_recorded_gate GZ") == 5
     assert source.count("run_recorded_gate P0") == 1
     assert source.count("run_trusted_parent_p0_launcher_authority_gate P0") == 1
@@ -14548,6 +14738,8 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "P3-MUTATIONS-002)" in source
     assert "P3-APPROVAL-003 | P3-APPROVAL-003B | P3-APPROVAL-003C)" in source
     assert "P3_APPROVAL_REVIEWED_BASE='a2299d510d792dd04646204653e405e0485204a6'" in source
+    assert "P4-ENROLLMENT-001)" in source
+    assert "P4_ENROLLMENT_REVIEWED_BASE='dba1da463edeb1b80f3f1d25e8c1c84726da1a4e'" in source
     assert "P3-APPROVAL-003B" in source
     assert "P3-APPROVAL-003C" in source
     assert "P1_SCOPE_REVIEWED_BASE='40781e1200289507fcfbcedf6ab14c120ac6aae8'" in source
@@ -14577,6 +14769,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "TMP_BASENAME='acgs-p3-approval'" in source
     assert "TMP_BASENAME='acgs-p3-approval-003b'" in source
     assert "TMP_BASENAME='acgs-p3-approval-003c'" in source
+    assert "TMP_BASENAME='acgs-p4-enrollment'" in source
     assert "P1_MIGRATION_GATE=(./scripts/run_postgres_gate.sh" in source
     assert "run_trusted_parent_postgres_gate CP" in source
     assert "packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate" in source
@@ -14692,6 +14885,14 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
         assert selector in source
     for selector in P3_APPROVAL_ROOT_SELECTORS:
         assert selector in source
+    assert "P4_RUNTIME_ENROLLMENT_CP_GATE=(./scripts/run_postgres_gate.sh" in source
+    assert (
+        "packages/acgs-control-plane:P4-ENROLLMENT-001-postgres-runtime-enrollment-gate" in source
+    )
+    assert "p4-runtime-enrollment-postgres" in source
+    assert "postgres-p4-runtime-enrollment-disposable-concurrency" in source
+    for selector in P4_RUNTIME_ENROLLMENT_SELECTORS:
+        assert selector in source
     assert "IFS=: read -r TMP_ROOT_DEVICE" in source
     assert "stat -c '%d:%i:%u:%a' --" in source
     assert "RUFF_NO_CACHE=true" in source
@@ -14706,6 +14907,8 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
         '"postgres-pg6-mutation-inventory-drift"]\'',
         'export ACGS_PROCESS_SCHEDULE=\'["single-process-evidence-and-package-gates",'
         '"postgres-pg9-approval-resume-multiprocess"]\'',
+        'export ACGS_PROCESS_SCHEDULE=\'["single-process-evidence-and-package-gates",'
+        '"postgres-p4-runtime-enrollment-disposable-concurrency"]\'',
         "export ACGS_CLOCK_SOURCE='system-utc'",
         "export ACGS_SKIPPED_JSON='[]'",
         "export ACGS_EXTERNAL_JSON='[]'",
@@ -15181,7 +15384,7 @@ exit $?
     )
     # Deliberate literal-prover corpus plus renderer-authority package manifests.
     assert Path("tests/saas_beta/test_cross_plane_contracts.py") in candidate_files
-    assert len(candidate_files) == 31
+    assert len(candidate_files) == 35
     candidate = tmp_path / "literal-prover-candidate"
     caller_parents: list[Path] = []
     added = False
@@ -20490,6 +20693,7 @@ def test_p1_clean_sibling_rejects_unassigned_retained_runtime_paths_before_outpu
     assert "P3-POLICY-001)" in pre_b1
     assert "P3-MUTATIONS-002)" in pre_b1
     assert "P3-APPROVAL-003 | P3-APPROVAL-003B | P3-APPROVAL-003C)" in pre_b1
+    assert "P4-ENROLLMENT-001)" in pre_b1
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP'" in pre_b1
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP+GZ'" in pre_b1
     assert "PREEXISTING_REJECT_PATHS=(" in pre_b1
@@ -20530,6 +20734,7 @@ def test_p1_clean_sibling_rejects_wrong_reviewed_parent_before_mutation(tmp_path
         ("P3-APPROVAL-003", "a2299d510d792dd04646204653e405e0485204a6"),
         ("P3-APPROVAL-003B", "a2299d510d792dd04646204653e405e0485204a6"),
         ("P3-APPROVAL-003C", "a2299d510d792dd04646204653e405e0485204a6"),
+        ("P4-ENROLLMENT-001", "dba1da463edeb1b80f3f1d25e8c1c84726da1a4e"),
     )
     for node_id, reviewed_parent in cases:
         wrong_parent = "1" * 40

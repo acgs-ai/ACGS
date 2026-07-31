@@ -335,6 +335,14 @@ P3_APPROVAL_ROOT_SELECTORS = (
     "tests/saas_beta/test_cross_plane_contracts.py::"
     "test_approval_contract_locks_vote_and_resume_assurance",
 )
+P4_RUNTIME_ENROLLMENT_SELECTORS = (
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_100_identical_runtime_enrollments_converge_to_one_identity",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_enrollment_conflict_and_cross_scope_idempotency_are_isolated",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_renew_replay_revoke_and_expired_paths_are_nonduplicating",
+)
 REVIEWED_P1_MIGRATION_TRANSCRIPT = (
     REVIEWED_P0_TRANSCRIPT[0],
     *REVIEWED_P0_TRANSCRIPT[1:5],
@@ -639,6 +647,14 @@ REVIEWED_P3_APPROVAL_003C_TRANSCRIPT = (
         ),
     ),
 )
+REVIEWED_P4_RUNTIME_ENROLLMENT_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:9],
+    (
+        "packages/acgs-control-plane:P4-ENROLLMENT-001-postgres-runtime-enrollment-gate",
+        ("./scripts/run_postgres_gate.sh", *P4_RUNTIME_ENROLLMENT_SELECTORS),
+    ),
+)
 REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P0-EVIDENCE-000": REVIEWED_P0_TRANSCRIPT,
     "P1-MIGRATION-001": REVIEWED_P1_MIGRATION_TRANSCRIPT,
@@ -654,6 +670,7 @@ REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P3-APPROVAL-003": REVIEWED_P3_APPROVAL_TRANSCRIPT,
     "P3-APPROVAL-003B": REVIEWED_P3_APPROVAL_003B_TRANSCRIPT,
     "P3-APPROVAL-003C": REVIEWED_P3_APPROVAL_003C_TRANSCRIPT,
+    "P4-ENROLLMENT-001": REVIEWED_P4_RUNTIME_ENROLLMENT_TRANSCRIPT,
 }
 REVIEWED_CWD_SCOPES_BY_NODE = {
     "P1-MIGRATION-001": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
@@ -756,6 +773,18 @@ REVIEWED_CWD_SCOPES_BY_NODE = {
         "CP",
         "REPO_ROOT",
         "REPO_ROOT",
+    ),
+    "P4-ENROLLMENT-001": (
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "CP",
     ),
 }
 REVIEWED_COMMAND_SELECTORS = {argv: selector for selector, argv in REVIEWED_P0_TRANSCRIPT}
@@ -866,6 +895,15 @@ REVIEWED_RUN_METADATA_BY_NODE["P3-APPROVAL-003C"] = {
     "process_schedule": (
         "single-process-evidence-and-package-gates",
         "postgres-pg9-approval-resume-multiprocess",
+    ),
+    "clock_source": "system-utc",
+    "skipped": (),
+    "external": (),
+}
+REVIEWED_RUN_METADATA_BY_NODE["P4-ENROLLMENT-001"] = {
+    "process_schedule": (
+        "single-process-evidence-and-package-gates",
+        "postgres-p4-runtime-enrollment-disposable-concurrency",
     ),
     "clock_source": "system-utc",
     "skipped": (),
@@ -1271,6 +1309,7 @@ def validate_secret_free_run(value: Any, *, expected_node: str | None = None) ->
         "P3-APPROVAL-003",
         "P3-APPROVAL-003B",
         "P3-APPROVAL-003C",
+        "P4-ENROLLMENT-001",
     } and (determinism.get("seed") != 20260710 or determinism.get("python_hash_seed") != "0"):
         if str(node_id).startswith("P1-"):
             fail("P1 run determinism differs from the reviewed node contract", phase="B6")

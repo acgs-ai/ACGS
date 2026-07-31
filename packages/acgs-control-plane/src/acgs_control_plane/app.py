@@ -14,11 +14,12 @@ Layering per request:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 from collections.abc import Iterator
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -108,6 +109,15 @@ from acgs_control_plane.policy_registry import (
     local_policy_registry_receipt_sealer,
 )
 from acgs_control_plane.rbac import Permission, Role, role_allows
+from acgs_control_plane.runtime_enrollment import (
+    RuntimeBootstrapPepper,
+    RuntimeEnrollmentHttpError,
+    RuntimeEnrollmentService,
+    local_runtime_bootstrap_pepper,
+    local_runtime_descriptor_signer,
+    local_runtime_enrollment_issuer,
+    local_runtime_enrollment_receipt_sealer,
+)
 from acgs_control_plane.schemas import (
     AgentRegisterRequest,
     AgentResponse,
@@ -128,6 +138,12 @@ from acgs_control_plane.schemas import (
     ReceiptListResponse,
     ReceiptSummary,
     ReceiptVerifyResponse,
+    RuntimeEnrollmentBootstrapCreateRequest,
+    RuntimeEnrollmentBootstrapCreateResponse,
+    RuntimeEnrollmentRequest,
+    RuntimeEnrollmentResponse,
+    RuntimeIdentityRevokeRequest,
+    RuntimeSignedRequest,
     SimulateRequest,
     SimulateResponse,
     TenantBootstrapRequest,
@@ -165,6 +181,15 @@ _TENANT_BOOTSTRAP_PUBLIC_DETAILS = {
     "TX_ABORTED": "tenant bootstrap transaction aborted",
 }
 _TENANT_BOOTSTRAP_NO_STORE_HEADERS = {"Cache-Control": "no-store"}
+_RUNTIME_ENROLLMENT_NO_STORE_HEADERS = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+_RUNTIME_ENROLLMENT_NO_STORE_PATH_PREFIXES = (
+    "/v1/runtime-enrollments",
+    "/v1/runtime-identities/",
+)
+_RUNTIME_ENROLLMENT_NO_STORE_PATH_SUFFIXES = (
+    "/runtime-enrollment-bootstraps",
+    "/revoke",
+)
 
 # ---------------------------------------------------------------------------
 # Dependencies
@@ -281,6 +306,42 @@ class _TenantBootstrapRequestIdMiddleware:
         await self.app(scope, receive, send_no_store)
 
 
+class _RuntimeEnrollmentNoStoreMiddleware:
+    """Stamp no-store headers on runtime enrollment and credential responses."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http" or not _is_runtime_enrollment_no_store_path(
+            str(scope.get("path", ""))
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        async def send_no_store(message: Any) -> None:
+            if message["type"] == "http.response.start":
+                headers = [
+                    (name, value)
+                    for name, value in message.get("headers", [])
+                    if name.lower() not in {b"cache-control", b"pragma"}
+                ]
+                headers.extend(
+                    (name.lower().encode("ascii"), value.encode("ascii"))
+                    for name, value in _RUNTIME_ENROLLMENT_NO_STORE_HEADERS.items()
+                )
+                message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_no_store)
+
+
+def _is_runtime_enrollment_no_store_path(path: str) -> bool:
+    return path.startswith(_RUNTIME_ENROLLMENT_NO_STORE_PATH_PREFIXES) or path.endswith(
+        _RUNTIME_ENROLLMENT_NO_STORE_PATH_SUFFIXES
+    )
+
+
 def _record_tenant_bootstrap_refusal(request: Request, exc: TenantBootstrapHttpError) -> None:
     if request.url.path != "/v1/tenant-bootstrap":
         return
@@ -371,6 +432,10 @@ def create_app(
     policy_registry_receipt_sealer: Any | None = None,
     policy_registry_receipt_issuer: Any | None = None,
     approval_payload_sealer: Any | None = None,
+    runtime_enrollment_issuer: Any | None = None,
+    runtime_enrollment_receipt_sealer: Any | None = None,
+    runtime_bootstrap_pepper: Any | None = None,
+    runtime_descriptor_signer: Any | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     app = MutationGuardedFastAPI(
@@ -512,6 +577,26 @@ def create_app(
             },
         )
 
+    @app.exception_handler(RuntimeEnrollmentHttpError)
+    def _runtime_enrollment_error(
+        request: Request, exc: RuntimeEnrollmentHttpError
+    ) -> JSONResponse:
+        if exc.receipt_id is not None and exc.decision is not None:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={
+                    "status": exc.status,
+                    "reason": exc.detail,
+                    "receipt_id": exc.receipt_id,
+                    "decision": exc.decision,
+                    "request_id": request_id_from_scope(request.scope),
+                },
+            )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"code": exc.code, "status": exc.status, "detail": exc.detail},
+        )
+
     # One handler per exception type wins in FastAPI, so the tenant-bootstrap
     # refusal recording (master) and the redacted admission errors (this branch)
     # have to live in the same function rather than one replacing the other.
@@ -545,6 +630,7 @@ def create_app(
             content=redacted_error(code, request_id_from_scope(request.scope)),
         )
 
+    app.add_middleware(_RuntimeEnrollmentNoStoreMiddleware)
     app.add_middleware(_TenantBootstrapRequestIdMiddleware)
 
     @app.exception_handler(Exception)
@@ -726,6 +812,43 @@ def create_app(
         receipt_sealer=effective_policy_registry_receipt_sealer,
         receipt_issuer=policy_registry_receipt_issuer,
     )
+    if settings.runtime_posture is RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED:
+        effective_runtime_issuer = runtime_enrollment_issuer or local_runtime_enrollment_issuer()
+        effective_runtime_receipt_sealer = (
+            runtime_enrollment_receipt_sealer or local_runtime_enrollment_receipt_sealer()
+        )
+        effective_runtime_bootstrap_pepper = (
+            runtime_bootstrap_pepper or local_runtime_bootstrap_pepper()
+        )
+        effective_runtime_descriptor_signer = (
+            runtime_descriptor_signer or local_runtime_descriptor_signer()
+        )
+    else:
+        if (
+            runtime_enrollment_issuer is None
+            or runtime_enrollment_receipt_sealer is None
+            or runtime_bootstrap_pepper is None
+            or runtime_descriptor_signer is None
+        ):
+            raise ProductionPostureBlocked(
+                (
+                    PostureBlocker(
+                        "RUNTIME_ENROLLMENT_PROVIDER_REQUIRED",
+                        "runtime-enrollment-provider",
+                    ),
+                )
+            )
+        effective_runtime_issuer = runtime_enrollment_issuer
+        effective_runtime_receipt_sealer = runtime_enrollment_receipt_sealer
+        effective_runtime_bootstrap_pepper = runtime_bootstrap_pepper
+        effective_runtime_descriptor_signer = runtime_descriptor_signer
+    app.state.runtime_enrollment_service = RuntimeEnrollmentService(
+        app.state.session_factory,
+        issuer=effective_runtime_issuer,
+        receipt_sealer=effective_runtime_receipt_sealer,
+        bootstrap_pepper=cast(RuntimeBootstrapPepper, effective_runtime_bootstrap_pepper),
+        descriptor_signer=effective_runtime_descriptor_signer,
+    )
     try:
         app.state.mutation_inventory_seal = build_mutation_inventory_seal(app)
     except BaseException:
@@ -749,7 +872,7 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/readyz", tags=["meta"])
     def readyz(request: Request) -> JSONResponse:
         preflight: SchemaPreflight = request.app.state.schema_preflight
-        schema_current = preflight.state is DatabaseSchemaState.VERSION_0010
+        schema_current = preflight.state is DatabaseSchemaState.VERSION_0011
         blockers: tuple[PostureBlocker, ...] = request.app.state.readiness_blockers
         return JSONResponse(
             status_code=503,
@@ -1033,6 +1156,179 @@ def _register_routes(app: FastAPI) -> None:
             state={"trust_tier": rec.trust_tier},
         )
         return _agent_response(rec, receipt_id=outcome.receipt.id)
+
+    # -- runtime identity enrollment ----------------------------------------
+
+    @app.post(
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/runtime-enrollment-bootstraps",
+        response_model=RuntimeEnrollmentBootstrapCreateResponse,
+        status_code=201,
+        tags=["runtime-identities"],
+        operation_id="runtime-enrollment-bootstrap.issue",
+    )
+    def issue_runtime_enrollment_bootstrap(
+        project_id: str,
+        environment_id: str,
+        body: RuntimeEnrollmentBootstrapCreateRequest,
+        org: OrgDep,
+        request: Request,
+        _session: SessionDep,
+        principal: Annotated[Principal, require(Permission.RUNTIME_ENROLLMENT_MANAGE)],
+    ) -> RuntimeEnrollmentBootstrapCreateResponse:
+        service: RuntimeEnrollmentService = request.app.state.runtime_enrollment_service
+        return service.issue_bootstrap(
+            org_id=org.id,
+            project_id=project_id,
+            environment_id=environment_id,
+            principal=principal,
+            body=body,
+        )
+
+    @app.post(
+        "/v1/runtime-enrollments",
+        response_model=RuntimeEnrollmentResponse,
+        status_code=201,
+        tags=["runtime-identities"],
+        operation_id="runtime-identity.enroll",
+    )
+    async def enroll_runtime_identity(
+        body: RuntimeEnrollmentRequest,
+        request: Request,
+        authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        bootstrap_id: Annotated[str | None, Header(alias="X-ACGS-Bootstrap-ID")] = None,
+        pop_signature: Annotated[str | None, Header(alias="X-ACGS-Runtime-PoP-Signature")] = None,
+        pop_key_id: Annotated[str | None, Header(alias="X-ACGS-Runtime-PoP-Key-ID")] = None,
+    ) -> RuntimeEnrollmentResponse:
+        service: RuntimeEnrollmentService = request.app.state.runtime_enrollment_service
+        return service.enroll(
+            body=body,
+            authorization=authorization,
+            idempotency_key=idempotency_key,
+            pop_signature=pop_signature,
+            pop_key_id=pop_key_id,
+            raw_body=await request.body(),
+            bootstrap_id_header=bootstrap_id,
+        )
+
+    @app.post(
+        "/v1/runtime-identities/{identity_id}/renew",
+        response_model=RuntimeEnrollmentResponse,
+        tags=["runtime-identities"],
+        operation_id="runtime-identity.renew",
+    )
+    async def renew_runtime_identity(
+        identity_id: str,
+        request: Request,
+        runtime_identity_id: Annotated[
+            str | None, Header(alias="X-ACGS-Runtime-Identity-ID")
+        ] = None,
+        key_id: Annotated[str | None, Header(alias="X-ACGS-Runtime-Key-ID")] = None,
+        audience: Annotated[str | None, Header(alias="X-ACGS-Runtime-Audience")] = None,
+        credential_id: Annotated[str | None, Header(alias="X-ACGS-Runtime-Credential-ID")] = None,
+        credential_generation: Annotated[
+            str | None, Header(alias="X-ACGS-Runtime-Credential-Generation")
+        ] = None,
+        timestamp: Annotated[str | None, Header(alias="X-ACGS-Runtime-Timestamp")] = None,
+        nonce: Annotated[str | None, Header(alias="X-ACGS-Runtime-Nonce")] = None,
+        body_sha256: Annotated[str | None, Header(alias="X-ACGS-Runtime-Body-Sha256")] = None,
+        signature: Annotated[str | None, Header(alias="X-ACGS-Runtime-Signature")] = None,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> RuntimeEnrollmentResponse:
+        service: RuntimeEnrollmentService = request.app.state.runtime_enrollment_service
+        if runtime_identity_id is not None and runtime_identity_id != identity_id:
+            raise RuntimeEnrollmentHttpError(
+                400,
+                "IDENTITY_ID_MISMATCH",
+                "bad_request",
+                "runtime identity header does not match route identity",
+            )
+        missing = [
+            name
+            for name, value in {
+                "X-ACGS-Runtime-Key-ID": key_id,
+                "X-ACGS-Runtime-Audience": audience,
+                "X-ACGS-Runtime-Credential-ID": credential_id,
+                "X-ACGS-Runtime-Credential-Generation": credential_generation,
+                "X-ACGS-Runtime-Timestamp": timestamp,
+                "X-ACGS-Runtime-Nonce": nonce,
+                "X-ACGS-Runtime-Body-Sha256": body_sha256,
+                "X-ACGS-Runtime-Signature": signature,
+                "Idempotency-Key": idempotency_key,
+            }.items()
+            if value is None
+        ]
+        if missing:
+            raise RuntimeEnrollmentHttpError(
+                400,
+                "RUNTIME_SIGNATURE_HEADERS_REQUIRED",
+                "bad_request",
+                f"runtime signed request headers are missing: {', '.join(missing)}",
+            )
+        try:
+            parsed_generation = int(cast(str, credential_generation))
+        except ValueError as exc:
+            raise RuntimeEnrollmentHttpError(
+                400,
+                "CREDENTIAL_GENERATION_MALFORMED",
+                "bad_request",
+                "runtime credential generation header must be an integer",
+            ) from exc
+        body = RuntimeSignedRequest(
+            key_id=cast(str, key_id),
+            credential_id=cast(str, credential_id),
+            credential_generation=parsed_generation,
+            audience=cast(str, audience),
+            timestamp=cast(str, timestamp),
+            nonce=cast(str, nonce),
+            idempotency_key_digest=hashlib.sha256(
+                cast(str, idempotency_key).encode("utf-8")
+            ).hexdigest(),
+            signature=cast(str, signature),
+        )
+        return service.renew(
+            identity_id=identity_id,
+            body=body,
+            raw_body=await request.body(),
+            query=request.url.query,
+            body_sha256=body_sha256,
+            idempotency_key=cast(str, idempotency_key),
+        )
+
+    @app.post(
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/runtime-identities/{identity_id}/revoke",
+        response_model=RuntimeEnrollmentResponse,
+        tags=["runtime-identities"],
+        operation_id="runtime-identity.revoke",
+    )
+    def revoke_runtime_identity(
+        project_id: str,
+        environment_id: str,
+        identity_id: str,
+        body: RuntimeIdentityRevokeRequest,
+        org: OrgDep,
+        request: Request,
+        _session: SessionDep,
+        principal: Annotated[Principal, require(Permission.RUNTIME_IDENTITY_REVOKE)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> RuntimeEnrollmentResponse:
+        if not idempotency_key:
+            raise RuntimeEnrollmentHttpError(
+                400,
+                "IDEMPOTENCY_KEY_REQUIRED",
+                "bad_request",
+                "runtime identity revocation requires Idempotency-Key",
+            )
+        service: RuntimeEnrollmentService = request.app.state.runtime_enrollment_service
+        return service.revoke(
+            org_id=org.id,
+            project_id=project_id,
+            environment_id=environment_id,
+            identity_id=identity_id,
+            principal=principal,
+            body=body,
+            idempotency_key=idempotency_key,
+        )
 
     # -- approvals -----------------------------------------------------------
 

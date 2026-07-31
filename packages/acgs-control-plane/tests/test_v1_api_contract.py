@@ -379,7 +379,12 @@ def test_v1_org_aliases_share_v0_endpoints_with_stable_operation_ids(tmp_path: P
                 assert alias.status_code == route.status_code
                 assert alias.dependencies == route.dependencies
                 assert alias.operation_id == f"v1_{route.unique_id}"
-                if route.operation_id in {"approval.vote", "approval.resume"}:
+                if route.operation_id in {
+                    "approval.vote",
+                    "approval.resume",
+                    "runtime-enrollment-bootstrap.issue",
+                    "runtime-identity.revoke",
+                }:
                     assert alias.operation_id == f"v1_{route.operation_id}"
                 else:
                     assert route.operation_id is None

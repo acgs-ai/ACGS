@@ -517,10 +517,465 @@ class AgentRegistrationIdempotency(Base):
     org_id: Mapped[str] = mapped_column(
         ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"),
         index=True,
+        nullable=False,
     )
     project_id: Mapped[str] = mapped_column(String(64), nullable=False)
     environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
     agent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    receipt_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    response: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RuntimeIdentityGate(Base):
+    """Server-owned runtime identity namespace for one environment."""
+
+    __tablename__ = "runtime_identity_gates"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_runtime_identity_gates_environment",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "id",
+            name="uq_runtime_identity_gate_scope_id",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            name="uq_runtime_identity_gate_scope",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        CheckConstraint(
+            "status IN ('active', 'revoked')",
+            name="ck_runtime_identity_gate_status",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"),
+        index=True,
+        nullable=False,
+    )
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RuntimeIdentity(Base):
+    """Hosted runtime identity enrolled through a one-use bootstrap and PoP."""
+
+    __tablename__ = "runtime_identities"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_runtime_identities_environment",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "gate_id"],
+            [
+                "runtime_identity_gates.org_id",
+                "runtime_identity_gates.project_id",
+                "runtime_identity_gates.environment_id",
+                "runtime_identity_gates.id",
+            ],
+            name="fk_runtime_identities_gate_scope",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "id",
+            name="uq_runtime_identities_scope_id",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "name",
+            name="uq_runtime_identities_scope_name",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "public_key_thumbprint",
+            name="uq_runtime_identities_scope_thumbprint",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        CheckConstraint(
+            "status IN ('active', 'revoked')",
+            name="ck_runtime_identities_status",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"),
+        index=True,
+        nullable=False,
+    )
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    gate_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    actor: Mapped[str] = mapped_column(String(240), nullable=False)
+    workload_key_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    public_key: Mapped[str] = mapped_column(Text, nullable=False)
+    public_key_thumbprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    descriptor: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    current_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RuntimeEnrollmentBootstrap(Base):
+    """One-use runtime enrollment bootstrap storing only a keyed token digest."""
+
+    __tablename__ = "runtime_enrollment_bootstraps"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_runtime_enrollment_bootstraps_environment",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "gate_id"],
+            [
+                "runtime_identity_gates.org_id",
+                "runtime_identity_gates.project_id",
+                "runtime_identity_gates.environment_id",
+                "runtime_identity_gates.id",
+            ],
+            name="fk_runtime_enrollment_bootstraps_gate_scope",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "consumed_by_identity_id"],
+            [
+                "runtime_identities.org_id",
+                "runtime_identities.project_id",
+                "runtime_identities.environment_id",
+                "runtime_identities.id",
+            ],
+            name="fk_runtime_enrollment_bootstraps_consumed_identity_scope",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "bootstrap_digest",
+            name="uq_runtime_enrollment_bootstrap_digest",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "bootstrap_locator",
+            name="uq_runtime_enrollment_bootstrap_locator",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        CheckConstraint(
+            "status IN ('active', 'consumed', 'revoked', 'expired')",
+            name="ck_runtime_enrollment_bootstrap_status",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        Index(
+            "uq_runtime_enrollment_active_bootstrap_scope",
+            "org_id",
+            "project_id",
+            "environment_id",
+            "gate_id",
+            unique=True,
+            sqlite_where=sa.text("status = 'active'"),
+            postgresql_where=sa.text("status = 'active'"),
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"),
+        index=True,
+        nullable=False,
+    )
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    gate_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    bootstrap_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    bootstrap_locator: Mapped[str] = mapped_column(String(64), nullable=False)
+    pepper_key_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    server_challenge: Mapped[str] = mapped_column(String(256), nullable=False)
+    runtime_identity_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    audience: Mapped[str] = mapped_column(String(128), nullable=False)
+    workload_key_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    public_key_thumbprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    created_by_actor: Mapped[str] = mapped_column(String(200), nullable=False)
+    consumed_by_identity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    policy_head_generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RuntimeCredentialGeneration(Base):
+    """Public runtime credential generation; no bearer refresh secret exists."""
+
+    __tablename__ = "runtime_credential_generations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "identity_id"],
+            [
+                "runtime_identities.org_id",
+                "runtime_identities.project_id",
+                "runtime_identities.environment_id",
+                "runtime_identities.id",
+            ],
+            name="fk_runtime_credential_generations_identity_scope",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "identity_id",
+            "generation",
+            name="uq_runtime_credential_generation",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        CheckConstraint(
+            "status IN ('active', 'superseded', 'revoked', 'expired')",
+            name="ck_runtime_credential_generation_status",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        Index(
+            "uq_runtime_credential_active_identity",
+            "org_id",
+            "project_id",
+            "environment_id",
+            "identity_id",
+            unique=True,
+            sqlite_where=sa.text("status = 'active'"),
+            postgresql_where=sa.text("status = 'active'"),
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"),
+        index=True,
+        nullable=False,
+    )
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    identity_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    workload_key_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    public_key_thumbprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    not_before: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    not_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    descriptor: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RuntimeEnrollmentIdempotency(Base):
+    """Terminal public enrollment response for one client idempotency key."""
+
+    __tablename__ = "runtime_enrollment_idempotency"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "identity_id"],
+            [
+                "runtime_identities.org_id",
+                "runtime_identities.project_id",
+                "runtime_identities.environment_id",
+                "runtime_identities.id",
+            ],
+            name="fk_runtime_enrollment_idempotency_identity_scope",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "receipt_id"],
+            [
+                "managed_decision_receipts.org_id",
+                "managed_decision_receipts.project_id",
+                "managed_decision_receipts.environment_id",
+                "managed_decision_receipts.receipt_id",
+            ],
+            name="fk_runtime_enrollment_idempotency_receipt_scope",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "identity_id",
+            "idempotency_key_hash",
+            name="uq_runtime_enrollment_idempotency_scope_key",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "identity_id",
+            name="uq_runtime_enrollment_idempotency_identity",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    idempotency_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"),
+        index=True,
+        nullable=False,
+    )
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    identity_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    receipt_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    response: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RuntimeRequestNonce(Base):
+    """Durable signed-request nonce burn for hosted runtime identity operations."""
+
+    __tablename__ = "runtime_request_nonces"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "identity_id"],
+            [
+                "runtime_identities.org_id",
+                "runtime_identities.project_id",
+                "runtime_identities.environment_id",
+                "runtime_identities.id",
+            ],
+            name="fk_runtime_request_nonces_identity_scope",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "identity_id",
+            "nonce",
+            name="uq_runtime_request_nonce_identity",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"),
+        index=True,
+        nullable=False,
+    )
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    identity_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    nonce: Mapped[str] = mapped_column(String(128), nullable=False)
+    idempotency_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(64), nullable=False)
+    receipt_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    response: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant, nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RuntimeOperationIdempotency(Base):
+    """Terminal response for one governed runtime identity operation."""
+
+    __tablename__ = "runtime_operation_idempotency"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "receipt_id"],
+            [
+                "managed_decision_receipts.org_id",
+                "managed_decision_receipts.project_id",
+                "managed_decision_receipts.environment_id",
+                "managed_decision_receipts.receipt_id",
+            ],
+            name="fk_runtime_operation_idempotency_receipt_scope",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "identity_id",
+            "operation",
+            "idempotency_key_hash",
+            name="uq_runtime_operation_idempotency_scope_operation_key",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    idempotency_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"),
+        index=True,
+        nullable=False,
+    )
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    identity_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    operation: Mapped[str] = mapped_column(String(64), nullable=False)
     receipt_id: Mapped[str] = mapped_column(String(200), nullable=False)
     response: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

@@ -82,6 +82,11 @@ p3_approval_selectors=(
   'tests/integration/test_approval_resume_postgres.py::test_pg_multiprocess_resume_race_authorizes_one_agent'
   'tests/integration/test_approval_resume_postgres.py::test_pg_approval_composite_constraints_reject_cross_scope_rows'
 )
+p4_runtime_enrollment_selectors=(
+  'tests/integration/test_runtime_enrollment_postgres.py::test_100_identical_runtime_enrollments_converge_to_one_identity'
+  'tests/integration/test_runtime_enrollment_postgres.py::test_runtime_enrollment_conflict_and_cross_scope_idempotency_are_isolated'
+  'tests/integration/test_runtime_enrollment_postgres.py::test_runtime_renew_replay_revoke_and_expired_paths_are_nonduplicating'
+)
 immutable_0004_selector='tests/integration/test_migrations_postgres.py::test_immutable_0004_upgrade_defers_managed_ledger_constraints_and_bootstraps'
 selector_mode=''
 junit_expected_tests=0
@@ -173,12 +178,23 @@ if [[ -z "$selector_mode" && $# == "${#p3_approval_selectors[@]}" ]]; then
     fi
   done
 fi
+if [[ -z "$selector_mode" && $# == "${#p4_runtime_enrollment_selectors[@]}" ]]; then
+  selector_mode='p4-runtime-enrollment'
+  junit_expected_tests=3
+  actual_selectors=("$@")
+  for index in "${!p4_runtime_enrollment_selectors[@]}"; do
+    if [[ "${actual_selectors[index]}" != "${p4_runtime_enrollment_selectors[index]}" ]]; then
+      selector_mode=''
+      break
+    fi
+  done
+fi
 if [[ -z "$selector_mode" && $# == 1 && "$1" == "$immutable_0004_selector" ]]; then
   selector_mode='p2-immutable-0004-upgrade'
   junit_expected_tests=1
 fi
 if [[ -z "$selector_mode" ]]; then
-  echo 'the exact ordered PostgreSQL migration, P2 tenant-bootstrap, P2 register, P2 idempotency, P2 vertical-gate, P3 policy, P3 mutations, P3 approval, or immutable-0004 selector is required' >&2
+  echo 'the exact ordered PostgreSQL migration, P2 tenant-bootstrap, P2 register, P2 idempotency, P2 vertical-gate, P3 policy, P3 mutations, P3 approval, P4 runtime-enrollment, or immutable-0004 selector is required' >&2
   exit 64
 fi
 case "${PYTEST_ADDOPTS:-}" in

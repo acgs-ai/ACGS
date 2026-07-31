@@ -29,9 +29,10 @@ def test_mutation_inventory_preserves_canonical_and_legacy_truth(client: TestCli
         if contract.execution_class is ExecutionClass.LEGACY_UNSIGNED_WRITE
     ]
 
-    # 6 unversioned canonical writes plus the 5 /v1 aliases (tenant bootstrap
-    # is already served under /v1), and 6 legacy writes plus their /v1 aliases.
-    assert len(canonical_contracts) == 11
+    # 10 canonical writes plus the 7 /v1 aliases whose source path is not
+    # already versioned. Tenant bootstrap, runtime enroll, and runtime renew are
+    # already served only under /v1.
+    assert len(canonical_contracts) == 17
     assert len(legacy_contracts) == 12
     assert {
         (definition.method, definition.path, definition.action, definition.effect_class)
@@ -51,6 +52,12 @@ def test_mutation_inventory_preserves_canonical_and_legacy_truth(client: TestCli
         "approval.vote.v1",
         "approval.resume",
         "approval.resume.v1",
+        "runtime-enrollment-bootstrap.issue",
+        "runtime-enrollment-bootstrap.issue.v1",
+        "runtime-identity.enroll",
+        "runtime-identity.renew",
+        "runtime-identity.revoke",
+        "runtime-identity.revoke.v1",
         "environment-policy.publish",
         "environment-policy.publish.v1",
         "environment-policy.activate",
@@ -63,6 +70,37 @@ def test_mutation_inventory_preserves_canonical_and_legacy_truth(client: TestCli
         if definition.effect_class
         in {MutationEffectClass.DURABLE_JOB_ENQUEUE, MutationEffectClass.EXTERNAL_ATTEMPT}
     ]
+    runtime_definitions = {
+        definition.operation_id: definition
+        for definition in CANONICAL_MUTATION_DEFINITIONS
+        if definition.operation_id.startswith(("runtime-enrollment", "runtime-identity"))
+    }
+    assert set(runtime_definitions) == {
+        "runtime-enrollment-bootstrap.issue",
+        "runtime-enrollment-bootstrap.issue.v1",
+        "runtime-identity.enroll",
+        "runtime-identity.renew",
+        "runtime-identity.revoke",
+        "runtime-identity.revoke.v1",
+    }
+    assert {
+        definition.operation_id
+        for definition in runtime_definitions.values()
+        if definition.service == "acgs_control_plane.runtime_enrollment.RuntimeEnrollmentService"
+        and definition.state_key == "runtime_enrollment_service"
+        and definition.dispatcher == "managed-mutation-uow.execute_with_receipt"
+    } == set(runtime_definitions)
+    assert {
+        operation_id: definition.service_method
+        for operation_id, definition in runtime_definitions.items()
+    } == {
+        "runtime-enrollment-bootstrap.issue": "issue_bootstrap",
+        "runtime-enrollment-bootstrap.issue.v1": "issue_bootstrap",
+        "runtime-identity.enroll": "enroll",
+        "runtime-identity.renew": "renew",
+        "runtime-identity.revoke": "revoke",
+        "runtime-identity.revoke.v1": "revoke",
+    }
     assert (
         len(
             [

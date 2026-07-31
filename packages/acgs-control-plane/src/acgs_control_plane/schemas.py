@@ -142,6 +142,96 @@ class ApprovalVoteResponse(BaseModel):
     receipt_id: str
 
 
+class RuntimeEnrollmentBootstrapCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ttl_seconds: int = Field(default=600, ge=1, le=900)
+    workload_key_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    public_key_thumbprint: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]+$")
+
+
+class RuntimeEnrollmentBootstrapCreateResponse(BaseModel):
+    bootstrap_id: str
+    org_id: str
+    project_id: str
+    environment_id: str
+    gate_id: str
+    runtime_identity_id: str
+    audience: str
+    workload_key_id: str
+    public_key_thumbprint: str
+    bootstrap_token: str = Field(repr=False)
+    server_challenge: str = Field(repr=False)
+    expires_at: datetime
+    receipt_id: str
+
+
+class RuntimeEnrollmentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    audience: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    bootstrap_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    gate_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    idempotency_key_digest: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]+$")
+    org_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    project_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    environment: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    runtime_identity_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    public_key: str = Field(min_length=32, max_length=512)
+    public_key_thumbprint: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]+$")
+    client_nonce: str = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    timestamp: str = Field(min_length=20, max_length=40)
+    server_challenge: str = Field(min_length=16, max_length=256)
+
+
+class RuntimeIdentityDescriptor(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str
+    scope: dict[str, str]
+    runtime_identity_id: str
+    credential_id: str
+    credential_generation: int
+    public_key: str
+    public_key_thumbprint: str
+    issuer: str
+    audience: str
+    issued_at: datetime
+    expires_at: datetime
+    signature_algorithm: str
+    signing_key_id: str
+    signature: str
+
+
+class RuntimeEnrollmentResponse(BaseModel):
+    identity_id: str
+    org_id: str
+    project_id: str
+    environment_id: str
+    generation: int
+    descriptor: RuntimeIdentityDescriptor
+    receipt_id: str
+
+
+class RuntimeSignedRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    credential_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    credential_generation: int = Field(ge=1)
+    audience: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    timestamp: str = Field(min_length=20, max_length=40)
+    nonce: str = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9._:/-]+$")
+    idempotency_key_digest: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]+$")
+    signature: str = Field(min_length=86, max_length=88)
+
+
+class RuntimeIdentityRevokeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_credential_generation: int = Field(ge=1)
+
+
 # ---------------------------------------------------------------------------
 # Policy registry
 # ---------------------------------------------------------------------------
