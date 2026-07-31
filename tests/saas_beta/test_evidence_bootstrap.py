@@ -14619,6 +14619,10 @@ def test_clean_sibling_guardian_completion_uses_unlinked_run_json_fd_and_rejects
     tmp_path: Path,
 ) -> None:
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    claim_terminal_status_writer = _shell_function(source, "claim_terminal_status_writer")
+    close_status_writer_quietly = _shell_function(source, "close_status_writer_quietly")
+    post_gate_stage_for_phase = _shell_function(source, "post_gate_stage_for_phase")
+    latch_post_gate_failure = _shell_function(source, "latch_post_gate_failure")
     verifier = _shell_function(source, "verify_post_cleanup_descriptors")
     emitter = _shell_function(source, "emit_exact_clean_sibling_pass")
     run_json = (
@@ -14645,10 +14649,18 @@ set -Eeuo pipefail
 die() {{ printf 'DIE=%s\\n' "$*" >&2; exit 2; }}
 verify_authenticated_launch_context() {{ return 0; }}
 verify_uv_identity() {{ return 0; }}
+{claim_terminal_status_writer}
+{close_status_writer_quietly}
+{post_gate_stage_for_phase}
+{latch_post_gate_failure}
 {verifier}
 {emitter}
 ACGS_OUTPUT_GUARDIAN=1
 ACGS_STATUS_FD={status_child.fileno()}
+ACGS_STATUS_TERMINAL_CLAIMED=0
+ACGS_POST_GATE_FAILURE_SEEN=0
+ACGS_POST_GATE_FAILURE_STAGE=''
+ACGS_POST_GATE_FAILURE_RC=''
 CASE_ROOT={shlex.quote(str(case_root))}
 TMP_ROOT="$CASE_ROOT/root"
 EVIDENCE_ROOT="$TMP_ROOT/evidence"
@@ -19429,6 +19441,8 @@ def test_clean_sibling_final_teardown_captures_failures_with_errexit_active(
     tmp_path: Path,
 ) -> None:
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    post_gate_stage_for_phase = _shell_function(source, "post_gate_stage_for_phase")
+    latch_post_gate_failure = _shell_function(source, "latch_post_gate_failure")
     helper = EVIDENCE_SCRIPTS / "clean_sibling_cleanup.sh"
     start = source.index("trap '' INT TERM\ncleanup_status=0")
     end = source.index("\nemit_exact_clean_sibling_pass", start) + len(
@@ -19465,6 +19479,8 @@ def test_clean_sibling_final_teardown_captures_failures_with_errexit_active(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
         f"source {shlex.quote(str(helper))}\n"
+        f"{post_gate_stage_for_phase}\n"
+        f"{latch_post_gate_failure}\n"
         f"SOURCE_REPO={shlex.quote(str(source_repo))}\n"
         f"TMP_PARENT={shlex.quote(str(parent))}\n"
         f"TMP_ROOT={shlex.quote(str(cleanup_root))}\n"
@@ -19487,6 +19503,10 @@ def test_clean_sibling_final_teardown_captures_failures_with_errexit_active(
         "OWNER_MARKER=1\n"
         "ACGS_OUTPUT_GUARDIAN=0\n"
         "ACGS_CLEANUP_TRAP_ARMED=1\n"
+        "ACGS_STATUS_TERMINAL_CLAIMED=0\n"
+        "ACGS_POST_GATE_FAILURE_SEEN=0\n"
+        "ACGS_POST_GATE_FAILURE_STAGE=''\n"
+        "ACGS_POST_GATE_FAILURE_RC=''\n"
         "record_worktree_gitfile_pre_detach_witness() {\n"
         "  printf 'GITFILE_WITNESS_ATTEMPT\\n'\n"
         "  return 0\n"
@@ -19544,6 +19564,11 @@ def test_clean_sibling_guardian_final_teardown_cleanup_failure_leaves_parent_mem
     import fcntl
 
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    claim_terminal_status_writer = _shell_function(source, "claim_terminal_status_writer")
+    close_status_writer_quietly = _shell_function(source, "close_status_writer_quietly")
+    post_gate_stage_for_phase = _shell_function(source, "post_gate_stage_for_phase")
+    latch_post_gate_failure = _shell_function(source, "latch_post_gate_failure")
+    emit_post_gate_failure_diagnostic = _shell_function(source, "emit_post_gate_failure_diagnostic")
     start = source.index("trap '' INT TERM\ncleanup_status=0")
     end = source.index("\nemit_exact_clean_sibling_pass", start) + len(
         "\nemit_exact_clean_sibling_pass"
@@ -19580,9 +19605,18 @@ def test_clean_sibling_guardian_final_teardown_cleanup_failure_leaves_parent_mem
         env["ACGS_TEST_PARENT_MEMFD_TARGET"] = memfd_target
         harness = f"""
 set -Eeuo pipefail
+{claim_terminal_status_writer}
+{close_status_writer_quietly}
+{post_gate_stage_for_phase}
+{latch_post_gate_failure}
+{emit_post_gate_failure_diagnostic}
 ACGS_OUTPUT_GUARDIAN=1
 ACGS_STATUS_FD=99
 ACGS_CLEANUP_TRAP_ARMED=1
+ACGS_STATUS_TERMINAL_CLAIMED=0
+ACGS_POST_GATE_FAILURE_SEEN=0
+ACGS_POST_GATE_FAILURE_STAGE=''
+ACGS_POST_GATE_FAILURE_RC=''
 QUOTA_IMAGE=
 QUOTA_LOG=
 if env | grep -q '^ACGS_CLEAN_SIBLING_MEMFD_'; then
@@ -20522,7 +20556,7 @@ def test_clean_sibling_quota_detach_failure_flag_is_wired_to_cleanup_helper() ->
     assert "os.fsync(marker_fd)" in source
     assert "os.fsync(root_fd)" in source
     assert 'ACGS_POSTGRES_RECOVERY_ROOT:-}"' in cleanup_source
-    assert "search_roots.append(recovery_root)" in cleanup_source
+    assert "search_roots = [recovery_root]" in cleanup_source
     assert "cleanup refused PostgreSQL recovery root binding" in cleanup_source
     assert 'exec {TRUSTED_LEDGER_FD}<"$TRUSTED_LEDGER_ROOT"' in source
     assert '"$TMP_PARENT_FD" "$TRUSTED_LEDGER_FD"' in source
@@ -25343,7 +25377,7 @@ def _external_intent_cleanup_helper(
 ) -> str:
     source = (ROOT / "scripts/evidence/clean_sibling_cleanup.sh").read_text(encoding="utf-8")
     assert hashlib.sha256(source.encode("utf-8")).hexdigest() == (
-        "449a80282a63635aaa8ff1823da51faf00c5ca8d5e453558123591f4abac0e53"
+        "bada908c5cff471de5513925aae2912b8170e9918fde6925e792d3544449633a"
     )
     helper = _shell_function(source, "clean_sibling_retain_recovery_contracts")
     helper = (
@@ -25673,6 +25707,133 @@ def _run_external_intent_cleanup(
         "names": names,
         "harness": harness,
     }
+
+
+def _write_matching_external_contract(
+    recovery_root: Path, names: dict[str, str], nonce: str
+) -> Path:
+    server_intent = dict(_server_intent_pairs(names, nonce))
+    contract = recovery_root / "recovery-contract.env"
+    contract.write_text(
+        "contract_version=2\n"
+        "schema=acgs-postgres-recovery-contract/v2\n"
+        "external_cleanup_uncertain=1\n"
+        "cleanup_status=2\n"
+        f"proof_nonce={nonce}\n"
+        f"proof_label={names['proof_label']}\n"
+        f"server_name={names['server_name']}\n"
+        f"socket_bridge_basename={server_intent['socket_bridge_basename']}\n"
+        f"socket_bridge_identity={server_intent['socket_bridge_identity']}\n"
+        f"socket_bridge_marker_sha256={server_intent['socket_bridge_marker_sha256']}\n"
+        f"socket_bridge_mnt_id={server_intent['socket_bridge_mnt_id']}\n"
+        f"recovery_root_mnt_id={server_intent['socket_bridge_mnt_id']}\n",
+        encoding="ascii",
+    )
+    contract.chmod(0o600)
+    return contract
+
+
+def _write_tmp_recovery_contract_decoys(tmp_root: Path, count: int = 21) -> None:
+    for index in range(count):
+        decoy_dir = tmp_root / f"decoy-{index:02d}"
+        decoy_dir.mkdir(mode=0o700)
+        decoy = decoy_dir / "recovery-contract.env"
+        decoy.write_text("untrusted-tmp-decoy=1\n", encoding="ascii")
+        decoy.chmod(0o600)
+
+
+def test_clean_sibling_authenticated_external_contract_ignores_tmp_decoys(
+    tmp_path: Path,
+) -> None:
+    nonce = "00000000000000000000000000000011"
+
+    def add_contract_and_decoys(
+        tmp_root: Path, recovery_root: Path, names: dict[str, str], _: str
+    ) -> None:
+        _write_matching_external_contract(recovery_root, names, nonce)
+        _write_tmp_recovery_contract_decoys(tmp_root)
+
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        nonce=nonce,
+        docker_mode="empty",
+        mutate=add_contract_and_decoys,
+    )
+    tmp_root = context["tmp_root"]
+    recovery_root = context["recovery_root"]
+    log = context["log"]
+    assert isinstance(tmp_root, Path)
+    assert isinstance(recovery_root, Path)
+    assert isinstance(log, Path)
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert len(list(tmp_root.glob("decoy-*/recovery-contract.env"))) == 21
+    assert (recovery_root / "recovery-contract.env").is_file()
+    assert "duplicate recovery contracts" not in completed.stderr
+    assert log.read_text(encoding="utf-8") != ""
+
+
+def test_clean_sibling_duplicate_contracts_in_external_root_refuse_before_docker(
+    tmp_path: Path,
+) -> None:
+    before: dict[str, tuple[int, str]] = {}
+
+    def add_duplicate_contracts(
+        _tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+    ) -> None:
+        contract = _write_matching_external_contract(recovery_root, names, nonce)
+        duplicate_dir = recovery_root / "duplicate"
+        duplicate_dir.mkdir(mode=0o700)
+        duplicate = duplicate_dir / "recovery-contract.env"
+        duplicate.write_bytes(contract.read_bytes())
+        duplicate.chmod(0o600)
+        before.update(_recovery_state_snapshot(recovery_root))
+
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=add_duplicate_contracts,
+    )
+    recovery_root = context["recovery_root"]
+    log = context["log"]
+    assert isinstance(recovery_root, Path)
+    assert isinstance(log, Path)
+    assert completed.returncode == 2, (completed.stdout, completed.stderr)
+    assert "cleanup refused duplicate recovery contracts" in completed.stderr
+    assert _recovery_state_snapshot(recovery_root) == before
+    assert not log.exists() or log.read_text(encoding="utf-8") == ""
+
+
+def test_clean_sibling_tampered_external_root_never_falls_back_to_tmp_decoys(
+    tmp_path: Path,
+) -> None:
+    before: dict[str, dict[str, tuple[int, str]]] = {}
+
+    def tamper_root_and_add_decoys(
+        tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+    ) -> None:
+        _write_matching_external_contract(recovery_root, names, nonce)
+        _write_tmp_recovery_contract_decoys(tmp_root)
+        recovery_root.chmod(0o750)
+        before["tmp"] = _recovery_state_snapshot(tmp_root)
+        before["recovery"] = _recovery_state_snapshot(recovery_root)
+
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=tamper_root_and_add_decoys,
+    )
+    tmp_root = context["tmp_root"]
+    recovery_root = context["recovery_root"]
+    log = context["log"]
+    assert isinstance(tmp_root, Path)
+    assert isinstance(recovery_root, Path)
+    assert isinstance(log, Path)
+    assert completed.returncode == 2, (completed.stdout, completed.stderr)
+    assert "cleanup refused PostgreSQL recovery root identity" in completed.stderr
+    assert stat.S_IMODE(recovery_root.stat().st_mode) == 0o750
+    assert _recovery_state_snapshot(tmp_root) == before["tmp"]
+    assert _recovery_state_snapshot(recovery_root) == before["recovery"]
+    assert not log.exists() or log.read_text(encoding="utf-8") == ""
 
 
 @pytest.mark.parametrize("docker_mode", ["empty", "exact"])

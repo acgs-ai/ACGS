@@ -1585,7 +1585,7 @@ try:
             stat.S_IMODE(recovery_path_stat.st_mode),
         ):
             fail("cleanup refused PostgreSQL recovery root identity")
-        search_roots.append(recovery_root)
+        search_roots = [recovery_root]
     nonce_files: list[str] = []
     for search_root in search_roots:
         for current_root, dirs, files in os.walk(search_root, topdown=True, followlinks=False):
