@@ -8,6 +8,6 @@
     "mismatches": [],
     "valid": true
   },
-  "schema_version": "acgs/proof-pack/v1",
+  "schema_version": "acgs/proof-pack/v1.1",
   "status": "verified"
 }

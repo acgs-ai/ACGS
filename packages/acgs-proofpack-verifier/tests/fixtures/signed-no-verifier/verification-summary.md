@@ -1,7 +1,7 @@
 # ACGS Proof Pack — Verification Summary
 
 Generated: 2026-01-01T00:00:00+00:00
-Schema: `acgs/proof-pack/v1`
+Schema: `acgs/proof-pack/v1.1`
 
 ## What this pack is
 

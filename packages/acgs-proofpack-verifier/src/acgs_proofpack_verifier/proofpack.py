@@ -10,7 +10,8 @@ check is intact. It is built for three audiences at once:
   not proven;
 - **regulators** get a plain-language summary section with no jargon.
 
-Layout (schema ``acgs/proof-pack/v1``)::
+Layout (schema ``acgs/proof-pack/v1.1``; ``acgs/proof-pack/v1`` packs remain
+verifiable — see ``_SUMMARY_REVISION_FOR_SCHEMA``)::
 
     proofpack/
     ├── evidence.json             # manifest: action, actor, policy, sha256 digests
@@ -67,7 +68,14 @@ from acgs_proofpack_verifier.verifier import (
 if TYPE_CHECKING:
     from acgs_proofpack_verifier.revocation import RevocationList
 
-PACK_SCHEMA_VERSION = "acgs/proof-pack/v1"
+# The schema version newly generated packs declare. Every supported schema
+# version is bound 1:1 to a summary-template revision (see
+# _SUMMARY_REVISION_FOR_SCHEMA): auditor-wording changes ship as a NEW schema
+# version instead of changing already-issued bytes in place, so a verifier
+# installed before a wording change rejects newer packs with
+# SCHEMA_VERSION_UNSUPPORTED (an upgrade signal) rather than
+# SUMMARY_BINDING_MISMATCH (a false tamper alarm).
+PACK_SCHEMA_VERSION = "acgs/proof-pack/v1.1"
 GENERATED_WITH = "acgs proofpack generate (acgs_proofpack_verifier.proofpack)"
 
 # The exact generator-identity footers this verifier accepts after the summary's
@@ -440,15 +448,34 @@ def generate_proof_pack(
 
 # --- human-readable summary -----------------------------------------------------
 
-# Auditor-prose revisions of the summary template. The summary body is
-# byte-compared at verify time, so a wording change must never invalidate
-# previously issued v1 packs: generation always renders the NEWEST revision,
-# while verification accepts a body matching ANY listed revision. Revisions
-# differ ONLY in auditor wording — every substantive fact (receipt, chain,
-# replay, signature posture) is identical across revisions, so accepting an
-# older rendering never weakens what a passing verification proves.
-_SUMMARY_REVISIONS = (2, 1)
-_LATEST_SUMMARY_REVISION = _SUMMARY_REVISIONS[0]
+# Auditor-prose revisions of the summary template, bound 1:1 to pack schema
+# versions. The summary body is byte-compared at verify time: generation
+# renders the revision bound to PACK_SCHEMA_VERSION, and verification
+# re-renders EXACTLY the revision bound to the pack's DECLARED schema_version
+# — never a set of alternatives. A wording change therefore ships as a new
+# schema version instead of changing already-issued bytes in place:
+#
+# * packs issued under an older schema keep verifying under that schema;
+# * verifiers installed before the change reject newer packs with
+#   SCHEMA_VERSION_UNSUPPORTED (an upgrade signal, not a tamper verdict);
+# * a current pack whose summary is swapped for an older revision's rendering
+#   fails SUMMARY_BINDING_MISMATCH — there is no cross-revision acceptance a
+#   downgrade could exploit to reinstate superseded auditor wording.
+#
+# Residual limit: schema_version is itself an unauthenticated declaration, so
+# an editor who rewrites the ENTIRE pack self-consistently under an older
+# schema produces a pack indistinguishable from genuinely historical evidence.
+# That is whole-pack forgery — exactly the power unsigned packs already
+# disclaim in the summary's signature caveats — and the result at least
+# presents itself to the relying party under the older, superseded
+# schema_version instead of passing as current evidence.
+#
+# Revisions differ ONLY in auditor wording — every substantive fact (receipt,
+# chain, replay, signature posture) is identical across revisions.
+_SUMMARY_REVISION_FOR_SCHEMA = {
+    "acgs/proof-pack/v1": 1,
+    "acgs/proof-pack/v1.1": 2,
+}
 
 # Revision 1 overstated the byte-compare ("a rewritten summary ... fails")
 # without the body/footer distinction; revision 2 scopes the claim to the
@@ -489,8 +516,9 @@ def _render_summary(
     event_count: int,
     replay_report: dict[str, Any],
     now_iso: str,
-    revision: int = _LATEST_SUMMARY_REVISION,
+    schema_version: str = PACK_SCHEMA_VERSION,
 ) -> str:
+    revision = _SUMMARY_REVISION_FOR_SCHEMA[schema_version]
     signed = receipt.signature_algorithm != "none"
     decision = receipt.decision.upper()
     decision_line = (
@@ -530,7 +558,7 @@ def _render_summary(
     return f"""# ACGS Proof Pack — Verification Summary
 
 Generated: {now_iso}
-Schema: `{PACK_SCHEMA_VERSION}`
+Schema: `{schema_version}`
 
 ## What this pack is
 
@@ -718,7 +746,7 @@ def _verify_pack_inner(
     schema_version = evidence.get("schema_version")
     if not schema_version:
         return _fail(PackRejectionReason.SCHEMA_VERSION_MISSING)
-    if schema_version != PACK_SCHEMA_VERSION:
+    if schema_version not in _SUMMARY_REVISION_FOR_SCHEMA:
         return _fail(PackRejectionReason.SCHEMA_VERSION_UNSUPPORTED, schema_version=schema_version)
 
     reasons: list[str] = []
@@ -835,25 +863,26 @@ def _verify_pack_inner(
                     # otherwise an attacker who recomputes the unauthenticated
                     # evidence.json digest could append arbitrary Markdown (a
                     # false auditor conclusion) after the separator and still
-                    # verify. The body must match ONE of the accepted template
-                    # revisions, so packs issued before an auditor-wording
-                    # change remain verifiable (they are still v1 packs).
+                    # verify. The body must match EXACTLY the template revision
+                    # bound to the pack's declared schema version
+                    # (_SUMMARY_REVISION_FOR_SCHEMA): packs issued under an
+                    # older schema keep verifying under that schema, while a
+                    # newer pack whose summary is swapped for an older
+                    # revision's rendering fails — a revision downgrade cannot
+                    # silently reinstate superseded auditor wording.
                     shipped = summary_path.read_text(encoding="utf-8")
                     shipped_body, shipped_sep, shipped_footer = shipped.rpartition("\n---\n")
-                    expected_bodies = {
-                        _render_summary(
-                            receipt=receipt,
-                            chain={"valid": True},
-                            event_count=len(events),
-                            replay_report=report_doc,
-                            now_iso=str(evidence.get("generated_at")),
-                            revision=rev,
-                        ).rsplit("\n---\n", 1)[0]
-                        for rev in _SUMMARY_REVISIONS
-                    }
+                    expected_body = _render_summary(
+                        receipt=receipt,
+                        chain={"valid": True},
+                        event_count=len(events),
+                        replay_report=report_doc,
+                        now_iso=str(evidence.get("generated_at")),
+                        schema_version=schema_version,
+                    ).rsplit("\n---\n", 1)[0]
                     if (
                         not shipped_sep
-                        or shipped_body not in expected_bodies
+                        or shipped_body != expected_body
                         or shipped_footer not in _KNOWN_GENERATOR_FOOTERS
                     ):
                         reasons.append(PackRejectionReason.SUMMARY_BINDING_MISMATCH)

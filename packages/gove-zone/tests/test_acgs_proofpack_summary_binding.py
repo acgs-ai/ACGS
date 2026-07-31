@@ -10,10 +10,13 @@ valid and invalid depending on which supported verifier checks it:
   standalone ``acgs_proofpack_verifier`` package must verify here, and the
   excision must not become an injection window for arbitrary auditor-facing
   Markdown.
-* **Revision tolerance** — the summary body must match ONE accepted template
-  revision, so packs issued before an auditor-wording change (still
-  ``acgs/proof-pack/v1``) remain verifiable, while any substantive edit to a
-  body of either revision still fails closed.
+* **Schema-bound revisions** — the summary body must match EXACTLY the
+  template revision bound to the pack's declared schema version. Genuinely
+  historical ``acgs/proof-pack/v1`` packs (committed golden-v1 fixture,
+  byte-for-byte as the pre-revision generator emitted them) remain verifiable,
+  while swapping a current ``acgs/proof-pack/v1.1`` pack's summary for the
+  revision-1 rendering — the revision-downgrade attack — fails closed, as does
+  any substantive edit to a body of either revision.
 """
 
 from __future__ import annotations
@@ -29,6 +32,9 @@ from gove_zone.proofpack import verify_pack
 
 FIXTURES = Path(__file__).parent / "fixtures"
 GOLDEN = FIXTURES / "acgs_proofpack" / "golden"
+# A genuinely historical acgs/proof-pack/v1 pack, byte-for-byte as the
+# pre-revision-2 generator emitted it (resurrected from the parent commit).
+GOLDEN_V1 = FIXTURES / "acgs_proofpack" / "golden-v1"
 NOW_ISO = "2026-01-01T00:00:00+00:00"
 
 SUMMARY_BINDING_MISMATCH = "SUMMARY_BINDING_MISMATCH"
@@ -63,6 +69,13 @@ def _rewrite_summary(pack: Path, new_text: str) -> None:
 def golden_copy(tmp_path: Path) -> Path:
     pack = tmp_path / "pack"
     shutil.copytree(GOLDEN, pack)
+    return pack
+
+
+@pytest.fixture
+def golden_v1_copy(tmp_path: Path) -> Path:
+    pack = tmp_path / "pack-v1"
+    shutil.copytree(GOLDEN_V1, pack)
     return pack
 
 
@@ -111,7 +124,7 @@ def test_appended_markdown_after_footer_is_rejected(golden_copy: Path) -> None:
     ]
 
 
-# --- template-revision tolerance -------------------------------------------------
+# --- schema-bound template revisions ----------------------------------------------
 
 # The revision-1 auditor prose, byte-for-byte as generators emitted it before
 # the revision-2 wording change. Historical v1 packs carry these exact bytes;
@@ -142,34 +155,66 @@ _REV2_ATTESTATION_BULLET = """\
 
 
 def _downgrade_to_revision_1(text: str) -> str:
-    """Rewrite a revision-2 summary into the exact revision-1 rendering."""
+    """Rewrite a revision-2 summary into the exact revision-1 rendering,
+    including the older schema line — the strongest summary-only downgrade an
+    editor can produce without also rewriting the pack's declared
+    schema_version in evidence.json."""
     assert _REV2_PROVES_ITEM_3 in text
     assert _REV2_ATTESTATION_BULLET in text
-    return text.replace(_REV2_PROVES_ITEM_3, _REV1_PROVES_ITEM_3).replace(
-        _REV2_ATTESTATION_BULLET, ""
+    return (
+        text.replace(_REV2_PROVES_ITEM_3, _REV1_PROVES_ITEM_3)
+        .replace(_REV2_ATTESTATION_BULLET, "")
+        .replace("Schema: `acgs/proof-pack/v1.1`", "Schema: `acgs/proof-pack/v1`")
     )
 
 
-def test_previously_issued_revision_1_summary_still_verifies(golden_copy: Path) -> None:
-    """PACK_SCHEMA_VERSION is still acgs/proof-pack/v1, so a pack issued before
-    the auditor-wording change (revision-1 summary body) must remain valid —
-    a template change must never invalidate historical evidence."""
-    text = (golden_copy / "verification-summary.md").read_text(encoding="utf-8")
-    _rewrite_summary(golden_copy, _downgrade_to_revision_1(text))
-
-    result = verify_pack(golden_copy, now_iso=NOW_ISO)
+def test_historical_v1_pack_still_verifies() -> None:
+    """A genuinely historical acgs/proof-pack/v1 pack (committed byte-for-byte
+    as the pre-revision-2 generator emitted it) must remain valid — a template
+    change must never invalidate previously issued evidence."""
+    result = verify_pack(GOLDEN_V1, now_iso=NOW_ISO)
     assert result.valid, [str(r) for r in result.reasons]
     assert result.reasons == []
 
 
-def test_tampered_revision_1_summary_body_is_rejected(golden_copy: Path) -> None:
-    """Accepting the older revision must not open a tamper window: an edit to
-    a revision-1 body still trips SUMMARY_BINDING_MISMATCH."""
+def test_revision_downgrade_of_current_pack_is_rejected(golden_copy: Path) -> None:
+    """The downgrade attack: replacing a current v1.1 pack's summary with the
+    exact revision-1 rendering (and recomputing the unauthenticated
+    evidence.json digest) must FAIL — the revision is bound to the pack's
+    declared schema version, so superseded auditor wording cannot be silently
+    reinstated on a current pack."""
     text = (golden_copy / "verification-summary.md").read_text(encoding="utf-8")
-    legacy = _downgrade_to_revision_1(text)
-    _rewrite_summary(golden_copy, legacy.replace("PASS", "FAIL", 1))
+    _rewrite_summary(golden_copy, _downgrade_to_revision_1(text))
 
     result = verify_pack(golden_copy, now_iso=NOW_ISO)
+    assert not result.valid, "revision-downgraded summary was accepted on a v1.1 pack"
+    assert any(str(r) == SUMMARY_BINDING_MISMATCH for r in result.reasons), [
+        str(r) for r in result.reasons
+    ]
+
+
+def test_revision_2_body_on_v1_pack_is_rejected(golden_v1_copy: Path) -> None:
+    """The mirror-image mix: a v1 pack whose summary carries the revision-2
+    body must fail too — no cross-revision acceptance in either direction."""
+    text = (golden_v1_copy / "verification-summary.md").read_text(encoding="utf-8")
+    assert _REV1_PROVES_ITEM_3.rstrip("\n") in text
+    upgraded = text.replace(_REV1_PROVES_ITEM_3.rstrip("\n"), _REV2_PROVES_ITEM_3.rstrip("\n"))
+    _rewrite_summary(golden_v1_copy, upgraded)
+
+    result = verify_pack(golden_v1_copy, now_iso=NOW_ISO)
+    assert not result.valid
+    assert any(str(r) == SUMMARY_BINDING_MISMATCH for r in result.reasons), [
+        str(r) for r in result.reasons
+    ]
+
+
+def test_tampered_revision_1_summary_body_is_rejected(golden_v1_copy: Path) -> None:
+    """Accepting historical v1 packs must not open a tamper window: an edit to
+    a genuine revision-1 body still trips SUMMARY_BINDING_MISMATCH."""
+    text = (golden_v1_copy / "verification-summary.md").read_text(encoding="utf-8")
+    _rewrite_summary(golden_v1_copy, text.replace("PASS", "FAIL", 1))
+
+    result = verify_pack(golden_v1_copy, now_iso=NOW_ISO)
     assert not result.valid
     assert any(str(r) == SUMMARY_BINDING_MISMATCH for r in result.reasons), [
         str(r) for r in result.reasons

@@ -36,6 +36,7 @@ import pytest
 jsonschema = pytest.importorskip("jsonschema")
 
 from gove_zone.proofpack import (  # noqa: E402
+    _SUMMARY_REVISION_FOR_SCHEMA,
     ARTIFACT_FILES,
     AUDIT_CHAIN_FILE,
     EVIDENCE_FILE,
@@ -136,9 +137,13 @@ def test_schemas_ship_as_gove_zone_package_data() -> None:
         assert schemas_dir.joinpath(schema_file).is_file(), schema_file
 
 
-def test_evidence_schema_pins_the_pack_schema_version() -> None:
+def test_evidence_schema_pins_the_supported_pack_schema_versions() -> None:
+    """The schema accepts exactly the schema versions the verifier supports
+    (each bound 1:1 to a summary-template revision), and the version newly
+    generated packs declare is one of them."""
     schema = _load_schema(SCHEMA_FOR_ARTIFACT[EVIDENCE_FILE])
-    assert schema["properties"]["schema_version"] == {"const": PACK_SCHEMA_VERSION}
+    assert schema["properties"]["schema_version"] == {"enum": sorted(_SUMMARY_REVISION_FOR_SCHEMA)}
+    assert PACK_SCHEMA_VERSION in _SUMMARY_REVISION_FOR_SCHEMA
 
 
 # --- 2. fixture validation --------------------------------------------------------

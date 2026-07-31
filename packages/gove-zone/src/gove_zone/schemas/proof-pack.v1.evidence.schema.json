@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://acgs.ai/schema/proof-pack/v1/evidence.schema.json",
   "title": "ACGS proof pack v1 — evidence.json manifest",
-  "description": "The manifest of an acgs/proof-pack/v1 evidence bundle: the governed action, actor, policy and receipt summaries (re-derived from the hash-bound receipt at verify time), the audit-chain tail, and the SHA-256 digests of the other four artifacts. Frozen format: unknown keys are rejected, mirroring the verifier's fail-closed posture.",
+  "description": "The manifest of an acgs/proof-pack/v1 evidence bundle: the governed action, actor, policy and receipt summaries (re-derived from the hash-bound receipt at verify time), the audit-chain tail, and the SHA-256 digests of the other four artifacts. Frozen format: unknown keys are rejected, mirroring the verifier's fail-closed posture. schema_version acgs/proof-pack/v1.1 is structurally identical and differs only in the summary-template revision the pack's verification-summary.md carries, so both versions validate against these schemas.",
   "type": "object",
   "properties": {
-    "schema_version": { "const": "acgs/proof-pack/v1" },
+    "schema_version": { "enum": ["acgs/proof-pack/v1", "acgs/proof-pack/v1.1"] },
     "generated_at": { "type": "string", "minLength": 1 },
     "generated_with": { "type": "string", "minLength": 1 },
     "governed_action": {

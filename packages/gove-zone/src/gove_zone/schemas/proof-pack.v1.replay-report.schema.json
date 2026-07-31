@@ -5,7 +5,7 @@
   "description": "The decision re-derivation report of an acgs/proof-pack/v1 bundle. status 'verified' is a generate-time attestation (the generator refuses to mint a pack from a failed replay, so a verified report always carries result.valid=true); status 'not_available' means no replay material was supplied and result is null. Frozen format: unknown keys are rejected.",
   "type": "object",
   "properties": {
-    "schema_version": { "const": "acgs/proof-pack/v1" },
+    "schema_version": { "enum": ["acgs/proof-pack/v1", "acgs/proof-pack/v1.1"] },
     "status": { "enum": ["verified", "not_available"] },
     "note": { "type": "string", "minLength": 1 },
     "result": {

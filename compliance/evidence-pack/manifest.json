@@ -18,24 +18,24 @@
       "sha256": "5bdf64f1ad894e1fbe3dfabed45a537054f5d395a2882d5c6496a8a718d90366"
     },
     "runtime-evidence/proofpack/audit-chain.json": {
-      "bytes": 2040,
-      "sha256": "4b8c06bc5187544112b31a555732155e44513761d8ac3f3b0d0c7c2930c1ec7a"
+      "bytes": 2042,
+      "sha256": "01ea8eb52831f0b1799bca3065e3b53bba6f2da1ffb342e96151ac81b0c861fe"
     },
     "runtime-evidence/proofpack/decision-receipt.json": {
       "bytes": 1375,
       "sha256": "328ef6d1b7dd19568a350ce12f2c90da3fccf555c25616e04b0fedf3f32d3657"
     },
     "runtime-evidence/proofpack/evidence.json": {
-      "bytes": 1952,
-      "sha256": "a78c52b0de9740c876eaccdbbe6d05f052563b57dbbb4aacaa47d2e944106951"
+      "bytes": 1954,
+      "sha256": "4a132852d1e652e1fe6428c05ac71ab8c5945bf4a597da2255c7ea7b3597d496"
     },
     "runtime-evidence/proofpack/replay-report.json": {
-      "bytes": 502,
-      "sha256": "9720a70fa308d814701aa1428754eae4ba0d6dbd9220a4fd9059d064d64b6c3c"
+      "bytes": 504,
+      "sha256": "7ffe1524bf2a439f2895fc33704b79a0806fe63b8e38547a30db0c4425c8984e"
     },
     "runtime-evidence/proofpack/verification-summary.md": {
-      "bytes": 5283,
-      "sha256": "52bb4f1dfc5c46a6cc9f4773385df00b422ec5247acd71066fb84f95f3cc5e78"
+      "bytes": 5285,
+      "sha256": "dc7507c61258203b6d74393e0231121337f88cea33c696b4ac26426cfa10f1af"
     }
   },
   "frameworks": [
