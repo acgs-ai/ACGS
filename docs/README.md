@@ -6,6 +6,8 @@ Other packages in this repository — the control plane, adapters, evaluation an
 
 Core invariant: **No valid Decision Receipt, no side effect.**
 
+This file is the canonical documentation index. There is deliberately no separate `docs/INDEX.md` — a second index would drift against this one.
+
 ## Best entry points
 
 - [START_HERE](START_HERE.md) — 10-minute path.
@@ -37,6 +39,8 @@ Core invariant: **No valid Decision Receipt, no side effect.**
 - [SaaS beta API and data contract](saas/API_AND_DATA_CONTRACT.md) — future /v1, BFF, scope, and provenance contract
 - [SaaS beta migration and compatibility policy](saas/MIGRATION_VERSIONING_COMPATIBILITY_POLICY.md) — future Alembic, recovery, and artifact-compatibility requirements
 - [Proposed SaaS build-vs-buy ADR packet](adr/saas-identity-oidc-saml-scim-build-vs-buy.md) — owner/counsel-gated identity, key, retention, witness, billing, and licensing decisions
+- [VERSIONING](VERSIONING.md) — per-package version sources of truth; the `gove-zone` kernel line (`1.0.0rc1`/Beta) and the ACGS artifact line (`0.1.0`/alpha) are intentionally different levels
+- [DOC_REFERENCE_POLICY](DOC_REFERENCE_POLICY.md) — how one document may cite another; cite by stable anchor, never by line number
 - [GLOSSARY](GLOSSARY.md)
 - [REVIEW_CHECKLIST](REVIEW_CHECKLIST.md)
 - [ADOPTION_GUIDE](ADOPTION_GUIDE.md)
