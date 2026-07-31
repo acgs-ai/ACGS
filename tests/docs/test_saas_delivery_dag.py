@@ -203,7 +203,7 @@ def test_schema_types_vocabularies_and_portability() -> None:
     assert dag["schema"] == {
         "name": "acgs-saas-delivery-dag",
         "version": 3,
-        "updated": "2026-07-24",
+        "updated": "2026-07-30",
         "source_of_truth": "docs/ROADMAP.md",
         "serialization": "JSON, a strict YAML 1.2 subset",
     }
@@ -363,7 +363,7 @@ def test_state_invariants_and_mutation_regressions() -> None:
         raise AssertionError("completed node with unverified evidence was accepted")
 
     ready = copy.deepcopy(dag)
-    next(node for node in ready["nodes"] if node["id"] == "G102")["status"] = "ready"
+    next(node for node in ready["nodes"] if node["id"] == "G103")["status"] = "ready"
     try:
         _validate_state_invariants(ready)
     except AssertionError:
@@ -392,7 +392,22 @@ def test_external_blockers_are_complete_actionable_and_referenced() -> None:
         assert set(_nonempty_list(blocker["downstream_nodes"])) <= node_ids
         for node_id in blocker["downstream_nodes"]:
             node = next(item for item in dag["nodes"] if item["id"] == node_id)
-            assert blocker["id"] in str(node["blocker"])
+            if blocker["state"] == "open":
+                assert blocker["id"] in str(node["blocker"])
+            else:
+                assert blocker["id"] not in str(node["blocker"])
+    github_billing = next(item for item in blockers if item["id"] == "EXT-GITHUB-BILLING")
+    assert github_billing["state"] == "resolved"
+    assert set(github_billing["downstream_nodes"]) == {
+        "G004",
+        "G101",
+        "G102",
+        "G102A",
+        "G102B",
+        "G102C",
+        "G102D",
+    }
+    assert github_billing["validation_after_unblock"].startswith("for pr in 353")
 
 
 def test_acceptance_criteria_and_exact_matrix_rows_are_consistent() -> None:
@@ -419,6 +434,11 @@ def test_acceptance_criteria_and_exact_matrix_rows_are_consistent() -> None:
     assert set(matrix_refs) == node_ids
     assert all(row["artifact"].strip() for row in rows)
     _validate_matrix_state(rows, dag)
+    assert {row["state"] for row in rows} == {"built", "partial", "missing"}
+    assert sum(row["state"] == "built" for row in rows) == 1
+    assert sum(row["state"] == "partial" for row in rows) == 5
+    assert sum(row["state"] == "missing" for row in rows) == 9
+    assert sum(row["state"] == "conflicting" for row in rows) == 0
 
     mutated = copy.deepcopy(rows)
     am_003_row = next(row for row in mutated if row["id"] == "AM-003")
@@ -463,29 +483,37 @@ def test_disaster_recovery_node_has_executable_evidence_gates() -> None:
 def test_g004_and_frozen_pr_snapshot_preserve_historical_boundary() -> None:
     dag = _load_dag()
     snapshot = dag["program"]["survey_snapshot"]
-    assert snapshot["baseline_commit"] == "ee83e189ec62eddea4a73be79e9bf492a2f6b371"
-    assert snapshot["github_observed_at"] == "2026-07-24T08:52:43Z"
+    assert snapshot["baseline_commit"] == "c20b51ee9ab1d89cfa496330568ca032c34d5022"
+    assert snapshot["github_observed_at"] == "2026-07-30T07:41:08Z"
     prs = {item["number"]: item for item in snapshot["pull_requests"]}
-    assert prs[308]["state"] == "CLOSED" and prs[308]["merged"] is False
-    assert prs[308]["disposition"] == "closed_unmerged_superseded_by_current_master_rebuild_stack"
-    assert prs[353]["state"] == "OPEN" and prs[353]["draft"] is True and prs[353]["merged"] is False
-    assert prs[353]["base"] == "master"
-    assert prs[354]["base"] == "beta/p0-gates-003-master-rebuild"
-    assert prs[355]["base"] == "beta/p1-migration-001"
-    assert prs[267]["state"] == "CLOSED" and prs[267]["merged"] is False
-    assert prs[267]["disposition"] == "superseded_closed_unmerged"
+    assert snapshot["repository"] == "acgs-ai/ACGS"
+    assert prs[391]["state"] == "OPEN" and prs[391]["draft"] is False and prs[391]["merged"] is False
+    assert prs[391]["base"] == "beta/p2-idempotency-002-retry"
+    assert prs[391]["disposition"] == "current_local_g042_evidence_isolation_stack_unmerged"
+    assert prs[393]["base"] == "beta/p2-evidence-isolation-002b"
+    assert prs[393]["disposition"] == "current_local_g201_bootstrap_registration_stack_unmerged"
+    assert prs[395]["base"] == "beta/p2-vertical-gate-003"
+    assert prs[395]["disposition"] == "current_local_g202_signed_policy_stack_unmerged"
+    assert prs[398]["base"] == "beta/p3-policy-001"
+    assert prs[398]["disposition"] == "current_local_g105_mutation_inventory_stack_unmerged"
+    assert prs[413]["base"] == "beta/p3-mutations-002"
+    assert (
+        prs[413]["disposition"]
+        == "current_local_g015_g305_fixed_quorum_agent_register_unmerged_failed_authoritative_proof"
+    )
     g030b = next(node for node in dag["nodes"] if node["id"] == "G030B")
     assert (g030b["status"], g030b["implementation_state"], g030b["evidence_state"]) == (
         "completed",
         "built",
         "local_verified",
     )
-    assert g030b["pr"] == "#353"
+    assert g030b["pr"] == 353
     g004 = next(node for node in dag["nodes"] if node["id"] == "G004")
     assert set(g004["dependencies"]) == {"G005", "G030B", "G031"}
     assert (g004["implementation_state"], g004["evidence_state"]) == ("built", "local_verified")
     assert g004["status"] == "blocked"
-    assert "EXT-GITHUB-BILLING" in g004["blocker"]
+    assert "evidence/g004/manifest.json is absent" in g004["blocker"]
+    assert "exact-proof job was skipped" in g004["blocker"]
     assert g004["historical_evidence"]["disposition"] == "superseded"
     assert g004["historical_evidence"]["usable_as_current_verification"] is False
     dag_text = DAG_PATH.read_text(encoding="utf-8").lower()
@@ -495,355 +523,182 @@ def test_g004_and_frozen_pr_snapshot_preserve_historical_boundary() -> None:
     assert "active_baseline_candidate" not in dag_text
 
 
-def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> None:
+def test_g305_reconciliation_keeps_failed_authoritative_proof_blocked() -> None:
+    dag = _load_dag()
+    by_id = {node["id"]: node for node in dag["nodes"]}
+    g305 = by_id["G305"]
+    g405 = by_id["G405"]
+    assert (g305["status"], g305["implementation_state"], g305["evidence_state"]) == (
+        "blocked",
+        "partial",
+        "local_verified",
+    )
+    assert g305["branch"] == "beta/p3-approval-003-reconciled"
+    assert g305["worktree"] == "saas-beta/p3-approval-003-ci-review"
+    assert g305["pr"] == 413
+    assert "88377db825c522748e1e1ef1ea7db5b86d141106" in g305["evidence_artifact"]
+    assert "c8518859818916d772fb939ea567b6c22fe0ed54" in g305["evidence_artifact"]
+    assert "ccc9f6ffb9fa459852932691302bcda6f58fc3e5cf66e5605389994b5363abd1" in g305["evidence_artifact"]
+    assert "1008763134 bytes" in g305["evidence_artifact"]
+    assert "7 failed, 817 passed, 84 skipped" in g305["evidence_artifact"]
+    assert "later CI/local repair is non-authoritative only" in g305["evidence_artifact"]
+    assert "fixed-quorum-1 agent.register approval/resume slice" in g305["evidence_artifact"]
+    assert "consumed" in g305["blocker"]
+    assert "retry/evidence goal" in g305["blocker"]
+    assert "do not map this partial approval slice to enrollment completion" in g305["next_safe_action"]
+    assert by_id["G201"]["dependencies"] == ["G106"]
+    assert "G305" not in by_id["G201"]["dependencies"]
+    assert "G201" not in g305["consumers"]
+    orchestration = dag["program"]["local_orchestration_snapshot"]
+    assert orchestration["G015-p3-approval-003"]["status"] == "failed"
+    assert "consumed" in orchestration["G015-p3-approval-003"]["reason"]
+    assert orchestration["G016-p4-enrollment-001"]["status"] == "pending"
+    assert "distinct replacement approval evidence node" in orchestration["G016-p4-enrollment-001"]["scheduler_blocker"]
+    assert "G305 -> G201" in orchestration["canonical_dependency_boundary"]
+    assert (g405["status"], g405["implementation_state"], g405["evidence_state"]) == (
+        "planned",
+        "missing",
+        "unverified",
+    )
+    rows = {row["id"]: row for row in _matrix_rows()}
+    assert rows["AM-009"]["state"] == "partial"
+    assert rows["AM-009"]["evidence"] == "current_local"
+    assert rows["AM-009"]["refs"] == "G305, G405"
+    assert "PR #413" in rows["AM-009"]["artifact"]
+    assert "c8518859818916d772fb939ea567b6c22fe0ed54" in rows["AM-009"]["artifact"]
+    assert "G405 console approval UX remain missing" in rows["AM-009"]["artifact"]
+
+def test_g101_reconciliation_keeps_current_merged_slices_and_dr_separate() -> None:
     dag = _load_dag()
     by_id = {node["id"]: node for node in dag["nodes"]}
     g101 = by_id["G101"]
     g102 = by_id["G102"]
-    g102a = by_id["G102A"]
-    g102b = by_id["G102B"]
-    g102c = by_id["G102C"]
-    g102d = by_id["G102D"]
+    g103 = by_id["G103"]
+    g104 = by_id["G104"]
+    g105 = by_id["G105"]
+    g106 = by_id["G106"]
+    g201 = by_id["G201"]
+    g202 = by_id["G202"]
     g603 = by_id["G603"]
-    assert (g101["status"], g101["implementation_state"], g101["evidence_state"]) == (
-        "blocked",
-        "built",
-        "local_verified",
-    )
-    assert g101["pr"] == 355
-    assert "EXT-GITHUB-BILLING" in g101["blocker"]
+
+    for node_id, pr, branch in (
+        ("G101", 355, "beta/p1-g101-tool-provenance"),
+        ("G102A", 357, "beta/p1-g102-request-admission"),
+        ("G102B", 359, "beta/p1-g102b-receipt-cursors"),
+        ("G102C", 361, "beta/p1-g102c-openapi-drift"),
+        ("G102D", 363, "beta/p1-g102d-v1-api-contract"),
+    ):
+        node = by_id[node_id]
+        assert (node["status"], node["implementation_state"], node["evidence_state"]) == (
+            "completed",
+            "built",
+            "independently_reviewed",
+        )
+        assert node["pr"] == pr
+        assert node["branch"] == branch
+        assert node["blocker"] is None
+        assert "current master" in node["evidence_artifact"]
+        assert "EXT-GITHUB-BILLING" not in node["evidence_artifact"]
+
     assert (g102["status"], g102["implementation_state"], g102["evidence_state"]) == (
         "in_progress",
         "partial",
         "local_verified",
     )
-    assert "EXT-GITHUB-BILLING" in g102["blocker"]
-    assert (g102a["status"], g102a["implementation_state"], g102a["evidence_state"]) == (
+    assert g102["dependencies"] == ["G101", "G102A", "G102B", "G102C", "G102D"]
+    assert "EXT-GITHUB-BILLING" not in g102["blocker"]
+    for missing_contract in (
+        "complete all-collections cursor pagination",
+        "durable idempotency for mutating routes beyond native agent.register",
+        "async export jobs",
+        "production provider wiring",
+        "complete tenant isolation",
+    ):
+        assert missing_contract in g102["blocker"]
+
+    assert (g103["status"], g103["implementation_state"], g103["evidence_state"]) == (
         "blocked",
-        "built",
+        "partial",
         "local_verified",
     )
-    assert g102a["branch"] == "beta/p1-g102-request-admission"
-    assert g102a["pr"] == 357
-    assert g102["dependencies"] == ["G101", "G102A", "G102B", "G102C", "G102D"]
-    assert set(g102a["dependencies"]) == {"G101"}
-    assert g102a["consumers"] == ["G102"]
-    assert "EXT-GITHUB-BILLING" in g102a["blocker"]
-    actual_g102a_files = {
-        "packages/acgs-control-plane/README.md",
-        "packages/acgs-control-plane/src/acgs_control_plane/api_contract.py",
-        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
-        "packages/acgs-control-plane/src/acgs_control_plane/config.py",
-        "packages/acgs-control-plane/tests/test_api_contract.py",
-    }
-    assert actual_g102a_files <= set(g102["likely_interfaces_files"])
-    assert actual_g102a_files <= set(g102a["likely_interfaces_files"])
-    _assert_repo_files_exist(actual_g102a_files)
-    focused_command = (
-        "cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q"
+    assert g103["pr"] == 369
+    assert "tenant isolation" in g103["blocker"]
+    assert (g104["status"], g104["implementation_state"], g104["evidence_state"]) == (
+        "planned",
+        "missing",
+        "unverified",
     )
-    assert focused_command in g102["validation_commands"]
-    assert focused_command in g102a["validation_commands"]
-    actual_g102b_files = {
-        "packages/acgs-control-plane/README.md",
-        "packages/acgs-control-plane/pyproject.toml",
+    assert (g105["status"], g105["implementation_state"], g105["evidence_state"]) == (
+        "blocked",
+        "partial",
+        "local_verified",
+    )
+    assert set(g105["dependencies"]) == {"G103", "G104", "G004"}
+    assert g105["pr"] == 398
+    assert (g106["status"], g106["implementation_state"], g106["evidence_state"]) == (
+        "blocked",
+        "partial",
+        "local_verified",
+    )
+    assert g106["dependencies"] == ["G105"]
+    assert g106["pr"] == 391
+
+    assert g201["dependencies"] == ["G106"]
+    assert "G305" not in g201["dependencies"]
+    assert "G305" not in g201["consumers"]
+    assert (g201["status"], g201["implementation_state"], g201["evidence_state"]) == (
+        "blocked",
+        "partial",
+        "local_verified",
+    )
+    assert g201["pr"] == 393
+    assert (g202["status"], g202["implementation_state"], g202["evidence_state"]) == (
+        "blocked",
+        "partial",
+        "local_verified",
+    )
+    assert set(g202["dependencies"]) == {"G105", "G201"}
+    assert g202["pr"] == 395
+
+    actual_files = {
         "packages/acgs-control-plane/src/acgs_control_plane/app.py",
-        "packages/acgs-control-plane/src/acgs_control_plane/config.py",
         "packages/acgs-control-plane/src/acgs_control_plane/governance.py",
         "packages/acgs-control-plane/src/acgs_control_plane/pagination.py",
         "packages/acgs-control-plane/src/acgs_control_plane/schemas.py",
+        "packages/acgs-control-plane/tests/test_api_contract.py",
         "packages/acgs-control-plane/tests/test_receipt_cursor_pagination.py",
-        "requirements/saas-beta/cp-test.in",
+        "packages/acgs-control-plane/tests/test_openapi_drift.py",
+        "packages/acgs-control-plane/tests/test_v1_api_contract.py",
+        "packages/acgs-control-plane/tests/integration/test_production_posture.py",
         "requirements/saas-beta/cp-test.lock",
     }
-    assert actual_g102b_files <= set(g102["likely_interfaces_files"])
-    assert actual_g102b_files <= set(g102b["likely_interfaces_files"])
-    _assert_repo_files_exist(actual_g102b_files)
-    focused_cursor_command = (
+    _assert_repo_files_exist(actual_files)
+    assert actual_files <= set(g102["likely_interfaces_files"])
+    assert (
+        "cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q"
+        in g102["validation_commands"]
+    )
+    assert (
         "cd packages/acgs-control-plane && uv run pytest tests/test_receipt_cursor_pagination.py -q"
+        in g102["validation_commands"]
     )
-    assert focused_cursor_command in g102["validation_commands"]
-    assert focused_cursor_command in g102b["validation_commands"]
-    pinned_generator_command = (
-        "uv run --no-project --python 3.11 python "
-        "scripts/evidence/render_lock_inputs.py --config requirements/saas-beta/locks.toml"
-    )
-    assert pinned_generator_command in g102b["validation_commands"]
     assert (
-        "python scripts/evidence/render_lock_inputs.py --config requirements/saas-beta/locks.toml"
-        not in g102b["validation_commands"]
-    )
-    actual_g102c_files = {
-        "packages/acgs-control-plane/tests/test_openapi_drift.py",
-    }
-    assert actual_g102c_files <= set(g102["likely_interfaces_files"])
-    assert actual_g102c_files <= set(g102c["likely_interfaces_files"])
-    _assert_repo_files_exist(actual_g102c_files)
-    focused_openapi_command = (
         "cd packages/acgs-control-plane && uv run pytest tests/test_openapi_drift.py -q"
+        in g102["validation_commands"]
     )
-    assert focused_openapi_command in g102["validation_commands"]
-    assert focused_openapi_command in g102c["validation_commands"]
-    actual_g102d_files = {
-        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
-        "packages/acgs-control-plane/src/acgs_control_plane/governance.py",
-        "packages/acgs-control-plane/src/acgs_control_plane/schemas.py",
-        "packages/acgs-control-plane/tests/integration/test_production_posture.py",
-        "packages/acgs-control-plane/tests/test_openapi_drift.py",
-        "packages/acgs-control-plane/tests/test_startup_preflight.py",
-        "packages/acgs-control-plane/tests/test_v1_api_contract.py",
-    }
-    assert actual_g102d_files <= set(g102["likely_interfaces_files"])
-    assert actual_g102d_files <= set(g102d["likely_interfaces_files"])
-    _assert_repo_files_exist(actual_g102d_files)
-    focused_v1_command = (
-        "cd packages/acgs-control-plane && uv run pytest tests/test_v1_api_contract.py "
-        "tests/test_openapi_drift.py tests/test_startup_preflight.py "
-        "tests/integration/test_production_posture.py -q"
-    )
-    assert focused_v1_command in g102["validation_commands"]
-    assert focused_v1_command in g102d["validation_commands"]
-    combined_g102a_contract = " ".join(
-        g102["likely_interfaces_files"]
-        + g102["validation_commands"]
-        + g102a["likely_interfaces_files"]
-        + g102a["validation_commands"]
-    )
-    assert "tests/test_request_admission.py" not in combined_g102a_contract
-    assert "tests/test_api_program_reconcile.py" not in combined_g102a_contract
-    assert "4d60fb4a0a16be06a2a9957dea91dc2bf429c57d" in g102a["evidence_artifact"]
-    assert "focused 14 passed" in g102a["evidence_artifact"]
-    assert "full control-plane 228 passed/32 skipped" in g102a["evidence_artifact"]
-    assert "Ruff pass" in g102a["evidence_artifact"]
-    assert "mypy pass" in g102a["evidence_artifact"]
-    assert "independent security/code approve/verifier pass" in g102a["evidence_artifact"]
-    assert "hosted Python 3.11 and Python 3.12 pass" in g102a["evidence_artifact"]
-    assert (
-        "Hosted PostgreSQL migrations and codex-review did not start" in g102a["evidence_artifact"]
-    )
-    combined_g102a_status = " ".join(
-        [
-            *g102a["forbidden_side_effect_negative_tests"],
-            g102a["evidence_artifact"],
-            g102a["blocker"],
-            g102a["next_safe_action"],
-        ]
-    )
-    assert "G102B separately covers receipt-route cursor pagination" in combined_g102a_status
-    assert "G102C separately covers the current-v0 OpenAPI drift sentinel" in combined_g102a_status
-    assert "G102D separately covers additive legacy-v0 /v1 aliases" in combined_g102a_status
-    assert "complete all-collections cursor pagination" in combined_g102a_status
-    assert "OpenAPI drift acceptance evidence" not in combined_g102a_status
-    assert "OpenAPI drift gates are completed" not in combined_g102a_status
-    assert "until /v1, cursor pagination," not in combined_g102a_status
-    assert "lacks /v1 root, cursor pagination," not in combined_g102a_status
-    assert "partial until /v1 root, cursor pagination," not in combined_g102a_status
-    assert (
-        g102b["status"],
-        g102b["implementation_state"],
-        g102b["evidence_state"],
-    ) == ("blocked", "built", "local_verified")
-    assert set(g102b["dependencies"]) == {"G101"}
-    assert g102b["consumers"] == ["G102"]
-    assert g102b["branch"] == "beta/p1-g102b-receipt-cursors"
-    assert g102b["worktree"] == "saas-beta/p1-g101-tool-provenance"
-    assert g102b["pr"] == 359
-    combined_g102b = " ".join(
-        [
-            *g102b["likely_interfaces_files"],
-            *g102b["positive_tests"],
-            *g102b["forbidden_side_effect_negative_tests"],
-            *g102b["validation_commands"],
-            g102b["evidence_artifact"],
-            g102b["blocker"],
-            g102b["next_safe_action"],
-        ]
-    )
-    for evidence in (
-        "262c7bd8f408cef81333ae53591113960d78a32a",
-        "receipt cursor pagination evidence at 32 passed",
-        "full control-plane 260 passed/32 skipped",
-        "Ruff pass",
-        "mypy pass",
-        "deterministic generated CP lock",
-        "Python 3.11 hash-locked offline import pass",
-        "independent security/code approve/verifier pass",
-        "hosted Python 3.11",
-        "Python 3.12 pass",
-        "Hosted PostgreSQL migrations and codex-review did not start",
-        "EXT-GITHUB-BILLING",
-        "receipt-route cursor pagination only",
-        "no PostgreSQL/schema change or capacity claim",
-    ):
-        assert evidence in combined_g102b
-    for forbidden_promotion in (
-        "aggregate G102",
-        "all-collections pagination",
-        "G102D /v1 alias evidence",
-        "durable idempotency",
-        "async export jobs",
-        "PostgreSQL/schema change",
-        "capacity claims",
-        "G102C OpenAPI drift sentinel evidence",
-    ):
-        assert forbidden_promotion in combined_g102b
-    for missing_contract in (
-        "all-collections cursor pagination",
-        "durable idempotency",
-        "async export jobs",
-    ):
-        assert missing_contract in g102["blocker"]
-        assert missing_contract in combined_g102b or missing_contract in g102["evidence_artifact"]
-        assert (
-            missing_contract in g102a["evidence_artifact"] or missing_contract in g102a["blocker"]
-        )
-    assert "OpenAPI drift verification remain missing" not in g102["blocker"]
-    assert "OpenAPI drift gates are still missing" not in g102["evidence_artifact"]
-    assert (
-        g102c["status"],
-        g102c["implementation_state"],
-        g102c["evidence_state"],
-    ) == ("blocked", "built", "local_verified")
-    assert set(g102c["dependencies"]) == {"G101"}
-    assert g102c["consumers"] == ["G102"]
-    assert g102c["branch"] == "beta/p1-g102c-openapi-drift"
-    assert g102c["worktree"] == "saas-beta/p1-g101-tool-provenance"
-    assert g102c["pr"] == 361
-    combined_g102c = " ".join(
-        [
-            *g102c["likely_interfaces_files"],
-            *g102c["positive_tests"],
-            *g102c["forbidden_side_effect_negative_tests"],
-            *g102c["validation_commands"],
-            g102c["evidence_artifact"],
-            g102c["blocker"],
-            g102c["next_safe_action"],
-        ]
-    )
-    for evidence in (
-        "a6faf49a7b5f947b592f4be8372a85b173251090",
-        "current-v0 OpenAPI drift sentinel evidence at 5 passed",
-        "full control-plane 303 passed/50 skipped",
-        "Ruff pass",
-        "package-local mypy pass",
-        "independent review finding repaired then APPROVE",
-        "verifier PASS",
-        "hosted Python 3.11",
-        "Python 3.12 pass",
-        "Hosted PostgreSQL migrations and codex-review did not start",
-        "EXT-GITHUB-BILLING",
-        "contract-test evidence only",
-    ):
-        assert evidence in combined_g102c
-    for forbidden_promotion in (
-        "no runtime behavior",
-        "database schema",
-        "production readiness",
-        "beta completion",
-        "G102D /v1 alias",
-        "durable idempotency",
-        "async export job",
-        "all-collections pagination",
-    ):
-        assert forbidden_promotion in combined_g102c
-    assert (
-        g102d["status"],
-        g102d["implementation_state"],
-        g102d["evidence_state"],
-    ) == ("blocked", "built", "local_verified")
-    assert set(g102d["dependencies"]) == {"G101"}
-    assert g102d["consumers"] == ["G102"]
-    assert g102d["branch"] == "beta/p1-g102d-v1-api-contract"
-    assert g102d["worktree"] == "saas-beta/p1-g101-tool-provenance"
-    assert g102d["pr"] == 363
-    combined_g102d = " ".join(
-        [
-            *g102d["likely_interfaces_files"],
-            *g102d["positive_tests"],
-            *g102d["forbidden_side_effect_negative_tests"],
-            *g102d["validation_commands"],
-            g102d["evidence_artifact"],
-            g102d["blocker"],
-            g102d["next_safe_action"],
-        ]
-    )
-    for evidence in (
-        "047ddcf89530dc488ab6a2f4dd3bc00fe0211c5d",
-        "focused v1/OpenAPI/startup/production-posture evidence at 42 passed",
-        "full control-plane package evidence at 272 passed and 32 skipped",
-        "Ruff pass",
-        "package-local mypy pass",
-        "independent code and security APPROVE",
-        "verifier PASS",
-        "hosted Python 3.11",
-        "Python 3.12 pass",
-        "Hosted PostgreSQL migrations and codex-review did not start",
-        "EXT-GITHUB-BILLING",
-        "typed /v1 root",
-        "additive legacy-v0 /v1 aliases",
-        "v0 is preserved",
-        "14 LEGACY_UNSIGNED_WRITE blockers",
-    ):
-        assert evidence in combined_g102d
-    for forbidden_promotion in (
-        "signed production governance",
-        "database schema",
-        "migration",
-        "generated client",
-        "production readiness",
-        "beta completion",
-        "complete all-collections pagination",
-        "durable idempotency",
-        "async export job",
-    ):
-        assert forbidden_promotion in combined_g102d
-    combined_g101 = " ".join(
-        g101["likely_interfaces_files"]
-        + g101["validation_commands"]
-        + [g101["evidence_artifact"], g101["blocker"], g101["next_safe_action"]]
-    )
-    assert ".github/workflows/python-acgs-control-plane.yml" in combined_g101
-    assert ".github/workflows/postgresql-migrations.yml" not in combined_g101
-    assert "ACP_TEST_RECOVERY_SOURCE_URL" in combined_g101
-    assert "ACP_TEST_RECOVERY_TARGET_URL" in combined_g101
-    assert "ACP_TEST_POSTGRES_EXPECT_EMPTY" not in combined_g101
-    assert "pg_dump/pg_restore" in combined_g101
-    assert "214 passed/32 skipped" in combined_g101
-    assert "8 passed" in combined_g101
-    assert (
-        "G603 production backup/PITR/object/witness DR remains planned separately" in combined_g101
-    )
+
     assert g603["status"] == "planned"
     assert g603["implementation_state"] == "missing"
     assert "timestamped-dr-report.json" in g603["evidence_artifact"]
 
     matrix = MATRIX_PATH.read_text(encoding="utf-8")
-    assert ".github/workflows/python-acgs-control-plane.yml" in matrix
-    assert (
-        "focused `cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q` "
-        "at 14 passed"
-    ) in matrix
-    assert "full control-plane 228 passed/32 skipped" in matrix
-    assert "independent security/code approve/verifier pass" in matrix
-    assert "hosted Python 3.11/3.12 pass" in matrix
-    assert "hosted PostgreSQL migration/codex-review check-start failures" in matrix
-    assert "aggregate G102 remains in_progress/partial/current-local" in matrix
-    assert "additive legacy-v0 `/v1` alias" in matrix
-    assert "completed `/v1` root" not in matrix
-    assert "opaque cursor pagination" in matrix
-    assert "durable idempotency" in matrix
-    assert "async export jobs" in matrix
-    assert "current-v0 OpenAPI drift sentinel evidence" in matrix
-    assert "OpenAPI drift evidence" not in matrix
-    assert (
-        "still lacks complete all-collections cursor pagination, durable idempotency, "
-        "and async export jobs" in matrix
-    )
-    assert "ACP_TEST_RECOVERY_SOURCE_URL" in matrix
-    assert "ACP_TEST_RECOVERY_TARGET_URL" in matrix
-    assert "ACP_TEST_POSTGRES_EXPECT_EMPTY" not in matrix
-    assert "G603 production DR/PITR/object/witness recovery remains separate" in matrix
-
+    assert "G101 and slices G102A-D are completed/built/independently reviewed" in matrix
+    assert "hosted GitHub checks did not start" not in matrix
+    assert "EXT-GITHUB-BILLING" not in matrix
+    assert "Open clean PR #393" in matrix
+    assert "Open clean PR #395" in matrix
+    assert "G201 depends on G106 only" in matrix
+    assert "1008763134" in matrix
 
 def test_roadmap_links_to_canonical_program_records() -> None:
     roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
