@@ -60,10 +60,13 @@ What a passing verification **proves**:
 2. The audit chain is internally consistent and the receipt is anchored to a
    specific event in it.
 3. `evidence.json`'s action / actor / policy sections and this summary's body
-   (everything above the trailing generator footer) are re-derived from the
-   hash-bound receipt and chain at verify time — a rewritten summary body or
-   evidence file fails verification even if every file digest is recomputed
-   to match.
+   (everything above the trailing generator footer) are re-rendered and
+   byte-compared at verify time. Prose derived from the hash-bound receipt
+   and chain cannot be rewritten without failing verification, even if every
+   file digest is recomputed to match. The body's generation timestamp and
+   replay-status wording are rendered from the pack's own recorded
+   attestations (`evidence.json`, `replay-report.json`), so they are exactly
+   as trustworthy as those attestations (see below).
 
 What it does **not** prove:
 

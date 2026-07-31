@@ -68,12 +68,19 @@ FAILCLOSED-POLICY/AUDIT, AUDIT-HASHCHAIN, EXPIRY, SIG-REQUIRED, ANTI-REPLAY,
 REPLAY-VERIFY. Read that table for each control's enforcement statement, evidence
 file, and default. It is not duplicated here, so the two crosswalks cannot drift.
 
-**One additional control is cited below.** `ESCALATE-HUMAN` ("ESCALATE decisions
-route to human authority and are not executable until resolved",
-`packages/gove-zone/src/gove_zone/escalation.py`) is defined in
+**One additional control is cited below.** `ESCALATE-HUMAN` is defined in
 `compliance/control-mapping.json`, **not** in the `docs/COMPLIANCE_CROSSWALK.md`
-inventory. It is used here because the generated ISO 42001 Annex A rows already
-cite it; it is flagged rather than silently promoted into the anchor inventory.
+inventory. Its recorded definition says ESCALATE decisions "route to human
+authority"; what the runtime actually enforces
+(`packages/gove-zone/src/gove_zone/escalation.py`, `approve_escalation()`) is
+routing to an **integrator-supplied distinct validator**: the escalation is not
+executable until approved, and the only machine-enforced property of the
+approver is that its opaque `validator_id` differs from the proposer's. No
+authentication or human-credential check is performed, so an integrator may
+wire an automated validator; authenticated *human* involvement is
+operator-owned (gap 6). The control is used here because the generated ISO
+42001 Annex A rows already cite it; it is flagged rather than silently promoted
+into the anchor inventory.
 
 ### Control-identifier alias map
 

@@ -27,15 +27,15 @@
     },
     "runtime-evidence/proofpack/evidence.json": {
       "bytes": 1952,
-      "sha256": "d59779e0fc3e4627e34cf1110fdea4356ac49844d0a8056a5a6eb5260dee5013"
+      "sha256": "a78c52b0de9740c876eaccdbbe6d05f052563b57dbbb4aacaa47d2e944106951"
     },
     "runtime-evidence/proofpack/replay-report.json": {
       "bytes": 502,
       "sha256": "9720a70fa308d814701aa1428754eae4ba0d6dbd9220a4fd9059d064d64b6c3c"
     },
     "runtime-evidence/proofpack/verification-summary.md": {
-      "bytes": 5031,
-      "sha256": "1ff0a24ae22b08b169af3e66e69b2b80e97de190b68f9082bc2d8faaa4b4a21c"
+      "bytes": 5283,
+      "sha256": "52bb4f1dfc5c46a6cc9f4773385df00b422ec5247acd71066fb84f95f3cc5e78"
     }
   },
   "frameworks": [

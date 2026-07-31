@@ -468,8 +468,10 @@ _LATEST_SUMMARY_REVISION = _SUMMARY_REVISIONS[0]
 
 # Revision 1 overstated the byte-compare ("a rewritten summary ... fails")
 # without the body/footer distinction; revision 2 scopes the claim to the
-# summary body and names the generator footer as an unauthenticated
-# attestation. Historical packs carry revision 1 verbatim — these blocks are
+# summary body, limits the re-derivation claim to receipt/chain-derived prose
+# (the interpolated generation timestamp and replay-status wording follow the
+# pack's own unauthenticated attestations), and names the generator footer as
+# an unauthenticated attestation. Historical packs carry revision 1 verbatim — these blocks are
 # frozen bytes, never reworded retroactively.
 _SUMMARY_PROVES_ITEM_3 = {
     1: """3. `evidence.json`'s action / actor / policy sections and this summary are
@@ -477,10 +479,13 @@ _SUMMARY_PROVES_ITEM_3 = {
    rewritten summary or evidence file fails verification even if every file
    digest is recomputed to match.""",
     2: """3. `evidence.json`'s action / actor / policy sections and this summary's body
-   (everything above the trailing generator footer) are re-derived from the
-   hash-bound receipt and chain at verify time — a rewritten summary body or
-   evidence file fails verification even if every file digest is recomputed
-   to match.""",
+   (everything above the trailing generator footer) are re-rendered and
+   byte-compared at verify time. Prose derived from the hash-bound receipt
+   and chain cannot be rewritten without failing verification, even if every
+   file digest is recomputed to match. The body's generation timestamp and
+   replay-status wording are rendered from the pack's own recorded
+   attestations (`evidence.json`, `replay-report.json`), so they are exactly
+   as trustworthy as those attestations (see below).""",
 }
 _SUMMARY_FOOTER_ATTESTATION_BULLET = {
     1: "",
