@@ -2374,6 +2374,37 @@ def _mount_id(path: Path) -> str:
     raise AssertionError("mnt_id missing")
 
 
+def _canonical_tmp_root() -> Path:
+    tmp_root = Path("/tmp")
+    assert tmp_root.exists()
+    assert tmp_root.is_dir()
+    assert not tmp_root.is_symlink()
+    canonical_tmp = tmp_root.resolve(strict=True)
+    assert canonical_tmp == tmp_root
+    return canonical_tmp
+
+
+def _private_canonical_tmp_dir(prefix: str, request: pytest.FixtureRequest) -> Path:
+    path = Path(tempfile.mkdtemp(prefix=prefix, dir=_canonical_tmp_root()))
+    request.addfinalizer(lambda: shutil.rmtree(path, ignore_errors=True))
+    path.chmod(0o700)
+    path_stat = path.stat(follow_symlinks=False)
+    assert path_stat.st_uid == os.getuid()
+    assert stat.S_IMODE(path_stat.st_mode) == 0o700
+    return path
+
+
+def _directory_identity(path: Path) -> tuple[int, int, int, int]:
+    path_stat = path.stat(follow_symlinks=False)
+    assert stat.S_ISDIR(path_stat.st_mode)
+    return (
+        path_stat.st_dev,
+        path_stat.st_ino,
+        path_stat.st_uid,
+        stat.S_IMODE(path_stat.st_mode),
+    )
+
+
 def _recovery_root_binding(path: Path) -> str:
     root_stat = path.stat(follow_symlinks=False)
     return (
@@ -2451,9 +2482,10 @@ def test_postgres_gate_recovery_root_binding_validation_accepts_exact_identity(
 
 
 def test_postgres_gate_recovery_root_binding_validation_refuses_bad_inputs(
-    tmp_path: Path,
+    request: pytest.FixtureRequest,
 ) -> None:
-    recovery_root = tmp_path / "recovery"
+    tmp_root = _private_canonical_tmp_dir("acp-pg-binding-", request)
+    recovery_root = tmp_root / "recovery"
     recovery_root.mkdir()
     recovery_root.chmod(0o700)
     exact_binding = _recovery_root_binding(recovery_root)
@@ -2469,14 +2501,14 @@ def test_postgres_gate_recovery_root_binding_validation_refuses_bad_inputs(
         "malformed-mount": f"acgs-postgres-recovery-root/v2\t{exact_identity}\tnot-a-mount",
     }
     for name, binding in cases.items():
-        sentinel = tmp_path / f"{name}-sentinel"
+        sentinel = tmp_root / f"{name}-sentinel"
         result = _run_recovery_root_binding_validation(recovery_root, binding, sentinel)
         assert result.returncode == 70, (name, result.stdout, result.stderr)
         assert "VALID_BINDING_RC=70\n" in result.stdout
         assert not sentinel.exists()
 
     recovery_root.chmod(0o770)
-    mode_sentinel = tmp_path / "wrong-mode-sentinel"
+    mode_sentinel = tmp_root / "wrong-mode-sentinel"
     mode_result = _run_recovery_root_binding_validation(
         recovery_root,
         exact_binding,
@@ -2486,9 +2518,9 @@ def test_postgres_gate_recovery_root_binding_validation_refuses_bad_inputs(
     assert not mode_sentinel.exists()
     recovery_root.chmod(0o700)
 
-    symlink_root = tmp_path / "recovery-link"
+    symlink_root = tmp_root / "recovery-link"
     symlink_root.symlink_to(recovery_root, target_is_directory=True)
-    symlink_sentinel = tmp_path / "symlink-sentinel"
+    symlink_sentinel = tmp_root / "symlink-sentinel"
     symlink_result = _run_recovery_root_binding_validation(
         symlink_root,
         exact_binding,
@@ -2497,10 +2529,13 @@ def test_postgres_gate_recovery_root_binding_validation_refuses_bad_inputs(
     assert symlink_result.returncode == 70, (symlink_result.stdout, symlink_result.stderr)
     assert not symlink_sentinel.exists()
 
+    replacement_root = tmp_root / "recovery-replacement"
+    replacement_root.mkdir()
+    replacement_root.chmod(0o700)
+    assert _directory_identity(replacement_root) != _directory_identity(recovery_root)
     shutil.rmtree(recovery_root)
-    recovery_root.mkdir()
-    recovery_root.chmod(0o700)
-    replaced_sentinel = tmp_path / "post-mint-replaced-sentinel"
+    replacement_root.rename(recovery_root)
+    replaced_sentinel = tmp_root / "post-mint-replaced-sentinel"
     replaced_result = _run_recovery_root_binding_validation(
         recovery_root,
         exact_binding,
@@ -2510,11 +2545,14 @@ def test_postgres_gate_recovery_root_binding_validation_refuses_bad_inputs(
     assert not replaced_sentinel.exists()
 
     current_binding = _recovery_root_binding(recovery_root)
-    renamed_original = tmp_path / "recovery-original-renamed"
+    renamed_original = tmp_root / "recovery-original-renamed"
+    rename_replacement = tmp_root / "recovery-rename-replacement"
+    rename_replacement.mkdir()
+    rename_replacement.chmod(0o700)
+    assert _directory_identity(rename_replacement) != _directory_identity(recovery_root)
     recovery_root.rename(renamed_original)
-    recovery_root.mkdir()
-    recovery_root.chmod(0o700)
-    renamed_sentinel = tmp_path / "rename-replaced-sentinel"
+    rename_replacement.rename(recovery_root)
+    renamed_sentinel = tmp_root / "rename-replaced-sentinel"
     renamed_result = _run_recovery_root_binding_validation(
         recovery_root,
         current_binding,
@@ -8614,13 +8652,36 @@ def test_postgres_gate_state_cleanup_refuses_mount_binding_drift(tmp_path: Path)
     assert state_dir.is_dir()
 
 
+def _prove_rename_exchange_round_trip(
+    first: Path,
+    second: Path,
+) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
+    """Prove canonical native/tmpfs RENAME_EXCHANGE support for these paths.
+
+    Separate FUSE evidence records unsupported EINVAL behavior.
+    """
+    first_identity = _directory_identity(first)
+    second_identity = _directory_identity(second)
+    assert first_identity != second_identity
+
+    _rename_exchange(first, second)
+    assert _directory_identity(first) == second_identity
+    assert _directory_identity(second) == first_identity
+
+    _rename_exchange(first, second)
+    assert _directory_identity(first) == first_identity
+    assert _directory_identity(second) == second_identity
+    return first_identity, second_identity
+
+
 @pytest.mark.parametrize("substitute_has_payload", [True, False])
 def test_postgres_gate_state_cleanup_refuses_top_level_rename_exchange(
-    tmp_path: Path,
+    request: pytest.FixtureRequest,
     substitute_has_payload: bool,
 ) -> None:
-    state_dir = tmp_path / "state"
-    substitute = tmp_path / "substitute"
+    tmp_root = _private_canonical_tmp_dir("acp-pg-cleanup-top-exchange-", request)
+    state_dir = tmp_root / "state"
+    substitute = tmp_root / "substitute"
     state_dir.mkdir()
     substitute.mkdir()
     state_dir.chmod(0o700)
@@ -8629,6 +8690,10 @@ def test_postgres_gate_state_cleanup_refuses_top_level_rename_exchange(
     if substitute_has_payload:
         (substitute / "must-survive.txt").write_text("substitute", encoding="ascii")
     (state_dir / "recovery-contract.env").write_text("contract", encoding="ascii")
+    original_state_identity, original_substitute_identity = _prove_rename_exchange_round_trip(
+        state_dir,
+        substitute,
+    )
     result = _run_postgres_gate_state_cleanup(
         state_dir,
         env={"ACGS_POSTGRES_STATE_CLEANUP_RENAME_EXCHANGE_TOP": substitute.name},
@@ -8641,14 +8706,17 @@ def test_postgres_gate_state_cleanup_refuses_top_level_rename_exchange(
         assert state_dir.is_dir()
         assert not (state_dir / "must-survive.txt").exists()
     assert substitute.is_dir()
+    assert _directory_identity(state_dir) == original_substitute_identity
+    assert _directory_identity(substitute) == original_state_identity
 
 
 @pytest.mark.parametrize("substitute_has_payload", [True, False])
 def test_postgres_gate_state_cleanup_refuses_nested_rename_exchange(
-    tmp_path: Path,
+    request: pytest.FixtureRequest,
     substitute_has_payload: bool,
 ) -> None:
-    state_dir = tmp_path / "state"
+    tmp_root = _private_canonical_tmp_dir("acp-pg-cleanup-nested-exchange-", request)
+    state_dir = tmp_root / "state"
     nested = state_dir / "nested"
     substitute = state_dir / "substitute"
     nested.mkdir(parents=True)
@@ -8660,6 +8728,10 @@ def test_postgres_gate_state_cleanup_refuses_nested_rename_exchange(
     if substitute_has_payload:
         (substitute / "must-survive.txt").write_text("substitute", encoding="ascii")
     (state_dir / "recovery-contract.env").write_text("contract", encoding="ascii")
+    original_nested_identity, original_substitute_identity = _prove_rename_exchange_round_trip(
+        nested,
+        substitute,
+    )
     result = _run_postgres_gate_state_cleanup(
         state_dir,
         env={
@@ -8676,19 +8748,26 @@ def test_postgres_gate_state_cleanup_refuses_nested_rename_exchange(
         assert not (nested / "must-survive.txt").exists()
     assert substitute.is_dir()
     assert (state_dir / "recovery-contract.env").read_text(encoding="ascii") == "contract"
+    assert _directory_identity(nested) == original_substitute_identity
+    assert _directory_identity(substitute) == original_nested_identity
 
 
 def test_postgres_gate_state_cleanup_refuses_top_level_exchange_after_verify(
-    tmp_path: Path,
+    request: pytest.FixtureRequest,
 ) -> None:
-    state_dir = tmp_path / "state"
-    substitute = tmp_path / "substitute"
+    tmp_root = _private_canonical_tmp_dir("acp-pg-cleanup-top-after-verify-", request)
+    state_dir = tmp_root / "state"
+    substitute = tmp_root / "substitute"
     state_dir.mkdir()
     substitute.mkdir()
     state_dir.chmod(0o700)
     substitute.chmod(0o700)
     (state_dir / "original.txt").write_text("original", encoding="ascii")
     (state_dir / "recovery-contract.env").write_text("contract", encoding="ascii")
+    original_state_identity, original_substitute_identity = _prove_rename_exchange_round_trip(
+        state_dir,
+        substitute,
+    )
     result = _run_postgres_gate_state_cleanup(
         state_dir,
         env={
@@ -8701,12 +8780,15 @@ def test_postgres_gate_state_cleanup_refuses_top_level_exchange_after_verify(
     assert not (state_dir / "original.txt").exists()
     assert substitute.is_dir()
     assert not (substitute / "original.txt").exists()
+    assert _directory_identity(state_dir) == original_substitute_identity
+    assert _directory_identity(substitute) == original_state_identity
 
 
 def test_postgres_gate_state_cleanup_refuses_nested_exchange_after_verify(
-    tmp_path: Path,
+    request: pytest.FixtureRequest,
 ) -> None:
-    state_dir = tmp_path / "state"
+    tmp_root = _private_canonical_tmp_dir("acp-pg-cleanup-nested-after-verify-", request)
+    state_dir = tmp_root / "state"
     nested = state_dir / "nested"
     substitute = state_dir / "substitute"
     nested.mkdir(parents=True)
@@ -8716,6 +8798,10 @@ def test_postgres_gate_state_cleanup_refuses_nested_exchange_after_verify(
     substitute.chmod(0o700)
     (nested / "original.txt").write_text("original", encoding="ascii")
     (state_dir / "recovery-contract.env").write_text("contract", encoding="ascii")
+    original_nested_identity, original_substitute_identity = _prove_rename_exchange_round_trip(
+        nested,
+        substitute,
+    )
     result = _run_postgres_gate_state_cleanup(
         state_dir,
         env={
@@ -8729,6 +8815,8 @@ def test_postgres_gate_state_cleanup_refuses_nested_exchange_after_verify(
     assert substitute.is_dir()
     assert not (substitute / "original.txt").exists()
     assert (state_dir / "recovery-contract.env").read_text(encoding="ascii") == "contract"
+    assert _directory_identity(substitute) == original_nested_identity
+    assert original_substitute_identity != original_nested_identity
 
 
 def test_postgres_gate_cleanup_preserves_original_body_status_on_cleanup_failure(
