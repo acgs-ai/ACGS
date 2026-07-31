@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://acgs.ai/schema/proof-pack/v1/replay-report.schema.json",
-  "title": "ACGS proof pack v1 — replay-report.json artifact",
-  "description": "The decision re-derivation report of an acgs/proof-pack/v1 bundle. status 'verified' is a generate-time attestation (the generator refuses to mint a pack from a failed replay, so a verified report always carries result.valid=true); status 'not_available' means no replay material was supplied and result is null. Frozen format: unknown keys are rejected.",
+  "$id": "https://acgs.ai/schema/proof-pack/v1.1/replay-report.schema.json",
+  "title": "ACGS proof pack v1.1 — replay-report.json artifact",
+  "description": "The decision re-derivation report of an acgs/proof-pack/v1.1 bundle. status 'verified' is a generate-time attestation (the generator refuses to mint a pack from a failed replay, so a verified report always carries result.valid=true); status 'not_available' means no replay material was supplied and result is null. Frozen format: unknown keys are rejected. This v1.1 schema is structurally identical to its v1 counterpart: the two pack versions differ only in the summary-template revision bound to the pack's verification-summary.md, so v1.1 ships as distinct schema files with distinct $id values instead of widening the frozen v1 schemas in place.",
   "type": "object",
   "properties": {
-    "schema_version": { "const": "acgs/proof-pack/v1" },
+    "schema_version": { "const": "acgs/proof-pack/v1.1" },
     "status": { "enum": ["verified", "not_available"] },
     "note": { "type": "string", "minLength": 1 },
     "result": {
