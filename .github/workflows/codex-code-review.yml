@@ -57,6 +57,11 @@ jobs:
       - name: Run Codex Code Review
         if: ${{ env.OPENAI_API_KEY != '' && env.IS_INTERNAL == 'true' }}
         id: codex-review
+        # The "Gate on review outcome" step below is the sole decider of this required
+        # check, so a hard failure here must not fail the job directly: the gate reads
+        # steps.codex-review.outcome (which continue-on-error preserves as 'failure')
+        # and still fails closed unless a maintainer applied 'codex-review-waived'.
+        continue-on-error: true
         uses: openai/codex-action@v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
