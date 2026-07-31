@@ -57,6 +57,13 @@ jobs:
       - name: Run Codex Code Review
         if: ${{ env.OPENAI_API_KEY != '' && env.IS_INTERNAL == 'true' }}
         id: codex-review
+        # The gate step below is the sole decider of this required check. Without
+        # continue-on-error, a failure inside the action (e.g. its sandbox setup)
+        # fails the job directly and bypasses the gate's explicit waiver path, so a
+        # maintainer-applied 'codex-review-waived' label could never unblock the
+        # merge. The gate still fails closed for non-waived PRs whose review did
+        # not complete (outcome != 'success').
+        continue-on-error: true
         uses: openai/codex-action@v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
