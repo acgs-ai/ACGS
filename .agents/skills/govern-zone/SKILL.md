@@ -1,7 +1,12 @@
-```markdown
+---
+name: govern-zone
+description: Use when working anywhere in the govern-zone (acgs-ai/ACGS) monorepo — coding conventions, package/console scaffolding workflows, CI-gate alignment, and readiness-evidence upkeep.
+---
+
 # govern-zone Development Patterns
 
-> Auto-generated skill from repository analysis
+> Originally generated from repository analysis; maintained by hand since — there is no
+> generator for this file.
 
 ## Overview
 
@@ -11,10 +16,12 @@ This skill covers the core development patterns, coding conventions, and operati
 
 ### File Naming
 
-- **Python packages:** Use `camelCase` for filenames.
-  - Example: `myFeatureModule.py`
-- **Frontend (JS/TS):** Also uses `camelCase` for files and components.
-  - Example: `UserDashboard.tsx`
+- **Python modules:** `snake_case`, with a leading underscore for private helpers.
+  - Example: `replay_store.py`, `benchmark_adapters.py`, `_locking.py`
+- **Python package directories:** kebab-case on disk, `snake_case` for the importable module.
+  - Example: `packages/gove-zone/src/gove_zone/`
+- **Frontend (JS/TS):** `PascalCase.tsx` for React components, `camelCase.ts` for modules.
+  - Example: `UserDashboard.tsx`, `src/api/client.ts`
 
 ### Imports
 
@@ -32,7 +39,7 @@ This skill covers the core development patterns, coding conventions, and operati
 - **Python:** Named exports via explicit imports in `__init__.py`.
   ```python
   # __init__.py
-  from .myFeatureModule import MyFeatureClass
+  from .replay_store import ReplayStore
   ```
 - **Frontend:** Named exports.
   ```javascript
@@ -41,8 +48,10 @@ This skill covers the core development patterns, coding conventions, and operati
 
 ### Commit Patterns
 
-- Prefixes: `chore`, `fix`, `impl` (but freeform allowed)
-- Example: `fix: correct package registration in pyproject.toml`
+- Conventional Commits: `feat`, `fix`, `docs`, `test`, `chore`, `ci`, `refactor`, with an
+  optional scope. (`impl` appears a handful of times in older history; do not use it.)
+- Example: `fix(gateway): correct package registration in pyproject.toml`
+- The default branch is `master`, **not** `main`. Open PRs with `--base master`.
 
 ---
 
@@ -63,9 +72,9 @@ This skill covers the core development patterns, coding conventions, and operati
 
 **Example:**
 ```bash
-mkdir packages/myNewAgent
-touch packages/myNewAgent/pyproject.toml
-echo "# My New Agent" > packages/myNewAgent/README.md
+mkdir -p packages/my-new-agent/src/my_new_agent
+touch packages/my-new-agent/pyproject.toml
+echo "# My New Agent" > packages/my-new-agent/README.md
 # ...etc
 ```
 
@@ -177,24 +186,26 @@ dist/
 
 ## Testing Patterns
 
-- **Framework:** [vitest](https://vitest.dev/) (for frontend JS/TS)
-- **Pattern:** Test files are named `*.test.js`
+- **Framework:** [vitest](https://vitest.dev/) (frontend JS/TS), pytest (Python)
+- **Pattern:** frontend tests are `*.test.ts` / `*.test.tsx`; Python tests are `test_*.py`
 - **Python:** Tests are placed in `tests/` directories within each package and at the repo root for monorepo invariants.
-- **Example (JS/TS):**
-  ```javascript
-  // myFeature.test.js
-  import { myFeature } from './myFeature'
-  test('should work', () => {
-    expect(myFeature()).toBe(true)
+- **Example (TS):**
+  ```typescript
+  // receipt.test.ts
+  import { expect, test } from 'vitest'
+  import { formatReceipt } from './receipt'
+
+  test('formats a denied receipt', () => {
+    expect(formatReceipt({ decision: 'DENY' })).toContain('DENY')
   })
   ```
 - **Example (Python):**
   ```python
-  # tests/test_my_feature.py
-  from myFeatureModule import my_feature
+  # packages/gove-zone/tests/test_replay_store.py
+  from gove_zone.replay_store import ReplayStore
 
-  def test_my_feature():
-      assert my_feature() is True
+  def test_replay_store_rejects_tampered_chain() -> None:
+      ...
   ```
 
 ---
@@ -210,4 +221,3 @@ dist/
 | /refresh-readiness-evidence | Update readiness docs, evidence, and preflight scripts      |
 | /update-gitignore       | Add or update .gitignore for tool/build artifacts               |
 | /remove-package         | Remove or extract an inactive or experimental package           |
-```
