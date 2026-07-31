@@ -65,7 +65,24 @@ jobs:
           .venv/bin/python -m ruff check src tests
           .venv/bin/python -m ruff format --check src tests
 
+      - name: Provision gove-zone generator venv (round-trip contract)
+        # tests/test_round_trip_gove_zone_pack.py generates a REAL gove-zone
+        # pack via a separate interpreter (.venv-gz) and verifies it with this
+        # package. Without this venv those tests skip — exactly the false-green
+        # the round-trip suite exists to prevent — so CI provisions the
+        # generator and then REQUIRES the tests to run (env on the Test step).
+        # gove-zone declares zero runtime deps; crypto covers the signing
+        # surface its proofpack CLI can touch.
+        working-directory: packages/gove-zone
+        run: |
+          uv venv --python ${{ matrix.python-version }} .venv-gz
+          uv pip install --python .venv-gz/bin/python --no-config --editable '.[crypto]'
+
       - name: Test
+        env:
+          # Fail loudly (never skip) if the gove-zone generator interpreter is
+          # absent, so the round-trip contract cannot silently stop running.
+          ACGS_REQUIRE_ROUND_TRIP: '1'
         run: .venv/bin/python -m pytest tests/ -v
 
       - name: Clean-room verify (no gove-zone installed)

@@ -14,15 +14,18 @@ Inputs are gove-zone's committed ``proofpacks/valid-replay`` artifacts and the
 generation clock is pinned, matching gove-zone's own byte-reproducible fixture
 generator, so the pack under test is exactly what gove-zone ships.
 
-CI note: the gove-zone interpreter (``.venv-gz``) is a local development venv
-that is NOT present in a clean ``actions/checkout`` tree. When it is absent,
-the round-trip tests SKIP loudly (not silently pass) — a round-trip test that
-never runs is exactly the false-green this package exists to prevent.
+CI note: the workflow (``.github/workflows/python-acgs-proofpack-verifier.yml``)
+provisions the gove-zone interpreter (``.venv-gz``) and sets
+``ACGS_REQUIRE_ROUND_TRIP=1``, under which a missing interpreter FAILS the run
+instead of skipping — a round-trip test that never runs is exactly the
+false-green this package exists to prevent. Locally (no env var) the tests
+skip loudly when the venv is absent.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -42,13 +45,16 @@ NOW_ISO = "2026-01-01T00:00:00+00:00"
 
 SUMMARY_BINDING_MISMATCH = "SUMMARY_BINDING_MISMATCH"
 
-# Skip the entire module when the gove-zone interpreter is absent (CI).
-# A loud skip is correct; a silent pass would be the false-green we prevent.
+# When ACGS_REQUIRE_ROUND_TRIP=1 (set by CI, which provisions .venv-gz), a
+# missing generator interpreter FAILS the run — the round-trip contract must
+# actually execute. Without it (local dev), skip loudly; a silent pass would
+# be the false-green we prevent.
 _HAS_GENERATOR = _GOVE_ZONE_PYTHON.is_file() and _GENERATOR_INPUTS.is_dir()
+_REQUIRE_ROUND_TRIP = os.environ.get("ACGS_REQUIRE_ROUND_TRIP") == "1"
 pytestmark = pytest.mark.skipif(
-    not _HAS_GENERATOR,
+    not _HAS_GENERATOR and not _REQUIRE_ROUND_TRIP,
     reason=f"gove-zone generator interpreter not found at {_GOVE_ZONE_PYTHON} "
-    "(local dev venv; absent in CI). Run `uv venv --python 3.11 .venv-gz` in "
+    "(local dev venv). Run `uv venv --python 3.11 .venv-gz` in "
     "packages/gove-zone and `uv pip install -e '.[dev,schema,crypto]'` to enable.",
 )
 
@@ -56,6 +62,13 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture(scope="module")
 def gove_zone_pack(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Generate a real gove-zone proof pack via gove-zone's own interpreter."""
+    if not _HAS_GENERATOR:
+        pytest.fail(
+            "ACGS_REQUIRE_ROUND_TRIP=1 but the gove-zone generator interpreter "
+            f"is missing at {_GOVE_ZONE_PYTHON} — the round-trip contract did "
+            "not run. Provision .venv-gz (see the CI workflow) or unset the "
+            "env var for a local skip."
+        )
     out = tmp_path_factory.mktemp("gove-zone-pack") / "pack"
 
     proc = subprocess.run(  # noqa: S603 — fixed argv, no shell, paths are repo-local.
