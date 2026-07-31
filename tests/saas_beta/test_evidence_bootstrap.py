@@ -2687,6 +2687,10 @@ def test_closed_p0_command_corpus_is_exact_ordered_and_contains_no_shell_compoun
     assert [(record["selectors"][0], tuple(record["argv"])) for record in records] == list(
         _common.REVIEWED_P0_TRANSCRIPT
     )
+    assert all("cwd_scope" not in record for record in records)
+    assert [record["cwd"] for record in records] == [
+        _cwd_for_selector(selector) for selector, _ in _common.REVIEWED_P0_TRANSCRIPT
+    ]
     assert all(
         "-c" not in argv and argv[0] not in {"bash", "sh", "zsh", "python", "python3"}
         for _, argv in _common.REVIEWED_P0_TRANSCRIPT
@@ -2699,17 +2703,23 @@ def test_closed_p0_command_corpus_is_exact_ordered_and_contains_no_shell_compoun
     ):
         with pytest.raises(_common.EvidenceError, match="reviewed ordered command corpus"):
             _common.validate_p0_transcript_sequence(mutation)
-    for forged in (
+    rejected_cwd_cases = (
         {key: value for key, value in records[0].items() if key != "cwd"},
         {**records[0], "cwd": "relative"},
         {**records[0], "cwd": str(ROOT) + "/"},
         {**records[0], "cwd": str(ROOT / "../ACGS")},
         {**records[0], "cwd": "//tmp/acgs"},
+    )
+    for forged in (
+        *rejected_cwd_cases,
         {**records[0], "cwd": str(ROOT), "cwd_scope": "REPO_ROOT"},
         {**records[0], "cwd": str(ROOT), "unexpected": True},
     ):
         with pytest.raises(_common.EvidenceError):
             _common.validate_transcript_record(forged, expected_node="P0-EVIDENCE-000")
+    for forged in rejected_cwd_cases[:3]:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_transcript_record(forged)
     for forged_sequence in (
         [{**records[0], "cwd": str(ROOT / "packages/acgs-control-plane")}, *records[1:]],
         [{**records[0], "cwd": str(ROOT)}, {**records[1], "cwd": str(ROOT)}, *records[2:]],
@@ -6122,6 +6132,8 @@ def test_append_record_compatibility_write_all_recovers_short_and_fails_zero(
     )
     wrapper_python.chmod(0o700)
     harness_source = source.replace("/usr/bin/python3 -I -S -", f"{wrapper_python} -")
+    evid_selector, evid_argv = _common.REVIEWED_P0_TRANSCRIPT[0]
+    evid_command = " ".join(shlex.quote(argument) for argument in evid_argv)
 
     def run_append(mode: str) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path]:
         case_root = tmp_path / mode
@@ -6151,7 +6163,7 @@ def test_append_record_compatibility_write_all_recovers_short_and_fails_zero(
             "append_rc=0\n"
             "if append_record 2026-07-29T00:00:00Z 2026-07-29T00:00:01Z "
             f"{shlex.quote(str(stdout_file))} {shlex.quote(str(stderr_file))} "
-            "'root:EVID-gate' REPO_ROOT /usr/bin/python -m pytest -q; then\n"
+            f"{shlex.quote(evid_selector)} __NONE__ {evid_command}; then\n"
             "  append_rc=0\n"
             "else\n"
             "  append_rc=$?\n"
@@ -6179,14 +6191,21 @@ def test_append_record_compatibility_write_all_recovers_short_and_fails_zero(
     compatibility_payload = short_compatibility_path.read_text(encoding="utf-8")
     assert trusted_payload.endswith("\n")
     assert compatibility_payload.endswith("\n")
-    assert json.loads(trusted_payload)["cwd"] == str(short_worktree)
-    assert "cwd" not in json.loads(compatibility_payload)
+    trusted_record = json.loads(trusted_payload)
+    compatibility_record = json.loads(compatibility_payload)
+    assert trusted_record["cwd"] == str(short_worktree)
+    assert compatibility_record["cwd"] == trusted_record["cwd"]
+    assert _common.validate_transcript_record(compatibility_record) == compatibility_record
+    assert compatibility_record == trusted_record
 
     zero, zero_trusted_path, zero_compatibility_path, zero_worktree = run_append("zero_second")
     assert zero.returncode == 0, (zero.stdout, zero.stderr)
     assert "APPEND_RC=1" in zero.stdout
     assert "RECORDS=41" in zero.stdout
     assert "trusted transcript compatibility short write" in zero.stderr
+    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in zero.stdout + zero.stderr
+    # The trusted append precedes the compatibility append; this unit leaves that
+    # authoritative record behind, and the caller must fail closed before PASS.
     zero_trusted_payload = zero_trusted_path.read_text(encoding="utf-8")
     assert zero_trusted_payload.endswith("\n")
     assert json.loads(zero_trusted_payload)["cwd"] == str(zero_worktree)
@@ -15113,6 +15132,11 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
         assert [(record["selectors"][0], tuple(record["argv"])) for record in records] == list(
             _common.REVIEWED_P0_TRANSCRIPT[:10]
         )
+        assert all("cwd_scope" not in record for record in records)
+        assert [record["cwd"] for record in records] == [
+            _cwd_for_selector(selector, repo_root=ROOT)
+            for selector, _ in _common.REVIEWED_P0_TRANSCRIPT[:10]
+        ]
         return
 
     range_repo = tmp_path / "range-repo"
@@ -20970,6 +20994,7 @@ def test_pinned_uv_execution_is_normalized_only_for_transcript_metadata() -> Non
         '    compatibility["argv"] = ["uv", *compatibility["argv"][1:]]'
     )
     assert prover.count(normalization) == 1
+    assert 'compatibility.pop("cwd", None)' not in prover
     assert "/home/martin/.local/bin/uv" not in common
     assert '            "uv",\n            "run",' in common
     reviewed = list(_common.REVIEWED_P0_TRANSCRIPT[5][1])

@@ -3960,7 +3960,6 @@ try:
 finally:
     os.close(fd)
 compatibility = dict(record)
-compatibility.pop("cwd", None)
 if compatibility["argv"] and compatibility["argv"][0] == "/home/martin/.local/bin/uv":
     compatibility["argv"] = ["uv", *compatibility["argv"][1:]]
 compatibility_path = pathlib.Path(compatibility_target)
