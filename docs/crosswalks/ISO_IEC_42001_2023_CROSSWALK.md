@@ -38,7 +38,9 @@ pack's `status` vocabulary and per-row limitations govern for Annex A rows.
 
 ## Core invariant being mapped
 
-**No valid Decision Receipt, no side effect.** A registered tool executes only
+**No valid Decision Receipt, no side effect.** This receipt-validation claim
+describes the receipt-gated execution path, `GovernedExecutor` /
+`execute_with_receipt`: there, a registered tool executes only
 when a receipt passes the full executor gate: it exists; was issued for *this*
 caller (actor anchor); is hash-intact (and signature-valid when it claims a
 signature); is ALLOW/TRANSFORM (not DENY/ESCALATE/expired); and its tenant,
@@ -52,9 +54,19 @@ policy derives `expected_policy_hash` automatically, and the escalation gateway
 / governed-MCP gateway pin `expected_audit_hash` at resume, but an integration
 relying on the bare defaults gets hash-bound *carried claims*, not
 independently gate-enforced bindings. Any failed check raises
-`ReceiptValidationError` **before** the tool runs. Independently, the kernel
-guarantees policy-runs-before-effect and fail-closes (synthesized DENY /
-`AuditError`) on policy or audit failure.
+`ReceiptValidationError` **before** the tool runs.
+
+**Kernel dispatch is a separate, policy-before-effect path; it is not the
+executor gate.** `Kernel.dispatch` (`kernel.py`) evaluates policy and appends
+the decision to the audit chain before invoking the registered tool directly,
+raises on DENY/ESCALATE, and fail-closes (synthesized DENY / `AuditError`) on
+policy or audit failure. But no `DecisionReceipt` passes the executor's actor,
+signature, expiry, or receipt-hash gate on this path: the lightweight
+`Receipt` it returns is constructed only *after* the tool has run, as a record
+of the executed call, not a pre-execution credential. Rows below that cite
+`kernel.py` map to these policy-before-effect and fail-closed properties; the
+full receipt-validation guarantees above belong to `GovernedExecutor` /
+`execute_with_receipt` only.
 
 Evidence: `packages/gove-zone/src/gove_zone/{receipt,executor,kernel,audit,policy,signing,consumption}.py`.
 
@@ -113,7 +125,9 @@ authoritative for public wording.)
 Clause numbers and titles follow the publicly available ISO/IEC 42001:2023
 table of contents (Clause 6 ends at 6.3 *planning of changes*; Clause 8
 comprises 8.1–8.4 and ends at 8.4 *AI system impact assessment* — there is no
-Clause 8.5). **The full ISO/IEC 42001:2023 published text was not consulted** —
+Clause 8.5; Clause 10 comprises 10.1 *continual improvement* and 10.2
+*nonconformity and corrective action* — there is no Clause 10.3). **The full
+ISO/IEC 42001:2023 published text was not consulted** —
 no verbatim clause text is reproduced or paraphrased from the standard, and the
 normative requirement wording behind each clause title is not verified against
 the published document. Every row is therefore a mapping to the *clause theme*,
@@ -143,17 +157,16 @@ not to verified normative requirement text. See "Limitations and gaps".
 | **9.1** | Monitoring, measurement, analysis and evaluation | AUDIT-HASHCHAIN, REPLAY-VERIFY | `audit.py`, `replay.py`, `metrics.py`; `tests/test_audit_chain.py`, `tests/test_replay.py`, `tests/test_metrics.py` | Evidence toward the clause theme only. The hash chain plus replay supply the measurable, verifiable inputs a monitoring programme consumes; `metrics.py` derives receipt-emission signals but is **default-OFF** (enabled by `GOVE_ZONE_METRICS`) and deliberately leak-safe (timestamp, decision, tool, `argument_hash`, `event_id` only). Dashboards, alerting thresholds, evaluation criteria, and review cadence are operator-owned. Consistent with `ISO42001-A6.2.6`. |
 | **9.2** | Internal audit | AUDIT-HASHCHAIN, REPLAY-VERIFY, HASH-INTEGRITY | `audit.py`, `cli.py`, `verifier.py`, `proofpack.py`; `tests/test_cli.py`, `tests/test_audit_chain_corruption.py`, `tests/test_proofpack_schema.py` | Evidence toward the clause theme only, and narrower than it first appears. What an internal auditor can independently re-check **without system access** is receipt-hash binding and audit-chain integrity. Offline replay is **not** in that set: `compliance/evidence-pack/frameworks/iso-42001.md` records that the shipped pack omits the policy bundle and side store, so offline `acgs proofpack verify` reports the replay as `recorded` — a generator attestation, not an independent re-derivation — unless the material is supplied via `--policy-bundle` / `--side-store`. The same source lists REPLAY-VERIFY, DECISION-GATE, ESCALATE-HUMAN and FAILCLOSED among the controls that ALLOW-only pack does not independently demonstrate. These are **point-in-time local evaluations**; the internal audit programme, auditor independence, and audit scheduling are organizational. |
 | **9.3** | Management review | — | — | No runtime evidence — organizational control, outside gove-zone's scope. The audit chain can be an *input* to a management review, but the review itself is a leadership activity the gate neither performs nor records. |
-| **10.1** | Improvement (general) | — | — | No direct mapping identified. |
+| **10.1** | Continual improvement | — | — | No runtime evidence — organizational control, outside gove-zone's scope. |
 | **10.2** | Nonconformity and corrective action | FAILCLOSED-POLICY/AUDIT, DECISION-GATE, ESCALATE-HUMAN, AUDIT-HASHCHAIN, HASH-INTEGRITY | `kernel.py`, `escalation.py`, `audit.py`, `revocation.py`; `tests/test_fail_closed.py`, `tests/test_audit_chain_corruption.py`, `tests/test_escalation_resume.py`, `tests/test_revocation.py` | Evidence toward the clause theme only. A nonconforming action is *detected and blocked at the boundary* rather than corrected after the fact: chain corruption and receipt-hash mismatch are detectable on verify, ESCALATE routes to resolution by an integrator-supplied distinct validator (human involvement is operator-owned; gap 6), and a compromised signing key can be revoked at the gate independently of verifier-map membership. Detection is **on-verify, not continuous**; the corrective-action process, root-cause analysis, and nonconformity register are operator-owned. |
-| **10.3** | Continual improvement | — | — | No runtime evidence — organizational control, outside gove-zone's scope. |
 | **Annex A.2** | AI policy (control group) | POLICY/TENANT/BOUNDARY/ACTION/AUDIT-BIND, POLICY-BEFORE-EXEC | `compliance/control-mapping.json` row `ISO42001-A2.2`; `policy.py`; `tests/test_policy_bundle_io.py` | Mapped in the generated evidence pack at status **partial**. See `compliance/evidence-pack/frameworks/iso-42001.md` for the authoritative row and its `verification_method`. Only the `A.2.2` identifier is attested by an in-repo source; other controls in this group are not enumerated (gap 2). |
 | **Annex A.3** | Internal organization / AI roles and responsibilities (control group) | MACI-VALIDATOR-SEP, ACTOR-ANCHOR | `compliance/control-mapping.json` row `ISO42001-A3.2`; `receipt.py`, `tenant.py`; `tests/test_maci_role_separation.py`, `tests/test_tenant_safety.py` | Mapped in the generated evidence pack at status **implemented**. Only `A.3.2` is attested in-repo. |
 | **Annex A.6** | AI system life cycle (control group) | AUDIT-HASHCHAIN, REPLAY-VERIFY, FAILCLOSED-POLICY/AUDIT, RECEIPT-REQUIRED | `compliance/control-mapping.json` rows `ISO42001-A6.2.6` (partial), `ISO42001-A6.2.8` (implemented); `audit.py`, `replay.py`, `kernel.py` | Mapped in the generated evidence pack. Life-cycle coverage is operation-and-logging only — gove-zone contributes nothing to design, data management, or verification-and-validation controls within this group. Only `A.6.2.6` and `A.6.2.8` are attested in-repo. |
 | **Annex A.8** | Information for interested parties (control group) | — *(documentation evidence, no runtime control)* | `compliance/control-mapping.json` row `ISO42001-A8.2`; `docs/DECISION_RECEIPT_SPEC.md`, `docs/SECURITY_MODEL.md`, `docs/CLAIMS.md` | Mapped in the generated evidence pack at status **implemented** with **no ACGS runtime controls** — the evidence is documentation review, not enforcement. Documentation covers the governance component only; whole-system documentation for users is the integrator's. |
 | **Annex A.9** | Use of AI systems (control group) | DECISION-GATE, ESCALATE-HUMAN | `compliance/control-mapping.json` row `ISO42001-A9.2`; `receipt.py`, `escalation.py`; `tests/test_escalation_resume.py` | Mapped in the generated evidence pack at status **partial**. Non-executable DENY and ESCALATE-to-distinct-validator (authenticated human involvement is operator-owned; gap 6) are enforcement primitives *inside* a responsible-use process the organization must define. Only `A.9.2` is attested in-repo. |
 
-**Row totals.** 30 rows: 17 with a mapping, 13 with none (`4.1`, `4.2`, `5.1`,
-`6.2`, `7.1`, `7.2`, `7.3`, `7.4`, `8.2`, `8.4`, `9.3`, `10.1`, `10.3`).
+**Row totals.** 29 rows: 17 with a mapping, 12 with none (`4.1`, `4.2`, `5.1`,
+`6.2`, `7.1`, `7.2`, `7.3`, `7.4`, `8.2`, `8.4`, `9.3`, `10.1`).
 
 ## Limitations and gaps — do not overstate (read before citing this doc)
 
@@ -164,7 +177,9 @@ clause theme," bounded by all of the following.
    published text.** The ISO/IEC 42001:2023 standard is a paid publication and
    its full text was not consulted. Clause numbers and titles follow the
    publicly available ISO/IEC 42001:2023 table of contents (6.3 is *planning of
-   changes*; Clause 8 is 8.1–8.4, ending at *AI system impact assessment*); no
+   changes*; Clause 8 is 8.1–8.4, ending at *AI system impact assessment*;
+   Clause 10 is 10.1 *continual improvement* and 10.2 *nonconformity and
+   corrective action*); no
    normative requirement text is reproduced or paraphrased, and the requirement
    wording behind each title is **not** verified against the published
    document. Verify against a licensed copy before relying on a specific clause
@@ -177,10 +192,12 @@ clause theme," bounded by all of the following.
    on them.
 3. **gove-zone is one layer, not the AI management system.** An AIMS spans
    leadership, competence, planning, communication, and review — none of which a
-   runtime membrane can supply. Thirteen of the thirty-one rows above have no
+   runtime membrane can supply. Twelve of the twenty-nine rows above have no
    gove-zone evidence at all, by design.
 4. **Executor-bypass is possible.** Controls bind only to calls routed through
-   `GovernedExecutor` / `execute_with_receipt` / kernel `dispatch`. A raw tool
+   `GovernedExecutor` / `execute_with_receipt` / kernel `dispatch` (the first
+   two receipt-gated; kernel `dispatch` is the policy-before-effect path
+   described under "Core invariant being mapped", with no receipt gate). A raw tool
    call the integrator exposes bypasses the membrane entirely — handler wiring is
    integrator-owned. `tests/test_gate_wiring_matrix.py` statically checks only
    the examples the integration matrix labels "Shipped + tested"

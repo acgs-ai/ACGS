@@ -136,6 +136,7 @@ class PackRejectionReason(StrEnum):
     EVIDENCE_MALFORMED = "EVIDENCE_MALFORMED"
     SCHEMA_VERSION_MISSING = "SCHEMA_VERSION_MISSING"
     SCHEMA_VERSION_UNSUPPORTED = "SCHEMA_VERSION_UNSUPPORTED"
+    SCHEMA_VERSION_MISMATCH = "SCHEMA_VERSION_MISMATCH"
     ARTIFACT_MISSING = "ARTIFACT_MISSING"
     ARTIFACT_DIGEST_MISMATCH = "ARTIFACT_DIGEST_MISMATCH"
     RECEIPT_BINDING_MISMATCH = "RECEIPT_BINDING_MISMATCH"
@@ -460,7 +461,11 @@ def generate_proof_pack(
 #   SCHEMA_VERSION_UNSUPPORTED (an upgrade signal, not a tamper verdict);
 # * a current pack whose summary is swapped for an older revision's rendering
 #   fails SUMMARY_BINDING_MISMATCH — there is no cross-revision acceptance a
-#   downgrade could exploit to reinstate superseded auditor wording.
+#   downgrade could exploit to reinstate superseded auditor wording;
+# * a pack whose artifacts disagree about the declared schema version fails
+#   SCHEMA_VERSION_MISMATCH: downgrading evidence.json plus the summary alone
+#   (recomputing the unauthenticated digests) is caught because
+#   audit-chain.json and replay-report.json still declare the newer version.
 #
 # Residual limit: schema_version is itself an unauthenticated declaration, so
 # an editor who rewrites the ENTIRE pack self-consistently under an older
@@ -767,6 +772,18 @@ def _verify_pack_inner(
         except (ValueError, OSError):
             reasons.append(PackRejectionReason.REPLAY_REPORT_MALFORMED)
 
+    # --- cross-artifact schema pinning ----------------------------------------
+    # evidence.json's declared schema_version selects the summary-template
+    # revision, so every OTHER artifact that declares a schema_version must
+    # declare the SAME one. Without this, an editor could downgrade
+    # evidence.json + the summary to an older schema (recomputing the
+    # unauthenticated digests) while leaving audit-chain.json /
+    # replay-report.json at the current version: a mixed-version pack whose
+    # legacy summary rendering would pass the schema-bound byte-compare. The
+    # audit chain's declared version is checked in tier 2, where it is parsed.
+    if report_doc is not None and report_doc.get("schema_version") != schema_version:
+        reasons.append(PackRejectionReason.SCHEMA_VERSION_MISMATCH)
+
     # --- tier 1: artifact integrity -----------------------------------------
     declared = evidence.get("artifacts")
     declared = declared if isinstance(declared, dict) else {}
@@ -838,6 +855,14 @@ def _verify_pack_inner(
                 or chain_doc.get("event_count") != len(events)
             ):
                 reasons.append(PackRejectionReason.AUDIT_BINDING_MISMATCH)
+            # Cross-artifact schema pinning, chain half (report half above):
+            # the chain must declare the same schema_version evidence.json
+            # selected the summary-template revision with.
+            if (
+                chain_doc.get("schema_version") != schema_version
+                and PackRejectionReason.SCHEMA_VERSION_MISMATCH not in reasons
+            ):
+                reasons.append(PackRejectionReason.SCHEMA_VERSION_MISMATCH)
 
             # The summary is deterministic given the receipt, the chain, and the
             # replay status, so it is re-rendered here and byte-compared — the
