@@ -280,10 +280,13 @@ def test_receipt_unknown_key_fails() -> None:
 
 
 # The scoped-trust receipt v2 fields DecisionReceipt.to_dict() emits all-or-none
-# on top of the v1 serialization. generate_proof_pack accepts a v2 receipt and
-# mints an acgs/proof-pack/v1.1 bundle, so the v1.1 receipt schema must accept
-# genuine generator output carrying them — while the FROZEN v1 schema keeps
-# rejecting them (no v1-era generator ever packaged a v2 receipt).
+# on top of the v1 serialization. NEITHER pack schema admits them: scoped-trust
+# verification needs an expected tenant/project/environment scope and a trust
+# registry, inputs no proof-pack verification path carries or accepts, so
+# generate_proof_pack rejects a v2 receipt at generation and the schemas reject
+# the fields symmetrically: a schema-valid pack must never be unverifiable by
+# construction (see test_acgs_proofpack.py for the generation/verification
+# rejection tests).
 _RECEIPT_V2_FIELDS = {
     "receipt_schema_version": "gove-zone/decision-receipt/v2",
     "project_id": "proj-1",
@@ -292,10 +295,11 @@ _RECEIPT_V2_FIELDS = {
 }
 
 
-def test_receipt_v2_scoped_trust_fields_validate_under_v1_1() -> None:
+def test_receipt_v2_scoped_trust_fields_rejected_by_v1_1() -> None:
     doc = _golden_doc(RECEIPT_FILE)
+    _assert_valid(RECEIPT_FILE, doc)  # guard
     doc.update(_RECEIPT_V2_FIELDS)
-    _assert_valid(RECEIPT_FILE, doc)
+    _assert_invalid(RECEIPT_FILE, doc)
 
 
 def test_receipt_v2_scoped_trust_fields_stay_rejected_by_frozen_v1() -> None:
@@ -305,27 +309,11 @@ def test_receipt_v2_scoped_trust_fields_stay_rejected_by_frozen_v1() -> None:
     _assert_invalid(RECEIPT_FILE, doc, version="acgs/proof-pack/v1")
 
 
-@pytest.mark.parametrize("dropped", sorted(_RECEIPT_V2_FIELDS))
-def test_receipt_v2_partial_scoped_trust_fields_fail(dropped: str) -> None:
-    """DecisionReceipt.from_dict enforces the four v2 fields all-or-none; the
-    v1.1 schema mirrors that instead of accepting a half-v2 receipt."""
+@pytest.mark.parametrize("field", sorted(_RECEIPT_V2_FIELDS))
+def test_receipt_any_single_scoped_trust_field_rejected_by_v1_1(field: str) -> None:
+    """Rejection holds field-by-field, not only for the full v2 quartet."""
     doc = _golden_doc(RECEIPT_FILE)
-    doc.update(_RECEIPT_V2_FIELDS)
-    del doc[dropped]
-    _assert_invalid(RECEIPT_FILE, doc)
-
-
-def test_receipt_v2_unknown_receipt_schema_version_fails() -> None:
-    doc = _golden_doc(RECEIPT_FILE)
-    doc.update(_RECEIPT_V2_FIELDS)
-    doc["receipt_schema_version"] = "gove-zone/decision-receipt/v3"
-    _assert_invalid(RECEIPT_FILE, doc)
-
-
-def test_receipt_v2_nonpositive_trust_epoch_fails() -> None:
-    doc = _golden_doc(RECEIPT_FILE)
-    doc.update(_RECEIPT_V2_FIELDS)
-    doc["trust_epoch"] = 0
+    doc[field] = _RECEIPT_V2_FIELDS[field]
     _assert_invalid(RECEIPT_FILE, doc)
 
 

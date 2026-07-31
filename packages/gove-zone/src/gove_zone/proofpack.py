@@ -309,6 +309,24 @@ def generate_proof_pack(
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise PackGenerationError(f"cannot load receipt {receipt_path}: {exc}") from exc
 
+    # Scoped-trust receipt v2 verification requires inputs no proof-pack
+    # verification path carries or accepts (an expected tenant/project/
+    # environment scope and a trust registry): verify_pack here and the
+    # standalone acgs-proofpack-verifier expose neither, so a pack minted from
+    # a v2 receipt could never verify through any supported offline path.
+    # Fail-closed at generation instead of minting unverifiable evidence; a
+    # future pack schema version that carries scoped-trust verification inputs
+    # is the upgrade path.
+    if receipt.receipt_schema_version:
+        raise PackGenerationError(
+            f"receipt declares scoped-trust schema {receipt.receipt_schema_version!r}: "
+            "the acgs/proof-pack/v1 and v1.1 formats carry receipt v1 only. "
+            "Scoped-trust verification needs an expected tenant/project/environment "
+            "scope and a trust registry, which no pack verification path accepts, "
+            "so the pack would be unverifiable offline; refusing to package "
+            "unverifiable evidence"
+        )
+
     if not receipt.receipt_hash or receipt.compute_hash() != receipt.receipt_hash:
         raise PackGenerationError(
             "receipt_hash binding is broken: the receipt's bound fields do not "

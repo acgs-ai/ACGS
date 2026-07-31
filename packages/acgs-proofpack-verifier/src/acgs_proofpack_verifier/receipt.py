@@ -206,6 +206,27 @@ class DecisionReceipt:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> DecisionReceipt:
+        # Scoped-trust receipt v2 (gove-zone/decision-receipt/v2) is rejected
+        # EXPLICITLY. This vendored receipt carries no scoped-trust fields:
+        # silently dropping them would recompute receipt_hash over the wrong
+        # payload and report RECEIPT_HASH_MISMATCH, a false tamper verdict for
+        # an intact artifact. gove-zone refuses to package a v2 receipt at
+        # generation time (its verification needs an expected scope and a
+        # trust registry, which no proof-pack verification path accepts), so a
+        # v2 receipt inside an acgs/proof-pack/v1 or v1.1 bundle is unsupported
+        # input, not tampering; say so.
+        scoped_trust = sorted(
+            field
+            for field in ("receipt_schema_version", "project_id", "environment_id", "trust_epoch")
+            if field in d
+        )
+        if scoped_trust:
+            raise ValueError(
+                "scoped-trust Decision Receipt fields are not supported by this "
+                "standalone verifier: " + ", ".join(scoped_trust) + " (the "
+                "acgs/proof-pack/v1 and v1.1 formats carry receipt v1 only; "
+                "gove-zone rejects scoped-trust receipts at pack generation)"
+            )
         return cls(
             receipt_id=d["receipt_id"],
             request_id=d["request_id"],
