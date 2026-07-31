@@ -17,15 +17,18 @@ The Phase-0 target product contract is specified in
 [`saas/ENTITLEMENT_AND_METERING_MATRIX.md`](saas/ENTITLEMENT_AND_METERING_MATRIX.md).
 They are future acceptance contracts, not evidence that the managed service,
 entitlements, pricing, or billing implementation exists.
-As of the local PR #369 scope-attachment slice, PR #370 native transaction
-slice, and PR #371 durable idempotency slice, the managed control plane has
-additional current-local evidence for project/environment attachment on agents
-and policy bundles plus one signed native agent-create transaction route with
-terminal idempotency replay. That evidence is recorded in the SaaS DAG/matrix
-and does not promote the full managed service: legacy unsigned route aliases,
-provider wiring, durable idempotency for other mutating routes, async export
-jobs, tenant isolation, external exactly-once delivery, hosted CI check-starts,
-and production launch remain open.
+As of the current SaaS DAG snapshot at origin/master
+`c20b51ee9ab1d89cfa496330568ca032c34d5022`, PRs #369, #370, and
+#371 are merged into current master and provide partial current-local evidence
+for project/environment attachment, one signed native agent-create transaction
+route, and route-scoped idempotency/outbox behavior. Open clean PRs #391,
+#393, #395, #398, and #413 remain current-local stack evidence only; PR #413's
+authoritative G015 proof failed and was consumed, so its later green CI is
+non-authoritative. These records do not promote the full managed service:
+legacy unsigned route aliases, provider wiring, durable idempotency for other
+mutating routes, async export jobs, tenant isolation, external exactly-once
+delivery, enrollment/policy lifecycle completion, and production launch remain
+open.
 The companion Phase-0 architecture packet is
 [`saas/ARCHITECTURE.md`](saas/ARCHITECTURE.md),
 [`saas/THREAT_MODEL.md`](saas/THREAT_MODEL.md),
@@ -41,7 +44,7 @@ future trust, migration, and decision requirements; it is not evidence that a
 managed plane, provider, retention policy, witness, identity federation, or
 commercial program exists.
 
-Status legend: **✅ SHIPPED** — every acceptance sub-clause has a source file *and* a cited test; **🟡 PARTIAL** — some sub-clauses met (the missing one is named in Status evidence below); **⬜ PLANNED** — forward-looking, not implemented yet. Marks verified against `master` @ `941e398cb266b29b88325a58605a16008d2af63c` (see Status evidence).
+Status legend: **✅ SHIPPED** — every acceptance sub-clause has a source file *and* a cited test; **🟡 PARTIAL** — some sub-clauses met (the missing one is named in Status evidence below); **⬜ PLANNED** — forward-looking, not implemented yet. The stage table below is the historical local-kernel roadmap snapshot verified against `master` @ `941e398cb266b29b88325a58605a16008d2af63c` (see Status evidence); the current SaaS beta DAG/matrix snapshot is separate and frozen at `c20b51ee9ab1d89cfa496330568ca032c34d5022`.
 
 | Stage | Status | Why it matters | Acceptance test | User impact | Risk if skipped |
 |---|---|---|---|---|---|
