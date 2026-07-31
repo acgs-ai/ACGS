@@ -81,6 +81,10 @@ if [[ -z "$ACGS_DIAGNOSTIC_FD" ]]; then
 fi
 readonly ACGS_ATTEST_FD ACGS_DIAGNOSTIC_FD ACGS_OUTPUT_MEMFD_FD \
   ACGS_OUTPUT_MEMFD_IDENTITY ACGS_OUTPUT_GUARDIAN ACGS_STATUS_FD
+ACGS_STATUS_TERMINAL_CLAIMED=0
+ACGS_POST_GATE_FAILURE_SEEN=0
+ACGS_POST_GATE_FAILURE_STAGE=''
+ACGS_POST_GATE_FAILURE_RC=''
 
 early_fail() {
   printf 'CLEAN_SIBLING=FAIL phase=B0 reason=%s\n' "$*" >&"$ACGS_DIAGNOSTIC_FD"
@@ -530,6 +534,9 @@ PY
 }
 
 die() {
+  latch_post_gate_failure "${ACGS_DIE_POST_GATE_STAGE_OVERRIDE:-${PHASE:-B0}}" 2
+  emit_post_gate_failure_diagnostic "$ACGS_POST_GATE_FAILURE_STAGE" "$ACGS_POST_GATE_FAILURE_RC" 2 ||
+    true
   printf 'CLEAN_SIBLING=FAIL phase=%s reason=%s\n' "${PHASE:-B0}" "$*" >&2
   if [[ "${ACGS_CLEANUP_TRAP_ARMED:-0}" == 1 ]]; then
     exit 2
@@ -539,6 +546,137 @@ die() {
   fi
   finalize_clean_sibling_output 0 "$*"
   exit 2
+}
+
+claim_terminal_status_writer() {
+  [[ "$ACGS_STATUS_TERMINAL_CLAIMED" == 0 ]] || return 1
+  ACGS_STATUS_TERMINAL_CLAIMED=1
+  return 0
+}
+
+close_status_writer_quietly() {
+  [[ "$ACGS_STATUS_FD" =~ ^[0-9]+$ ]] || return 0
+  eval "exec ${ACGS_STATUS_FD}>&-" 2>/dev/null || true
+}
+
+post_gate_stage_for_phase() {
+  case "$1" in
+    B6) printf '%s\n' b6-run-materialize ;;
+    *) return 1 ;;
+  esac
+}
+
+latch_post_gate_failure() {
+  local stage="$1" rc="$2"
+  [[ "${ACGS_POST_GATE_FAILURE_SEEN:-0}" == 0 ]] || return 0
+  ACGS_POST_GATE_FAILURE_SEEN=1
+  [[ "$rc" =~ ^[0-9]+$ && "$rc" -ge 1 && "$rc" -le 255 ]] || return 0
+  case "$stage" in
+    b6-transcript-finalize | b6-run-materialize | b6-run-descriptor-auth | \
+      cleanup-gitfile-witness | cleanup-gitfile-close | cleanup-recovery-retain | \
+      cleanup-quota-detach | cleanup-quota-artifacts | cleanup-owned-resources | \
+      cleanup-owned-git-deregister | cleanup-owned-parent-snapshot | \
+      cleanup-owned-registration | cleanup-owned-source-status | \
+      cleanup-owned-root-reappeared | cleanup-owned-path-registry | \
+      cleanup-owned-entry-registry | \
+      cleanup-recovery-gc | cleanup-parent-snapshot | final-launch-context | \
+      final-postcleanup-descriptors | final-uv-identity | final-transcript-contract)
+      ACGS_POST_GATE_FAILURE_STAGE="$stage"
+      ACGS_POST_GATE_FAILURE_RC="$rc"
+      ;;
+    B6)
+      ACGS_POST_GATE_FAILURE_STAGE="$(post_gate_stage_for_phase "$stage")" || return 0
+      ACGS_POST_GATE_FAILURE_RC="$rc"
+      ;;
+  esac
+}
+
+emit_post_gate_failure_diagnostic() {
+  local stage="$1" component_rc="$2" observed_exit_code="$3"
+  [[ -n "$stage" ]] || return 2
+  claim_terminal_status_writer || return 2
+  if ! /usr/bin/python3 -I -S - "$ACGS_STATUS_FD" \
+    "$stage" "$component_rc" "$observed_exit_code" <<'PY'
+import json
+import socket
+import sys
+
+SCHEMA = "acgs.post_gate.failure_status"
+VERSION = 1
+MAX_FRAME_BYTES = 512
+
+status_fd_raw, stage, component_rc_raw, observed_exit_raw = sys.argv[1:]
+
+
+class DiagnosticUnavailable(Exception):
+    pass
+
+
+def parse_rc(raw):
+    if not raw.isdecimal():
+        raise DiagnosticUnavailable("rc")
+    value = int(raw)
+    if not 1 <= value <= 255:
+        raise DiagnosticUnavailable("rc")
+    return value
+
+
+def send_frame(frame):
+    if not status_fd_raw.isdecimal():
+        raise DiagnosticUnavailable("status-fd")
+    status_socket = socket.socket(fileno=int(status_fd_raw))
+    try:
+        status_socket.sendall(len(frame).to_bytes(4, "big"))
+        remaining = memoryview(frame)
+        while remaining:
+            sent = status_socket.sendmsg([remaining], [])
+            if sent <= 0:
+                raise DiagnosticUnavailable("status-send")
+            remaining = remaining[sent:]
+    finally:
+        status_socket.close()
+
+
+try:
+    payload = {
+        "component_rc": parse_rc(component_rc_raw),
+        "observed_exit_code": parse_rc(observed_exit_raw),
+        "schema": SCHEMA,
+        "stage": stage,
+        "version": VERSION,
+    }
+    rendered = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    frame = rendered.encode("ascii")
+    if len(frame) > MAX_FRAME_BYTES:
+        raise DiagnosticUnavailable("status-frame-too-large")
+    send_frame(frame)
+except DiagnosticUnavailable:
+    raise SystemExit(2)
+except Exception:
+    raise SystemExit(2)
+PY
+  then
+    close_status_writer_quietly
+    return 2
+  fi
+  close_status_writer_quietly
+  return 0
+}
+
+post_gate_fail_with_rc() {
+  local stage="$1" rc="$2" reason="$3"
+  [[ "$rc" =~ ^[0-9]+$ && "$rc" -ge 1 && "$rc" -le 255 ]] || rc=2
+  latch_post_gate_failure "$stage" "$rc"
+  emit_post_gate_failure_diagnostic "$ACGS_POST_GATE_FAILURE_STAGE" "$ACGS_POST_GATE_FAILURE_RC" "$rc" ||
+    true
+  printf 'CLEAN_SIBLING=FAIL phase=%s reason=%s\n' "${PHASE:-B0}" "$reason" >&2
+  exit "$rc"
 }
 
 verify_uv_identity() {
@@ -2415,20 +2553,24 @@ cleanup() {
   trap '' INT TERM
   record_worktree_gitfile_pre_detach_witness
   op_status=$?
+  [[ "$op_status" == 0 ]] || latch_post_gate_failure cleanup-gitfile-witness "$op_status"
   if [[ "$op_status" == 0 ]]; then
     close_worktree_gitfile_after_witness
     op_status=$?
+    [[ "$op_status" == 0 ]] || latch_post_gate_failure cleanup-gitfile-close "$op_status"
   fi
   if [[ "$op_status" != 0 && "$cleanup_status" == 0 ]]; then
     cleanup_status=$op_status
   fi
   clean_sibling_retain_recovery_contracts
   op_status=$?
+  [[ "$op_status" == 0 ]] || latch_post_gate_failure cleanup-recovery-retain "$op_status"
   if [[ "$op_status" != 0 && "$cleanup_status" == 0 ]]; then
     cleanup_status=$op_status
   fi
   detach_quota_root
   detach_status=$?
+  [[ "$detach_status" == 0 ]] || latch_post_gate_failure cleanup-quota-detach "$detach_status"
   if [[ "$detach_status" != 0 ]]; then
     if [[ "$cleanup_status" == 0 ]]; then
       cleanup_status=$detach_status
@@ -2438,6 +2580,7 @@ cleanup() {
   if [[ "$quota_detach_failed" == 0 ]]; then
     quota_bound_artifacts_removed
     op_status=$?
+    [[ "$op_status" == 0 ]] || latch_post_gate_failure cleanup-quota-artifacts "$op_status"
     if [[ "$op_status" != 0 && "$cleanup_status" == 0 ]]; then
       cleanup_status=$op_status
     fi
@@ -2447,12 +2590,21 @@ cleanup() {
   fi
   clean_sibling_cleanup "$status" "$quota_detach_failed" "$quota_cleanup_unsafe"
   op_status=$?
+  [[ "$op_status" == 0 ]] ||
+    latch_post_gate_failure "${CLEAN_SIBLING_FAILURE_STAGE:-cleanup-owned-resources}" "$op_status"
   if [[ "$op_status" != 0 && "$cleanup_status" == 0 ]]; then
     cleanup_status=$op_status
   fi
   trap - EXIT
   if [[ "$ACGS_OUTPUT_GUARDIAN" == 1 ]]; then
     if [[ "$cleanup_status" != 0 ]]; then
+      if [[ "$status" != 0 ]]; then
+        emit_post_gate_failure_diagnostic \
+          "$ACGS_POST_GATE_FAILURE_STAGE" "$ACGS_POST_GATE_FAILURE_RC" "$status" || true
+      else
+        emit_post_gate_failure_diagnostic \
+          "$ACGS_POST_GATE_FAILURE_STAGE" "$ACGS_POST_GATE_FAILURE_RC" 2 || true
+      fi
       printf 'CLEAN_SIBLING=FAIL phase=FINAL reason=cleanup-status-%s\n' "$cleanup_status" >&2
       if [[ "$status" != 0 ]]; then
         exit "$status"
@@ -2466,13 +2618,28 @@ cleanup() {
 }
 
 emit_exact_clean_sibling_pass() {
-  verify_authenticated_launch_context "$T" || die 'authenticated launch context changed'
-  verify_post_cleanup_descriptors || die 'owned proof lifecycle changed during cleanup'
+  verify_authenticated_launch_context "$T" || {
+    latch_post_gate_failure final-launch-context 2
+    die 'authenticated launch context changed'
+  }
+  verify_post_cleanup_descriptors || {
+    latch_post_gate_failure final-postcleanup-descriptors 2
+    die 'owned proof lifecycle changed during cleanup'
+  }
+  ACGS_DIE_POST_GATE_STAGE_OVERRIDE=final-uv-identity
   verify_uv_identity
+  unset ACGS_DIE_POST_GATE_STAGE_OVERRIDE
   [[ "$TRANSCRIPT_RECORDS" == "$EXPECTED_TRANSCRIPT_RECORDS" ]] ||
-    die "reviewed transcript must contain exactly $EXPECTED_TRANSCRIPT_RECORDS records"
-  [[ "$R" =~ ^[0-9a-f]{64}$ ]] || die 'JCS run hash is malformed'
+    {
+      latch_post_gate_failure final-transcript-contract 2
+      die "reviewed transcript must contain exactly $EXPECTED_TRANSCRIPT_RECORDS records"
+    }
+  [[ "$R" =~ ^[0-9a-f]{64}$ ]] || {
+    latch_post_gate_failure b6-run-materialize 2
+    die 'JCS run hash is malformed'
+  }
   if [[ "$ACGS_OUTPUT_GUARDIAN" == 1 ]]; then
+    claim_terminal_status_writer || die 'status writer already consumed'
     /usr/bin/python3 -I -S - "$ACGS_STATUS_FD" "$P" "$T" "$R" \
       "$TRANSCRIPT_RECORDS" "$ASSIGNED_BOOTSTRAPS" "$RUN_JSON_FD" \
       "$RUN_JSON_FD_IDENTITY" "$RUN_JSON_FD_SIZE" "$RUN_JSON_FD_SHA256" <<'PY'
@@ -2535,9 +2702,9 @@ send_status_body_once(
     frame,
     [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [run_fd]))],
 )
-status_socket.detach()
+status_socket.close()
 PY
-    exec {ACGS_STATUS_FD}>&-
+    close_status_writer_quietly
     exit 0
   fi
   trap '' INT TERM
@@ -3987,6 +4154,7 @@ PY
 
 emit_recorded_gate_failure_diagnostic() {
   local gate_ordinal="$1" selector="$2" gate_status="$3"
+  claim_terminal_status_writer || return 2
   if ! /usr/bin/python3 -I -S - "$ACGS_STATUS_FD" \
     "$gate_ordinal" "$selector" "$gate_status" <<'PY'
 import hashlib
@@ -4033,7 +4201,7 @@ def emit(payload):
         status_socket.sendall(len(frame).to_bytes(4, "big"))
         send_status_body_once(status_socket, frame, [])
     finally:
-        status_socket.detach()
+        status_socket.close()
 
 
 try:
@@ -4055,8 +4223,11 @@ except Exception:
     raise SystemExit(2)
 PY
   then
+    close_status_writer_quietly
     return 2
   fi
+  close_status_writer_quietly
+  return 0
 }
 
 recorded_gate_selector_sha256() {
@@ -4268,7 +4439,7 @@ run_trusted_parent_p0_launcher_authority_gate() {
   shift 5
   local started finished stdout_file stderr_file gate_status
   local launcher_path launcher_fd launcher_path_stat launcher_fd_stat launcher_sha
-  local trusted_launcher_sha256='00bf1db22797ea41b1391f006b8cc180549d9990300246926837b4dd31f559f9'
+  local trusted_launcher_sha256='ed5f0f338a5d2f009fc7b90fdce7b48dd750e2783be690ca9d14b09a342b15c6'
   local target_sha='1111111111111111111111111111111111111111'
   [[ "$scope" == P0 ]] || die 'trusted parent P0 launcher gate is P0-only'
   [[ "$cwd" == "$WORKTREE" ]] || die 'trusted parent P0 launcher gate cwd must be repository root'
@@ -5164,16 +5335,26 @@ else
 fi
 
 phase B6
-TRANSCRIPT_RECORDS="$(/usr/bin/python3 -I -S - "$TRUSTED_TRANSCRIPT" <<'PY'
+if TRANSCRIPT_RECORDS="$(/usr/bin/python3 -I -S - "$TRUSTED_TRANSCRIPT" <<'PY'
 import pathlib
 import sys
 
 print(len(pathlib.Path(sys.argv[1]).read_bytes().splitlines()))
 PY
 )"
+then
+  :
+else
+  op_status=$?
+  post_gate_fail_with_rc b6-transcript-finalize "$op_status" \
+    'cannot finalize reviewed transcript'
+fi
 [[ "$TRANSCRIPT_RECORDS" == "$EXPECTED_TRANSCRIPT_RECORDS" ]] ||
-  die "reviewed transcript must contain exactly $EXPECTED_TRANSCRIPT_RECORDS records"
-R="$(/usr/bin/python3 -I -S - \
+  {
+    latch_post_gate_failure b6-transcript-finalize 2
+    die "reviewed transcript must contain exactly $EXPECTED_TRANSCRIPT_RECORDS records"
+  }
+if R="$(/usr/bin/python3 -I -S - \
   "$WORKTREE" "$P" "$T" "$NODE_ID" "$ASSIGNED_BOOTSTRAPS" \
   "$TRUSTED_TRANSCRIPT" "$TRUSTED_LEDGER_ROOT" "$TRUSTED_RUN_PATH" "$UV_BIN" <<'PY'
 import csv
@@ -5500,13 +5681,42 @@ canonical = json.dumps(run, ensure_ascii=False, sort_keys=True, separators=(",",
 print(hashlib.sha256(canonical).hexdigest())
 PY
 )"
-[[ "$R" =~ ^[0-9a-f]{64}$ ]] || die 'JCS run hash is malformed'
+then
+  :
+else
+  op_status=$?
+  post_gate_fail_with_rc b6-run-materialize "$op_status" \
+    'cannot materialize run evidence'
+fi
+[[ "$R" =~ ^[0-9a-f]{64}$ ]] || {
+  latch_post_gate_failure b6-run-materialize 2
+  die 'JCS run hash is malformed'
+}
 RUN_JSON_PATH="$TRUSTED_RUN_PATH"
-exec {RUN_JSON_FD}<"$RUN_JSON_PATH"
-RUN_JSON_FD_IDENTITY="$(stat -Lc '%d:%i:%u:%a' -- "/proc/$$/fd/$RUN_JSON_FD")"
-RUN_JSON_FD_SIZE="$(stat -Lc '%s' -- "/proc/$$/fd/$RUN_JSON_FD")"
-RUN_JSON_FD_SHA256="$(sha256sum "/proc/$$/fd/$RUN_JSON_FD" | awk '{print $1}')"
-[[ "$RUN_JSON_FD_SHA256" =~ ^[0-9a-f]{64}$ ]] || die 'run evidence descriptor hash is malformed'
+exec {RUN_JSON_FD}<"$RUN_JSON_PATH" || {
+  op_status=$?
+  post_gate_fail_with_rc b6-run-descriptor-auth "$op_status" \
+    'cannot hold run evidence descriptor'
+}
+RUN_JSON_FD_IDENTITY="$(stat -Lc '%d:%i:%u:%a' -- "/proc/$$/fd/$RUN_JSON_FD")" || {
+  op_status=$?
+  post_gate_fail_with_rc b6-run-descriptor-auth "$op_status" \
+    'run evidence descriptor identity is unavailable'
+}
+RUN_JSON_FD_SIZE="$(stat -Lc '%s' -- "/proc/$$/fd/$RUN_JSON_FD")" || {
+  op_status=$?
+  post_gate_fail_with_rc b6-run-descriptor-auth "$op_status" \
+    'run evidence descriptor size is unavailable'
+}
+RUN_JSON_FD_SHA256="$(sha256sum "/proc/$$/fd/$RUN_JSON_FD" | awk '{print $1}')" || {
+  op_status=$?
+  post_gate_fail_with_rc b6-run-descriptor-auth "$op_status" \
+    'run evidence descriptor hash is unavailable'
+}
+[[ "$RUN_JSON_FD_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+  latch_post_gate_failure b6-run-descriptor-auth 2
+  die 'run evidence descriptor hash is malformed'
+}
 PROOF_COMPLETE=1
 readonly RUN_JSON_FD RUN_JSON_FD_IDENTITY RUN_JSON_FD_SIZE RUN_JSON_FD_SHA256 RUN_JSON_PATH \
   PROOF_COMPLETE TRANSCRIPT_RECORDS R
@@ -5520,12 +5730,14 @@ if record_worktree_gitfile_pre_detach_witness; then
   op_status=0
 else
   op_status=$?
+  latch_post_gate_failure cleanup-gitfile-witness "$op_status"
 fi
 if [[ "$op_status" == 0 ]]; then
   if close_worktree_gitfile_after_witness; then
     op_status=0
   else
     op_status=$?
+    latch_post_gate_failure cleanup-gitfile-close "$op_status"
   fi
 fi
 if [[ "$op_status" != 0 && "$cleanup_status" == 0 ]]; then
@@ -5535,6 +5747,7 @@ if clean_sibling_retain_recovery_contracts; then
   op_status=0
 else
   op_status=$?
+  latch_post_gate_failure cleanup-recovery-retain "$op_status"
 fi
 if [[ "$op_status" != 0 && "$cleanup_status" == 0 ]]; then
   cleanup_status=$op_status
@@ -5543,6 +5756,7 @@ if detach_quota_root; then
   detach_status=0
 else
   detach_status=$?
+  latch_post_gate_failure cleanup-quota-detach "$detach_status"
 fi
 if [[ "$detach_status" != 0 ]]; then
   if [[ "$cleanup_status" == 0 ]]; then
@@ -5555,6 +5769,7 @@ if [[ "$quota_detach_failed" == 0 ]]; then
     op_status=0
   else
     op_status=$?
+    latch_post_gate_failure cleanup-quota-artifacts "$op_status"
   fi
   if [[ "$op_status" != 0 && "$cleanup_status" == 0 ]]; then
     cleanup_status=$op_status
@@ -5567,6 +5782,7 @@ if clean_sibling_cleanup 0 "$quota_detach_failed" "$quota_cleanup_unsafe"; then
   op_status=0
 else
   op_status=$?
+  latch_post_gate_failure "${CLEAN_SIBLING_FAILURE_STAGE:-cleanup-owned-resources}" "$op_status"
 fi
 if [[ "$op_status" != 0 && "$cleanup_status" == 0 ]]; then
   cleanup_status=$op_status
@@ -5576,6 +5792,7 @@ if [[ "$op_status" == 0 && "$cleanup_status" == 0 ]]; then
     op_status=0
   else
     op_status=$?
+    latch_post_gate_failure cleanup-recovery-gc "$op_status"
   fi
 fi
 if [[ "$op_status" != 0 && "$cleanup_status" == 0 ]]; then
@@ -5588,12 +5805,15 @@ if [[ "$cleanup_status" == 0 ]]; then
     [[ "$current_parent_entries" != "$TMP_PARENT_ENTRIES_BEFORE" ]]; then
     printf 'caller TMPDIR direct entries changed across proof after recovery GC\n' >&2
     cleanup_status=2
+    latch_post_gate_failure cleanup-parent-snapshot 2
   fi
 fi
 ACGS_CLEANUP_TRAP_ARMED=0
 trap - EXIT
 if [[ "$cleanup_status" != 0 ]]; then
   if [[ "$ACGS_OUTPUT_GUARDIAN" == 1 ]]; then
+    emit_post_gate_failure_diagnostic \
+      "$ACGS_POST_GATE_FAILURE_STAGE" "$ACGS_POST_GATE_FAILURE_RC" 2 || true
     printf 'CLEAN_SIBLING=FAIL phase=FINAL reason=cleanup-status-%s\n' \
       "$cleanup_status" >&2
     exit 2

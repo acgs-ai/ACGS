@@ -5335,14 +5335,22 @@ def _run_recorded_gate_diagnostic_harness(
         "emit_recorded_gate_failure_diagnostic",
         "run_recorded_gate",
     )
+    status_helpers = "\n".join(
+        (
+            _shell_function(source, "claim_terminal_status_writer"),
+            _shell_function(source, "close_status_writer_quietly"),
+        )
+    )
     harness = tmp_path / "diag.sh"
     harness.write_text(
         "#!/usr/bin/env bash\n"
         "set -Eeuo pipefail\n"
         "umask 077\n"
         ': "${ACGS_STATUS_FD:?}"\n'
+        "ACGS_STATUS_TERMINAL_CLAIMED=0\n"
         "unset ACGS_CLEAN_SIBLING_STATUS_FD\n"
         '[[ -z "${ACGS_CLEAN_SIBLING_STATUS_FD+x}" ]]\n'
+        f"{status_helpers}\n"
         f"{diagnostic}\n"
         "emit_recorded_gate_failure_diagnostic "
         f"{gate_ordinal} {shlex.quote(selector)} {gate_status}\n",
@@ -5383,6 +5391,12 @@ def _run_recorded_gate_harness(
         "emit_recorded_gate_failure_diagnostic",
         "run_recorded_gate",
     )
+    status_helpers = "\n".join(
+        (
+            _shell_function(source, "claim_terminal_status_writer"),
+            _shell_function(source, "close_status_writer_quietly"),
+        )
+    )
     runner = _shell_function(source, "run_recorded_gate")
     node_evidence = tmp_path / "node"
     node_evidence.mkdir(mode=0o700)
@@ -5412,8 +5426,10 @@ def _run_recorded_gate_harness(
         f"ACGS_TEST_STATUS={status}\n"
         "TRANSCRIPT_RECORDS=1\n"
         ': "${ACGS_STATUS_FD:?}"\n'
+        "ACGS_STATUS_TERMINAL_CLAIMED=0\n"
         "unset ACGS_CLEAN_SIBLING_STATUS_FD\n"
         '[[ -z "${ACGS_CLEAN_SIBLING_STATUS_FD+x}" ]]\n'
+        f"{status_helpers}\n"
         "run_contained() {\n"
         "  printf 'RUN_CONTAINED_ARGV'\n"
         "  printf ' <%s>' \"$@\"\n"
@@ -5580,8 +5596,14 @@ def test_guardian_cleanup_failure_preserves_original_gate_exit_and_authenticates
         "#!/usr/bin/env bash\n"
         "set -Eeuo pipefail\n"
         "ACGS_OUTPUT_GUARDIAN=1\n"
+        "ACGS_STATUS_FD=''\n"
+        "ACGS_STATUS_TERMINAL_CLAIMED=0\n"
+        "ACGS_POST_GATE_FAILURE_SEEN=0\n"
+        "ACGS_POST_GATE_FAILURE_STAGE=''\n"
+        "ACGS_POST_GATE_FAILURE_RC=''\n"
         "ACGS_QUOTA_RECOVERY_BUNDLE_NAME=recovery-bundle\n"
         "ACGS_CLEANUP_TRAP_ARMED=1\n"
+        f"{_post_gate_shell_functions(source)}\n"
         "record_worktree_gitfile_pre_detach_witness() { return 0; }\n"
         "close_worktree_gitfile_after_witness() { return 0; }\n"
         "clean_sibling_retain_recovery_contracts() { return 0; }\n"
@@ -5776,47 +5798,579 @@ def test_launcher_failure_status_authenticates_exit_ordinal_selector_and_gate_id
     fd = os.open("/dev/null", os.O_RDONLY)
     try:
         assert namespace["failure_status_summary"](False, [], [], [], True, 7) == (
-            "gate_failure_status=unavailable"
+            "failure_status=unavailable"
         )
         assert namespace["failure_status_summary"](False, [frame], [], [0], False, 7) == (
-            "gate_failure_status=rejected"
+            "failure_status=rejected"
         )
         assert namespace["failure_status_summary"](True, [frame], [], [0], True, 7) == (
-            "gate_failure_status=rejected"
+            "failure_status=rejected"
         )
         assert namespace["failure_status_summary"](False, [frame, frame], [], [0, 0], True, 7) == (
-            "gate_failure_status=rejected"
+            "failure_status=rejected"
         )
         assert namespace["failure_status_summary"](False, [frame], [fd], [1], True, 7) == (
-            "gate_failure_status=rejected"
+            "failure_status=rejected"
         )
         assert namespace["failure_status_summary"](False, [wrong_exit_frame], [], [0], True, 7) == (
-            "gate_failure_status=rejected"
+            "failure_status=rejected"
         )
         assert (
             namespace["failure_status_summary"](False, [wrong_ordinal_frame], [], [0], True, 7)
-            == "gate_failure_status=rejected"
+            == "failure_status=rejected"
         )
         assert namespace["failure_status_summary"](False, [forged_frame], [], [0], True, 7) == (
-            "gate_failure_status=rejected"
+            "failure_status=rejected"
         )
         assert namespace["failure_status_summary"](False, [malformed_frame], [], [0], True, 7) == (
-            "gate_failure_status=rejected"
+            "failure_status=rejected"
         )
         assert (
             namespace["failure_status_summary"](False, [bool_version_frame], [], [0], True, 7)
-            == "gate_failure_status=rejected"
+            == "failure_status=rejected"
         )
         assert (
             namespace["failure_status_summary"](False, [float_version_frame], [], [0], True, 7)
-            == "gate_failure_status=rejected"
+            == "failure_status=rejected"
         )
         assert (
             namespace["failure_status_summary"](False, [duplicate_exit_frame], [], [0], True, 7)
-            == "gate_failure_status=rejected"
+            == "failure_status=rejected"
         )
     finally:
         os.close(fd)
+
+
+def test_launcher_post_gate_failure_status_authenticates_canonical_allowed_stages() -> None:
+    launcher = (EVIDENCE_SCRIPTS / "prove_clean_sibling").read_text(encoding="utf-8")
+    launcher_source = _launcher_python_source(launcher)
+    namespace: dict[str, Any] = {}
+    exec(launcher_source.split("\nlibc = ", 1)[0], namespace)
+    allowed_stages = namespace["POST_GATE_FAILURE_STAGES"]
+    assert allowed_stages == {
+        "b6-transcript-finalize",
+        "b6-run-materialize",
+        "b6-run-descriptor-auth",
+        "cleanup-gitfile-witness",
+        "cleanup-gitfile-close",
+        "cleanup-recovery-retain",
+        "cleanup-quota-detach",
+        "cleanup-quota-artifacts",
+        "cleanup-owned-resources",
+        "cleanup-owned-git-deregister",
+        "cleanup-owned-parent-snapshot",
+        "cleanup-owned-registration",
+        "cleanup-owned-source-status",
+        "cleanup-owned-root-reappeared",
+        "cleanup-owned-path-registry",
+        "cleanup-owned-entry-registry",
+        "cleanup-recovery-gc",
+        "cleanup-parent-snapshot",
+        "final-launch-context",
+        "final-postcleanup-descriptors",
+        "final-uv-identity",
+        "final-transcript-contract",
+    }
+    for stage in sorted(allowed_stages):
+        frame = json.dumps(
+            {
+                "component_rc": 7,
+                "observed_exit_code": 7,
+                "schema": "acgs.post_gate.failure_status",
+                "stage": stage,
+                "version": 1,
+            },
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("ascii")
+        assert namespace["failure_status_summary"](False, [frame], [], [0], True, 7) == (
+            f"post_gate_failure_status=authenticated stage={stage} "
+            "component_rc=7 observed_exit_code=7"
+        )
+
+
+def test_launcher_post_gate_failure_status_rejects_malformed_leaky_or_mixed_frames() -> None:
+    launcher = (EVIDENCE_SCRIPTS / "prove_clean_sibling").read_text(encoding="utf-8")
+    launcher_source = _launcher_python_source(launcher)
+    namespace: dict[str, Any] = {}
+    exec(launcher_source.split("\nlibc = ", 1)[0], namespace)
+    base = {
+        "component_rc": 7,
+        "observed_exit_code": 7,
+        "schema": "acgs.post_gate.failure_status",
+        "stage": "cleanup-owned-resources",
+        "version": 1,
+    }
+
+    def frame(value: dict[str, Any], **dump_kwargs: Any) -> bytes:
+        return json.dumps(
+            value,
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+            **dump_kwargs,
+        ).encode("ascii")
+
+    canonical = frame(base)
+    recorded = frame(
+        {
+            "exit_code": 7,
+            "gate_ordinal": 0,
+            "schema": "acgs.recorded_gate.failure_status",
+            "selector_sha256": "0" * 64,
+            "version": 1,
+        }
+    )
+    rejected_frames = [
+        b"",
+        b'{"component_rc":7',
+        b'{"component_rc":7,"component_rc":7,"observed_exit_code":7,'
+        b'"schema":"acgs.post_gate.failure_status","stage":"cleanup-owned-resources",'
+        b'"version":1}',
+        json.dumps({**base, "stage": "cleanup-owned-resources-\u2603"}).encode("utf-8"),
+        frame({**base, "raw_output": "CLEAN_SIBLING_TECHNICAL=PASS"}),
+        frame({key: value for key, value in base.items() if key != "schema"}),
+        frame({**base, "extra": "path=/tmp/secret"}),
+        frame({**base, "version": True}),
+        frame({**base, "version": 1.0}),
+        frame({**base, "component_rc": True}),
+        frame({**base, "component_rc": 1.0}),
+        frame({**base, "component_rc": 0}),
+        frame({**base, "component_rc": 256}),
+        frame({**base, "observed_exit_code": 0}),
+        frame({**base, "observed_exit_code": 256}),
+        frame({**base, "observed_exit_code": 8}),
+        frame({**base, "stage": "success-status-send"}),
+        frame({**base, "stage": "unknown-stage"}),
+        frame({**base, "stage": "cleanup-owned-unknown"}),
+        b" " + canonical,
+        json.dumps(
+            {
+                "stage": "cleanup-owned-resources",
+                "schema": "acgs.post_gate.failure_status",
+                "version": 1,
+                "observed_exit_code": 7,
+                "component_rc": 7,
+            },
+            sort_keys=False,
+            separators=(",", ":"),
+        ).encode("ascii"),
+        canonical + (b"x" * 512),
+    ]
+    fd = os.open("/dev/null", os.O_RDONLY)
+    try:
+        assert namespace["failure_status_summary"](False, [], [], [], True, 7) == (
+            "failure_status=unavailable"
+        )
+        assert namespace["failure_status_summary"](True, [canonical], [], [0], True, 7) == (
+            "failure_status=rejected"
+        )
+        assert namespace["failure_status_summary"](False, [canonical], [], [0], False, 7) == (
+            "failure_status=rejected"
+        )
+        assert (
+            namespace["failure_status_summary"](False, [recorded, canonical], [], [0, 0], True, 7)
+            == "failure_status=rejected"
+        )
+        assert namespace["failure_status_summary"](False, [canonical], [fd], [1], True, 7) == (
+            "failure_status=rejected"
+        )
+        for bad in rejected_frames:
+            summary = namespace["failure_status_summary"](False, [bad], [], [0], True, 7)
+            assert summary == "failure_status=rejected", bad
+            for forbidden in (
+                "reason=",
+                "path=",
+                "hash=",
+                "cwd=",
+                "argv=",
+                "raw",
+                "cleanup_rc",
+                "CLEAN_SIBLING_TECHNICAL=PASS",
+            ):
+                assert forbidden not in summary
+    finally:
+        os.close(fd)
+
+
+def test_shell_post_gate_latch_accepts_exact_cleanup_owned_substages(tmp_path: Path) -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    allowed = (
+        "cleanup-owned-git-deregister",
+        "cleanup-owned-parent-snapshot",
+        "cleanup-owned-registration",
+        "cleanup-owned-source-status",
+        "cleanup-owned-root-reappeared",
+        "cleanup-owned-path-registry",
+        "cleanup-owned-entry-registry",
+    )
+    harness = tmp_path / "post-gate-latch-owned-stages.sh"
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        "umask 077\n"
+        "ACGS_POST_GATE_FAILURE_SEEN=0\n"
+        "ACGS_POST_GATE_FAILURE_STAGE=''\n"
+        "ACGS_POST_GATE_FAILURE_RC=''\n"
+        f"{_shell_function(source, 'post_gate_stage_for_phase')}\n"
+        f"{_shell_function(source, 'latch_post_gate_failure')}\n"
+        'for stage in "$@"; do\n'
+        "  ACGS_POST_GATE_FAILURE_SEEN=0\n"
+        "  ACGS_POST_GATE_FAILURE_STAGE=''\n"
+        "  ACGS_POST_GATE_FAILURE_RC=''\n"
+        '  latch_post_gate_failure "$stage" 7\n'
+        "  printf '%s:%s:%s\\n' \"$stage\" "
+        '"$ACGS_POST_GATE_FAILURE_STAGE" "$ACGS_POST_GATE_FAILURE_RC"\n'
+        "done\n"
+        "ACGS_POST_GATE_FAILURE_SEEN=0\n"
+        "ACGS_POST_GATE_FAILURE_STAGE=''\n"
+        "ACGS_POST_GATE_FAILURE_RC=''\n"
+        "latch_post_gate_failure cleanup-owned-unknown 7\n"
+        "latch_post_gate_failure cleanup-owned-path-registry 8\n"
+        "printf 'unknown:%s:%s\\n' "
+        '"$ACGS_POST_GATE_FAILURE_STAGE" "$ACGS_POST_GATE_FAILURE_RC"\n',
+        encoding="utf-8",
+    )
+    harness.chmod(0o755)
+    completed = subprocess.run(
+        [str(harness), *allowed],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert completed.stderr == ""
+    assert completed.stdout.splitlines() == [f"{stage}:{stage}:7" for stage in allowed] + [
+        "unknown::"
+    ]
+
+
+def _post_gate_shell_functions(source: str) -> str:
+    return "\n".join(
+        (
+            _shell_function(source, "claim_terminal_status_writer"),
+            _shell_function(source, "close_status_writer_quietly"),
+            _shell_function(source, "post_gate_stage_for_phase"),
+            _shell_function(source, "latch_post_gate_failure"),
+            _shell_function(source, "emit_post_gate_failure_diagnostic"),
+            _shell_function(source, "post_gate_fail_with_rc"),
+            _shell_function(source, "emit_recorded_gate_failure_diagnostic"),
+            _shell_function(source, "cleanup"),
+        )
+    )
+
+
+def _run_status_success_close_harness(
+    tmp_path: Path,
+    *,
+    sender: str,
+) -> tuple[subprocess.CompletedProcess[str], list[tuple[bytes, int, int]]]:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    if sender == "recorded":
+        emit = "emit_recorded_gate_failure_diagnostic 1 selector::case 7"
+        retry = "emit_recorded_gate_failure_diagnostic 2 selector::retry 8"
+    elif sender == "post_gate":
+        emit = "emit_post_gate_failure_diagnostic b6-run-materialize 7 7"
+        retry = "emit_post_gate_failure_diagnostic cleanup-owned-resources 8 8"
+    else:
+        raise AssertionError(sender)
+    harness = tmp_path / f"{sender}-status-close.sh"
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        "umask 077\n"
+        ': "${ACGS_STATUS_FD:?}"\n'
+        "ACGS_STATUS_TERMINAL_CLAIMED=0\n"
+        "ACGS_POST_GATE_FAILURE_SEEN=0\n"
+        "ACGS_POST_GATE_FAILURE_STAGE=''\n"
+        "ACGS_POST_GATE_FAILURE_RC=''\n"
+        f"{_shell_function(source, 'claim_terminal_status_writer')}\n"
+        f"{_shell_function(source, 'close_status_writer_quietly')}\n"
+        f"{_shell_function(source, 'emit_recorded_gate_failure_diagnostic')}\n"
+        f"{_shell_function(source, 'emit_post_gate_failure_diagnostic')}\n"
+        f"{emit}\n"
+        'printf \'FD_AFTER=%s\\n\' "$([[ -e "/proc/$$/fd/$ACGS_STATUS_FD" ]] && '
+        'printf present || printf absent)"\n'
+        "set +e\n"
+        'bash -c \'printf x >&"$1"\' bash "$ACGS_STATUS_FD"\n'
+        "child_rc=$?\n"
+        f"{retry}\n"
+        "retry_rc=$?\n"
+        "set -e\n"
+        'printf \'CHILD_WRITE_RC=%s\\nRETRY_RC=%s\\n\' "$child_rc" "$retry_rc"\n',
+        encoding="utf-8",
+    )
+    harness.chmod(0o755)
+    parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    os.set_inheritable(child.fileno(), True)
+    try:
+        completed = subprocess.run(
+            [str(harness)],
+            env={**os.environ, "ACGS_STATUS_FD": str(child.fileno())},
+            pass_fds=(child.fileno(),),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+        child.close()
+        frames = _drain_stream_frames(parent)
+        return completed, frames
+    finally:
+        parent.close()
+        child.close()
+
+
+@pytest.mark.parametrize("sender", ["recorded", "post_gate"])
+def test_successful_status_sender_closes_parent_fd_and_prevents_later_inheritance(
+    tmp_path: Path,
+    sender: str,
+) -> None:
+    completed, frames = _run_status_success_close_harness(tmp_path, sender=sender)
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert "FD_AFTER=absent" in completed.stdout
+    assert "CHILD_WRITE_RC=1" in completed.stdout
+    assert "RETRY_RC=2" in completed.stdout
+    assert len(frames) == 1
+    payload = json.loads(frames[0][0].decode("ascii"))
+    if sender == "recorded":
+        assert payload["schema"] == "acgs.recorded_gate.failure_status"
+        assert payload["exit_code"] == 7
+    else:
+        assert payload == {
+            "component_rc": 7,
+            "observed_exit_code": 7,
+            "schema": "acgs.post_gate.failure_status",
+            "stage": "b6-run-materialize",
+            "version": 1,
+        }
+
+
+def _run_post_gate_cleanup_harness(
+    tmp_path: Path,
+    *,
+    prelude: str,
+    original_status: int,
+    witness_rc: int = 0,
+    close_rc: int = 0,
+    retain_rc: int = 0,
+    detach_rc: int = 0,
+    artifacts_rc: int = 0,
+    cleanup_rc: int = 0,
+    cleanup_stage: str = "",
+) -> tuple[subprocess.CompletedProcess[str], list[tuple[bytes, int, int]]]:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    harness = tmp_path / "post-gate-cleanup.sh"
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        "umask 077\n"
+        "ACGS_OUTPUT_GUARDIAN=1\n"
+        "ACGS_STATUS_TERMINAL_CLAIMED=0\n"
+        "ACGS_POST_GATE_FAILURE_SEEN=0\n"
+        "ACGS_POST_GATE_FAILURE_STAGE=''\n"
+        "ACGS_POST_GATE_FAILURE_RC=''\n"
+        "ACGS_CLEANUP_TRAP_ARMED=1\n"
+        "ACGS_QUOTA_RECOVERY_BUNDLE_NAME=recovery-bundle\n"
+        ': "${ACGS_STATUS_FD:?}"\n'
+        f"{_post_gate_shell_functions(source)}\n"
+        f"{prelude}\n"
+        f"record_worktree_gitfile_pre_detach_witness() {{ return {witness_rc}; }}\n"
+        f"close_worktree_gitfile_after_witness() {{ return {close_rc}; }}\n"
+        f"clean_sibling_retain_recovery_contracts() {{ return {retain_rc}; }}\n"
+        f"detach_quota_root() {{ return {detach_rc}; }}\n"
+        f"quota_bound_artifacts_removed() {{ return {artifacts_rc}; }}\n"
+        "clean_sibling_cleanup() { "
+        f"CLEAN_SIBLING_FAILURE_STAGE={shlex.quote(cleanup_stage)}; return {cleanup_rc}; "
+        "}\n"
+        "finalize_clean_sibling_output() { printf 'RAW_PROTECTED_OUTPUT\\n'; return 0; }\n"
+        "set +e\n"
+        f"(exit {original_status})\n"
+        "cleanup\n",
+        encoding="utf-8",
+    )
+    harness.chmod(0o755)
+    parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    os.set_inheritable(child.fileno(), True)
+    try:
+        completed = subprocess.run(
+            [str(harness)],
+            env={**os.environ, "ACGS_STATUS_FD": str(child.fileno())},
+            pass_fds=(child.fileno(),),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+        child.close()
+        frames = _drain_stream_frames(parent)
+        return completed, frames
+    finally:
+        parent.close()
+        child.close()
+
+
+def test_post_gate_failure_status_shell_lifecycle_latches_first_failure(
+    tmp_path: Path,
+) -> None:
+    gate_prelude = (
+        "emit_recorded_gate_failure_diagnostic 1 selector::case 7 || true\n"
+        "latch_post_gate_failure b6-run-materialize 2\n"
+    )
+    completed, frames = _run_post_gate_cleanup_harness(
+        tmp_path,
+        prelude=gate_prelude,
+        original_status=7,
+        cleanup_rc=9,
+    )
+    assert completed.returncode == 7, (completed.stdout, completed.stderr)
+    assert len(frames) == 1
+    recorded_payload = json.loads(frames[0][0].decode("ascii"))
+    assert recorded_payload["schema"] == "acgs.recorded_gate.failure_status"
+    assert recorded_payload["exit_code"] == 7
+
+    b6_prelude = "latch_post_gate_failure b6-run-materialize 2\n"
+    completed, frames = _run_post_gate_cleanup_harness(
+        tmp_path,
+        prelude=b6_prelude,
+        original_status=2,
+        cleanup_rc=9,
+    )
+    assert completed.returncode == 2, (completed.stdout, completed.stderr)
+    assert len(frames) == 1
+    b6_payload = json.loads(frames[0][0].decode("ascii"))
+    assert b6_payload == {
+        "component_rc": 2,
+        "observed_exit_code": 2,
+        "schema": "acgs.post_gate.failure_status",
+        "stage": "b6-run-materialize",
+        "version": 1,
+    }
+
+    completed, frames = _run_post_gate_cleanup_harness(
+        tmp_path,
+        prelude="",
+        original_status=0,
+        witness_rc=5,
+        close_rc=6,
+        retain_rc=7,
+        cleanup_rc=8,
+    )
+    assert completed.returncode == 2, (completed.stdout, completed.stderr)
+    assert len(frames) == 1
+    cleanup_payload = json.loads(frames[0][0].decode("ascii"))
+    assert cleanup_payload == {
+        "component_rc": 5,
+        "observed_exit_code": 2,
+        "schema": "acgs.post_gate.failure_status",
+        "stage": "cleanup-gitfile-witness",
+        "version": 1,
+    }
+
+    completed, frames = _run_post_gate_cleanup_harness(
+        tmp_path,
+        prelude="",
+        original_status=0,
+        cleanup_rc=8,
+        cleanup_stage="cleanup-owned-entry-registry",
+    )
+    assert completed.returncode == 2, (completed.stdout, completed.stderr)
+    assert len(frames) == 1
+    owned_payload = json.loads(frames[0][0].decode("ascii"))
+    assert owned_payload == {
+        "component_rc": 8,
+        "observed_exit_code": 2,
+        "schema": "acgs.post_gate.failure_status",
+        "stage": "cleanup-owned-entry-registry",
+        "version": 1,
+    }
+
+
+def test_post_gate_unclassified_first_latch_blocks_cleanup_authentication(
+    tmp_path: Path,
+) -> None:
+    completed, frames = _run_post_gate_cleanup_harness(
+        tmp_path,
+        prelude="latch_post_gate_failure B0 2\n",
+        original_status=2,
+        cleanup_rc=8,
+        cleanup_stage="cleanup-owned-path-registry",
+    )
+    assert completed.returncode == 2, (completed.stdout, completed.stderr)
+    assert frames == []
+    assert "CLEAN_SIBLING=FAIL phase=FINAL reason=cleanup-status-8" in completed.stderr
+    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout + completed.stderr
+
+
+@pytest.mark.parametrize(
+    "prelude",
+    [
+        "latch_post_gate_failure malformed-first-stage 7\n",
+        "latch_post_gate_failure cleanup-owned-path-registry malformed-rc\n",
+        "latch_post_gate_failure cleanup-owned-path-registry 0\n",
+    ],
+)
+def test_post_gate_malformed_first_latch_cannot_be_overwritten_by_cleanup(
+    tmp_path: Path,
+    prelude: str,
+) -> None:
+    completed, frames = _run_post_gate_cleanup_harness(
+        tmp_path,
+        prelude=prelude,
+        original_status=2,
+        cleanup_rc=8,
+        cleanup_stage="cleanup-owned-path-registry",
+    )
+    assert completed.returncode == 2, (completed.stdout, completed.stderr)
+    assert frames == []
+    assert "CLEAN_SIBLING=FAIL phase=FINAL reason=cleanup-status-8" in completed.stderr
+    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout + completed.stderr
+
+
+@pytest.mark.parametrize(
+    ("stage", "original_rc", "reason"),
+    [
+        ("b6-transcript-finalize", 7, "cannot finalize reviewed transcript"),
+        ("b6-run-materialize", 143, "cannot materialize run evidence"),
+    ],
+)
+def test_post_gate_operational_failure_preserves_original_exit_through_cleanup(
+    tmp_path: Path,
+    stage: str,
+    original_rc: int,
+    reason: str,
+) -> None:
+    completed, frames = _run_post_gate_cleanup_harness(
+        tmp_path,
+        prelude=(
+            "record_worktree_gitfile_pre_detach_witness() { return 0; }\n"
+            "close_worktree_gitfile_after_witness() { return 0; }\n"
+            "clean_sibling_retain_recovery_contracts() { return 0; }\n"
+            "detach_quota_root() { return 0; }\n"
+            "quota_bound_artifacts_removed() { return 0; }\n"
+            "clean_sibling_cleanup() { return 9; }\n"
+            f"trap cleanup EXIT\nPHASE=B6\npost_gate_fail_with_rc {stage} {original_rc} "
+            f"{shlex.quote(reason)}\n"
+        ),
+        original_status=0,
+        cleanup_rc=9,
+    )
+    assert completed.returncode == original_rc, (completed.stdout, completed.stderr)
+    assert f"CLEAN_SIBLING=FAIL phase=B6 reason={reason}" in completed.stderr
+    assert "CLEAN_SIBLING=FAIL phase=FINAL reason=cleanup-status-9" in completed.stderr
+    assert len(frames) == 1
+    payload = json.loads(frames[0][0].decode("ascii"))
+    assert payload == {
+        "component_rc": original_rc,
+        "observed_exit_code": original_rc,
+        "schema": "acgs.post_gate.failure_status",
+        "stage": stage,
+        "version": 1,
+    }
 
 
 def test_launcher_status_collector_rejects_empty_records_and_requires_true_eof() -> None:
@@ -6225,6 +6779,12 @@ def test_recorded_gate_production_sequence_advances_current_failure_ordinal(
         "emit_recorded_gate_failure_diagnostic",
         "run_recorded_gate",
     )
+    status_helpers = "\n".join(
+        (
+            _shell_function(source, "claim_terminal_status_writer"),
+            _shell_function(source, "close_status_writer_quietly"),
+        )
+    )
     namespace: dict[str, Any] = {}
     exec(launcher_source.split("\nlibc = ", 1)[0], namespace)
     monkeypatch.setenv("NODE_ID", "P0-EVIDENCE-000")
@@ -6247,6 +6807,7 @@ def test_recorded_gate_production_sequence_advances_current_failure_ordinal(
         "die() { printf 'DIE=%s\\n' \"$*\" >&2; exit 2; }\n"
         "TRANSCRIPT_RECORDS=0\n"
         "NODE_ID=P0-EVIDENCE-000\n"
+        "ACGS_STATUS_TERMINAL_CLAIMED=0\n"
         f"NODE_EVIDENCE={shlex.quote(str(node_evidence))}\n"
         f"TRUSTED_TRANSCRIPT={shlex.quote(str(trusted / 'transcript.jsonl'))}\n"
         f"WORKTREE={shlex.quote(str(worktree))}\n"
@@ -6262,6 +6823,7 @@ def test_recorded_gate_production_sequence_advances_current_failure_ordinal(
         "}\n"
         f"{_shell_function(source, 'advance_transcript_records_after_append')}\n"
         f"{_shell_function(source, 'append_record')}\n"
+        f"{status_helpers}\n"
         f"{diagnostic}\n"
         f"{_shell_function(source, 'run_recorded_gate')}\n"
         f"ACGS_LAST_RECORDED_CWD={shlex.quote(str(worktree))} "
@@ -6330,7 +6892,7 @@ def test_recorded_gate_production_sequence_advances_current_failure_ordinal(
         separators=(",", ":"),
     ).encode("ascii")
     assert namespace["failure_status_summary"](False, [wrong_ordinal], [], [0], True, 7) == (
-        "gate_failure_status=rejected"
+        "failure_status=rejected"
     )
 
 
@@ -15402,7 +15964,7 @@ R=3333333333333333333333333333333333333333333333333333333333333333
 printf '%s\n' "$$" >"$OWNER_MARKER"
 clean_sibling_cleanup 0
 exit $?
-"""
+	"""
     cleanup_harness = cleanup_repo / "scripts/evidence/prove_clean_sibling.sh"
     cleanup_harness.parent.mkdir(parents=True)
     cleanup_harness.write_text(cleanup_command, encoding="utf-8")
@@ -17255,7 +17817,7 @@ R=3333333333333333333333333333333333333333333333333333333333333333
 printf '%s\n' "$$" >"$OWNER_MARKER"
 clean_sibling_cleanup 0
 exit $?
-"""
+	"""
     cleanup_result = subprocess.run(
         [
             "bash",
@@ -17381,7 +17943,7 @@ R=3333333333333333333333333333333333333333333333333333333333333333
 printf '%s\n' "$$" >"$OWNER_MARKER"
 clean_sibling_cleanup 0
 exit $?
-"""
+	"""
     cleanup_result = subprocess.run(
         [
             "bash",
@@ -18521,6 +19083,7 @@ source "$1"
 SOURCE_REPO="$2"
 TMP_PARENT="$3"
 TMP_ROOT="$4"
+CLEAN_SIBLING_FAILURE_STAGE=cleanup-owned-entry-registry
 WORKTREE_ADDED=0
 WORKTREE=''
 SOURCE_STATUS_BEFORE="$(git -C "$SOURCE_REPO" status --porcelain=v1 --untracked-files=all)"
@@ -18537,6 +19100,7 @@ set +e
 clean_sibling_cleanup 1 1 0
 cleanup_rc=$?
 set -e
+printf 'STAGE=%s\n' "${CLEAN_SIBLING_FAILURE_STAGE:-}"
 if [[ -d "$TMP_ROOT" ]]; then
   printf 'ROOT_PRESERVED=1\n'
 fi
@@ -18561,6 +19125,7 @@ exit "$cleanup_rc"
         check=False,
     )
     assert cleanup_result.returncode == 2, (cleanup_result.stdout, cleanup_result.stderr)
+    assert "STAGE=\n" in cleanup_result.stdout
     assert "ROOT_PRESERVED=1" in cleanup_result.stdout
     assert "MARKER_PRESERVED=1" in cleanup_result.stdout
     assert "cleanup refused to remove owned root while quota filesystem remains mounted" in (
@@ -18669,6 +19234,195 @@ exit "$cleanup_status"
     assert "CLEAN_SIBLING_TECHNICAL=PASS" not in cleanup_result.stdout + cleanup_result.stderr
     assert cleanup_root.exists()
     assert cleanup_worktree.exists()
+
+
+def test_clean_sibling_cleanup_deregister_failure_latches_closed_stage_at_boundary(
+    tmp_path: Path,
+) -> None:
+    helper = EVIDENCE_SCRIPTS / "clean_sibling_cleanup.sh"
+    source_repo = tmp_path / "source"
+    source_repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(source_repo)], check=True)
+    subprocess.run(["git", "config", "user.name", "Evidence Test"], cwd=source_repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "evidence@example.invalid"],
+        cwd=source_repo,
+        check=True,
+    )
+    (source_repo / "tracked").write_text("tracked\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked"], cwd=source_repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=source_repo, check=True)
+    parent = tmp_path / "caller"
+    parent.mkdir(mode=0o700)
+    cleanup_root = parent / "acgs-p0-evidence.deregister-stage"
+    cleanup_root.mkdir(mode=0o700)
+    cleanup_command = r"""
+set -eu
+source "$1"
+SOURCE_REPO="$2"
+TMP_PARENT="$3"
+TMP_ROOT="$4"
+SOURCE_COMMON_GITDIR="$(git -C "$SOURCE_REPO" rev-parse --path-format=absolute --git-common-dir)"
+WORKTREE_REGISTRY_ROOT="$SOURCE_COMMON_GITDIR/worktrees"
+mkdir -p -- "$WORKTREE_REGISTRY_ROOT"
+WORKTREES_BEFORE="$(git -C "$SOURCE_REPO" worktree list --porcelain)"
+WORKTREE_PATHS_BEFORE="$(clean_sibling_worktree_paths_digest "$WORKTREES_BEFORE")"
+WORKTREE_REGISTRY_ENTRIES_BEFORE="$(
+  clean_sibling_snapshot_worktree_registry "$WORKTREE_REGISTRY_ROOT"
+)"
+SOURCE_STATUS_BEFORE="$(git -C "$SOURCE_REPO" status --porcelain=v1 --untracked-files=all)"
+exec {TMP_PARENT_FD}<"$TMP_PARENT"
+TMP_PARENT_STAT_BEFORE="$(stat -Lc '%d:%i:%u:%a' -- "/proc/$$/fd/$TMP_PARENT_FD")"
+TMP_PARENT_ENTRIES_BEFORE="$(clean_sibling_snapshot_direct_entries \
+  "$TMP_PARENT_FD" "$TMP_PARENT_STAT_BEFORE" "$TMP_PARENT")"
+OWNER_MARKER="$TMP_ROOT/.acgs-clean-sibling-owned"
+printf '%s\n' "$$" >"$OWNER_MARKER"
+IFS=: read -r TMP_ROOT_DEVICE TMP_ROOT_INODE TMP_ROOT_UID _ < <(
+  stat -c '%d:%i:%u:%a' -- "$TMP_ROOT"
+)
+exec {TMP_ROOT_TEST_FD}<"$TMP_ROOT"
+TMP_ROOT_MNT_ID="$(awk '$1 == "mnt_id:" {print $2; exit}' "/proc/$$/fdinfo/$TMP_ROOT_TEST_FD")"
+exec {TMP_ROOT_TEST_FD}<&-
+WORKTREE="$TMP_ROOT/product"
+WORKTREE_GITFILE_PATH="$WORKTREE/.git"
+WORKTREE_ADDED=1
+WORKTREE_POST_REMOVE_GITFILE_VALIDATED=0
+PROOF_COMPLETE=1
+TRANSCRIPT_RECORDS=10
+ASSIGNED_BOOTSTRAPS=EVID+CP+GZ
+NODE_ID=P0-EVIDENCE-000
+P=1111111111111111111111111111111111111111
+T=2222222222222222222222222222222222222222
+R=3333333333333333333333333333333333333333333333333333333333333333
+clean_sibling_initialize_worktree_gitfile_witness() {
+  return 0
+}
+clean_sibling_remove_registered_worktree() {
+  return 7
+}
+set +e
+clean_sibling_cleanup 1
+cleanup_rc=$?
+set -e
+printf 'CLEANUP_RC=%s\nSTAGE=%s\n' "$cleanup_rc" "${CLEAN_SIBLING_FAILURE_STAGE:-}"
+exit "$cleanup_rc"
+"""
+    cleanup_result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            cleanup_command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(cleanup_root),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert cleanup_result.returncode == 2, (cleanup_result.stdout, cleanup_result.stderr)
+    assert cleanup_result.stdout == "CLEANUP_RC=2\nSTAGE=cleanup-owned-git-deregister\n"
+    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in cleanup_result.stdout + cleanup_result.stderr
+    assert not cleanup_root.exists()
+
+
+def test_clean_sibling_cleanup_unrelated_registry_delta_latches_entry_registry_stage(
+    tmp_path: Path,
+) -> None:
+    helper = EVIDENCE_SCRIPTS / "clean_sibling_cleanup.sh"
+    source_repo = tmp_path / "source"
+    source_repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(source_repo)], check=True)
+    subprocess.run(["git", "config", "user.name", "Evidence Test"], cwd=source_repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "evidence@example.invalid"],
+        cwd=source_repo,
+        check=True,
+    )
+    (source_repo / "tracked").write_text("tracked\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked"], cwd=source_repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=source_repo, check=True)
+    parent = tmp_path / "caller"
+    parent.mkdir(mode=0o700)
+    cleanup_root = parent / "acgs-p0-evidence.registry-stage"
+    cleanup_command = r"""
+set -eu
+source "$1"
+SOURCE_REPO="$2"
+TMP_PARENT="$3"
+TMP_ROOT="$4"
+SOURCE_COMMON_GITDIR="$(git -C "$SOURCE_REPO" rev-parse --path-format=absolute --git-common-dir)"
+WORKTREE_REGISTRY_ROOT="$SOURCE_COMMON_GITDIR/worktrees"
+mkdir -p -- "$WORKTREE_REGISTRY_ROOT"
+WORKTREES_BEFORE="$(git -C "$SOURCE_REPO" worktree list --porcelain)"
+WORKTREE_PATHS_BEFORE="$(clean_sibling_worktree_paths_digest "$WORKTREES_BEFORE")"
+WORKTREE_REGISTRY_ENTRIES_BEFORE="$(
+  clean_sibling_snapshot_worktree_registry "$WORKTREE_REGISTRY_ROOT"
+)"
+SOURCE_STATUS_BEFORE="$(git -C "$SOURCE_REPO" status --porcelain=v1 --untracked-files=all)"
+exec {TMP_PARENT_FD}<"$TMP_PARENT"
+TMP_PARENT_STAT_BEFORE="$(stat -Lc '%d:%i:%u:%a' -- "/proc/$$/fd/$TMP_PARENT_FD")"
+TMP_PARENT_ENTRIES_BEFORE="$(clean_sibling_snapshot_direct_entries \
+  "$TMP_PARENT_FD" "$TMP_PARENT_STAT_BEFORE" "$TMP_PARENT")"
+mkdir -m 700 -- "$TMP_ROOT"
+OWNER_MARKER="$TMP_ROOT/.acgs-clean-sibling-owned"
+printf '%s\n' "$$" >"$OWNER_MARKER"
+IFS=: read -r TMP_ROOT_DEVICE TMP_ROOT_INODE TMP_ROOT_UID _ < <(
+  stat -c '%d:%i:%u:%a' -- "$TMP_ROOT"
+)
+exec {TMP_ROOT_TEST_FD}<"$TMP_ROOT"
+TMP_ROOT_MNT_ID="$(awk '$1 == "mnt_id:" {print $2; exit}' "/proc/$$/fdinfo/$TMP_ROOT_TEST_FD")"
+exec {TMP_ROOT_TEST_FD}<&-
+WORKTREE="$TMP_ROOT/product"
+WORKTREE_GITFILE_PATH="$WORKTREE/.git"
+WORKTREE_ADDED=1
+PROOF_COMPLETE=1
+TRANSCRIPT_RECORDS=10
+ASSIGNED_BOOTSTRAPS=EVID+CP+GZ
+NODE_ID=P0-EVIDENCE-000
+P=1111111111111111111111111111111111111111
+T=2222222222222222222222222222222222222222
+R=3333333333333333333333333333333333333333333333333333333333333333
+clean_sibling_initialize_worktree_gitfile_witness() {
+  return 0
+}
+clean_sibling_remove_registered_worktree() {
+  mkdir -m 700 -- "$WORKTREE_REGISTRY_ROOT/unrelated-after-baseline"
+  WORKTREE_REGISTRATION_REMOVED=1
+  WORKTREE_POST_REMOVE_GITFILE_VALIDATED=1
+  return 0
+}
+set +e
+clean_sibling_cleanup 1
+cleanup_rc=$?
+set -e
+printf 'CLEANUP_RC=%s\nSTAGE=%s\n' "$cleanup_rc" "${CLEAN_SIBLING_FAILURE_STAGE:-}"
+exit "$cleanup_rc"
+"""
+    cleanup_result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            cleanup_command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(cleanup_root),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert cleanup_result.returncode == 2, (cleanup_result.stdout, cleanup_result.stderr)
+    assert cleanup_result.stdout == "CLEANUP_RC=2\nSTAGE=cleanup-owned-entry-registry\n"
+    assert "worktree registry" in cleanup_result.stderr
+    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in cleanup_result.stdout + cleanup_result.stderr
+    assert not cleanup_root.exists()
 
 
 def test_clean_sibling_final_teardown_captures_failures_with_errexit_active(

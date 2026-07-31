@@ -191,6 +191,7 @@ F_SEAL_WRITE = 0x0008
 REQUIRED_SEALS = F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE
 PASS_MARKER = b"CLEAN_SIBLING_TECHNICAL=PASS"
 MAX_STATUS_FRAME_BYTES = 4 * 1024 * 1024
+MAX_POST_GATE_FAILURE_STATUS_FRAME_BYTES = 512
 MAX_VISIBLE_OUTPUT_BYTES = 64 * 1024 * 1024
 MAX_FAILURE_CAPTURE_BYTES = 64 * 1024 * 1024
 TRUSTED_QUOTA_SETUP_FSIZE_BYTES = 8 * 1024 * 1024 * 1024
@@ -297,6 +298,30 @@ EXPECTED_STATUS = {
             "postgres-p4-runtime-enrollment-disposable-concurrency",
         ],
     ),
+}
+POST_GATE_FAILURE_STAGES = {
+    "b6-transcript-finalize",
+    "b6-run-materialize",
+    "b6-run-descriptor-auth",
+    "cleanup-gitfile-witness",
+    "cleanup-gitfile-close",
+    "cleanup-recovery-retain",
+    "cleanup-quota-detach",
+    "cleanup-quota-artifacts",
+    "cleanup-owned-resources",
+    "cleanup-owned-git-deregister",
+    "cleanup-owned-parent-snapshot",
+    "cleanup-owned-registration",
+    "cleanup-owned-source-status",
+    "cleanup-owned-root-reappeared",
+    "cleanup-owned-path-registry",
+    "cleanup-owned-entry-registry",
+    "cleanup-recovery-gc",
+    "cleanup-parent-snapshot",
+    "final-launch-context",
+    "final-postcleanup-descriptors",
+    "final-uv-identity",
+    "final-transcript-contract",
 }
 EXPECTED_COMMAND_SELECTORS = {
     "P0-EVIDENCE-000": [
@@ -2389,6 +2414,68 @@ def verified_failure_status(status_payload, observed_exit_code):
     return " ".join(f"{key}={value}" for key, value in fields.items())
 
 
+def verified_post_gate_failure_status(status_payload, observed_exit_code):
+    def reject_duplicate_object_pairs(pairs):
+        parsed = {}
+        for key, value in pairs:
+            if key in parsed:
+                raise ValueError("duplicate post-gate failure status field")
+            parsed[key] = value
+        return parsed
+
+    try:
+        if len(status_payload) > MAX_POST_GATE_FAILURE_STATUS_FRAME_BYTES:
+            return "post_gate_failure_status=rejected"
+        status_text = status_payload.decode("ascii", "strict")
+        status = json.loads(status_text, object_pairs_hook=reject_duplicate_object_pairs)
+    except Exception:
+        return "post_gate_failure_status=rejected"
+    expected_keys = {"component_rc", "observed_exit_code", "schema", "stage", "version"}
+    if not isinstance(status, dict) or set(status) != expected_keys:
+        return "post_gate_failure_status=rejected"
+    canonical = json.dumps(
+        status,
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    if canonical != status_payload:
+        return "post_gate_failure_status=rejected"
+    if (
+        status.get("schema") != "acgs.post_gate.failure_status"
+        or type(status.get("version")) is not int
+        or status.get("version") != 1
+    ):
+        return "post_gate_failure_status=rejected"
+    stage = status.get("stage")
+    component_rc = status.get("component_rc")
+    frame_exit = status.get("observed_exit_code")
+    if not isinstance(stage, str) or stage not in POST_GATE_FAILURE_STAGES:
+        return "post_gate_failure_status=rejected"
+    if not (
+        isinstance(component_rc, int)
+        and not isinstance(component_rc, bool)
+        and 1 <= component_rc <= 255
+    ):
+        return "post_gate_failure_status=rejected"
+    if not (
+        isinstance(frame_exit, int)
+        and not isinstance(frame_exit, bool)
+        and 1 <= frame_exit <= 255
+    ):
+        return "post_gate_failure_status=rejected"
+    if frame_exit != observed_exit_code:
+        return "post_gate_failure_status=rejected"
+    fields = {
+        "post_gate_failure_status": "authenticated",
+        "stage": stage,
+        "component_rc": str(component_rc),
+        "observed_exit_code": str(observed_exit_code),
+    }
+    return " ".join(f"{key}={value}" for key, value in fields.items())
+
+
 def failure_status_summary(
     status_rejected,
     status_frames,
@@ -2398,12 +2485,18 @@ def failure_status_summary(
     observed_exit_code,
 ):
     if status_rejected or not status_eof:
-        return "gate_failure_status=rejected"
+        return "failure_status=rejected"
     if not status_frames:
-        return "gate_failure_status=unavailable"
+        return "failure_status=unavailable"
     if len(status_frames) != 1 or status_run_fds or status_frame_fd_counts != [0]:
-        return "gate_failure_status=rejected"
-    return verified_failure_status(status_frames[0], observed_exit_code)
+        return "failure_status=rejected"
+    gate_summary = verified_failure_status(status_frames[0], observed_exit_code)
+    if gate_summary != "gate_failure_status=rejected":
+        return gate_summary
+    post_gate_summary = verified_post_gate_failure_status(status_frames[0], observed_exit_code)
+    if post_gate_summary != "post_gate_failure_status=rejected":
+        return post_gate_summary
+    return "failure_status=rejected"
 
 
 def start_authority_guard_module():

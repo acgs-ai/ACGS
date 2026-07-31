@@ -4293,6 +4293,14 @@ clean_sibling_cleanup() {
   local dotglob_was_set=0
   local nullglob_was_set=0
 
+  CLEAN_SIBLING_FAILURE_STAGE=''
+  clean_sibling_note_failure_stage() {
+    local stage="$1"
+    if [[ "$cleanup_status" == 0 && -z "${CLEAN_SIBLING_FAILURE_STAGE:-}" ]]; then
+      CLEAN_SIBLING_FAILURE_STAGE="$stage"
+    fi
+  }
+
   case "$quota_detach_failed" in
     0 | 1) ;;
     *)
@@ -4338,11 +4346,13 @@ clean_sibling_cleanup() {
     if [[ -z "${SOURCE_REPO:-}" ]] ||
       [[ "$(realpath -e "${BASH_SOURCE[1]:-}" 2>/dev/null || true)" != \
         "$SOURCE_REPO/scripts/evidence/prove_clean_sibling.sh" ]]; then
+      clean_sibling_note_failure_stage cleanup-owned-resources
       cleanup_status=2
     fi
     if [[ "${PROOF_COMPLETE:-0}" != 1 || "${WORKTREE_ADDED:-0}" != 1 ||
       -z "${TMP_PARENT_FD:-}" || -z "${TMP_ROOT:-}" || -z "${TMP_ROOT_INODE:-}" ||
       -z "${OWNER_MARKER:-}" || -z "${WORKTREE:-}" ]]; then
+      clean_sibling_note_failure_stage cleanup-owned-resources
       cleanup_status=2
     fi
   fi
@@ -4362,6 +4372,7 @@ clean_sibling_cleanup() {
   fi
 
   if ! clean_sibling_retain_recovery_contracts; then
+    clean_sibling_note_failure_stage cleanup-owned-resources
     cleanup_status=2
     worktree_still_registered=1
   fi
@@ -4374,6 +4385,7 @@ clean_sibling_cleanup() {
         *)
           printf 'cleanup refused for unowned PostgreSQL recovery path: %s\n' \
             "$ACGS_POSTGRES_RECOVERY_ROOT" >&2
+          clean_sibling_note_failure_stage cleanup-owned-resources
           cleanup_status=2
           ;;
       esac
@@ -4433,8 +4445,12 @@ clean_sibling_cleanup() {
           if [[ -n "${ACGS_POSTGRES_RECOVERY_ROOT_INODE:-}" ]]; then
             clean_sibling_remove_owned_root "$TMP_PARENT_FD" "$ACGS_POSTGRES_RECOVERY_ROOT" \
               "$ACGS_POSTGRES_RECOVERY_ROOT_DEVICE:$ACGS_POSTGRES_RECOVERY_ROOT_INODE:$ACGS_POSTGRES_RECOVERY_ROOT_UID:700" \
-              "$$" "${ACGS_POSTGRES_RECOVERY_ROOT_MNT_ID:-}" || cleanup_status=2
+              "$$" "${ACGS_POSTGRES_RECOVERY_ROOT_MNT_ID:-}" || {
+              clean_sibling_note_failure_stage cleanup-owned-resources
+              cleanup_status=2
+            }
           else
+            clean_sibling_note_failure_stage cleanup-owned-resources
             cleanup_status=2
           fi
       else
@@ -4442,13 +4458,16 @@ clean_sibling_cleanup() {
           printf 'cleanup refused for unowned PostgreSQL recovery path: %s\n' \
             "$ACGS_POSTGRES_RECOVERY_ROOT" >&2
         fi
+        clean_sibling_note_failure_stage cleanup-owned-resources
         cleanup_status=2
       fi
     fi
   fi
   if [[ -n "${ACGS_POSTGRES_RECOVERY_ROOT:-}" ]]; then
-    [[ ! -e "$ACGS_POSTGRES_RECOVERY_ROOT" && ! -L "$ACGS_POSTGRES_RECOVERY_ROOT" ]] ||
+    [[ ! -e "$ACGS_POSTGRES_RECOVERY_ROOT" && ! -L "$ACGS_POSTGRES_RECOVERY_ROOT" ]] || {
+      clean_sibling_note_failure_stage cleanup-owned-root-reappeared
       cleanup_status=2
+    }
   fi
   if [[ "$worktree_still_registered" == 1 ]]; then
     :
@@ -4473,10 +4492,14 @@ clean_sibling_cleanup() {
           "${ACGS_QUOTA_RECOVERY_BUNDLE_FD:-}" \
           "${ACGS_QUOTA_RECOVERY_BUNDLE_IDENTITY:-}" \
           "${ACGS_QUOTA_RECOVERY_BUNDLE_SHA256:-}" \
-          "$quota_recovery_ledger_relpath" || cleanup_status=2
+          "$quota_recovery_ledger_relpath" || {
+          clean_sibling_note_failure_stage cleanup-owned-resources
+          cleanup_status=2
+        }
         ;;
       *)
         printf 'cleanup refused for unowned path: %s\n' "$TMP_ROOT" >&2
+        clean_sibling_note_failure_stage cleanup-owned-resources
         cleanup_status=2
         ;;
     esac
@@ -4484,30 +4507,43 @@ clean_sibling_cleanup() {
     [[ -z "$(find "$TMP_ROOT" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
     # The EXIT trap is installed before the marker is written.  In that tiny
     # interval only the freshly-created empty directory may be removed.
-    rmdir -- "$TMP_ROOT" || cleanup_status=2
+    rmdir -- "$TMP_ROOT" || {
+      clean_sibling_note_failure_stage cleanup-owned-resources
+      cleanup_status=2
+    }
   elif [[ -n "$TMP_ROOT" ]]; then
     printf 'cleanup refused because ownership marker changed: %s\n' "$TMP_ROOT" >&2
+    clean_sibling_note_failure_stage cleanup-owned-resources
     cleanup_status=2
   fi
   if [[ -n "$TMP_ROOT" ]]; then
-    [[ ! -e "$TMP_ROOT" && ! -L "$TMP_ROOT" ]] || cleanup_status=2
+    [[ ! -e "$TMP_ROOT" && ! -L "$TMP_ROOT" ]] || {
+      clean_sibling_note_failure_stage cleanup-owned-root-reappeared
+      cleanup_status=2
+    }
   fi
   if [[ "$cleanup_status" == 0 ]] && [[ "$WORKTREE_ADDED" == 1 ]] && [[ -n "$WORKTREE" ]]; then
-    clean_sibling_record_worktree_absence_proof || cleanup_status=2
+    clean_sibling_record_worktree_absence_proof || {
+      clean_sibling_note_failure_stage cleanup-owned-root-reappeared
+      cleanup_status=2
+    }
   fi
   if [[ "$WORKTREE_ADDED" == 1 ]] && [[ -n "$WORKTREE" ]]; then
     if [[ "$cleanup_status" == 0 ]]; then
       if ! clean_sibling_remove_registered_worktree; then
+        clean_sibling_note_failure_stage cleanup-owned-git-deregister
         cleanup_status=2
       fi
     fi
     if [[ "${WORKTREE_POST_REMOVE_GITFILE_VALIDATED:-0}" != 1 ]]; then
+      clean_sibling_note_failure_stage cleanup-owned-registration
       cleanup_status=2
     fi
     worktree_still_registered=0
     if worktree_list="$(git -C "$SOURCE_REPO" worktree list --porcelain)" &&
       clean_sibling_worktree_list_contains "$worktree_list" "$WORKTREE"; then
       worktree_still_registered=1
+      clean_sibling_note_failure_stage cleanup-owned-registration
       cleanup_status=2
     fi
   fi
@@ -4515,30 +4551,36 @@ clean_sibling_cleanup() {
   if [[ -z "${TMP_PARENT_STAT_BEFORE:-}" ]] ||
     [[ "$current_parent_stat" != "$TMP_PARENT_STAT_BEFORE" ]]; then
     printf 'caller TMPDIR device/inode/owner/mode changed across proof\n' >&2
+    clean_sibling_note_failure_stage cleanup-owned-parent-snapshot
     cleanup_status=2
   fi
   if ! current_parent_entries="$(clean_sibling_snapshot_direct_entries \
     "$TMP_PARENT_FD" "$TMP_PARENT_STAT_BEFORE" "$TMP_PARENT" \
     "${ACGS_QUOTA_RECOVERY_BUNDLE_NAME:-}" \
     "${ACGS_QUOTA_RECOVERY_BUNDLE_IDENTITY:-}" \
-    "${ACGS_QUOTA_RECOVERY_BUNDLE_SHA256:-}")"; then
+      "${ACGS_QUOTA_RECOVERY_BUNDLE_SHA256:-}")"; then
     printf 'caller TMPDIR direct entries snapshot refused across proof\n' >&2
+    clean_sibling_note_failure_stage cleanup-owned-parent-snapshot
     cleanup_status=2
   elif [[ -z "${TMP_PARENT_ENTRIES_BEFORE:-}" ]] ||
     [[ "$current_parent_entries" != "$TMP_PARENT_ENTRIES_BEFORE" ]]; then
     printf 'caller TMPDIR direct entries changed across proof\n' >&2
+    clean_sibling_note_failure_stage cleanup-owned-parent-snapshot
     cleanup_status=2
   fi
   if [[ "$WORKTREE_ADDED" == 1 ]] && [[ -n "$WORKTREE" ]]; then
     if ! worktree_list="$(git -C "$SOURCE_REPO" worktree list --porcelain)"; then
       printf 'cleanup refused because worktree registry query failed: %s\n' "$WORKTREE" >&2
+      clean_sibling_note_failure_stage cleanup-owned-registration
       cleanup_status=2
     elif clean_sibling_worktree_list_contains "$worktree_list" "$WORKTREE"; then
       printf 'cleanup refused to delete still-registered worktree root: %s\n' "$WORKTREE" >&2
+      clean_sibling_note_failure_stage cleanup-owned-registration
       cleanup_status=2
     fi
     [[ ! -e "$WORKTREE" && ! -L "$WORKTREE" ]] || {
       printf 'owned proof worktree reappeared during cleanup: %s\n' "$WORKTREE" >&2
+      clean_sibling_note_failure_stage cleanup-owned-root-reappeared
       cleanup_status=2
     }
   fi
@@ -4548,6 +4590,7 @@ clean_sibling_cleanup() {
       *)
         printf 'cleanup refused because worktree admin gitdir is outside source registry: %s\n' \
           "$WORKTREE_ADMIN_GITDIR" >&2
+        clean_sibling_note_failure_stage cleanup-owned-registration
         cleanup_status=2
         ;;
     esac
@@ -4561,6 +4604,7 @@ clean_sibling_cleanup() {
         printf 'cleanup refused because worktree admin registration identity changed: %s\n' \
           "$WORKTREE_ADMIN_GITDIR" >&2
       fi
+      clean_sibling_note_failure_stage cleanup-owned-registration
       cleanup_status=2
     fi
     if [[ -n "${WORKTREE_ADMIN_SENTINEL_PATH:-}" ]] &&
@@ -4574,12 +4618,14 @@ clean_sibling_cleanup() {
         printf 'cleanup refused because worktree admin sentinel remains: %s\n' \
           "$WORKTREE_ADMIN_SENTINEL_PATH" >&2
       fi
+      clean_sibling_note_failure_stage cleanup-owned-registration
       cleanup_status=2
     fi
     admin_registry_root="$SOURCE_COMMON_GITDIR/worktrees"
     if [[ ! -d "$admin_registry_root" || -L "$admin_registry_root" ]]; then
       printf 'cleanup refused because worktree registry enumeration failed: %s\n' \
         "$admin_registry_root" >&2
+      clean_sibling_note_failure_stage cleanup-owned-entry-registry
       cleanup_status=2
     elif [[ -n "${WORKTREE_ADMIN_GITDIR_IDENTITY:-}" ]]; then
       if [[ -n "${WORKTREE_REGISTRY_ROOT_IDENTITY:-}" ]]; then
@@ -4587,6 +4633,7 @@ clean_sibling_cleanup() {
         if [[ "$current_registry_identity" != "$WORKTREE_REGISTRY_ROOT_IDENTITY" ]]; then
           printf 'cleanup refused because worktree registry identity changed: %s\n' \
             "$admin_registry_root" >&2
+          clean_sibling_note_failure_stage cleanup-owned-entry-registry
           cleanup_status=2
         fi
       fi
@@ -4596,12 +4643,14 @@ clean_sibling_cleanup() {
       for admin_registry_entry in "$admin_registry_root"/*; do
         if ! clean_sibling_reject_control_path \
           WORKTREE_ADMIN_REGISTRY_ENTRY "$admin_registry_entry"; then
+          clean_sibling_note_failure_stage cleanup-owned-entry-registry
           cleanup_status=2
           continue
         fi
         if [[ ! -d "$admin_registry_entry" || -L "$admin_registry_entry" ]]; then
           printf 'cleanup refused because worktree registry entry is not a directory: %s\n' \
             "$admin_registry_entry" >&2
+          clean_sibling_note_failure_stage cleanup-owned-entry-registry
           cleanup_status=2
           continue
         fi
@@ -4609,6 +4658,7 @@ clean_sibling_cleanup() {
         if [[ -z "$current_admin_identity" ]]; then
           printf 'cleanup refused because worktree registry enumeration failed: %s\n' \
             "$admin_registry_entry" >&2
+          clean_sibling_note_failure_stage cleanup-owned-entry-registry
           cleanup_status=2
           continue
         fi
@@ -4626,6 +4676,7 @@ clean_sibling_cleanup() {
           printf 'cleanup refused because worktree admin registration relocated: %s\n' \
             "$admin_registry_found_path" >&2
         fi
+        clean_sibling_note_failure_stage cleanup-owned-registration
         cleanup_status=2
       fi
       if [[ -n "${WORKTREE_REGISTRY_ROOT_IDENTITY:-}" ]] &&
@@ -4633,6 +4684,7 @@ clean_sibling_cleanup() {
         if ! admin_sentinel_found_path="$(clean_sibling_find_admin_sentinel \
           "$admin_registry_root" "$WORKTREE_REGISTRY_ROOT_IDENTITY" \
           "$WORKTREE_ADMIN_SENTINEL")"; then
+          clean_sibling_note_failure_stage cleanup-owned-entry-registry
           cleanup_status=2
           admin_sentinel_found_path=''
         fi
@@ -4644,6 +4696,7 @@ clean_sibling_cleanup() {
             printf 'cleanup refused because worktree admin registration relocated: %s\n' \
               "$admin_sentinel_found_path" >&2
           fi
+          clean_sibling_note_failure_stage cleanup-owned-registration
           cleanup_status=2
         fi
       fi
@@ -4652,12 +4705,14 @@ clean_sibling_cleanup() {
         if ! linked_gitfile_found_path="$(clean_sibling_find_linked_gitfile_registration \
           "$admin_registry_root" "$WORKTREE_REGISTRY_ROOT_IDENTITY" \
           "$WORKTREE_GITFILE_IDENTITY")"; then
+          clean_sibling_note_failure_stage cleanup-owned-entry-registry
           cleanup_status=2
           linked_gitfile_found_path=''
         fi
         if [[ -n "$linked_gitfile_found_path" ]]; then
           printf 'cleanup refused because linked worktree registration remains: %s\n' \
             "$linked_gitfile_found_path" >&2
+          clean_sibling_note_failure_stage cleanup-owned-registration
           cleanup_status=2
         fi
       fi
@@ -4666,17 +4721,20 @@ clean_sibling_cleanup() {
   [[ "$(git -C "$SOURCE_REPO" status --porcelain=v1 --untracked-files=all)" == \
     "$SOURCE_STATUS_BEFORE" ]] || {
     printf 'source repository status changed across proof\n' >&2
+    clean_sibling_note_failure_stage cleanup-owned-source-status
     cleanup_status=2
   }
   if [[ -n "$TMP_ROOT" ]]; then
     [[ ! -e "$TMP_ROOT" && ! -L "$TMP_ROOT" ]] || {
       printf 'owned proof root reappeared during cleanup: %s\n' "$TMP_ROOT" >&2
+      clean_sibling_note_failure_stage cleanup-owned-root-reappeared
       cleanup_status=2
     }
   fi
   if [[ "$WORKTREE_ADDED" == 1 ]]; then
     if ! worktree_list="$(git -C "$SOURCE_REPO" worktree list --porcelain)"; then
       printf 'cleanup refused because final worktree registry query failed\n' >&2
+      clean_sibling_note_failure_stage cleanup-owned-path-registry
       cleanup_status=2
     else
       current_worktree_paths="$(clean_sibling_worktree_paths_digest "$worktree_list")"
@@ -4686,23 +4744,28 @@ clean_sibling_cleanup() {
       if [[ -z "${WORKTREE_PATHS_BEFORE:-}" ]] ||
         [[ "$current_worktree_paths" != "$WORKTREE_PATHS_BEFORE" ]]; then
         printf 'cleanup refused because worktree path registry changed across proof\n' >&2
+        clean_sibling_note_failure_stage cleanup-owned-path-registry
         cleanup_status=2
       fi
     fi
     if [[ -z "${WORKTREE_REGISTRY_ENTRIES_BEFORE:-}" ]]; then
       printf 'cleanup refused because baseline worktree registry snapshot is missing\n' >&2
+      clean_sibling_note_failure_stage cleanup-owned-entry-registry
       cleanup_status=2
     elif [[ -n "${WORKTREE_REGISTRY_ROOT:-}" ]]; then
       if ! current_registry_entries="$(clean_sibling_snapshot_worktree_registry \
         "$WORKTREE_REGISTRY_ROOT" "${WORKTREE_REGISTRY_ROOT_IDENTITY:-}")"; then
+        clean_sibling_note_failure_stage cleanup-owned-entry-registry
         cleanup_status=2
         current_registry_entries=''
       elif [[ "$current_registry_entries" != "$WORKTREE_REGISTRY_ENTRIES_BEFORE" ]]; then
         printf 'cleanup refused because worktree registry entries changed across proof\n' >&2
+        clean_sibling_note_failure_stage cleanup-owned-entry-registry
         cleanup_status=2
       fi
     else
       printf 'cleanup refused because worktree registry root is missing\n' >&2
+      clean_sibling_note_failure_stage cleanup-owned-entry-registry
       cleanup_status=2
     fi
   fi
