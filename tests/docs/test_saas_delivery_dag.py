@@ -193,8 +193,32 @@ def _validate_matrix_state(rows: list[dict[str, str]], dag: dict[str, Any]) -> N
         assert not (row["evidence"] == "historical_only" and row["state"] == "built")
 
 
+def _uninitialized_submodule_prefixes() -> tuple[str, ...]:
+    """Path prefixes of declared submodules absent from this checkout.
+
+    Paths under a submodule declared in ``.gitmodules`` whose working tree is
+    not initialized (no ``<path>/.git``) cannot be verified here, e.g. the
+    credential-gated ``packages/acgs-control-plane`` on public lanes. Their
+    contents are enforced by the lanes that do initialize them; everything
+    else stays strictly checked, and an initialized submodule is checked in
+    full.
+    """
+    gitmodules = ROOT / ".gitmodules"
+    if not gitmodules.is_file():
+        return ()
+    declared = re.findall(
+        r"(?m)^\s*path\s*=\s*(\S+)", gitmodules.read_text(encoding="utf-8")
+    )
+    return tuple(f"{p}/" for p in declared if not (ROOT / p / ".git").exists())
+
+
 def _assert_repo_files_exist(paths: set[str]) -> None:
-    missing = [path for path in sorted(paths) if not (ROOT / path).is_file()]
+    skip = _uninitialized_submodule_prefixes()
+    missing = [
+        path
+        for path in sorted(paths)
+        if not (ROOT / path).is_file() and not path.startswith(skip)
+    ]
     assert missing == []
 
 
