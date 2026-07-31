@@ -69,6 +69,14 @@ from pathlib import Path
 from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
+from gove_zone.capture import (
+    CaptureConfig,
+    CaptureError,
+    CaptureMode,
+    CaptureRecord,
+    capture_observation,
+    capture_record_for_decision,
+)
 from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.decision import Decision, DecisionRecord
 from gove_zone.errors import (
@@ -282,6 +290,7 @@ class UniversalGateway:
         ledger_path: str | Path | None = None,
         receipt_ttl_seconds: float | None = None,
         allowed_actors: frozenset[str] | set[str] | None = None,
+        capture_config: CaptureConfig | None = None,
     ) -> None:
         self.tenant_id = tenant_id
         self.execution_boundary = execution_boundary
@@ -292,6 +301,7 @@ class UniversalGateway:
         self.policy_bundle_id = policy_bundle_id or policy.version
         self.receipt_ttl_seconds = receipt_ttl_seconds
         self.allowed_actors = frozenset(allowed_actors) if allowed_actors is not None else None
+        self.capture_config = capture_config
 
         if profile.require_expiry and receipt_ttl_seconds is None:
             # Fail loud at construction instead of rejecting 100% of calls at
@@ -302,6 +312,15 @@ class UniversalGateway:
                 "(require_expiry=True) but receipt_ttl_seconds is None; every "
                 "minted receipt would be rejected at the gate — supply "
                 "receipt_ttl_seconds"
+            )
+        if (
+            profile.is_production
+            and capture_config is not None
+            and capture_config.mode in (CaptureMode.BEST_EFFORT, CaptureMode.DISABLED)
+        ):
+            raise ValueError(
+                "production profile rejects BEST_EFFORT and DISABLED runtime capture modes; "
+                "use REQUIRED capture or omit capture_config for legacy compatibility"
             )
 
         resolved_audit = Path(audit_path or Path(".gove-zone") / "gateway-audit.jsonl")
@@ -463,6 +482,17 @@ class UniversalGateway:
             else dict(call.args)
         )
 
+        try:
+            self._capture_before_receipt(record, audit_hash)
+        except CaptureError as exc:
+            return GatewayResult(
+                status="error",
+                tool=tool,
+                actor=actor,
+                audit_hash=audit_hash,
+                error_class=type(exc).__name__,
+            )
+
         receipt = DecisionReceipt.from_record(
             record,
             audit_hash=audit_hash,
@@ -527,6 +557,116 @@ class UniversalGateway:
             audit_hash=audit_hash,
             result=result,
             receipt=receipt,
+        )
+
+    def _capture_before_receipt(self, record: DecisionRecord, audit_hash: str) -> None:
+        """Persist configured D2 capture evidence before minting a receipt.
+
+        Capture is intentionally an issuer-path precondition only. It does not
+        feed the executor and it does not alter the DecisionReceipt schema.
+        """
+
+        config = self.capture_config
+        if config is None:
+            return
+        if config.mode is CaptureMode.DISABLED:
+            return
+        capture = self._capture_record(record, audit_hash, outcome="captured")
+        if config.mode is CaptureMode.REQUIRED:
+            if config.store is None or config.observation_sink is None:
+                raise CaptureError("required capture mode is missing a store or observation sink")
+            try:
+                ack = config.store.append(capture)
+                ack.validate_for(capture)
+                config.observation_sink.append(capture_observation("capture_persisted", capture))
+            except CaptureError as exc:
+                self._emit_capture_failed_observation(capture, exc)
+                raise
+            except Exception as exc:  # noqa: BLE001 - any required-capture failure blocks
+                self._emit_capture_failed_observation(capture, exc)
+                raise CaptureError("required capture failed") from exc
+            return
+
+        try:
+            if config.store is None:
+                raise CaptureError("best-effort capture mode has no store")
+            ack = config.store.append(capture)
+            ack.validate_for(capture)
+            if config.observation_sink is not None:
+                config.observation_sink.append(capture_observation("capture_persisted", capture))
+        except Exception as exc:  # noqa: BLE001 - best-effort must not authorize by silence
+            failed = self._capture_record(
+                record,
+                audit_hash,
+                outcome="capture_failed",
+                reason="best-effort-capture-failed",
+            )
+            if config.observation_sink is not None:
+                try:
+                    config.observation_sink.append(
+                        capture_observation(
+                            "capture_failed", failed, error_class=type(exc).__name__
+                        )
+                    )
+                except Exception:
+                    # Local/dev best-effort mode is explicitly non-authoritative:
+                    # a failed observation must not be upgraded into a capture
+                    # success claim, but it also must not block execution.
+                    return
+
+    def _emit_capture_failed_observation(self, capture: CaptureRecord, exc: Exception) -> None:
+        config = self.capture_config
+        if config is None or config.observation_sink is None:
+            return
+        failed = capture_record_for_decision(
+            tenant_id=capture.tenant_id,
+            event_id=capture.event_id,
+            audit_event_hash=capture.audit_event_hash,
+            policy_bundle_id=capture.policy_bundle_id,
+            policy_version=capture.policy_version,
+            policy_hash=capture.policy_hash,
+            evaluator_version=capture.evaluator_version,
+            projection_version=capture.projection_version,
+            decision_time=capture.decision_time,
+            field_status=capture.field_status,
+            privacy_outcome=capture.privacy_outcome,
+            capture_outcome="capture_failed",
+            capture_reason="required-capture-failed",
+        )
+        try:
+            config.observation_sink.append(
+                capture_observation("capture_failed", failed, error_class=type(exc).__name__)
+            )
+        except Exception:
+            # REQUIRED still blocks issuance. The secondary observation failure
+            # must not hide the original capture failure or permit a receipt.
+            return
+
+    def _capture_record(
+        self,
+        record: DecisionRecord,
+        audit_hash: str,
+        *,
+        outcome: str,
+        reason: str = "captured-after-audit-before-receipt",
+    ) -> CaptureRecord:
+        config = self.capture_config
+        if config is None:
+            raise CaptureError("capture is not configured")
+        return capture_record_for_decision(
+            tenant_id=self.tenant_id,
+            event_id=record.event_id,
+            audit_event_hash=audit_hash,
+            policy_bundle_id=self.policy_bundle_id,
+            policy_version=record.policy_version,
+            policy_hash=self.policy.version,
+            evaluator_version=config.evaluator_version,
+            projection_version=config.projection_version,
+            decision_time=record.timestamp_iso,
+            field_status=config.field_status,
+            privacy_outcome=config.privacy_outcome,
+            capture_outcome=outcome,
+            capture_reason=reason,
         )
 
     # -- bypass detection ---------------------------------------------------- #
@@ -846,6 +986,16 @@ class UniversalGateway:
                 "ask",
                 record.reason or f"{record.decision.value} requires human review",
             )
+
+        for record, audit_hash, _previous_audit_hash in decided:
+            try:
+                self._capture_before_receipt(record, audit_hash)
+            except CaptureError as exc:
+                return _hook_response(
+                    action_kind,
+                    "deny",
+                    f"runtime capture unavailable: {type(exc).__name__}",
+                )
 
         anchors: list[dict[str, Any]] = []
         for record, audit_hash, previous_audit_hash in decided:
