@@ -79,9 +79,17 @@ jobs:
           sudo -K
           sudo -n true
 
+      # `continue-on-error` keeps a review-step failure from failing the job directly,
+      # so the "Gate on review outcome" step below is the single decider of this
+      # required check. This does not weaken the gate: the gate reads the step's raw
+      # `outcome` (which stays 'failure' under continue-on-error) and still exits 1
+      # for any non-success outcome unless a maintainer applied the auditable
+      # `codex-review-waived` label. Without this, a waived PR stayed red because the
+      # failed review step marked the job failed even after the gate step passed.
       - name: Run Codex Code Review
         if: ${{ env.OPENAI_API_KEY != '' && env.IS_INTERNAL == 'true' }}
         id: codex-review
+        continue-on-error: true
         uses: openai/codex-action@v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
