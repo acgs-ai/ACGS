@@ -9,9 +9,12 @@ Scope: `.claude/skills/**`, `.agents/skills/**`, and the governance story around
 Agent skills are executable policy. A skill can tell an agent to run commands, read
 files, call tools, or make decisions on a user's behalf, and in this repo at least one
 is eligible for automatic invocation: `.agents/skills/govern-zone/agents/openai.yaml`
-sets `allow_implicit_invocation: true`, so Codex may trigger the skill and load its
-instructions into a run without anyone opting in. (The `SKILL.md` body loads on
-trigger, not as standing context in every run.)
+sets `allow_implicit_invocation: true`. (The `SKILL.md` body loads on trigger, not as
+standing context in every run.) In the reviewed tree that flag is a latent risk rather
+than a live one: the skill body itself is unparseable (see the scan findings below),
+so there is no evidence the host can currently register or load it. The moment step 1
+repairs the frontmatter, the skill becomes implicitly invocable without anyone opting
+in; that is why the repair and the controls proposed here belong together.
 
 The repository tracks six `SKILL.md` paths across the two trees: `govern-zone` mirrored
 in both, plus `maintain-acgs`, `phase-gate`, `pr-evidence`, and
@@ -36,7 +39,16 @@ their scanner against our own skills.
 | OMS signature | Is what I received what was reviewed? | `skill.oms.sig` |
 | Eval set | Does it still behave as described? | `evals/evals.json`, `BENCHMARK.md` |
 
-The docs are not aspirational. Four sampled skills each ship the complete set. Signing
+The docs are not aspirational. The four skills sampled for this note, re-verified at
+upstream commit `ea1d5b5c6753b9de34326f49099fc02c03707e4b`
+([skill-card-generator](https://github.com/NVIDIA/skills/tree/ea1d5b5c6753b9de34326f49099fc02c03707e4b/skills/skill-card-generator),
+[cuopt-server-api-python](https://github.com/NVIDIA/skills/tree/ea1d5b5c6753b9de34326f49099fc02c03707e4b/skills/cuopt-server-api-python),
+[data-designer](https://github.com/NVIDIA/skills/tree/ea1d5b5c6753b9de34326f49099fc02c03707e4b/skills/data-designer),
+[deepstream-dev](https://github.com/NVIDIA/skills/tree/ea1d5b5c6753b9de34326f49099fc02c03707e4b/skills/deepstream-dev)),
+each ship the complete set: `SKILL.md`, `skill-card.md`, `skill.oms.sig`,
+`evals/evals.json`, and `BENCHMARK.md` are present at every one of those paths, which a
+directory listing at that commit reproduces. (At the same commit, 323 of the 324
+`SKILL.md` directories in the catalog carry all three sidecar artifacts.) Signing
 uses the OpenSSF Model Signing format — Sigstore-style bundles extended to cover a
 **directory tree** rather than a single file — with a pinned trust anchor and offline
 verification:
@@ -197,9 +209,20 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    must therefore vendor a pinned copy of the validator (license permitting) or encode
    the same schema rules as a repo-local check, with a recorded upstream version to diff
    against on host upgrades. Cheap, deterministic, catches the entire class.
+   One repo-hygiene prerequisite: the root `.gitignore` ignores `.agents` wholesale, so
+   only the two already-tracked `govern-zone` files survive; any new skill or sidecar
+   under `.agents/skills/**` is invisible to a CI checkout (`git check-ignore` confirms
+   this for a new `SKILL.md` and for a `skill-card.md` beside the tracked skill).
+   Before relying on this gate, un-ignore the shared `.agents/skills/**` source tree
+   while selectively re-ignoring runtime state, mirroring the `.claude/` whitelist
+   pattern already in the same file; otherwise the gate silently covers only skills
+   someone remembered to force-add.
 3. **Skill cards for the skills that can act.** Start with the tracked skills that run
-   commands or touch privileged paths (`maintain-acgs`, `phase-gate`, and `pr-evidence`
-   today: all three direct git, test, lint, or hash-check commands), and make a card the entry
+   commands or touch privileged paths (`govern-zone` in both tracked copies,
+   `maintain-acgs`, `phase-gate`, and `pr-evidence` today: `govern-zone` directs agents
+   to create files, edit CI and manifests, and execute shell commands, and the other
+   three direct git, test, lint, or hash-check commands; the skill step 1 restores must
+   not sit outside the controls this proposal exists for), and make a card the entry
    ticket for any currently untracked local skill (`worktree-lanes`,
    `headless-delegation`, `deploy-drift-check`, `pr-queue`, `codex-execution-workflow`)
    before it lands in the repository.
@@ -231,7 +254,9 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    converge.
 
 Steps 2 and 3 are small and independently useful. Steps 5 and 6 are a real design task
-and should not be bundled with the rest.
+and should not be bundled with the rest; they are recorded as a planned stage in
+[`docs/ROADMAP.md`](../ROADMAP.md) ("Skill trust: identity, permission ceilings, host
+interception") so the roadmap of record carries the gap, not just this note.
 
 ## References
 
