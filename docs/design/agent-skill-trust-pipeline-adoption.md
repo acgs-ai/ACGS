@@ -244,11 +244,21 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    `disable-model-invocation` or restore `allow_implicit_invocation` and make the
    skill selectable during exactly the interval when no identity or interception
    exists to catch it. During the phased interval the hold must therefore also be
-   enforced in host policy held outside agent write authority (a host-level
-   denylist of the held skills for model selection and implicit invocation), with
-   a negative test proving that modifying the in-repo frontmatter or
+   enforced in host policy held outside agent write authority, and that
+   denylist must reject *every* invocation path for the held skills — model
+   selection, implicit invocation, and explicit user invocation alike — not
+   only the two automatic paths. The in-repo flags only remove automatic
+   selection, and a user who explicitly loads a held or manual skill during
+   the interval loads the same instructions with the same power to direct
+   unrestricted tool calls before the step-5 identity and step-6 interception
+   exist, so a hold scoped to automatic invocation leaves the exact exposure
+   it was created to close (step 6 already applies the same
+   loadability-not-invocation-path reasoning to the governed set). The
+   negative tests must prove both that modifying the in-repo frontmatter or
    companion-manifest flags does not make a held skill invocable while the
-   host-policy denylist is in force. The step-2 loadability gate and
+   host-policy denylist is in force, and — an explicit-invocation case — that
+   a user's explicit invocation of a held skill is refused while the hold is
+   in force. The step-2 loadability gate and
    a step-3 card are prerequisites but not sufficient, because neither prevents an
    automatically selected skill from directing actions beyond its intended
    authority; a schema-valid, well-described skill can still instruct anything.
@@ -355,7 +365,27 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    prose: it distinguishes per skill whether a denied action stops, escalates,
    or requires human approval) is carried into the canonical replacement alongside
    `permissions:`, with a defined fail-closed mapping (an absent or unrecognized
-   value means stop, never proceed) before the old field is removed. The
+   value means stop, never proceed) before the old field is removed.
+   Reconciliation fixes where the declaration lives, not what its terms mean:
+   path patterns, network origins, and script identifiers only carry one
+   authority if every component that reads them parses them identically, and
+   nothing above defines or versions that grammar. One component can
+   interpret `/tmp/**` recursively while another treats `**` literally or
+   falls back to prefix matching, so the ceiling and the signed receipt can
+   bind identical declaration bytes while the executor grants different
+   authority than admission approved. The canonical replacement must
+   therefore define one versioned permission-language grammar and
+   canonicalization — a single parser (or a conformance-tested equivalent)
+   shared by the step-2 gate, host admission, receipt issuance, and the
+   executor — with every declaration reduced to its canonical form before
+   use, the language version and the canonical effective permission set bound
+   into ceiling records and receipts, unknown or noncanonical forms rejected
+   fail-closed rather than interpreted best-effort, and parser-differential
+   negative tests proving a declaration whose pattern is interpreted
+   differently by two components (recursive-glob versus literal or
+   prefix-match readings) is rejected or yields identical granted authority
+   at every consumer, never a wider grant at the executor than at
+   admission. The
    `require human approval` value needs one more rule, because this repository
    already forbids treating `DENY` or `ESCALATE` receipts as executable: approval
    never revives the original receipt. A granted approval triggers a freshly
@@ -625,10 +655,29 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
     an OS keystore or hardware-backed store) that governed agents and their
     spawned processes can neither read nor invoke directly, reachable only
     through the issuance path that performs the checks above, and a
-    key-exfiltration/unauthorized-signing negative test must prove a
-    shell-enabled skill granted ambient credentials can neither read the
-    issuance key material nor obtain a validly signed receipt outside the
-    issuance path. Signing and hash-binding prove
+     key-exfiltration/unauthorized-signing negative test must prove a
+     shell-enabled skill granted ambient credentials can neither read the
+     issuance key material nor obtain a validly signed receipt outside the
+     issuance path. Protecting the key bounds forgery only while the key is
+     trusted: when an issuance key is rotated after compromise, a stale
+     executor whose local trust store still honors the retired key accepts
+     newly forged `ALLOW` receipts minted with the exfiltrated key, and the
+     key-exfiltration test above still passes because it assumes the active
+     key is unavailable. Verification must therefore not rely on a static
+     verifier alone: every skill-trust receipt must bind the identity of the
+     key that signed it and that key's purpose (skill-trust issuance, not any
+     other signing role) into the signed content, and the execution gate must
+     consult fresh, rollback-protected signer-trust state — a monotonic
+     revocation/active-key record held outside agent write authority, of the
+     same trust class as the ceiling freshness records — at execution time,
+     rejecting any receipt whose signing key is retired or whose purpose does
+     not match (`execute_with_receipt` already exposes a `revoked_keys`
+     parameter at `packages/gove-zone/src/gove_zone/executor.py` as the
+     starting point for that check). A retired-key negative test must prove a
+     receipt minted after its signing key was retired is rejected without a
+     side effect, including by an executor whose local signer-trust state is
+     stale or rolled back (the rollback-refusing store, not the executor's
+     memory, is what the gate must consult). Signing and hash-binding prove
    integrity, not that the verifier understands the new fields: during a rolling
    deployment or on a stale executor worker, skill fields encoded into an existing
    extensible receipt field would let an older gate validate the signature and the
@@ -807,7 +856,30 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    mismatch, with a handler-substitution negative test proving that rebinding
    an admitted alias to a different server, or swapping the handler behind an
    admitted tool name, is denied rather than executed under the stale
-   admission. Interception alone is still
+   admission. Binding the reviewed implementation receipts only the outer
+   tool call, not what the handler does to fulfill it: an admitted MCP
+   server, plugin, or host handler internally performs its own filesystem,
+   network, and process effects, those nested effects need not pass back
+   through the dispatcher, and so an unchanged, correctly bound handler can
+   exceed the invoking skill's file or network ceiling from inside — the
+   handler-substitution test passes because no substitution occurred. This is
+   the same ambient-authority gap the shell containment contract closes for
+   spawned processes, and it needs the same treatment: either each admitted
+   handler's ambient effect footprint (the filesystem paths, network origins,
+   credentials, and process capabilities its implementation exercises
+   internally) is reviewed at admission and recorded in the ceiling record
+   and receipt as authority the admission itself grants, so invoking the
+   handler from a skill whose ceiling is narrower than that footprint is
+   denied at issuance, or the handler executes under OS-level containment or
+   a capability broker that gates its transitive filesystem, network, and
+   process effects to the invoking skill's effective ceiling. Either way, a
+   negative test analogous to the shell containment tests must prove the
+   transitive effect itself is contained: an admitted, unmodified handler
+   whose internal behavior attempts a write outside the invoking skill's
+   file ceiling or a connection outside its network ceiling fails to perform
+   that effect (or the invocation is denied at issuance under the recorded
+   footprint), rather than passing because only the outer call was
+   checked. Interception alone is still
    not sufficient, because an agent issues ordinary tool calls outside any skill
    invocation and the current hook cannot tell the difference:
    `.claude/hooks/acgs-emit-receipt.py::main` receives only the tool payload and
