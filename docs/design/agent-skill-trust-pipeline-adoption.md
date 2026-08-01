@@ -478,9 +478,25 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
          unavailable rather than falling back to the mutable host clock, and
          a clock-rollback negative test must let an approval grant, an
          invocation context, and a receipt expire unused, set the verifier's
-         host clock back before their expiry, and prove each is still
-         rejected without a side effect.
-         Authenticating the approver and binding the grant to the canonical
+          host clock back before their expiry, and prove each is still
+          rejected without a side effect.
+          A trusted monotonic clock also has no persistent epoch: a host
+          restart resets or rebases it, so a durable unused grant,
+          invocation context, or receipt whose deadline was recorded
+          against the pre-restart monotonic value can compare against the
+          new lower reading and remain usable past its intended lifetime,
+          while the wall-clock rollback test above still passes because no
+          wall clock moved. Monotonic timestamps must therefore be bound
+          to a non-reusable boot or time-source epoch identifier, with
+          expiry evaluation failing closed across any epoch discontinuity
+          rather than comparing raw readings across it (or the verifier
+          must instead require fresh, non-replayable signed absolute
+          time), and a restart negative test must let an approval grant,
+          an invocation context, and a receipt expire unused, restart the
+          host so the monotonic clock resets or rebases, and prove none of
+          the pre-restart artifacts regains validity or yields a side
+          effect.
+          Authenticating the approver and binding the grant to the canonical
         request fields still does not prove those fields are what the human
         saw: when the requesting agent or a compromised skill supplies the
         label or summary the approval prompt displays, the prompt can
@@ -893,7 +909,22 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
      receipt minted after its signing key was retired is rejected without a
      side effect, including by an executor whose local signer-trust state is
      stale or rolled back (the rollback-refusing store, not the executor's
-     memory, is what the gate must consult). Signing and hash-binding prove
+     memory, is what the gate must consult). Consulting fresh signer-trust
+     state is still a point-in-time read, and key retirement can race an
+     in-flight request: the gate can observe a compromised key as active,
+     the retirement can then commit, and the already-validated forged
+     receipt can launch afterward even though the signer is now retired,
+     an interleaving the sequential retired-key test above (which mints
+     the receipt after retirement) never exercises. Signer-trust
+     validation, receipt consumption, and launch must therefore be
+     serialized against the active-key transition: the gate acquires a
+     signer-trust lease or epoch atomically with validation and holds it
+     through launch, revalidating or failing closed when the epoch changes
+     before the launch commits, with a concurrent revoke-versus-launch
+     negative test racing key retirement against an in-flight receipt
+     validated under that key, proving the launch either commits before
+     the retirement takes effect or is refused without a side effect,
+     never runs after it. Signing and hash-binding prove
    integrity, not that the verifier understands the new fields: during a rolling
    deployment or on a stale executor worker, skill fields encoded into an existing
    extensible receipt field would let an older gate validate the signature and the
@@ -1029,9 +1060,24 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    address, and connects using that approved resolution rather than
    re-resolving afterward, with negative tests proving an allowed URL
    redirecting to a forbidden origin and a hostname rebinding to an
-   out-of-ceiling address both fail to reach the outside destination; the
-   spawned-process denied-socket test below covers only shell containment,
-   not this direct network capability. Even then, argument-level checks
+    out-of-ceiling address both fail to reach the outside destination; the
+    spawned-process denied-socket test below covers only shell containment,
+    not this direct network capability. Validating and pinning the resolved
+    socket destination still governs only the first network hop: when an
+    allowed origin is itself a forwarding endpoint (an HTTP CONNECT proxy,
+    a SOCKS proxy, or an equivalent relay), the broker observes and
+    approves the proxy's address while the process asks that proxy to
+    reach an arbitrary forbidden origin, and the redirect, DNS-rebinding,
+    and denied-connect tests all pass because the local connection never
+    leaves the allowlisted proxy. Permission to use a forwarding endpoint
+    must therefore be treated as authority over every destination that
+    endpoint can relay to, granted only when that transitive reach is
+    itself reviewed and intended, or the connection must run through a
+    protocol-aware broker that parses the tunnel or relay request and
+    validates and binds the logical tunnel destination against the ceiling
+    before establishing it, with a proxy-tunnel negative test proving an
+    attempt to tunnel through an allowed proxy to a denied origin fails to
+    reach that origin. Even then, argument-level checks
    govern only the launch, not the launched process: an allowed
    `shell.allowed_scripts` entry spawns a process that inherits the host's ambient
    file and network capabilities, so a declaration that permits that script while
@@ -1157,10 +1203,28 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
      either the shell grant is defined as granting that ambient
      process-control and IPC authority (and the declaration documents it),
      or the executor profile must isolate or broker those channels (separate
-     PID and IPC namespaces, or equivalent brokering of signals, tracing,
-     and shared IPC), with an end-to-end negative test proving the launched
-     process cannot signal, trace, or otherwise affect another host process
-     through those channels. File, network, environment, and credential containment
+      PID and IPC namespaces, or equivalent brokering of signals, tracing,
+      and shared IPC), with an end-to-end negative test proving the launched
+      process cannot signal, trace, or otherwise affect another host process
+      through those channels. Namespaces, descriptors, and ceilings also
+      assume the process keeps the identity it was launched with: when the
+      execution host exposes a setuid or setgid helper, retains
+      supplementary groups or Linux capabilities, permits `sudo`, or
+      offers an exploitable user-namespace path, an allowed script can
+      acquire authority outside the sandbox's declared ceiling, and every
+      listed file, network, credential, PID/IPC, and resource test passes
+      because none of them exercises escalation. OS identity and privilege
+      controls must therefore be an enforceable executor-profile
+      requirement: the sandboxed or brokered launch runs with a fixed
+      non-privileged UID/GID and supplementary group set, drops Linux
+      capabilities, sets `no_new_privs` (or the platform equivalent), and
+      denies or brokers access to setuid/setgid helpers, `sudo`, and
+      user-namespace creation, with shell grants rejected at admission and
+      at execution when the executor profile cannot impose these controls,
+      and an end-to-end privilege-escalation negative test proving a
+      launched process that attempts each escalation path the host exposes
+      fails to acquire the elevated identity and the resulting
+      out-of-ceiling effect does not occur. File, network, environment, and credential containment
     still leave shared host resources ungoverned: an allowed script handed an
     adversarial workload size, or one that spawns unbounded children, can
     exhaust host CPU, memory, process slots, wall-clock runtime, or disk
@@ -1212,10 +1276,25 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    same trust class as the ceiling and signer freshness state, with any
    profile older than the recorded active version rejected at admission, at
    grant consumption, and at execution, and a matched profile/configuration
-   rollback negative test that downgrades the executor's actual
-   configuration, restores the older authenticated profile that claims the
-   removed capabilities, and proves the launch fails closed rather than
-   running uncontained. Wherever sandboxed or
+    rollback negative test that downgrades the executor's actual
+    configuration, restores the older authenticated profile that claims the
+    removed capabilities, and proves the launch fails closed rather than
+    running uncontained. Rollback-refusing freshness still leaves the
+    execution-time recheck a point-in-time read: a sandbox or profile
+    downgrade can race an in-flight launch, so the gate validates the
+    capable profile, the downgrade then removes its controls, and the
+    process spawns with ambient authority even though no stale profile
+    record was ever restored, an interleaving the matched rollback test
+    cannot catch because nothing is rolled back. Profile validation, the
+    containment-requirement check, and launch must therefore be serialized
+    against profile transitions: the gate acquires a capability lease or
+    profile epoch atomically with validation and holds it through launch,
+    revalidating or failing closed when the epoch changes before the
+    launch commits, with a concurrent downgrade-versus-launch negative
+    test racing a profile or capability downgrade against an in-flight
+    launch and proving the process either launches under the
+    still-enforced capable profile or is refused, never uncontained.
+    Wherever sandboxed or
    brokered enforcement is claimed it must be proven by end-to-end negative tests
    on the transitive effects themselves (the spawned process's denied write
    outside the allowed directory, its denied socket, its denied environment
@@ -1346,11 +1425,33 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
      launch, fail closed on mismatch, and pin the verified target into the
      immutable credential instance the handler consumes rather than
      leaving the handler to re-read mutable defaults, with a
-     target-substitution negative test proving a retargeted context or
-     default (an unchanged principal whose current cluster, project,
-     region, or namespace now designates production) is denied rather
-     than executed against a target the admission never named.
-     Interception alone is still
+      target-substitution negative test proving a retargeted context or
+      default (an unchanged principal whose current cluster, project,
+      region, or namespace now designates production) is denied rather
+      than executed against a target the admission never named.
+      Principal and target pinning govern who acts and where the effect
+      lands, not what the handler is told to do: an admitted handler that
+      reads a mutable default configuration file, environment value,
+      feature flag, or service-discovery record not named in the final
+      arguments executes a different operation when that input changes
+      after authorization, while the handler deployment digest, the outer
+      action and arguments, and the recorded path/origin footprint all
+      still verify; the by-reference content binding above covers only
+      inputs the final arguments name, and the allowlisted-environment
+      rule applies only to spawned shell processes, not admitted handlers.
+      Handler admission must therefore enumerate every security-relevant
+      ambient input the implementation consumes (configuration files and
+      defaults, environment values, feature flags, service-discovery
+      records), bind their resolved values or content digests into the
+      ceiling record and the receipt, and have the execution gate resolve
+      them atomically with launch into a pinned configuration snapshot
+      that is the only configuration the handler consumes rather than a
+      re-read of mutable state, failing closed on mismatch, with an
+      ambient-configuration substitution negative test proving that
+      changing an unnamed default (a repointed service-discovery record
+      or flipped feature flag) after authorization is denied or cannot
+      alter the executed operation, never silently changes it.
+      Interception alone is still
    not sufficient, because an agent issues ordinary tool calls outside any skill
    invocation and the current hook cannot tell the difference:
    `.claude/hooks/acgs-emit-receipt.py::main` receives only the tool payload and
