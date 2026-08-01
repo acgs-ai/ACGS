@@ -815,12 +815,30 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
     before any copy or materialization is taken: a multi-linked entry whose
     link count shows the inode is shared beyond the ceiling boundary fails the
     ceiling closed unless specifically vetted, and only the vetted tree may
-    then be materialized onto fresh inodes, with a cross-boundary hard-link
-     negative test proving that a hard link inside an allowed directory to a
-     denied file fails to read or write the outside content, that no copy or
-     snapshot of the denied content ever becomes readable inside the
-     materialized view, and that this holds when the capability runs inside a
-     mount-namespace or bind-mount view of the allowed directory. All
+     then be materialized onto fresh inodes. Vetting that runs before a
+     separate materialization step is itself a check-to-use race: when the
+     source tree stays live between the two operations, another permitted
+     writer can replace a vetted regular file with a hard link to a denied
+     file after the link-count check passes and before the copy reads it, so
+     materialization reads the denied inode and discloses its contents even
+     though the sequential vetting succeeded. Vetting must therefore be
+     atomic with materialization: either the materialized view is
+     constructed from a frozen, immutable snapshot of the source taken
+     before vetting, with both the vet and the copy reading only that
+     snapshot, or each entry is validated and copied through the same opened
+     descriptor (the link-count and inode-identity check performed on the
+     descriptor whose bytes are actually copied), with concurrent
+     substitution of any entry prevented or detected and failed closed. The
+     cross-boundary hard-link
+      negative test must prove that a hard link inside an allowed directory to a
+      denied file fails to read or write the outside content, that no copy or
+      snapshot of the denied content ever becomes readable inside the
+      materialized view, and that this holds when the capability runs inside a
+      mount-namespace or bind-mount view of the allowed directory, and a
+      concurrent swap-versus-materialization negative test must prove that
+      replacing a vetted entry with a hard link to a denied file between
+      vetting and materialization fails closed rather than disclosing the
+      denied content into the materialized view. All
     of these path-escape defenses share an assumption the filesystem does not
     guarantee: that an inode genuinely beneath the ceiling only carries
     in-ceiling effects. A FIFO or device node inside an allowed directory
@@ -898,8 +916,24 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    documents that), or the sandboxed/brokered launch must run with an
    allowlisted environment (secrets stripped) and inherited descriptors and
    credential-agent handles closed, with negative tests proving the spawned
-   process can neither read a denied environment token nor use an inherited
-   credential handle. Whether such a mechanism exists is
+    process can neither read a denied environment token nor use an inherited
+    credential handle. File, network, environment, and credential containment
+    still leave shared host resources ungoverned: an allowed script handed an
+    adversarial workload size, or one that spawns unbounded children, can
+    exhaust host CPU, memory, process slots, wall-clock runtime, or disk
+    while satisfying every containment test above, and that exhaustion
+    disrupts other work inside the same execution boundary even though no
+    file, network, or credential ceiling is crossed. The containment
+    contract must therefore also record enforceable resource budgets (CPU
+    time, memory, process/PID count, wall-clock runtime, and storage) in the
+    ceiling and executor profile, imposed by the sandboxed or brokered
+    launch on the spawned process and its entire descendant tree, with shell
+    grants rejected at admission and at execution when the executor profile
+    cannot impose the recorded budgets, and an end-to-end
+    resource-exhaustion negative test proving a launched process that
+    attempts to exceed its budget (an unbounded fork loop, allocation, or
+    disk write) is terminated or denied and the host-level exhaustion does
+    not occur. Whether such a mechanism exists is
    a property of the execution host, not of the checkout, so the static step-2
    gate cannot decide enforceability: it could reject a declaration a production
    sandbox would enforce, or accept one under an assumed sandbox that is absent
