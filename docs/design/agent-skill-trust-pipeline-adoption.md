@@ -1564,10 +1564,27 @@ enumerated entries still passes. The host policy must therefore deny
     profile epoch atomically with validation and holds it through launch,
     revalidating or failing closed when the epoch changes before the
     launch commits, with a concurrent downgrade-versus-launch negative
-    test racing a profile or capability downgrade against an in-flight
-    launch and proving the process either launches under the
-    still-enforced capable profile or is refused, never uncontained.
-    Wherever sandboxed or
+     test racing a profile or capability downgrade against an in-flight
+     launch and proving the process either launches under the
+     still-enforced capable profile or is refused, never uncontained.
+     A profile lease that ends at launch still stops short of the effect:
+     a spawned process or contained handler can defer its governed write
+     or connection until after launch, so the launch commits under the
+     capable profile, the lease is released, and a profile downgrade then
+     removes the broker, network, resource, or sandbox controls from the
+     in-flight work before the effect occurs, running it uncontained even
+     though the downgrade-versus-launch test passes (the same
+     launch-versus-effect gap the policy-version and actor-authorization
+     leases close elsewhere in this design). The selected containment
+     must therefore remain immutable for the entire descendant and effect
+     lifetime, or the profile lease must be held, revocably, until the
+     governed effect commits or completes so a profile or capability
+     downgrade revokes or re-validates in-flight work before its effect
+     commits, with a delayed post-launch effect negative test downgrading
+     the profile or its capabilities after launch but before a deferred
+     write or connection and proving the effect either runs under the
+     still-enforced containment or never occurs, never uncontained.
+     Wherever sandboxed or
    brokered enforcement is claimed it must be proven by end-to-end negative tests
    on the transitive effects themselves (the spawned process's denied write
    outside the allowed directory, its denied socket, its denied environment
@@ -1660,6 +1677,27 @@ enumerated entries still passes. The host policy must therefore deny
      are exactly the bytes executed, with a concurrent swap-versus-load
       negative test racing a dependency replacement against a lazy or
       execution-time load and proving the swapped code never runs.
+      The handler digest covers the handler's own executable and
+      dependency closure, not the runtime that executes it: an admitted
+      handler running under a mutable Python or Node interpreter,
+      dynamic loader, or native shared library outside that closure
+      executes whatever code a replaced runtime supplies, so unreviewed
+      code controls the side effect while every handler-byte,
+      immutable-snapshot, and lazy-import check still passes, the same
+      ambient-runtime boundary the skill-snapshot identity claim above
+      records explicitly. The admission record and receipt must
+      therefore extend the content-addressed binding over the handler's
+      execution runtime (the interpreter binary, dynamic loader, and
+      native shared libraries it loads, or an equivalent
+      content-addressed runtime image), verified and loaded from the
+      same immutable snapshot or protected handles as the handler bytes,
+      with a runtime-substitution negative test proving a handler whose
+      interpreter or shared library is replaced while its own bytes
+      remain unchanged is denied rather than executed; where a
+      deployment cannot yet supply a verifiable runtime closure, the
+      admission and receipt must record the runtime as an explicitly
+      unverified boundary, and no implementation-identity claim may
+      extend over it.
       Verified bytes are verified against whichever admission record the
       gate consults, and admissions are retired as well as granted: when an
       ordinary authenticated non-skill call uses this registry after a
@@ -1721,7 +1759,27 @@ enumerated entries still passes. The host policy must therefore deny
    file ceiling or a connection outside its network ceiling fails to perform
    that effect (or the invocation is denied at issuance under the recorded
     footprint), rather than passing because only the outer call was
-    checked. Recording that a handler's footprint includes credentials
+    checked. That footprint records where the handler's effects may land,
+    not how much it may consume: an admitted local plugin, MCP server, or
+    host handler fed adversarial arguments can allocate unbounded memory,
+    fork descendants, exhaust the descriptor table, or saturate shared
+    disk and network I/O without ever attempting a denied write or
+    connection, and the CPU, memory, PID, wall-clock, storage,
+    descriptor, and I/O-bandwidth budgets above apply only to shell
+    launches, so both footprint tests pass while the host is denied
+    service. Handler admission must therefore also record enforceable
+    per-invocation resource budgets (CPU, memory, process/thread count,
+    open-file/socket descriptor limits, storage, and disk and network
+    I/O bandwidth) imposed on the handler and any work it spawns, or the
+    handler must execute as isolated or rate-limited service capacity
+    whose exhaustion cannot starve other workloads, with admission
+    failing closed when the active executor profile cannot supply the
+    recorded budgets or isolation, and a handler-driven exhaustion
+    negative test proving an admitted handler that allocates memory,
+    forks, opens descriptors or sockets, or saturates an allowed disk or
+    network endpoint in a loop is throttled, denied, or terminated while
+    other workloads' capacity is preserved, rather than only shell
+    exhaustion being tested. Recording that a handler's footprint includes credentials
     identifies the channel, not the principal: an admitted handler that
     resolves a mutable ambient credential or default context (a Kubernetes
     context, a cloud role, a default account) executes as whatever that
