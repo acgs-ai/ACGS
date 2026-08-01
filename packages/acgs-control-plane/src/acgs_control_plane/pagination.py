@@ -17,6 +17,9 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 CURSOR_RESOURCE_RECEIPTS = "receipts"
 CURSOR_ORDER_RECEIPTS_DESC = "created_at_desc_id_desc"
+COLLECTION_CURSOR_RESOURCES = frozenset({"users", "agents", "policies", "exports"})
+COLLECTION_CURSOR_ORDER = "created_at_desc_id_desc"
+COLLECTION_CURSOR_FILTER_DIGEST = hashlib.sha256(b"{}").hexdigest()
 CURSOR_VERSION = 1
 CURSOR_KEY_ID_MAX_LENGTH = 64
 CURSOR_TOKEN_MAX_LENGTH = 4096
@@ -78,6 +81,12 @@ class CursorKeyring:
 class ReceiptCursor:
     created_at: datetime
     receipt_id: str
+
+
+@dataclass(frozen=True)
+class CollectionCursor:
+    created_at: datetime
+    item_id: str
 
 
 def local_ephemeral_cursor_keyring(
@@ -268,6 +277,133 @@ def decode_receipt_cursor(
         raise InvalidCursorError("invalid cursor") from exc
 
 
+def issue_collection_cursor(
+    *,
+    keyring: CursorKeyring,
+    org_id: str,
+    resource: str,
+    boundary_created_at: datetime,
+    boundary_id: str,
+    now: datetime | None = None,
+) -> str:
+    """Issue an opaque cursor for one of the public v1 collection routes."""
+
+    if resource not in COLLECTION_CURSOR_RESOURCES:
+        raise InvalidCursorError("invalid cursor")
+    if not _exact_string(org_id, max_length=128):
+        raise InvalidCursorError("invalid cursor")
+    if not _exact_string(boundary_id, max_length=128):
+        raise InvalidCursorError("invalid cursor")
+    try:
+        now = _normalize_datetime(now or datetime.now(UTC))
+        boundary_created_at_us = _datetime_to_epoch_us(boundary_created_at)
+        iat_us = _datetime_to_epoch_us(now)
+        exp_us = _datetime_to_epoch_us(now + timedelta(seconds=keyring.ttl_seconds))
+    except (AttributeError, OverflowError, TypeError, ValueError) as exc:
+        raise InvalidCursorError("invalid cursor") from exc
+    payload = {
+        "boundary_created_at_us": boundary_created_at_us,
+        "boundary_id": boundary_id,
+        "exp_us": exp_us,
+        "filter_digest": COLLECTION_CURSOR_FILTER_DIGEST,
+        "iat_us": iat_us,
+        "kid": keyring.active_key_id,
+        "order": COLLECTION_CURSOR_ORDER,
+        "resource": resource,
+        "scope_org_id": org_id,
+        "v": CURSOR_VERSION,
+    }
+    nonce = secrets.token_bytes(_NONCE_BYTES)
+    ciphertext = AESGCM(keyring.active_key).encrypt(
+        nonce,
+        _canonical_json(payload),
+        _collection_aad(keyring.active_key_id, org_id, resource),
+    )
+    token = _b64url(nonce + ciphertext)
+    if len(token) > CURSOR_TOKEN_MAX_LENGTH:
+        raise InvalidCursorError("invalid cursor")
+    return token
+
+
+def decode_collection_cursor(
+    *,
+    token: str,
+    keyring: CursorKeyring,
+    org_id: str,
+    expected_resource: str,
+    now: datetime | None = None,
+) -> CollectionCursor:
+    """Decode a public collection cursor, refusing every failure generically."""
+
+    try:
+        if expected_resource not in COLLECTION_CURSOR_RESOURCES:
+            raise InvalidCursorError("invalid cursor")
+        payload = _decrypt_collection_payload(
+            token,
+            keyring=keyring,
+            org_id=org_id,
+            resource=expected_resource,
+        )
+        expected_keys = {
+            "boundary_created_at_us",
+            "boundary_id",
+            "exp_us",
+            "filter_digest",
+            "iat_us",
+            "kid",
+            "order",
+            "resource",
+            "scope_org_id",
+            "v",
+        }
+        if set(payload) != expected_keys:
+            raise InvalidCursorError("invalid cursor")
+        if type(payload["v"]) is not int or payload["v"] != CURSOR_VERSION:
+            raise InvalidCursorError("invalid cursor")
+        if not _exact_string(payload["kid"], max_length=CURSOR_KEY_ID_MAX_LENGTH):
+            raise InvalidCursorError("invalid cursor")
+        if payload["kid"] != keyring.active_key_id:
+            raise InvalidCursorError("invalid cursor")
+        if not _exact_string(payload["resource"], max_length=32):
+            raise InvalidCursorError("invalid cursor")
+        if payload["resource"] != expected_resource:
+            raise InvalidCursorError("invalid cursor")
+        if not _exact_string(payload["order"], max_length=64):
+            raise InvalidCursorError("invalid cursor")
+        if payload["order"] != COLLECTION_CURSOR_ORDER:
+            raise InvalidCursorError("invalid cursor")
+        if not _exact_string(payload["scope_org_id"], max_length=128):
+            raise InvalidCursorError("invalid cursor")
+        if payload["scope_org_id"] != org_id:
+            raise InvalidCursorError("invalid cursor")
+        if not _exact_string(payload["filter_digest"], max_length=64):
+            raise InvalidCursorError("invalid cursor")
+        if payload["filter_digest"] != COLLECTION_CURSOR_FILTER_DIGEST:
+            raise InvalidCursorError("invalid cursor")
+        for name in ("boundary_created_at_us", "exp_us", "iat_us"):
+            if type(payload[name]) is not int or payload[name] < 0:
+                raise InvalidCursorError("invalid cursor")
+        if payload["exp_us"] <= payload["iat_us"]:
+            raise InvalidCursorError("invalid cursor")
+        now_us = _datetime_to_epoch_us(now or datetime.now(UTC))
+        skew_us = keyring.clock_skew_seconds * 1_000_000
+        if payload["iat_us"] > now_us + skew_us or payload["exp_us"] <= now_us:
+            raise InvalidCursorError("invalid cursor")
+        if payload["exp_us"] - payload["iat_us"] > CURSOR_MAX_TTL_SECONDS * 1_000_000:
+            raise InvalidCursorError("invalid cursor")
+        boundary_id = payload["boundary_id"]
+        if not _exact_string(boundary_id, max_length=128):
+            raise InvalidCursorError("invalid cursor")
+        return CollectionCursor(
+            created_at=_epoch_us_to_datetime(payload["boundary_created_at_us"]),
+            item_id=boundary_id,
+        )
+    except InvalidCursorError:
+        raise
+    except Exception as exc:
+        raise InvalidCursorError("invalid cursor") from exc
+
+
 def _decrypt_payload(token: str, *, keyring: CursorKeyring, org_id: str) -> dict[str, Any]:
     if not isinstance(token, str) or not token:
         raise InvalidCursorError("invalid cursor")
@@ -293,6 +429,49 @@ def _decrypt_payload(token: str, *, keyring: CursorKeyring, org_id: str) -> dict
         raise InvalidCursorError("invalid cursor") from exc
     if type(payload) is not dict:
         raise InvalidCursorError("invalid cursor")
+    return payload
+
+
+def _decrypt_collection_payload(
+    token: str,
+    *,
+    keyring: CursorKeyring,
+    org_id: str,
+    resource: str,
+) -> dict[str, Any]:
+    if not isinstance(token, str) or not token:
+        raise InvalidCursorError("invalid cursor")
+    if len(token) > CURSOR_TOKEN_MAX_LENGTH or not _TOKEN_RE.fullmatch(token):
+        raise InvalidCursorError("invalid cursor")
+    try:
+        raw = _b64url_decode(token)
+    except (binascii.Error, ValueError) as exc:
+        raise InvalidCursorError("invalid cursor") from exc
+    if len(raw) <= _NONCE_BYTES + 16:
+        raise InvalidCursorError("invalid cursor")
+    try:
+        plaintext = AESGCM(keyring.active_key).decrypt(
+            raw[:_NONCE_BYTES],
+            raw[_NONCE_BYTES:],
+            _collection_aad(keyring.active_key_id, org_id, resource),
+        )
+    except InvalidTag as exc:
+        raise InvalidCursorError("invalid cursor") from exc
+    try:
+        payload = json.loads(plaintext, object_pairs_hook=_reject_duplicate_cursor_keys)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        raise InvalidCursorError("invalid cursor") from exc
+    if type(payload) is not dict:
+        raise InvalidCursorError("invalid cursor")
+    return payload
+
+
+def _reject_duplicate_cursor_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise ValueError("duplicate cursor key")
+        payload[key] = value
     return payload
 
 
@@ -344,6 +523,16 @@ def _aad(key_id: str, org_id: str) -> bytes:
             "resource": CURSOR_RESOURCE_RECEIPTS,
             "scope_org_id": org_id,
             "v": CURSOR_VERSION,
+        }
+    )
+
+
+def _collection_aad(key_id: str, org_id: str, resource: str) -> bytes:
+    return _canonical_json(
+        {
+            "kid": key_id,
+            "resource": resource,
+            "scope_org_id": org_id,
         }
     )
 

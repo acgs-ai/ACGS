@@ -6,9 +6,10 @@
 future management, policy, approval, fleet, and evidence APIs. Current-local
 evidence exists for narrow slices such as additive legacy `/v1` aliases,
 project/environment attachment for agents and policy bundles, receipt explorer
-pagination, and one native agent-create transaction path with durable terminal
-idempotency replay. It does not claim that the current control plane exposes the
-complete `/v1` API, browser sessions, a BFF, generated clients, durable
+pagination, dedicated cursor envelopes for four `/v1` organization collections,
+and one native agent-create transaction path with durable terminal idempotency
+replay. It does not claim that the current control plane exposes the complete
+`/v1` API, browser sessions, a BFF, generated clients, durable
 idempotency for other mutating routes, external receipt ingestion, async export
 jobs, signed policy sync, or every resource described here.
 
@@ -19,12 +20,13 @@ scoped service surface and API-key model as distinct from this target. It also
 records the baseline before later local slices added additive `/v1` aliases,
 project/environment attachment, and the first native agent-create transaction
 path with durable terminal idempotency replay. The remaining absent or
-incomplete areas include complete all-collections pagination, durable
-idempotency for other mutating routes, async export jobs, external receipt
-ingestion, signed policy sync, browser-to-upstream boundary, production provider
-wiring, and full native-route cutover. Current routes and fixtures must not be
-relabeled as this contract without the corresponding implementation and
-integration evidence.
+incomplete areas include cursor coverage beyond the four dedicated organization
+collections, migration-managed composite collection indexes and PostgreSQL
+query-plan proof, durable idempotency for other mutating routes, async export
+jobs, external receipt ingestion, signed policy sync, browser-to-upstream
+boundary, production provider wiring, and full native-route cutover. Current
+routes and fixtures must not be relabeled as this contract without the
+corresponding implementation and integration evidence.
 
 This contract implements the product-level target in
 [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md), preserves provenance in
@@ -132,6 +134,33 @@ arguments, or unclassified personal/regulated data.
 - Long-running proof-pack and export generation creates an asynchronous job
   resource. A request does not become a completed export merely because it was
   queued.
+
+#### Current-local public collection cursor slice
+
+The current control plane implements dedicated authenticated reads for
+`/v1/orgs/{org_id}/{users,agents,policies,exports}`. Each returns an
+`{items, limit, next_cursor}` envelope and uses `created_at DESC, id DESC`
+keyset pagination. The admitted page size defaults to 50 and is strictly bounded
+from 1 through 500. Only `limit` and `cursor` are accepted; raw aggregate query
+size and syntax admission run after authentication, tenant lookup, and endpoint
+RBAC. Malformed, duplicate, unknown, oversized, tampered, expired, wrong-tenant,
+wrong-resource, or wrong-protocol input receives a generic redacted
+`invalid_cursor` refusal with `Cache-Control: private, no-store`.
+
+The collection cursor protocol is separate from the legacy receipt cursor
+protocol. Its AES-256-GCM token binds organization, collection resource, fixed
+sort order, fixed empty-filter digest, key id, issue/expiry times, and the exact
+`(created_at, id)` boundary. Internally canonicalizing a trailing slash avoids a
+redirect and therefore avoids reflecting the query through a `Location` header.
+The four unversioned collection routes retain their array response contracts,
+and the unversioned receipt explorer retains its offset fields and its existing
+receipt cursor protocol.
+
+This is functional local evidence only. No migration-managed composite
+`(org_id, created_at, id)` indexes or PostgreSQL `EXPLAIN`/query-plan proof have
+been added, so this slice supports no staging, production, capacity, or latency
+claim. Production startup continues to refuse the existing production-posture
+blockers.
 
 ### Mutation transaction contract
 

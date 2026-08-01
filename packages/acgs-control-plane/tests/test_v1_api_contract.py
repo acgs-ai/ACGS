@@ -167,6 +167,15 @@ def test_v1_org_aliases_share_v0_endpoints_with_stable_operation_ids(tmp_path: P
         for (method, path), route in routes.items():
             if path == "/orgs" or path.startswith("/orgs/"):
                 alias = routes[(method, f"/v1{path}")]
+                if method == "GET" and path in {
+                    "/orgs/{org_id}/users",
+                    "/orgs/{org_id}/agents",
+                    "/orgs/{org_id}/policies",
+                    "/orgs/{org_id}/exports",
+                }:
+                    assert alias.endpoint is not route.endpoint
+                    assert alias.operation_id == f"v1_{route.unique_id}"
+                    continue
                 assert alias.endpoint is route.endpoint
                 assert alias.response_model == route.response_model
                 assert alias.status_code == route.status_code
@@ -201,10 +210,12 @@ def test_v1_positive_write_and_read_paths_preserve_v0_behavior(
         assert created.status_code == 201, created.text
         assert created.json()["receipt_id"]
 
-        assert (
-            client.get(f"/v1/orgs/{org_id}/agents", headers=headers).json()
-            == client.get(f"/orgs/{org_id}/agents", headers=headers).json()
-        )
+        v1_agents = client.get(f"/v1/orgs/{org_id}/agents", headers=headers).json()
+        assert v1_agents == {
+            "items": list(reversed(client.get(f"/orgs/{org_id}/agents", headers=headers).json())),
+            "limit": 50,
+            "next_cursor": None,
+        }
         receipt_tools = [
             item["tool"]
             for item in client.get(f"/v1/orgs/{org_id}/receipts", headers=headers).json()["items"]

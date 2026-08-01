@@ -34,7 +34,7 @@ from gove_zone.policy import RuleSetPolicy
 from gove_zone.receipt import Validator
 from gove_zone.tool import ToolCall, normalize_path_context
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from acgs_control_plane.agent_registration import (
@@ -122,7 +122,9 @@ from acgs_control_plane.native_receipts import (
 from acgs_control_plane.pagination import (
     CURSOR_TOKEN_MAX_LENGTH,
     InvalidCursorError,
+    decode_collection_cursor,
     decode_receipt_cursor,
+    issue_collection_cursor,
     issue_receipt_cursor,
     receipt_filter_digest,
 )
@@ -151,7 +153,11 @@ from acgs_control_plane.schemas import (
     UserCreateRequest,
     UserCreateResponse,
     UserResponse,
+    V1AgentListResponse,
+    V1ExportListResponse,
     V1MetadataResponse,
+    V1PolicyListResponse,
+    V1UserListResponse,
 )
 from acgs_control_plane.scope_defaults import (
     LEGACY_DEFAULT_ENVIRONMENT_NAME,
@@ -284,6 +290,24 @@ class _TenantBootstrapRequestIdMiddleware:
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] == "http" and scope.get("path") == "/v1/tenant-bootstrap":
             scope.setdefault("state", {})["tenant_bootstrap_request_id"] = secrets.token_hex(16)
+        await self.app(scope, receive, send)
+
+
+class _V1CollectionPathCanonicalizer:
+    """Internally canonicalize only the four trailing-slash collection GETs."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") == "http" and scope.get("method") == "GET":
+            path = scope.get("path")
+            if isinstance(path, str):
+                canonical_path = path.rstrip("/")
+                if canonical_path != path and _is_v1_collection_path(canonical_path):
+                    scope = dict(scope)
+                    scope["path"] = canonical_path
+                    scope["raw_path"] = canonical_path.encode("utf-8")
         await self.app(scope, receive, send)
 
 
@@ -438,6 +462,7 @@ def create_app(
         RequestAdmissionMiddleware,
         max_request_body_bytes=settings.max_request_body_bytes,
     )
+    app.add_middleware(_V1CollectionPathCanonicalizer)
 
     @app.exception_handler(PolicyDeniedError)
     def _denied(request: Request, exc: PolicyDeniedError) -> JSONResponse:
@@ -475,10 +500,13 @@ def create_app(
             code = "precondition_required"
         elif status_code >= 500:
             code = "service_unavailable"
+        headers = dict(exc.headers or {})
+        if _is_v1_collection_path(request.url.path):
+            headers["Cache-Control"] = "private, no-store"
         return JSONResponse(
             status_code=status_code,
             content=redacted_error(code, request_id_from_scope(request.scope)),
-            headers=dict(exc.headers or {}),
+            headers=headers,
         )
 
     @app.exception_handler(InvalidCursorError)
@@ -947,6 +975,44 @@ def _register_routes(app: FastAPI) -> None:
             for u in users
         ]
 
+    @app.get(
+        "/v1/orgs/{org_id}/users",
+        response_model=V1UserListResponse,
+        tags=["users"],
+        operation_id="v1_list_users_orgs__org_id__users_get",
+        openapi_extra={"parameters": _COLLECTION_CURSOR_OPENAPI_PARAMETERS},
+        responses=_COLLECTION_CURSOR_RESPONSES,
+    )
+    def list_v1_users(
+        org: OrgDep,
+        request: Request,
+        response: Response,
+        session: SessionDep,
+        _p: Annotated[Principal, require(Permission.USER_READ)],
+    ) -> V1UserListResponse:
+        limit, token = _admit_collection_cursor_query(request)
+        boundary = _decode_collection_boundary(request, org.id, "users", token)
+        query = select(User).where(User.org_id == org.id)
+        if boundary is not None:
+            query = query.where(
+                or_(
+                    User.created_at < boundary.created_at,
+                    and_(User.created_at == boundary.created_at, User.id < boundary.item_id),
+                )
+            )
+        rows = list(
+            session.execute(
+                query.order_by(User.created_at.desc(), User.id.desc()).limit(limit + 1)
+            ).scalars()
+        )
+        page = rows[:limit]
+        response.headers["Cache-Control"] = "private, no-store"
+        return V1UserListResponse(
+            items=[_user_response(row) for row in page],
+            limit=limit,
+            next_cursor=_next_collection_cursor(request, org.id, "users", page, len(rows) > limit),
+        )
+
     # -- agent registry -------------------------------------------------------
 
     @app.post(
@@ -1348,6 +1414,49 @@ def _register_routes(app: FastAPI) -> None:
         ).scalars()
         return [_agent_response(a) for a in agents]
 
+    @app.get(
+        "/v1/orgs/{org_id}/agents",
+        response_model=V1AgentListResponse,
+        tags=["agents"],
+        operation_id="v1_list_agents_orgs__org_id__agents_get",
+        openapi_extra={"parameters": _COLLECTION_CURSOR_OPENAPI_PARAMETERS},
+        responses=_COLLECTION_CURSOR_RESPONSES,
+    )
+    def list_v1_agents(
+        org: OrgDep,
+        request: Request,
+        response: Response,
+        session: SessionDep,
+        _p: Annotated[Principal, require(Permission.AGENT_READ)],
+    ) -> V1AgentListResponse:
+        limit, token = _admit_collection_cursor_query(request)
+        boundary = _decode_collection_boundary(request, org.id, "agents", token)
+        query = select(AgentRecord).where(AgentRecord.org_id == org.id)
+        if boundary is not None:
+            query = query.where(
+                or_(
+                    AgentRecord.created_at < boundary.created_at,
+                    and_(
+                        AgentRecord.created_at == boundary.created_at,
+                        AgentRecord.id < boundary.item_id,
+                    ),
+                )
+            )
+        rows = list(
+            session.execute(
+                query.order_by(AgentRecord.created_at.desc(), AgentRecord.id.desc()).limit(
+                    limit + 1
+                )
+            ).scalars()
+        )
+        page = rows[:limit]
+        response.headers["Cache-Control"] = "private, no-store"
+        return V1AgentListResponse(
+            items=[_agent_response(row) for row in page],
+            limit=limit,
+            next_cursor=_next_collection_cursor(request, org.id, "agents", page, len(rows) > limit),
+        )
+
     @app.get("/orgs/{org_id}/agents/{agent_id}", response_model=AgentResponse, tags=["agents"])
     def get_agent(
         agent_id: str,
@@ -1450,6 +1559,51 @@ def _register_routes(app: FastAPI) -> None:
             .order_by(PolicyBundle.created_at.asc())
         ).scalars()
         return [_policy_response(r) for r in rows]
+
+    @app.get(
+        "/v1/orgs/{org_id}/policies",
+        response_model=V1PolicyListResponse,
+        tags=["policies"],
+        operation_id="v1_list_policies_orgs__org_id__policies_get",
+        openapi_extra={"parameters": _COLLECTION_CURSOR_OPENAPI_PARAMETERS},
+        responses=_COLLECTION_CURSOR_RESPONSES,
+    )
+    def list_v1_policies(
+        org: OrgDep,
+        request: Request,
+        response: Response,
+        session: SessionDep,
+        _p: Annotated[Principal, require(Permission.POLICY_READ)],
+    ) -> V1PolicyListResponse:
+        limit, token = _admit_collection_cursor_query(request)
+        boundary = _decode_collection_boundary(request, org.id, "policies", token)
+        query = select(PolicyBundle).where(PolicyBundle.org_id == org.id)
+        if boundary is not None:
+            query = query.where(
+                or_(
+                    PolicyBundle.created_at < boundary.created_at,
+                    and_(
+                        PolicyBundle.created_at == boundary.created_at,
+                        PolicyBundle.id < boundary.item_id,
+                    ),
+                )
+            )
+        rows = list(
+            session.execute(
+                query.order_by(PolicyBundle.created_at.desc(), PolicyBundle.id.desc()).limit(
+                    limit + 1
+                )
+            ).scalars()
+        )
+        page = rows[:limit]
+        response.headers["Cache-Control"] = "private, no-store"
+        return V1PolicyListResponse(
+            items=[_policy_response(row) for row in page],
+            limit=limit,
+            next_cursor=_next_collection_cursor(
+                request, org.id, "policies", page, len(rows) > limit
+            ),
+        )
 
     @app.post(
         "/orgs/{org_id}/policies/{bundle_id}/activate",
@@ -1862,6 +2016,51 @@ def _register_routes(app: FastAPI) -> None:
         ).scalars()
         return [_export_summary(r) for r in rows]
 
+    @app.get(
+        "/v1/orgs/{org_id}/exports",
+        response_model=V1ExportListResponse,
+        tags=["exports"],
+        operation_id="v1_list_exports_orgs__org_id__exports_get",
+        openapi_extra={"parameters": _COLLECTION_CURSOR_OPENAPI_PARAMETERS},
+        responses=_COLLECTION_CURSOR_RESPONSES,
+    )
+    def list_v1_exports(
+        org: OrgDep,
+        request: Request,
+        response: Response,
+        session: SessionDep,
+        _p: Annotated[Principal, require(Permission.EXPORT_READ)],
+    ) -> V1ExportListResponse:
+        limit, token = _admit_collection_cursor_query(request)
+        boundary = _decode_collection_boundary(request, org.id, "exports", token)
+        query = select(ComplianceExport).where(ComplianceExport.org_id == org.id)
+        if boundary is not None:
+            query = query.where(
+                or_(
+                    ComplianceExport.created_at < boundary.created_at,
+                    and_(
+                        ComplianceExport.created_at == boundary.created_at,
+                        ComplianceExport.id < boundary.item_id,
+                    ),
+                )
+            )
+        rows = list(
+            session.execute(
+                query.order_by(
+                    ComplianceExport.created_at.desc(), ComplianceExport.id.desc()
+                ).limit(limit + 1)
+            ).scalars()
+        )
+        page = rows[:limit]
+        response.headers["Cache-Control"] = "private, no-store"
+        return V1ExportListResponse(
+            items=[_export_summary(row) for row in page],
+            limit=limit,
+            next_cursor=_next_collection_cursor(
+                request, org.id, "exports", page, len(rows) > limit
+            ),
+        )
+
     @app.get("/orgs/{org_id}/exports/{export_id}", response_model=ExportDetail, tags=["exports"])
     def get_export(
         export_id: str,
@@ -2068,6 +2267,110 @@ def _duplicate_query_params(request: Request, names: frozenset[str]) -> frozense
     return frozenset(name for name in names if len(request.query_params.getlist(name)) > 1)
 
 
+def _is_v1_collection_path(path: str) -> bool:
+    parts = path.split("/")
+    return (
+        len(parts) == 5
+        and parts[1] == "v1"
+        and parts[2] == "orgs"
+        and bool(parts[3])
+        and parts[4] in {"users", "agents", "policies", "exports"}
+    )
+
+
+def _user_response(row: User) -> UserResponse:
+    return UserResponse(
+        user_id=row.id,
+        name=row.name,
+        email=row.email,
+        role=Role(row.role),
+        active=row.active,
+        created_at=row.created_at,
+    )
+
+
+def _admit_collection_cursor_query(request: Request) -> tuple[int, str | None]:
+    """Strictly admit the tiny public-list query language after auth/RBAC."""
+
+    raw_query = request.scope.get("query_string", b"")
+    if not isinstance(raw_query, bytes):
+        raise InvalidCursorError("invalid cursor")
+    if len(raw_query) > _COLLECTION_CURSOR_QUERY_MAX_BYTES:
+        raise InvalidCursorError("invalid cursor")
+    try:
+        query = raw_query.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise InvalidCursorError("invalid cursor") from exc
+    if not query:
+        return 50, None
+
+    values: dict[str, str] = {}
+    for pair in query.split("&"):
+        if pair.count("=") != 1:
+            raise InvalidCursorError("invalid cursor")
+        name, value = pair.split("=", 1)
+        if name not in {"limit", "cursor"} or name in values or not value:
+            raise InvalidCursorError("invalid cursor")
+        values[name] = value
+
+    raw_limit = values.get("limit")
+    limit = 50
+    if raw_limit is not None:
+        if len(raw_limit) > 3 or not raw_limit.isascii() or not raw_limit.isdecimal():
+            raise InvalidCursorError("invalid cursor")
+        if raw_limit != str(int(raw_limit)):
+            raise InvalidCursorError("invalid cursor")
+        limit = int(raw_limit)
+        if not 1 <= limit <= 500:
+            raise InvalidCursorError("invalid cursor")
+
+    token = values.get("cursor")
+    if token is not None and len(token) > CURSOR_TOKEN_MAX_LENGTH:
+        raise InvalidCursorError("invalid cursor")
+    return limit, token
+
+
+def _decode_collection_boundary(
+    request: Request,
+    org_id: str,
+    resource: str,
+    token: str | None,
+) -> Any | None:
+    if token is None:
+        return None
+    settings: Settings = request.app.state.settings
+    keyring = settings.cursor_keyring
+    assert keyring is not None
+    return decode_collection_cursor(
+        token=token,
+        keyring=keyring,
+        org_id=org_id,
+        expected_resource=resource,
+    )
+
+
+def _next_collection_cursor(
+    request: Request,
+    org_id: str,
+    resource: str,
+    page: list[Any],
+    has_more: bool,
+) -> str | None:
+    if not has_more or not page:
+        return None
+    settings: Settings = request.app.state.settings
+    keyring = settings.cursor_keyring
+    assert keyring is not None
+    last = page[-1]
+    return issue_collection_cursor(
+        keyring=keyring,
+        org_id=org_id,
+        resource=resource,
+        boundary_created_at=last.created_at,
+        boundary_id=last.id,
+    )
+
+
 def _export_summary(row: ComplianceExport, receipt_id: str | None = None) -> ExportSummary:
     return ExportSummary(
         export_id=row.id,
@@ -2083,6 +2386,52 @@ _RECEIPT_CURSOR_QUERY_PARAMS = frozenset(
     {"decision", "tool", "actor", "since", "until", "limit", "offset", "cursor"}
 )
 
+_COLLECTION_CURSOR_OPENAPI_PARAMETERS = [
+    {
+        "name": "limit",
+        "in": "query",
+        "required": False,
+        "schema": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50},
+    },
+    {
+        "name": "cursor",
+        "in": "query",
+        "required": False,
+        "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    },
+]
+
+_COLLECTION_CURSOR_QUERY_MAX_BYTES = CURSOR_TOKEN_MAX_LENGTH + len("cursor=&limit=500")
+
+_COLLECTION_CURSOR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    400: {
+        "description": "Invalid cursor",
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["code", "status", "request_id"],
+                    "properties": {
+                        "code": {"type": "string", "const": "invalid_cursor"},
+                        "status": {"type": "string", "const": "error"},
+                        "request_id": {"type": "string"},
+                    },
+                }
+            }
+        },
+    }
+}
+
+_DEDICATED_V1_COLLECTION_GETS = frozenset(
+    {
+        ("GET", "/orgs/{org_id}/users"),
+        ("GET", "/orgs/{org_id}/agents"),
+        ("GET", "/orgs/{org_id}/policies"),
+        ("GET", "/orgs/{org_id}/exports"),
+    }
+)
+
 
 def _install_v1_aliases(app: FastAPI) -> None:
     source_routes = [
@@ -2092,6 +2441,8 @@ def _install_v1_aliases(app: FastAPI) -> None:
         and (route.path == "/orgs" or route.path.startswith("/orgs/"))
     ]
     for route in source_routes:
+        if route.methods == {"GET"} and ("GET", route.path) in _DEDICATED_V1_COLLECTION_GETS:
+            continue
         alias = APIRoute(
             path=f"/v1{route.path}",
             endpoint=route.endpoint,

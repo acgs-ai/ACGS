@@ -84,6 +84,12 @@ class UserResponse(BaseModel):
     created_at: datetime
 
 
+class V1UserListResponse(BaseModel):
+    items: list[UserResponse]
+    limit: int
+    next_cursor: str | None
+
+
 # ---------------------------------------------------------------------------
 # Agent registry
 # ---------------------------------------------------------------------------
@@ -121,6 +127,12 @@ class AgentResponse(BaseModel):
     receipt_id: str | None = None
 
 
+class V1AgentListResponse(BaseModel):
+    items: list[AgentResponse]
+    limit: int
+    next_cursor: str | None
+
+
 class AgentStatusRequest(BaseModel):
     status: str = Field(pattern="^(active|suspended)$")
 
@@ -145,6 +157,12 @@ class PolicyResponse(BaseModel):
     created_at: datetime
     activated_at: datetime | None
     receipt_id: str | None = None
+
+
+class V1PolicyListResponse(BaseModel):
+    items: list[PolicyResponse]
+    limit: int
+    next_cursor: str | None
 
 
 class SimulateRequest(BaseModel):
@@ -235,6 +253,12 @@ class ExportSummary(BaseModel):
     bundle_hash: str
     created_at: datetime
     receipt_id: str | None = None
+
+
+class V1ExportListResponse(BaseModel):
+    items: list[ExportSummary]
+    limit: int
+    next_cursor: str | None
 
 
 class ExportDetail(ExportSummary):
