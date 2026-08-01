@@ -597,6 +597,27 @@ enumerated entries still passes. The host policy must therefore deny
         test racing a content replacement against grant consumption and
         proving no interleaving yields a receipt or side effect over
         bytes that differ from what was reviewed.
+        Binding and atomically capturing the reviewed content still shows
+        the approver only its digest: when the approved request names a
+        mutable manifest or configuration file, the trusted channel
+        renders an opaque hash for that reference, so a compromised
+        requester can supply destructive content before the approval
+        prompt is generated, no post-approval substitution ever occurs,
+        every digest-binding, substitution, and replace-versus-consume
+        test above passes, and the human approves bytes they were never
+        shown. The trusted approval channel must therefore render, for
+        each referenced-content binding in the payload being signed, the
+        referenced content itself, a trusted semantic summary, or a
+        reviewable diff, each derived by the trusted channel from exactly
+        the verified bytes the bound digest names (never from
+        caller-supplied prose or requester-computed renderings), and
+        refuse to collect a signature over a referenced-content binding
+        it did not render in one of those forms, with a
+        destructive-referenced-content negative test that supplies a
+        destructive manifest before the prompt is generated, presents
+        only its digest to the approver, and proves an approval collected
+        without the content, summary, or diff rendered yields no
+        consumable grant and no side effect.
         Binding the policy bundle id/version detects substitution, not
        rollback: when an older, more permissive policy bundle and its
        active tenant binding are restored together, receipt issuance,
@@ -1615,6 +1636,27 @@ enumerated entries still passes. The host policy must therefore deny
     proving the aggregate count, rate, or value of its external effects
     is bounded even though every individual request is allowed and every
     host-resource quota is respected.
+    Admission charges the outer request, not its transitive effects: an
+    admitted handler that batches operations, fans one request out to
+    many downstream calls, or retries after an ambiguous downstream
+    timeout consumes one admission and one single-use receipt while
+    creating multiple messages, resources, or charges behind the
+    dispatcher, so atomic request admission and receipt idempotency
+    bound the requests observed at admission, not the external effects
+    that actually occur, and the many-request test above passes while
+    the promised aggregate bound does not hold. The handler path must
+    therefore reserve and commit external-effect budget per transitive
+    effect (each downstream message, resource creation, or charge debits
+    the scoped budget before it is issued), propagate a downstream
+    idempotency identity so an ambiguous-timeout retry cannot
+    double-effect, or conservatively reserve a verified maximum effect
+    count and value for the invocation at admission and refuse
+    invocations whose maximum cannot be established, with a
+    retry-or-batch negative test driving an admitted handler that
+    batches downstream operations and retries after an ambiguous
+    downstream timeout and proving the aggregate count, rate, and value
+    of its actual external effects stay within the reserved budget even
+    though admission observed a single request.
     Whether such a mechanism exists is
    a property of the execution host, not of the checkout, so the static step-2
    gate cannot decide enforceability: it could reject a declaration a production
@@ -1736,9 +1778,26 @@ enumerated entries still passes. The host policy must therefore deny
    declared capability class the ceiling decision covers, with only
    operations explicitly proven pure (computing over inputs already supplied
    in the request, touching no host state and disclosing nothing beyond it)
-   eligible for exemption, and the unknown-tool negative tests must include
-   an unrecognized read-only tool proving it is denied rather than silently
-   passed through. Admission by name is still
+    eligible for exemption, and the unknown-tool negative tests must include
+    an unrecognized read-only tool proving it is denied rather than silently
+    passed through. Purity bounds disclosure and host state, not
+    computation: an operation exempted as pure (a parser, solver,
+    decompressor, or regex evaluator over caller-supplied input) sits
+    outside the admitted-tool registry while the resource-budget
+    requirements below apply only to admitted handlers, so a skill can
+    exhaust CPU, memory, or dispatcher time through one pathological
+    call or many concurrent calls without touching host state or
+    violating the purity definition. Pure exemptions must therefore
+    retain enforceable per-call and aggregate resource budgets (CPU,
+    memory, and wall-clock or dispatcher time, enforced across all
+    concurrent calls attributed to the skill, actor, tenant, and
+    execution boundary), with the exemption refused and the operation
+    falling back to registry admission when those budgets cannot be
+    imposed, and a pathological-input exhaustion negative test proving a
+    pure-exempt operation driven with pathological input, alone or
+    concurrently, is throttled, denied, or terminated and other
+    workloads retain CPU, memory, and dispatcher capacity.
+    Admission by name is still
    not admission of code: the registry authenticates that a tool or alias is
    admitted, not which implementation the name resolves to, so an admitted MCP
    alias rebound to a different server, or a plugin or host handler upgraded
