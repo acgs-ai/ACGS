@@ -71,7 +71,16 @@ skillspector scan .claude/skills --recursive --no-llm --format markdown
 skillspector scan .agents/skills --recursive --no-llm --format markdown
 ```
 
-**Reported: 7 HIGH, 6 MEDIUM.** Six of the seven HIGH findings were captured in the
+**Reported: 7 HIGH, 6 MEDIUM.** One reproducibility limit applies to the whole run,
+beyond the untracked-skill caveat above: the scanner's exact revision was not recorded,
+no installation lock was kept, and the full report artifact was not preserved. Pinning
+the NVIDIA skill-catalog sample (previous section) does not pin SkillSpector, whose
+rule set and CLI evolve independently, so the 7-HIGH/6-MEDIUM totals — including the
+rows against tracked skills — are recorded evidence from an unpinned scanner build,
+not independently re-derivable. Any future scan whose findings feed a gate or a claim
+must record the exact scanner commit or release, lock the installed dependencies, and
+preserve the full output artifact (or at minimum its hash) alongside the findings.
+Six of the seven HIGH findings were captured in the
 notes below; each was verified as a heuristic misfire on one of this repo's own idioms
 by reading the flagged line. The seventh HIGH was not preserved when these notes were
 written, so the zero-true-positive verdict is claimed only for the six itemized here:
@@ -309,21 +318,40 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    evaluated request through the full policy path, producing a new `ALLOW` or
    `TRANSFORM` receipt that is the only thing the executor will accept, and a
    negative test must prove the original denied or escalated receipt can never
-   run, approved or not.
+   run, approved or not. The approval grant is itself a credential and must be
+   bound to the exact request it approves: authenticated to the granting human,
+   tied to the actor, skill identity/digest, action, and final arguments the new
+   receipt represents, single-use, and bounded by an expiry, with the grant
+   recorded as evidence in that receipt. Negative tests must prove a grant
+   presented for altered arguments or a different skill, an expired grant, and a
+   grant replayed for a second execution are all rejected without a side effect.
    `docs/skills/skill-schema.md` is then updated to record that mapping so cards,
    validators, and the future executor read exactly one contract.
 5. **Skill identity and permission ceiling.** A trusted name/version/artifact digest per
    skill, plus an independently reviewed maximum permission set held outside the skill.
-   Without these, step 6 would enforce a caller-controlled declaration. A pinned
+   Without these, step 6 would enforce a caller-controlled declaration. "Outside the
+   skill" is necessary but not sufficient: if the agent, or any skill it runs, can
+   write the location holding the ceiling record, the caller can widen the ceiling
+   before issuance, the receipt then faithfully binds the tampered value, and the
+   executor accepts capabilities nobody approved. The ceiling record must therefore
+   live outside agent write authority entirely, be authenticated (integrity-protected
+   under a key or review path the agent cannot exercise), and be version-bound to the
+   specific skill digest it approves, with tamper and rollback tests at both issuance
+   and execution proving that a widened, reverted, or digest-mismatched ceiling record
+   is rejected. A pinned
    digest proves what was approved, not what executes: if a bundled script or
    resource changes after the loader authenticates the artifact digest but before
    the tool runs, the loader context and receipt still carry the old trusted
    digest while the shell reads the modified bytes. Identity must therefore be
-   bound to what actually executes, by running skills from an immutable
-   content-addressed snapshot taken at authentication time or by atomically
-   revalidating the digest immediately before launch, with the executed snapshot
-   digest bound into the receipt and a test mutating skill bytes between load and
-   launch proving the stale-digest execution is rejected.
+   bound to what actually executes by running skills — scripts and bundled
+   resources alike — from a read-only, immutable content-addressed snapshot taken
+   at authentication time. Atomic pre-launch digest revalidation is not an
+   acceptable substitute: it leaves a window between the recheck and `exec`, and
+   says nothing about resources a script reads after launch, so authenticated
+   bytes could still change while the receipt carries the approved digest. The
+   executed snapshot digest is bound into the receipt, with tests mutating skill
+   bytes both between load and launch and after launch (a bundled resource read
+   mid-execution) proving the mutated content is never executed or read.
 6. **Wire `permissions:` into the kernel** as a deny-only policy input bound into the
    receipt and checked against the step-5 identity and ceiling. Deny-only is not a
    one-shot pre-check: existing policies can return `TRANSFORM`, and
@@ -333,7 +361,17 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    arguments. The permission intersection must therefore be evaluated against the
    final executable arguments, re-running after any policy transformation and
    denying (fail closed) when the transformed request crosses the ceiling, with the
-   post-transform check recorded in the receipt. Even then, argument-level checks
+   post-transform check recorded in the receipt. Argument-level checks are also
+   insufficient for the direct filesystem capabilities: a `file_read` or
+   `file_write` ceiling scoped to a directory is not enforced by validating the
+   final path argument, because an allowed path can traverse a symlink to a
+   location outside the ceiling, or a path component can be swapped for a symlink
+   after the check and before the host opens it. Directory ceilings must be
+   enforced at filesystem resolution — descriptor-relative opens with no-follow
+   semantics (`openat2`-style `RESOLVE_BENEATH`) or an equivalent filesystem
+   sandbox that confines the resolved target — with negative tests proving both a
+   symlink escape inside an allowed path and a check-to-open path race fail to
+   touch the outside location. Even then, argument-level checks
    govern only the launch, not the launched process: an allowed
    `shell.allowed_scripts` entry spawns a process that inherits the host's ambient
    file and network capabilities, so a declaration that permits that script while
@@ -365,7 +403,17 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    its ceiling. Every intercepted request must therefore carry an unforgeable,
    host-bound origin. For requests the host identifies as skill-originated, that
    origin is the loader-issued invocation context (the step-5 identity and digest,
-   not self-reported in the payload), which selects the skill's ceiling. For ordinary
+   not self-reported in the payload), which selects the skill's ceiling. A single
+   origin identity is not enough once skills compose: when one skill invokes
+   another, or several are active concurrently, attributing the request to any
+   single skill would let a restricted outer skill route an action through a
+   broader inner skill and escape its own ceiling. The loader-issued context must
+   therefore carry the authenticated origin/delegation stack of every skill
+   contributing to the request, and the effective ceiling is the intersection of
+   all stacked skill ceilings (before intersecting with the declaration as
+   above), with nested- and concurrent-skill negative tests proving that invoking
+   or overlapping with another skill can only narrow authority, never amplify
+   it. For ordinary
    tool use outside any skill invocation, the host must authenticate an explicit
    non-skill origin, governed by the agent's normal policy ceiling; demanding a skill
    digest on every request would block all governed non-skill tool use. The gate
