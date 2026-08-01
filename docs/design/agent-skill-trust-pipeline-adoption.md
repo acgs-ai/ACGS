@@ -280,9 +280,22 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    rollout terminates or taints every live model context that has loaded a
    not-yet-admitted skill, or the hold is re-enforced on every tool request
    rather than only at invocation time, denying requests from contexts
-   whose loaded skills are unadmitted, with a preexisting-context negative
-   test that loads a skill before hold activation and proves that skill's
-   subsequent tool call is denied while the hold is in force. The step-2 loadability gate and
+    whose loaded skills are unadmitted, with a preexisting-context negative
+    test that loads a skill before hold activation and proves that skill's
+    subsequent tool call is denied while the hold is in force. Draining
+    contexts and denying later tool requests still does not stop work those
+    contexts set in motion before the hold: a detached child process, file
+    watcher, scheduled task, or queued operation launched by a
+    not-yet-admitted skill needs no further tool call, so it keeps producing
+    unrestricted effects throughout the interval while the
+    preexisting-context test passes. Activating the hold must therefore
+    also terminate or revoke the process trees, scheduled tasks, and
+    pending queued work attributable to unadmitted skill contexts, or
+    restart the execution boundary into a state where none of them
+    survive, with a pre-hold background-work negative test that launches a
+    detached child (or schedules deferred work) from a skill context
+    before hold activation and proves it produces no further effects once
+    the hold is in force. The step-2 loadability gate and
    a step-3 card are prerequisites but not sufficient, because neither prevents an
    automatically selected skill from directing actions beyond its intended
    authority; a schema-valid, well-described skill can still instruct anything.
@@ -450,6 +463,20 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
        a grant presented in a different tenant, under a different policy
        bundle/version, across a different execution boundary, or against a
         request whose audit hash differs is rejected without a side effect.
+        Authenticating the approver and binding the grant to the canonical
+        request fields still does not prove those fields are what the human
+        saw: when the requesting agent or a compromised skill supplies the
+        label or summary the approval prompt displays, the prompt can
+        describe a benign staging action while the signed payload names
+        production, and every binding, role, expiry, and replay test above
+        passes. The approval must therefore be collected through a trusted
+        approval channel that renders the decision directly from the payload
+        being signed (the actor, skill identity/digest, action, final
+        arguments, resolved target, and referenced-content digests taken
+        from the canonical bound fields, never from caller-supplied prose),
+        with a mismatched-display negative test proving an approval prompted
+        with a caller-supplied label or summary that disagrees with the
+        bound request fields yields no consumable grant and no side effect.
         Binding the final arguments and the originating audit hash pins the
         references the human saw, not the bytes they designate: when the
         approved request names a mutable manifest or configuration file, an
@@ -1041,15 +1068,27 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
       remain unchanged, and the handler-principal binding later in this
       design covers only admitted handlers, not spawned scripts. Shell
       grants, their approvals, and their receipts must therefore bind the
-      effective credential principal (the stable principal, account, or
-      role identifier, with its scope and trust epoch) that each granted
-      ambient credential resolved to at authorization, and the launcher
-      must re-resolve those credentials at execution time and fail closed
-      when any designates a different principal, scope, or epoch, with a
-      shell credential-substitution negative test proving an allowed
-      script authorized while the ambient credential resolved to the
-      staging principal is refused launch, without a side effect, after
-      that credential is repointed to production.
+       effective credential principal (the stable principal, account, or
+       role identifier, with its scope and trust epoch) that each granted
+       ambient credential resolved to at authorization, and the launcher
+       must, atomically with launch, re-resolve each granted credential,
+       fail closed when any designates a different principal, scope, or
+       epoch, and materialize the verified result as an immutable
+       credential instance (a materialized session, token, or
+       non-reswitchable handle) that is the only credential the spawned
+       process inherits or consumes; a launcher that re-resolves, checks,
+       and then launches leaves a check-to-use gap in which the ambient
+       credential can designate the approved staging principal during the
+       check and be repointed to production before the child inherits or
+       uses it, exactly the race the admitted-handler path below closes by
+       pinning. This requires a shell credential-substitution negative
+       test proving an allowed script authorized while the ambient
+       credential resolved to the staging principal is refused launch,
+       without a side effect, after that credential is repointed to
+       production, and a concurrent switch-versus-use negative test racing
+       an ambient-credential repoint against script launch and use,
+       proving the spawned process only ever acts as the pinned verified
+       principal.
       Files, sockets, environment, and credentials still do
      not exhaust ambient authority: a launch that shares the host's PID or
      IPC namespace lets the spawned process signal or trace same-UID
@@ -1229,12 +1268,32 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
     credential afterward, reopens the window, because the context can
     designate the approved principal during the check and be repointed
     before the handler resolves or uses it. This requires a
-    credential-substitution negative test proving a swapped ambient
-    credential or context is denied rather than executed against a
-    principal the admission never named, and a concurrent
-    switch-versus-use negative test racing an ambient-credential repoint
-    against handler launch and use, proving the side effect only ever runs
-    as the pinned verified principal. Interception alone is still
+     credential-substitution negative test proving a swapped ambient
+     credential or context is denied rather than executed against a
+     principal the admission never named, and a concurrent
+     switch-versus-use negative test racing an ambient-credential repoint
+     against handler launch and use, proving the side effect only ever runs
+     as the pinned verified principal. Pinning the principal verifies who
+     acts, not where the side effect lands: the same credential principal,
+     scope, and epoch can remain valid for multiple targets (a Kubernetes
+     context can keep the same user credential while its current cluster
+     or namespace changes from staging to production, and one cloud
+     principal can address multiple projects or regions through the same
+     network origin), so a repointed default target passes every principal
+     check while identical approved arguments land somewhere the admission
+     never named. The ceiling record, approvals, and receipts must
+     therefore also bind the resolved ambient target context (the
+     endpoint, cluster or project, region, namespace, and equivalent
+     target identifiers the admitted footprint resolves to), and the
+     execution gate must resolve the effective target atomically with
+     launch, fail closed on mismatch, and pin the verified target into the
+     immutable credential instance the handler consumes rather than
+     leaving the handler to re-read mutable defaults, with a
+     target-substitution negative test proving a retargeted context or
+     default (an unchanged principal whose current cluster, project,
+     region, or namespace now designates production) is denied rather
+     than executed against a target the admission never named.
+     Interception alone is still
    not sufficient, because an agent issues ordinary tool calls outside any skill
    invocation and the current hook cannot tell the difference:
    `.claude/hooks/acgs-emit-receipt.py::main` receives only the tool payload and
@@ -1297,11 +1356,19 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
     run the side effect multiple times while every stale-context test still
     passes. The live invocation must therefore be bound into the receipt itself
     (the origin context's session binding and its nonce or handle identity), and
-    every skill-originated receipt, not only approval-gated ones, must be
+    every executable receipt, regardless of origin class (skill-originated,
+    approval-gated, or an ordinary authenticated non-skill tool call), must be
     consumed atomically at the execution gate against shared durable state of
-     the same class as the grant ledger, with a concurrent-replay negative test
-     presenting an ordinary non-approval skill receipt to the execution gate in
-     parallel and proving its side effect runs at most once. Atomic
+     the same class as the grant ledger. Consumption scoped only to
+     skill-originated receipts leaves the non-skill receipt a reusable
+     bearer credential: a retried or replayed authenticated non-skill call
+     presents the same signed `ALLOW` receipt and runs its matching side
+     effect repeatedly, while the closed-world non-skill routing
+     requirement only ensures each presentation carries a receipt, not
+     that each receipt executes once. This requires concurrent-replay
+     negative tests presenting an ordinary non-approval skill receipt and
+     an ordinary authenticated non-skill receipt to the execution gate in
+     parallel and proving each side effect runs at most once. Atomic
      consumption presumes the ledger's own integrity: if a governed skill can
      write the consumption store, it can delete a consumed receipt's key or
      restore an earlier ledger snapshot, making a still-valid signed receipt
@@ -1421,12 +1488,21 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    every skill-writable ceiling), or origin-gated at the consumer's execution
    point (the CI/host runner verifies the artifact's recorded producing skill
    stack before executing it and refuses, or confines execution within the
-   originating ceiling), and where neither is enforceable for a given
-   consumer that residual boundary must be recorded explicitly in the ceiling
-   record and receipt rather than left implied, with a negative test proving
+   originating ceiling), and where neither write-time denial nor
+   consumer-side origin gating or confinement is enforceable for a given
+   consumer, admission must fail closed for that write capability: the
+   skill-writable ceiling is narrowed to exclude the control-artifact
+   paths that consumer executes (or the skill is held un-invocable),
+   never the gap recorded as a permitted residual boundary, because a
+   recorded-but-unenforced boundary still lets the later consumer execute
+   the artifact's embedded instructions with its broader authority and no
+   receipt. Negative tests must prove
    a skill-written modification to a machine-consumed control artifact is
    either rejected at write time or is not executed by that consumer with
-   authority beyond the producing skill's ceiling. A single
+   authority beyond the producing skill's ceiling, and that a declaration
+   whose control-artifact write capability no reachable consumer can
+   enforce is denied admission rather than admitted with a recorded
+   residual boundary. A single
    origin identity is not enough once skills compose: when one skill invokes
    another, or several are active concurrently, attributing the request to any
    single skill would let a restricted outer skill route an action through a
