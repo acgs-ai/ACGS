@@ -302,12 +302,28 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    prose: it distinguishes per skill whether a denied action stops, escalates,
    or requires human approval) is carried into the canonical replacement alongside
    `permissions:`, with a defined fail-closed mapping (an absent or unrecognized
-   value means stop, never proceed) before the old field is removed.
+   value means stop, never proceed) before the old field is removed. The
+   `require human approval` value needs one more rule, because this repository
+   already forbids treating `DENY` or `ESCALATE` receipts as executable: approval
+   never revives the original receipt. A granted approval triggers a freshly
+   evaluated request through the full policy path, producing a new `ALLOW` or
+   `TRANSFORM` receipt that is the only thing the executor will accept, and a
+   negative test must prove the original denied or escalated receipt can never
+   run, approved or not.
    `docs/skills/skill-schema.md` is then updated to record that mapping so cards,
    validators, and the future executor read exactly one contract.
 5. **Skill identity and permission ceiling.** A trusted name/version/artifact digest per
    skill, plus an independently reviewed maximum permission set held outside the skill.
-   Without these, step 6 would enforce a caller-controlled declaration.
+   Without these, step 6 would enforce a caller-controlled declaration. A pinned
+   digest proves what was approved, not what executes: if a bundled script or
+   resource changes after the loader authenticates the artifact digest but before
+   the tool runs, the loader context and receipt still carry the old trusted
+   digest while the shell reads the modified bytes. Identity must therefore be
+   bound to what actually executes, by running skills from an immutable
+   content-addressed snapshot taken at authentication time or by atomically
+   revalidating the digest immediately before launch, with the executed snapshot
+   digest bound into the receipt and a test mutating skill bytes between load and
+   launch proving the stale-digest execution is rejected.
 6. **Wire `permissions:` into the kernel** as a deny-only policy input bound into the
    receipt and checked against the step-5 identity and ceiling. Deny-only is not a
    one-shot pre-check: existing policies can return `TRANSFORM`, and
