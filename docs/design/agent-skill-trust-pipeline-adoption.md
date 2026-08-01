@@ -321,10 +321,20 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    run, approved or not. The approval grant is itself a credential and must be
    bound to the exact request it approves: authenticated to the granting human,
    tied to the actor, skill identity/digest, action, and final arguments the new
-   receipt represents, single-use, and bounded by an expiry, with the grant
-   recorded as evidence in that receipt. Negative tests must prove a grant
-   presented for altered arguments or a different skill, an expired grant, and a
-   grant replayed for a second execution are all rejected without a side effect.
+    receipt represents, single-use, and bounded by an expiry, with the grant
+    recorded as evidence in that receipt. Single-use must hold under concurrency:
+    marking the grant used at execution time is too late, because two
+    evaluations presenting the same still-unused grant could each validate it
+    and mint separate executable receipts before either execution burns it, so
+    both side effects run while a second-execution replay test still passes.
+    Consuming the grant must therefore happen at receipt issuance as an atomic
+    compare-and-consume (or an idempotent issuance operation keyed on the
+    grant) against shared durable state, so at most one executable receipt can
+    ever be minted from one grant. Negative tests must prove a grant
+    presented for altered arguments or a different skill, an expired grant, and a
+    grant replayed for a second execution are all rejected without a side effect,
+    and a concurrent-use test must prove that two evaluations racing on the same
+    grant yield exactly one executable receipt and at most one side effect.
    `docs/skills/skill-schema.md` is then updated to record that mapping so cards,
    validators, and the future executor read exactly one contract.
 5. **Skill identity and permission ceiling.** A trusted name/version/artifact digest per
@@ -349,9 +359,22 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    acceptable substitute: it leaves a window between the recheck and `exec`, and
    says nothing about resources a script reads after launch, so authenticated
    bytes could still change while the receipt carries the approved digest. The
-   executed snapshot digest is bound into the receipt, with tests mutating skill
-   bytes both between load and launch and after launch (a bundled resource read
-   mid-execution) proving the mutated content is never executed or read.
+    executed snapshot digest is bound into the receipt, with tests mutating skill
+    bytes both between load and launch and after launch (a bundled resource read
+    mid-execution) proving the mutated content is never executed or read. That
+    snapshot bounds the guarantee to bundled skill content, and the claim must
+    say so: a snapshotted script still resolves its interpreter, imports
+    installed packages, and invokes binaries through `PATH`, and those
+    executable bytes live outside the skill directory, so they can change while
+    the skill-directory digest stays identical and every skill/resource
+    mutation test passes even though unapproved code controls the side effect.
+    The identity guarantee is therefore explicitly scoped to bundled skill
+    content, and the ambient runtime the skill executes under (interpreter,
+    installed packages, `PATH`-resolved binaries) is recorded in the approval
+    and receipt as an unverified boundary. Extending the guarantee over that
+    runtime requires binding a content-addressed runtime image or
+    interpreter/dependency closure into the approval and receipt; no broader
+    identity claim may be made without that binding.
 6. **Wire `permissions:` into the kernel** as a deny-only policy input bound into the
    receipt and checked against the step-5 identity and ceiling. Deny-only is not a
    one-shot pre-check: existing policies can return `TRANSFORM`, and
@@ -371,7 +394,21 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    semantics (`openat2`-style `RESOLVE_BENEATH`) or an equivalent filesystem
    sandbox that confines the resolved target — with negative tests proving both a
    symlink escape inside an allowed path and a check-to-open path race fail to
-   touch the outside location. Even then, argument-level checks
+   touch the outside location. Direct network capabilities have the same
+   resolution gap: a network ceiling scoped to allowed origins is not enforced
+   by validating the requested endpoint or the post-policy arguments, because
+   an allowed URL can redirect to a forbidden origin, and a hostname can
+   resolve — or rebind between check and connect — to an address outside the
+   ceiling, so a different network side effect runs than the one bound into
+   the receipt. Network ceilings must therefore be enforced through a
+   direct-network broker that re-validates every redirect hop against the
+   ceiling before following it, validates the actual resolved destination
+   address, and connects using that approved resolution rather than
+   re-resolving afterward, with negative tests proving an allowed URL
+   redirecting to a forbidden origin and a hostname rebinding to an
+   out-of-ceiling address both fail to reach the outside destination; the
+   spawned-process denied-socket test below covers only shell containment,
+   not this direct network capability. Even then, argument-level checks
    govern only the launch, not the launched process: an allowed
    `shell.allowed_scripts` entry spawns a process that inherits the host's ambient
    file and network capabilities, so a declaration that permits that script while
@@ -436,7 +473,10 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    converge.
 
 Steps 2 and 3 are small and independently useful. Steps 5 and 6 are a real design task
-and should not be bundled with the rest; they are recorded as a planned stage in
+and should not be bundled with the rest; they, together with step 4's enforcement
+path (the `deny_behavior` fail-closed mapping and the approval-grant issuance,
+binding, expiry, atomic consumption, and original-receipt-rejection requirements),
+are recorded as a planned stage in
 [`docs/ROADMAP.md`](../ROADMAP.md) ("Skill trust: identity, permission ceilings, host
 interception") so the roadmap of record carries the gap, not just this note.
 
