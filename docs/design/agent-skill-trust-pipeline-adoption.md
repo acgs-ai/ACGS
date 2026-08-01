@@ -204,9 +204,13 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    `allow_implicit_invocation: true` flag, so shipping the repair alone would turn a
    previously inert, unowned, unsigned skill into an automatic instruction source
    before any control below exists. The repair must therefore set
-   `allow_implicit_invocation: false` in `agents/openai.yaml`, to be re-enabled only
-   once the step-2 gate and a step-3 card cover the skill (or those minimum controls
-   land atomically with this step).
+   `allow_implicit_invocation: false` in `agents/openai.yaml`, and the flag stays
+   disabled through the phased rollout until the skill is authenticated and its
+   actions are actually constrained: the step-5 identity/digest and approved ceiling
+   plus the step-6 host interception and enforcement. The step-2 loadability gate and
+   a step-3 card are prerequisites but not sufficient, because neither prevents an
+   automatically selected skill from directing actions beyond its intended
+   authority; a schema-valid, well-described skill can still instruct anything.
 2. **Add a loadability gate.** A root test that every `SKILL.md` under `.claude/skills/**`
    and `.agents/skills/**` parses `---`-delimited frontmatter with a `name` and
    `   description`, and enforces the host's skill schema (see step 4 for why the generic
@@ -237,11 +241,17 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    while selectively re-ignoring runtime state, mirroring the `.claude/` whitelist
    pattern already in the same file; otherwise the gate silently covers only skills
    someone remembered to force-add.
-3. **Skill cards for the skills that can act.** Start with the tracked skills that run
-   commands or touch privileged paths (`govern-zone` in both tracked copies,
-   `maintain-acgs`, `phase-gate`, and `pr-evidence` today: `govern-zone` directs agents
-   to create files, edit CI and manifests, and execute shell commands, and the other
-   three direct git, test, lint, or hash-check commands; the skill step 1 restores must
+3. **Skill cards for the skills that can act.** Start with the tracked skills that
+   direct governed capabilities — command execution, privileged-path or manifest
+   reads, and network fetches (`govern-zone` in both tracked copies, `maintain-acgs`,
+   `phase-gate`, `pr-evidence`, and `source-driven-development` today: `govern-zone`
+   directs agents to create files, edit CI and manifests, and execute shell commands;
+   `maintain-acgs`, `phase-gate`, and `pr-evidence` direct git, test, lint, or
+   hash-check commands; and `source-driven-development` directs reads of package
+   manifests and `.github/workflows/**` and fetches of external documentation URLs,
+   with no `disable-model-invocation` flag, so it is model-selectable like the rest.
+   File reads and network access are inside the governed capability set this proposal
+   opened with, not exempt from it. The skill step 1 restores must
    not sit outside the controls this proposal exists for), and make a card the entry
    ticket for any currently untracked local skill (`worktree-lanes`,
    `headless-delegation`, `deploy-drift-check`, `pr-queue`, `codex-execution-workflow`)
