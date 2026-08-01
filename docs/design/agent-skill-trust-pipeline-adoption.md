@@ -260,7 +260,18 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    agent installation, so an ordinary checkout or CI runner cannot invoke it. The gate
    must therefore vendor a pinned copy of the validator (license permitting) or encode
    the same schema rules as a repo-local check, with a recorded upstream version to diff
-   against on host upgrades. The gate must also cover host companion manifests, not
+   against on host upgrades. A recorded version alone is documentation: nothing runs
+   that diff, so when the installed Claude or Codex host is upgraded to a version whose
+   skill schema diverges from the vendored validator, this repo-local gate keeps
+   passing while the active host rejects the skill outright or interprets its security
+   metadata (the `permissions:` declaration, invocation flags) differently than the
+   gate validated. The gate must therefore also pin the host/schema version its
+   vendored validator corresponds to, and host deployment/admission (step 5) must
+   verify that the active host's skill-schema version matches that pinned version
+   before enabling the skill, failing closed (the skill held un-invocable) on
+   mismatch until a validator matching the active host version has revalidated the
+   tree and the pin is updated, with a negative test proving a skill validated only
+   against a stale schema version is not enabled on an upgraded host. The gate must also cover host companion manifests, not
    only `SKILL.md`: Codex registration of `govern-zone` additionally depends on
    `.agents/skills/govern-zone/agents/openai.yaml`, and `quick_validate.py` reads only
    `SKILL.md`, so a malformed or schema-incompatible companion manifest keeps the
@@ -779,7 +790,25 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    consumable instructions at all, with a negative test proving a tool call
    issued by a context after reading a skill-written artifact is still
    governed by the producing skill's ceiling rather than the reader's broader
-   ceiling. A single
+   ceiling. Model contexts are not the only consumers of persisted artifacts:
+   a write the ceiling permits can target a machine-consumed control artifact
+   (a CI workflow, a host hook, a package script, any executable that CI or
+   another host process later runs directly), and that consumer never enters
+   a model context, so neither remedy above ever fires while the machine
+   consumer executes the artifact's embedded instructions with its own
+   broader network, credential, and filesystem authority; every
+   model-consumption test passes while the escape runs in CI. Writes to
+   machine-consumed control artifacts must therefore be treated as authority
+   delegation: either denied by default (control-artifact paths carved out of
+   every skill-writable ceiling), or origin-gated at the consumer's execution
+   point (the CI/host runner verifies the artifact's recorded producing skill
+   stack before executing it and refuses, or confines execution within the
+   originating ceiling), and where neither is enforceable for a given
+   consumer that residual boundary must be recorded explicitly in the ceiling
+   record and receipt rather than left implied, with a negative test proving
+   a skill-written modification to a machine-consumed control artifact is
+   either rejected at write time or is not executed by that consumer with
+   authority beyond the producing skill's ceiling. A single
    origin identity is not enough once skills compose: when one skill invokes
    another, or several are active concurrently, attributing the request to any
    single skill would let a restricted outer skill route an action through a
