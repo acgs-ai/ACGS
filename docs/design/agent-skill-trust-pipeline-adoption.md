@@ -542,6 +542,26 @@ enumerated entries still passes. The host policy must therefore deny
         with a mismatched-display negative test proving an approval prompted
         with a caller-supplied label or summary that disagrees with the
         bound request fields yields no consumable grant and no side effect.
+        Rendering only those request fields still lets bound-but-unrendered
+        fields be signed unseen: the requirements below bind the effective
+        credential principal, the resolved ambient target context, the
+        versioned enforcement and implementation identities, and the
+        handler's or allowed script's security-relevant ambient
+        configuration values (such as `DEPLOY_MODE`) into the approval, so
+        a compromised requester can obtain a signature over a destructive
+        value in any of those fields while every canonical-binding and
+        mismatched-label test above passes, because nothing requires the
+        channel to display them. The trusted approval channel must
+        therefore render every security-relevant field bound into the
+        payload being signed (or a trusted semantic representation derived
+        from those bound values, never from caller-supplied prose) and
+        refuse to collect a signature over a payload carrying a bound
+        behavior-defining field it did not render, with a hidden-field
+        substitution negative test that binds a destructive ambient
+        configuration value, credential principal, or enforcement identity
+        into an approval payload whose rendered request fields all match
+        and proves an approval collected without that field rendered
+        yields no consumable grant and no side effect.
         Binding the final arguments and the originating audit hash pins the
         references the human saw, not the bytes they designate: when the
         approved request names a mutable manifest or configuration file, an
@@ -613,7 +633,23 @@ enumerated entries still passes. The host policy must therefore deny
         validation), with a concurrent policy-update-versus-launch negative
         test racing a policy transition that newly denies the action
         against an in-flight validated request and proving no interleaving
-        lets the side effect run under the superseded policy.
+        lets the side effect run under the superseded policy. A lease that
+        ends at launch still stops short of the effect: an admitted handler
+        can queue work and an allowed script can perform its governed write
+        after spawning, so the launch commits under policy v1, the lease
+        ends, and policy v2 denies the action before the actual side effect
+        occurs, a gap the shell containment section below makes explicit by
+        distinguishing launch from the launched process's transitive
+        effects, which a launch-scoped test therefore cannot close. The
+        policy-version lease must be held until the governed effect commits
+        or completes, or the launched work must remain revocable or
+        brokered so a policy transition revokes or re-validates in-flight
+        work before its effect commits (the same revocable-lease discipline
+        the ceiling-revocation requirement applies to running work), with a
+        delayed post-launch effect negative test racing a policy transition
+        that newly denies the action against a launched process whose
+        governed effect occurs after launch and proving the effect never
+        commits under the superseded policy.
         The decision identity above still omits the enforcement context the
       fresh evaluation will run under: while a grant sits unconsumed, the
       active ceiling record, the executor profile, the permission-language
@@ -711,7 +747,25 @@ enumerated entries still passes. The host policy must therefore deny
     rejecting a validator whose identity equals the proposer — and a
     self-approval negative test through the real handler must prove a grant
     issued by the requesting principal for its own request is rejected without
-     a side effect. Distinctness and human authentication are verified against
+     a side effect. Comparing credential or opaque principal identifiers is
+     not comparing humans: `docs/CLAIMS.md` already records that two
+     identities controlled by one person are distinct principals to the
+     kernel and that no built-in IAM closes that gap, so a single human
+     holding two credentials can submit the request under one and approve it
+     under the other while the inequality check and the self-approval test
+     both pass. An independent-human approval claim must therefore compare
+     requester and approver by an authoritative stable human-subject
+     identifier bound into both credentials at authentication from the
+     organization's identity provider or an equivalent authoritative
+     directory, failing closed when that mapping is unavailable, with a
+     same-human negative test proving a request submitted under one
+     credential and approved under a second credential mapped to the same
+     human subject is rejected without a side effect; where no authoritative
+     human-subject mapping exists, the check provides principal-level
+     separation only, that limitation must be recorded explicitly in the
+     ceiling record, the approval evidence, and the receipt, and the design
+     must not represent the check as independent-human approval.
+     Distinctness and human authentication are verified against
      the credential that signed the grant, not against the approver's current
      standing: when an approver's role or credential is revoked after
      compromise, an unconsumed grant signed with the retired credential still
@@ -923,11 +977,24 @@ enumerated entries still passes. The host policy must therefore deny
      `scripts/run.py -> /tmp/run.py`, whose digest and link entry are unchanged
      while the external target is replaced after authentication, so unapproved
      bytes execute while every in-snapshot mutation test passes. Snapshot
-     construction and resource loading must therefore reject symlinks and other
-     references that escape the snapshot, or materialize their targets inside
-     the confined snapshot and include those bytes in the hashed content, with a
-     negative test that mutates an external link target between authentication
-     and use and proves the mutated target is never executed or read. That
+      construction and resource loading must therefore reject symlinks and other
+      references that escape the snapshot, or materialize their targets inside
+      the confined snapshot and include those bytes in the hashed content, with a
+      negative test that mutates an external link target between authentication
+      and use and proves the mutated target is never executed or read. The
+      symlink rule does not cover special inodes: a bundled FIFO, Unix
+      socket, or device node is neither a symlink nor a reference whose
+      target can be materialized into content, so the unchanged entry can
+      receive attacker-controlled bytes or reach external state after
+      authentication while the manifest digest and the read-only directory
+      both remain valid (the regular-file-only rule later in this design
+      restricts directory capabilities, not the construction of this
+      snapshot). Snapshot admission must therefore reject every entry that
+      is not a regular file or directory unless that specific entry is
+      separately brokered and content-bound as its own reviewed capability,
+      with a bundled-FIFO negative test proving a skill bundling a FIFO or
+      other special inode fails snapshot construction and yields no
+      authenticated snapshot, no receipt, and no side effect. That
     snapshot bounds the guarantee to bundled skill content, and the claim must
     say so: a snapshotted script still resolves its interpreter, imports
     installed packages, and invokes binaries through `PATH`, and those
