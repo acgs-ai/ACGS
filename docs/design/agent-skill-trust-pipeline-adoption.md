@@ -462,8 +462,25 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
      and policy bundle/version in force, and mismatch negative tests must prove
        a grant presented in a different tenant, under a different policy
        bundle/version, across a different execution boundary, or against a
-        request whose audit hash differs is rejected without a side effect.
-        Authenticating the approver and binding the grant to the canonical
+         request whose audit hash differs is rejected without a side effect.
+         Single-use and expiry bound a grant only as reliably as the clock
+         that evaluates them: `docs/SECURITY_MODEL.md` and ADV14 record that
+         expiry today is host-clock-bound with no built-in trusted time
+         source, so a verifier whose host clock is set backward or frozen
+         accepts an otherwise expired but unused approval grant, invocation
+         context, or receipt, and every rollback-resistant ledger in this
+         design still passes because the artifact was never consumed. Expiry
+         evaluation at issuance, at grant consumption, and at execution must
+         therefore consult a trusted time source (a trusted monotonic clock
+         or a signed time attestation of the same trust class as the ceiling
+         and grant freshness state, held and validated outside agent and
+         child-process write authority), fail closed when that source is
+         unavailable rather than falling back to the mutable host clock, and
+         a clock-rollback negative test must let an approval grant, an
+         invocation context, and a receipt expire unused, set the verifier's
+         host clock back before their expiry, and prove each is still
+         rejected without a side effect.
+         Authenticating the approver and binding the grant to the canonical
         request fields still does not prove those fields are what the human
         saw: when the requesting agent or a compromised skill supplies the
         label or summary the approval prompt displays, the prompt can
@@ -513,10 +530,27 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
        force against that state and failing closed when the bundle is
        older than the recorded active version or the state is
        unavailable, and a matched bundle-and-binding rollback negative
-       test that restores an older permissive bundle together with its
-       active tenant binding and proves a request the current policy
-       denies yields no executable receipt and no side effect.
-       The decision identity above still omits the enforcement context the
+        test that restores an older permissive bundle together with its
+        active tenant binding and proves a request the current policy
+        denies yields no executable receipt and no side effect.
+        Validating policy freshness at issuance, consumption, and execution
+        still leaves a check-to-launch race the rollback test does not
+        cover: the gate validates a receipt against the then-active policy
+        version, a policy transition then installs a version that denies
+        the action, and the already-validated request still launches
+        afterward under the superseded policy. Unlike the ceiling and
+        invocation transitions elsewhere in this design, nothing above
+        serializes policy-freshness validation with receipt consumption and
+        launch, so that validation must be made atomic with the
+        active-policy transition: launch holds a policy-version lease or
+        epoch check acquired atomically with the freshness validation and
+        consumed with the receipt (one transaction, or an epoch recheck at
+        launch that fails closed when the active policy changed since
+        validation), with a concurrent policy-update-versus-launch negative
+        test racing a policy transition that newly denies the action
+        against an in-flight validated request and proving no interleaving
+        lets the side effect run under the superseded policy.
+        The decision identity above still omits the enforcement context the
       fresh evaluation will run under: while a grant sits unconsumed, the
       active ceiling record, the executor profile, the permission-language
       version, or an admitted handler's deployment can be re-approved or
@@ -1086,10 +1120,33 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
        credential resolved to the staging principal is refused launch,
        without a side effect, after that credential is repointed to
        production, and a concurrent switch-versus-use negative test racing
-       an ambient-credential repoint against script launch and use,
-       proving the spawned process only ever acts as the pinned verified
-       principal.
-      Files, sockets, environment, and credentials still do
+        an ambient-credential repoint against script launch and use,
+        proving the spawned process only ever acts as the pinned verified
+        principal. Pinning the shell credential's principal verifies who
+        the spawned process acts as, not where its effects land: the same
+        principal, scope, and trust epoch can remain valid while the
+        credential's resolved target changes (a Kubernetes context can keep
+        its user credential while its current cluster or namespace moves
+        from staging to production, and one cloud principal can address
+        multiple projects or regions), and the resolved-target binding
+        required for admitted handlers later in this design covers only
+        that path, not spawned scripts, so a repointed default target lets
+        an allowed script authorized against staging run against production
+        while every principal check above passes. Shell grants, their
+        approvals, and their receipts must therefore also bind the resolved
+        ambient target context (the endpoint, cluster or project, region,
+        namespace, and equivalent target identifiers each granted
+        credential resolves to) at authorization, and the launcher must
+        resolve the effective target atomically with launch, fail closed on
+        mismatch, and pin the verified target into the same immutable
+        credential instance the spawned process inherits or consumes rather
+        than leaving the child to re-read mutable defaults, with a shell
+        target-substitution negative test proving an allowed script
+        authorized while its credential's target designated staging is
+        refused launch, without a side effect, after that target is
+        repointed to production under an unchanged principal, scope, and
+        epoch.
+       Files, sockets, environment, and credentials still do
      not exhaust ambient authority: a launch that shares the host's PID or
      IPC namespace lets the spawned process signal or trace same-UID
      processes, connect over abstract Unix-domain sockets, and read or write
