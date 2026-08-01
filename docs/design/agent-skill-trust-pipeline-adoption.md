@@ -436,7 +436,22 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
     rejecting a validator whose identity equals the proposer — and a
     self-approval negative test through the real handler must prove a grant
     issued by the requesting principal for its own request is rejected without
-    a side effect. Single-use must hold under concurrency:
+     a side effect. Distinctness and human authentication are verified against
+     the credential that signed the grant, not against the approver's current
+     standing: when an approver's role or credential is revoked after
+     compromise, an unconsumed grant signed with the retired credential still
+     satisfies every check above, and the signer-trust requirements later in
+     this design protect the receipt-issuance key, not the human approval
+     credential, so a post-revocation approval can still yield a freshly
+     signed executable receipt. The grant must therefore bind the approver's
+     credential and role identifiers, and grant consumption must revalidate
+     both against fresh, monotonic, rollback-protected approver-authorization
+     and credential-revocation state (the same trust class as the grant
+     ledger below), failing closed when the credential is revoked, the role
+     is withdrawn, or that state is unavailable, with a post-revocation
+     negative test proving a grant signed by a since-revoked approver
+     credential, or issued under a since-withdrawn approver role, is rejected
+     at consumption without a side effect. Single-use must hold under concurrency:
     marking the grant used at execution time is too late, because two
     evaluations presenting the same still-unused grant could each validate it
     and mint separate executable receipts before either execution burns it, so
@@ -757,15 +772,25 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    handle hard links explicitly, and an unspecified isolated filesystem view
    is not sufficient: a mount namespace or bind-mounted allowed directory
    hides the outside pathname but preserves the hard-linked inode, so writing
-   the visible in-ceiling name still mutates the denied file. The remediation
-   must either materialize the allowed directory onto a copied or
-   copy-on-write filesystem whose entries are fresh inodes sharing no storage
-   with any file outside the ceiling, or reject (or specially vet)
-   multi-linked entries whose link count shows the inode is shared beyond the
-   ceiling boundary, with a cross-boundary hard-link negative test proving
-    that a hard link inside an allowed directory to a denied file fails to
-    read or write the outside content, including when the capability runs
-    inside a mount-namespace or bind-mount view of the allowed directory. All
+    the visible in-ceiling name still mutates the denied file. Copying is not
+    a sufficient remediation either: materializing the allowed directory onto
+    a copied or copy-on-write filesystem gives the sandbox fresh inodes, so
+    later writes no longer reach the outside file, but the copy is produced by
+    reading every in-ceiling entry, so an entry that is a hard link to a
+    denied file is read during materialization and its contents are disclosed
+    into the sandbox; fresh inodes prevent mutation of the outside file, not
+    disclosure of it, and the required unreadability outcome fails even though
+    the write-isolation outcome holds. Cross-boundary hard links must
+    therefore be rejected, or individually vetted and explicitly approved,
+    before any copy or materialization is taken: a multi-linked entry whose
+    link count shows the inode is shared beyond the ceiling boundary fails the
+    ceiling closed unless specifically vetted, and only the vetted tree may
+    then be materialized onto fresh inodes, with a cross-boundary hard-link
+     negative test proving that a hard link inside an allowed directory to a
+     denied file fails to read or write the outside content, that no copy or
+     snapshot of the denied content ever becomes readable inside the
+     materialized view, and that this holds when the capability runs inside a
+     mount-namespace or bind-mount view of the allowed directory. All
     of these path-escape defenses share an assumption the filesystem does not
     guarantee: that an inode genuinely beneath the ceiling only carries
     in-ceiling effects. A FIFO or device node inside an allowed directory
@@ -883,10 +908,16 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    alias absent from the mapping, executes with no ceiling decision at all, and
    adding mappings for today's Read/Bash/Edit cases would satisfy every listed
    test while future tools bypass the pipeline. Interception must therefore
-   resolve every skill-originated action against an exhaustive admitted-tool
-   registry and fail closed on any tool or alias not in it, with a real-handler
-   negative test proving an unknown or newly exposed tool invoked from a skill
-   is denied rather than silently passed through. Admission by name is still
+   resolve every side-effectful action, regardless of origin class, against an
+   exhaustive admitted-tool registry and fail closed on any tool or alias not
+   in it: the authenticated non-skill origin required below establishes who is
+   calling, not what is called, so scoping exhaustive resolution to
+   skill-originated actions would leave ordinary authenticated calls on
+   today's `_classify` behavior and let a newly exposed side-effectful tool
+   run without a receipt despite the repository-wide invariant. Real-handler
+   negative tests must prove an unknown or newly exposed tool is denied rather
+   than silently passed through both when invoked from a skill and when
+   invoked from an authenticated non-skill context. Admission by name is still
    not admission of code: the registry authenticates that a tool or alias is
    admitted, not which implementation the name resolves to, so an admitted MCP
    alias rebound to a different server, or a plugin or host handler upgraded
