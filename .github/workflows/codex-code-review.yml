@@ -65,6 +65,14 @@ jobs:
       # comment out every group-based rule, so drop-sudo can fully revoke sudo.
       # If sudo were granted through yet another mechanism, the action would keep
       # failing closed exactly as before, so this step cannot weaken the gate.
+      #
+      # EPHEMERAL RUNNERS ONLY. This rewrites the host's /etc/sudoers and every file
+      # in /etc/sudoers.d, commenting out all group rules (including
+      # 90-cloud-init-users). That is harmless on a Blacksmith VM, which is discarded
+      # after the job. On a self-hosted runner the change would be permanent and would
+      # strip sudo from every other user of that machine. This repo does run jobs on
+      # self-hosted runners — if `codex-review` is ever moved to one, delete this step
+      # first and solve the drop-sudo verification another way.
       - name: Make sudo revocable for the drop-sudo safety strategy
         if: ${{ env.OPENAI_API_KEY != '' && env.IS_INTERNAL == 'true' }}
         run: |
