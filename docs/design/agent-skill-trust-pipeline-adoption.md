@@ -270,7 +270,19 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    a user's explicit invocation of a held skill is refused while the hold is
    in force, and that (a default-deny case) a loadable skill newly created
    or renamed in the checkout during the interval is not invocable by any
-   path until its identity has been externally admitted. The step-2 loadability gate and
+   path until its identity has been externally admitted. The hold gates
+   invocation, and invocation gating cannot reach contexts that predate it:
+   a skill already loaded into a live model session before the hold is
+   enabled needs no new invocation, so its retained instructions keep
+   directing unrestricted tool calls during exactly the interval the hold
+   was created to close while every invocation-path test above passes.
+   Enabling the hold must therefore also drain preexisting contexts:
+   rollout terminates or taints every live model context that has loaded a
+   not-yet-admitted skill, or the hold is re-enforced on every tool request
+   rather than only at invocation time, denying requests from contexts
+   whose loaded skills are unadmitted, with a preexisting-context negative
+   test that loads a skill before hold activation and proves that skill's
+   subsequent tool call is denied while the hold is in force. The step-2 loadability gate and
    a step-3 card are prerequisites but not sufficient, because neither prevents an
    automatically selected skill from directing actions beyond its intended
    authority; a schema-valid, well-described skill can still instruct anything.
@@ -437,8 +449,40 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
      and policy bundle/version in force, and mismatch negative tests must prove
      a grant presented in a different tenant, under a different policy
      bundle/version, across a different execution boundary, or against a
-     request whose audit hash differs is rejected without a side effect.
-     Binding alone does not establish
+      request whose audit hash differs is rejected without a side effect.
+      The decision identity above still omits the enforcement context the
+      fresh evaluation will run under: while a grant sits unconsumed, the
+      active ceiling record, the executor profile, the permission-language
+      version, or an admitted handler's deployment can be re-approved or
+      upgraded, every bound request field and the originating audit hash
+      still match, and the fresh evaluation then mints a receipt under
+      versioned enforcement and implementation identities the approving
+      human never saw. The grant must therefore also bind the versioned
+      enforcement and implementation identities in force at approval (the
+      active ceiling record and version, the executor profile identity and
+      version, the permission-language version, and the admitted handler
+      deployment digest the request resolves to), and consumption must
+      recheck each of them against the identities active at fresh
+      evaluation, failing closed on any change, with a context-substitution
+      negative test that approves a request and then substitutes the active
+      ceiling or the admitted handler before presenting the grant, proving
+      the stale grant is rejected without a side effect. Binding the
+      originating audit hash also presumes the bound event persists: when a
+      governed skill can write the local audit store, it can delete or
+      truncate the recorded escalation after the grant is issued, and the
+      grant still consumes and the freshly issued receipt still executes
+      while the decision evidence the approval was predicated on is gone
+      (the protected grant and receipt ledgers record the grant and the
+      receipt, not the escalated decision, so they do not restore it). The
+      originating audit state must therefore be held or anchored in
+      authenticated, rollback-resistant storage outside agent and
+      child-process write authority (the same trust class as the grant
+      ledger below), and both grant consumption and execution must confirm
+      the bound audit event remains present and anchored there, failing
+      closed when it does not, with a negative test that deletes or
+      truncates the bound audit event before presenting the grant and
+      proves consumption is refused without a side effect.
+      Binding alone does not establish
     separation of duties: exact-request binding proves *what* was approved, not
     that an independent authority approved it, so when the requesting actor is
     itself an authenticated human, nothing above stops that same principal from
@@ -916,8 +960,22 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    documents that), or the sandboxed/brokered launch must run with an
    allowlisted environment (secrets stripped) and inherited descriptors and
    credential-agent handles closed, with negative tests proving the spawned
-    process can neither read a denied environment token nor use an inherited
-    credential handle. File, network, environment, and credential containment
+     process can neither read a denied environment token nor use an inherited
+     credential handle. Files, sockets, environment, and credentials still do
+     not exhaust ambient authority: a launch that shares the host's PID or
+     IPC namespace lets the spawned process signal or trace same-UID
+     processes, connect over abstract Unix-domain sockets, and read or write
+     shared IPC (shared-memory segments, message queues) belonging to other
+     host workloads, while every file, network, credential, and
+     resource-budget test in this contract passes. The containment contract
+     must therefore treat process-control and IPC channels explicitly:
+     either the shell grant is defined as granting that ambient
+     process-control and IPC authority (and the declaration documents it),
+     or the executor profile must isolate or broker those channels (separate
+     PID and IPC namespaces, or equivalent brokering of signals, tracing,
+     and shared IPC), with an end-to-end negative test proving the launched
+     process cannot signal, trace, or otherwise affect another host process
+     through those channels. File, network, environment, and credential containment
     still leave shared host resources ungoverned: an allowed script handed an
     adversarial workload size, or one that spawns unbounded children, can
     exhaust host CPU, memory, process slots, wall-clock runtime, or disk
@@ -1048,8 +1106,22 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    whose internal behavior attempts a write outside the invoking skill's
    file ceiling or a connection outside its network ceiling fails to perform
    that effect (or the invocation is denied at issuance under the recorded
-   footprint), rather than passing because only the outer call was
-   checked. Interception alone is still
+    footprint), rather than passing because only the outer call was
+    checked. Recording that a handler's footprint includes credentials
+    identifies the channel, not the principal: an admitted handler that
+    resolves a mutable ambient credential or default context (a Kubernetes
+    context, a cloud role, a default account) executes as whatever that
+    credential currently designates, so swapping it can make identical
+    approved tool arguments run against production instead of staging while
+    the handler deployment digest, executor profile, and receipt all still
+    verify. The ceiling record and receipt must therefore bind the stable
+    principal, account, or role identifier (with its scope and trust epoch)
+    that the handler was admitted to act as, and the execution gate must
+    re-resolve the handler's effective credential at execution time and
+    fail closed when it designates a different principal, scope, or epoch,
+    with a credential-substitution negative test proving a swapped ambient
+    credential or context is denied rather than executed against a
+    principal the admission never named. Interception alone is still
    not sufficient, because an agent issues ordinary tool calls outside any skill
    invocation and the current hook cannot tell the difference:
    `.claude/hooks/acgs-emit-receipt.py::main` receives only the tool payload and
@@ -1164,9 +1236,22 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    a self-carried marker, because a restricted skill that controls an
    allowed file, queue entry, or adjacent sidecar can omit or forge
    provenance it writes itself, letting a later broader context consume the
-   artifact without inheriting the restricted ceiling; the provenance must
-   also be preserved across copies and updates of the artifact. The host
-   must then either propagate
+    artifact without inheriting the restricted ceiling; the provenance must
+    also be preserved across copies and updates of the artifact. Under
+    multiple writers, preservation alone is not enough: a restricted skill
+    can append instructions to an artifact previously labeled as non-skill
+    or broader-skill output, or a later broad writer can replace the
+    restricted writer's label, and the next reader then inherits authority
+    the most restricted contributor never had. Every update must therefore
+    accumulate provenance rather than overwrite it, recording every
+    contributing origin stack across the artifact's write history, and
+    consumers must be governed by the intersection of all contributors'
+    ceilings, with a mixed-writer negative test proving an artifact written
+    first by a broader (or non-skill) context and then modified by a
+    restricted skill governs its next reader at the restricted
+    intersection; the provenance-stripping test below does not cover this
+    case. The host
+    must then either propagate
    the originating ceiling (intersected as above) into every model context
    that consumes such an artifact, retained until that context is discarded,
    or prevent skill-written artifacts from re-entering any model context as
