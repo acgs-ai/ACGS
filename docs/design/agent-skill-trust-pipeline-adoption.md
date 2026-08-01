@@ -116,8 +116,9 @@ mechanism must precede this step), and an independently reviewed maximum permiss
 held outside the skill. The declared block then operates only as an additional deny
 gate: it can narrow the approved ceiling, never widen it. With those in place, the
 kernel's existing actor/action/argument/policy binding extends naturally. They declare;
-we authenticate, cap, and enforce. This is the one item that is both borrowable and
-differentiating.
+we authenticate, cap, and enforce, for the calls that are actually routed through the
+receipt-gated executor boundary (step 6 records how narrow that routing is today). This
+is the one item that is both borrowable and differentiating.
 
 ### 2. Skill cards
 
@@ -189,19 +190,35 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
 1. **Fix what is broken.** Both `govern-zone` skill copies (in flight).
 2. **Add a loadability gate.** A root test that every `SKILL.md` under `.claude/skills/**`
    and `.agents/skills/**` parses `---`-delimited frontmatter with a `name` and
-   `description`. Cheap, deterministic, catches the entire class.
+   `   description`, and passes the host's own skill validator where one ships (see step 4
+   for why the generic check alone is not enough). Cheap, deterministic, catches the
+   entire class.
 3. **Skill cards for the skills that can act.** Start with the tracked skills that run
    commands or touch privileged paths (`maintain-acgs` today), and make a card the entry
    ticket for any currently untracked local skill (`worktree-lanes`,
    `headless-delegation`, `deploy-drift-check`, `pr-queue`, `codex-execution-workflow`)
    before it lands in the repository.
-4. **Declared `permissions:` on the same set**, initially documentation-only.
+4. **Declared `permissions:` on the same set**, initially documentation-only. Where the
+   block lives is host-specific: Codex's bundled skill validator (the skill-creator
+   system skill's `quick_validate.py`) rejects frontmatter keys other than `name`,
+   `description`, `license`, `allowed-tools`, and `metadata`, so for
+   `.agents/skills/**` the declaration must sit under the supported `metadata:` key or
+   in a sidecar manifest, not beside `name` as in NVIDIA's catalog. That is also why
+   the step-2 gate must run the host validator: a frontmatter-parses check alone would
+   approve a skill the host itself rejects.
 5. **Skill identity and permission ceiling.** A trusted name/version/artifact digest per
    skill, plus an independently reviewed maximum permission set held outside the skill.
    Without these, step 6 would enforce a caller-controlled declaration.
 6. **Wire `permissions:` into the kernel** as a deny-only policy input bound into the
-   receipt and checked against the step-5 identity and ceiling. This is the
-   differentiating step and should get a design of its own.
+   receipt and checked against the step-5 identity and ceiling. Receipt binding governs
+   only actions that reach the executor, and today's host coverage is narrow:
+   `.claude/hooks/acgs-emit-receipt.py::_classify` intercepts the edit tools and a few
+   orchestration commands, so ordinary `Read` and general `Bash` calls bypass the
+   receipt path entirely, and the `.agents` tree has no runtime gate at all. This step
+   therefore includes the host-side interception that routes every governed capability
+   through `execute_with_receipt`; until that wiring exists, the enforcement claim is
+   limited to calls already routed through that boundary. This is the differentiating
+   step and should get a design of its own.
 7. **Evals** for the skills that encode repo conventions, where drift is silent.
 8. **Full OMS-style signing** can come last; step 5 needs only a pinned digest and an
    approval record, not the complete certificate-chain apparatus, though the two should
