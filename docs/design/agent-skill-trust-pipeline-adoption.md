@@ -447,10 +447,30 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
       also be bound to the originating request/audit hash of the escalated or
       explicitly approvable decision it responds to, plus the tenant, execution boundary,
      and policy bundle/version in force, and mismatch negative tests must prove
-     a grant presented in a different tenant, under a different policy
-     bundle/version, across a different execution boundary, or against a
-      request whose audit hash differs is rejected without a side effect.
-      The decision identity above still omits the enforcement context the
+      a grant presented in a different tenant, under a different policy
+      bundle/version, across a different execution boundary, or against a
+       request whose audit hash differs is rejected without a side effect.
+       Binding the policy bundle id/version detects substitution, not
+       rollback: when an older, more permissive policy bundle and its
+       active tenant binding are restored together, receipt issuance,
+       grant consumption, and execution all observe the same stale
+       policy, every bound identifier matches what those checks consult,
+       and an action the current policy newly denies can execute if it
+       remains inside the skill ceiling; `docs/SECURITY_MODEL.md` already
+       records that no active/stale/revoked policy lifecycle registry
+       exists today to catch this. The currently active policy bundle
+       identity and version must therefore be held in monotonic,
+       rollback-refusing freshness state outside agent and child-process
+       write authority (the same trust class as the ceiling freshness
+       records and the grant ledger), with receipt issuance, grant
+       consumption, and execution each validating the policy bundle in
+       force against that state and failing closed when the bundle is
+       older than the recorded active version or the state is
+       unavailable, and a matched bundle-and-binding rollback negative
+       test that restores an older permissive bundle together with its
+       active tenant binding and proves a request the current policy
+       denies yields no executable receipt and no side effect.
+       The decision identity above still omits the enforcement context the
       fresh evaluation will run under: while a grant sits unconsumed, the
       active ceiling record, the executor profile, the permission-language
       version, or an admitted handler's deployment can be re-approved or
@@ -989,10 +1009,29 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    inherited credentials explicitly: either the shell grant is defined as
    granting the ambient credentials the process inherits (and the declaration
    documents that), or the sandboxed/brokered launch must run with an
-   allowlisted environment (secrets stripped) and inherited descriptors and
-   credential-agent handles closed, with negative tests proving the spawned
-     process can neither read a denied environment token nor use an inherited
-     credential handle. Files, sockets, environment, and credentials still do
+    allowlisted environment (secrets stripped) and inherited descriptors and
+    credential-agent handles closed, with negative tests proving the spawned
+      process can neither read a denied environment token nor use an inherited
+      credential handle. Documenting that ambient credentials are granted
+      names the credential channel, not the principal: an allowed script
+      that inherits a mutable ambient credential or default context (a
+      Kubernetes context, a cloud default role) executes as whatever that
+      credential designates at launch, so between authorization and launch
+      the credential can be repointed from the approved staging principal
+      to production while the script, its arguments, and the receipt all
+      remain unchanged, and the handler-principal binding later in this
+      design covers only admitted handlers, not spawned scripts. Shell
+      grants, their approvals, and their receipts must therefore bind the
+      effective credential principal (the stable principal, account, or
+      role identifier, with its scope and trust epoch) that each granted
+      ambient credential resolved to at authorization, and the launcher
+      must re-resolve those credentials at execution time and fail closed
+      when any designates a different principal, scope, or epoch, with a
+      shell credential-substitution negative test proving an allowed
+      script authorized while the ambient credential resolved to the
+      staging principal is refused launch, without a side effect, after
+      that credential is repointed to production.
+      Files, sockets, environment, and credentials still do
      not exhaust ambient authority: a launch that shares the host's PID or
      IPC namespace lets the spawned process signal or trace same-UID
      processes, connect over abstract Unix-domain sockets, and read or write
@@ -1182,10 +1221,26 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    select that skill's ceiling after its invocation has ended. Each context must
    therefore be bound to the host session and to the exact tool-call/request
    digest it authorizes, carry a short lifetime and a nonce or be held as a
-   non-exportable live handle, and be validated before any receipt is issued,
-    with stale-context and cross-call replay negative tests proving a context
-    from an ended invocation, or one minted for a different tool call, is
-    rejected before receipt issuance. Validating the context protects only up to
+    non-exportable live handle, and be validated before any receipt is issued,
+     with stale-context and cross-call replay negative tests proving a context
+     from an ended invocation, or one minted for a different tool call, is
+     rejected before receipt issuance. Validating the context without
+     consuming it still admits duplication at issuance: when issuance for
+     one live tool call is retried or raced, each attempt can validate the
+     same session-bound nonce and mint its own signed receipt anchored to
+     a distinct decision event, and because the execution-gate ledger
+     below consumes each distinct receipt once, one invocation context
+     then runs its side effect multiple times while the replay tests for
+     any individual receipt pass. Receipt issuance must therefore
+     atomically compare-and-consume the invocation context (or be
+     idempotent, keyed on the session, nonce, and request digest,
+     returning the already-issued receipt rather than minting another)
+     against shared durable state of the same trust class as the grant
+     ledger, so one origin context yields at most one signed receipt, with
+     a concurrent multi-issuance negative test racing retried issuance on
+     the same context and proving at most one executable receipt is ever
+     minted and the side effect runs at most once.
+     Validating the context protects only up to
     issuance: a skill-issued `ALLOW` that involves no human approval yields a
     valid signed receipt whose planned bindings carry no session, nonce, or live
     handle, and the shared consumption ledger above is scoped to approval-gated
@@ -1375,7 +1430,29 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    proving a tool call issued by a context that read a registered
    `SKILL.md` through an ordinary file read is governed by that skill's
    ceiling rather than the reader's broader non-skill ceiling, or that the
-   read itself is refused. The
+   read itself is refused. Activation on read covers only registered
+   artifacts: a non-skill context can first copy or transform a
+   registered `SKILL.md` through an admitted shell or file operation,
+   without ingesting the content into any model context, and then read
+   the unregistered destination, which is neither a registered artifact
+   nor labeled skill-produced (the copying context was non-skill, so the
+   provenance rules above assign it no skill stack), so the instructions
+   enter the model while subsequent calls retain the broader non-skill
+   ceiling and the direct-read test still passes. Registered-skill
+   identity must therefore propagate through copies and transformations:
+   any artifact whose content derives from a registered skill's
+   instruction files carries that origin (host- or broker-assigned at the
+   copying or transforming operation, the same mandatory
+   outside-writer-authority provenance mechanism as skill-written
+   artifacts, never a self-carried marker) and reading it counts as
+   ingesting the originating skill, propagating that skill's identity and
+   ceiling exactly as a direct read does, or such extraction must be
+   prevented outright (registered skill artifacts refused as the source
+   of ordinary non-loader copy and transform operations), with a
+   copy-then-read negative test proving a tool call issued by a context
+   that read a copied or transformed registered `SKILL.md` is governed by
+   the originating skill's ceiling rather than the reader's broader
+   non-skill ceiling, or that the copy itself is refused. The
    interception layer is itself inside the threat model: the current hook is
    executed directly from its working-tree path (`.claude/hooks/acgs-emit-receipt.py`,
    selected by `.claude/settings.json`) on each intercepted call, so a skill whose
