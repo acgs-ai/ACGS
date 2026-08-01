@@ -190,9 +190,13 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
 1. **Fix what is broken.** Both `govern-zone` skill copies (in flight).
 2. **Add a loadability gate.** A root test that every `SKILL.md` under `.claude/skills/**`
    and `.agents/skills/**` parses `---`-delimited frontmatter with a `name` and
-   `   description`, and passes the host's own skill validator where one ships (see step 4
-   for why the generic check alone is not enough). Cheap, deterministic, catches the
-   entire class.
+   `   description`, and enforces the host's skill schema (see step 4 for why the generic
+   check alone is not enough). The host validators do not ship in this repository or as
+   a pinned dependency: Codex's `quick_validate.py`, for example, lives only inside the
+   agent installation, so an ordinary checkout or CI runner cannot invoke it. The gate
+   must therefore vendor a pinned copy of the validator (license permitting) or encode
+   the same schema rules as a repo-local check, with a recorded upstream version to diff
+   against on host upgrades. Cheap, deterministic, catches the entire class.
 3. **Skill cards for the skills that can act.** Start with the tracked skills that run
    commands or touch privileged paths (`maintain-acgs`, `phase-gate`, and `pr-evidence`
    today: all three direct git, test, lint, or hash-check commands), and make a card the entry
@@ -205,8 +209,9 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    `description`, `license`, `allowed-tools`, and `metadata`, so for
    `.agents/skills/**` the declaration must sit under the supported `metadata:` key or
    in a sidecar manifest, not beside `name` as in NVIDIA's catalog. That is also why
-   the step-2 gate must run the host validator: a frontmatter-parses check alone would
-   approve a skill the host itself rejects.
+   the step-2 gate must enforce the host schema via its vendored validator or
+   equivalent repo-local check: a frontmatter-parses check alone would approve a skill
+   the host itself rejects.
 5. **Skill identity and permission ceiling.** A trusted name/version/artifact digest per
    skill, plus an independently reviewed maximum permission set held outside the skill.
    Without these, step 6 would enforce a caller-controlled declaration.
