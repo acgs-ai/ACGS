@@ -1010,7 +1010,21 @@ enumerated entries still passes. The host policy must therefore deny
       references that escape the snapshot, or materialize their targets inside
       the confined snapshot and include those bytes in the hashed content, with a
       negative test that mutates an external link target between authentication
-      and use and proves the mutated target is never executed or read. The
+      and use and proves the mutated target is never executed or read.
+      Materialization is itself a read, so the permitted alternative must
+      never be applied to external targets: an attacker-supplied skill can
+      bundle a symlink to a host file outside the skill root, and a
+      materializing admission process that follows it copies the target's
+      bytes into the authenticated snapshot, disclosing any file readable
+      by the admission process even though subsequent mutation is
+      prevented. Materialization is therefore permitted only for link
+      targets that resolve descriptor-relative to paths inside the source
+      skill tree; absolute targets and targets whose resolution escapes
+      the skill root are rejected at admission without ever being opened
+      or read, with a negative test bundling a symlink to an out-of-root
+      secret and proving admission fails with no byte of the target
+      disclosed into the snapshot, no authenticated snapshot, no receipt,
+      and no side effect. The
       symlink rule does not cover special inodes: a bundled FIFO, Unix
       socket, or device node is neither a symlink nor a reference whose
       target can be materialized into content, so the unchanged entry can
@@ -1139,8 +1153,20 @@ enumerated entries still passes. The host policy must therefore deny
      before the launch commits, with a concurrent revoke-versus-launch
      negative test racing key retirement against an in-flight receipt
      validated under that key, proving the launch either commits before
-     the retirement takes effect or is refused without a side effect,
-     never runs after it. Signing and hash-binding prove
+      the retirement takes effect or is refused without a side effect,
+      never runs after it. Launch is not the effect: an allowed script or
+      admitted handler can defer its governed effect, so a forged receipt
+      minted under a compromised key can launch just before the key is
+      retired, release a launch-scoped lease, and commit the effect
+      afterward even though the signer is no longer trusted,
+      contradicting the never-runs-after-it outcome above. The
+      signer-trust lease must therefore be held until the governed effect
+      commits or completes, or the launched work kept revocable or
+      brokered so key retirement revokes or re-validates in-flight work
+      before its effect commits, with a delayed-effect retirement
+      negative test retiring the signing key after launch but before a
+      deferred side effect and proving the effect either committed before
+      the retirement or never occurs. Signing and hash-binding prove
    integrity, not that the verifier understands the new fields: during a rolling
    deployment or on a stale executor worker, skill fields encoded into an existing
    extensible receipt field would let an older gate validate the signature and the
@@ -2036,7 +2062,22 @@ enumerated entries still passes. The host policy must therefore deny
       concurrent retry-to-issuance negative test presenting parallel
       retries of one authenticated non-skill request to issuance and
       proving at most one executable receipt exists and its side effect
-      runs at most once. Atomic
+      runs at most once. A key minted and returned only on first issuance
+      does not close the initial race: a transport can duplicate the
+      first authenticated attempt before either copy has received the
+      server-minted key, so both attempts arrive keyless, each mints a
+      distinct executable receipt, and replay deduplication that matches
+      only retries already carrying the returned key never fires. The
+      trusted request identity must therefore exist before any first
+      attempt is admitted: either the caller's authenticated transport
+      supplies a stable idempotency identity with every first attempt, or
+      the issuance path atomically maps the authenticated request digest
+      to at most one issuance (compare-and-swap on that digest against
+      shared durable state of the same trust class as the consumption
+      ledger) before minting, with a parallel keyless initial-attempt
+      negative test presenting duplicate authenticated first attempts
+      carrying no idempotency key and proving at most one executable
+      receipt is minted and its side effect runs at most once. Atomic
      consumption presumes the ledger's own integrity: if a governed skill can
      write the consumption store, it can delete a consumed receipt's key or
      restore an earlier ledger snapshot, making a still-valid signed receipt
@@ -2133,7 +2174,22 @@ enumerated entries still passes. The host policy must therefore deny
     first by a broader (or non-skill) context and then modified by a
     restricted skill governs its next reader at the restricted
     intersection; the provenance-stripping test below does not cover this
-    case. The host
+    case. Accumulation "at write time" still leaves two stores: when a
+    restricted skill updates an artifact whose existing label records a
+    broader or non-skill origin, publishing the new content before the
+    host label or out-of-band provenance record commits lets a concurrent
+    reader consume the restricted instructions under the old broader
+    ceiling, because nothing serializes content visibility against
+    provenance visibility. Content visibility and the accumulated
+    provenance must therefore commit as one atomic transition (the
+    updated content becomes readable only in the same commit that records
+    the contributing origin stack, or the artifact is held unreadable,
+    locked or unpublished, until the provenance record commits), with a
+    concurrent update-versus-read negative test racing a restricted
+    skill's update against a broader reader and proving the reader
+    observes either the old content under the old provenance or the new
+    content under the accumulated provenance, never the restricted
+    content under the broader ceiling. The host
     must then either propagate
    the originating ceiling (intersected as above) into every model context
    that consumes such an artifact, retained until that context is discarded,
