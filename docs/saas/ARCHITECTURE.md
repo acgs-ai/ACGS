@@ -2,9 +2,10 @@
 
 **Status:** Phase-0 target beta contract (G008).
 
-**Not an implementation claim:** This document freezes an architecture and
-acceptance boundary for future work. It does not assert that a managed service,
-browser BFF, signed policy synchronization, durable evidence store, independent
+**Not an implementation claim:** This document freezes the beta architecture
+and acceptance boundary, with explicit current-local exceptions. The G201
+enrollment and G202/G203 policy lifecycle/sync slices described below do not
+assert that a managed service, browser BFF, durable evidence store, independent
 witness, deployment, customer use, production readiness, or commercial offering
 exists today.
 
@@ -15,8 +16,23 @@ what exists. It records a partial local receipt/executor foundation, a local
 alpha control-plane path that uses a legacy receipt flow, per-organization JSONL
 audit behavior, and no surveyed managed ingestion, signed policy sync, durable
 spool, independent witness, browser BFF, migration system, or
-project/environment scope. It is not safe to infer any target component below
-from a local proof or from a UI fixture.
+project/environment scope. Those observations remain the frozen survey baseline;
+later current-local exceptions must be supported by code, tests, and the delivery
+DAG. It is not safe to infer any other target component below from a local proof
+or from a UI fixture.
+
+Current-local exception for G202/G203: branch `beta/p4-policy-sync-002` contains
+a governed signed policy publication/activation substrate, an authenticated
+read-only `/v1/runtime-identities/{identity_id}/policy-bundle` endpoint, strict
+policy-sync v2 verification, and an owner-only last-known-good cache with a
+durable high-water floor. The cache and floor are separately atomically
+replaced, not pairwise transactional. `UniversalGateway` can evaluate that verified policy
+under a cache lease and return native assurance only after a signed, expiring,
+single-use receipt-v2 executes successfully. This is an implementation-only
+slice. G203 remains incomplete because G202 and bounded evidence-spool/capacity
+semantics are incomplete. Separately, aggregate G017 remains incomplete because
+no G204 signed persisted wiring attestation, G205 operator fleet-status surface,
+or canonical `run.json` exists.
 
 The [G007 product contract](PRODUCT_REQUIREMENTS.md) defines the user outcome
 and invariants. [ROADMAP.md](../ROADMAP.md) remains the roadmap of record;
@@ -174,6 +190,24 @@ argument digest. Its access, retention, deletion, and export rules are
 explicitly governed by data classification.
 
 ## Policy distribution, outage, and degraded operation
+
+The current-local G203 slice implements the core signed LKG behavior for one
+enrolled gate. It authenticates sync requests, verifies separate policy-envelope
+and sync-attestation trust, pins activation commitments and monotonic cursor/head
+state, and performs local evaluation without a network call. Fresh snapshots are
+usable locally; stale snapshots are usable only inside both their signed expiry
+and the configured degraded window. Expired, locally revoked, rollbacked,
+equivocated, corrupt, or untrusted state fails closed. The cache and high-water
+sidecar are owner-only and each is atomically replaced, but the pair is not a
+transaction. The high-water record advances first; if a crash occurs before the
+cache replacement, restart forces an unconditional authenticated fetch and still
+rejects a response below the preserved floor. Both files share one filesystem
+trust boundary; independent/off-host anti-rollback anchoring is not implemented.
+The bounded evidence spool and its record/byte/time limits, durable
+acknowledgement, observability, and capacity-exhaustion failure behavior are also
+not implemented, so G203 remains incomplete.
+
+The remainder of this section is the beta target contract.
 
 Only a signed, compatible, scope-bound, unexpired last-known-good (LKG) policy
 and trust cache may be used locally while the managed plane is unavailable.

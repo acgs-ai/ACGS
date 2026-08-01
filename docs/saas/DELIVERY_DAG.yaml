@@ -1189,24 +1189,26 @@
       ],
       "risk_class": "red",
       "positive_tests": [
-        "Signature, lifecycle, locked concurrent activation, diff, simulation, rollout, and rollback tests pass."
+        "Current-local tests cover signed immutable publication, governed activation, idempotent replay, scope/trust validation, and one-winner PostgreSQL head advancement.",
+        "Completion still requires review, stale, superseded, revoked, diff, simulation, staged rollout, and rollback tests."
       ],
       "forbidden_side_effect_negative_tests": [
         "Unsigned, stale, revoked, wrong-tenant, incompatible, or concurrent second-active policy cannot activate."
       ],
       "validation_commands": [
-        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests/test_policy_registry_managed.py --import-mode=importlib -q",
+        "cd packages/acgs-control-plane && ./scripts/run_postgres_gate.sh tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_publish_immutable_version_without_head tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_activate_advances_exactly_one_head tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_concurrent_candidates_have_one_generation_winner tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_publish_idempotent_replay_is_one_terminal_effect tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_idempotency_conflict_has_zero_delta tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_activation_revalidates_trust_and_rolls_back_before_effect",
         "git diff --check"
       ],
-      "evidence_artifact": "Signed policy lifecycle test report",
-      "branch": null,
+      "evidence_artifact": "Current-local signed policy publication/activation code and focused SQLite/PostgreSQL tests; complete lifecycle report remains absent.",
+      "branch": "beta/p3-policy-001",
       "worktree": null,
       "pr": null,
-      "status": "planned",
-      "implementation_state": "missing",
-      "evidence_state": "unverified",
+      "status": "in_progress",
+      "implementation_state": "partial",
+      "evidence_state": "local_verified",
       "blocker": null,
-      "next_safe_action": "Survey and freeze the signed policy lifecycle and exactly-one-active invariant contract before implementation.",
+      "next_safe_action": "Add review, stale, superseded, revoked, diff, simulation, staged-rollout, and rollback semantics with fail-closed concurrency tests before marking G202 completed.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
@@ -1232,25 +1234,29 @@
       ],
       "risk_class": "red",
       "positive_tests": [
-        "ETag/cursor sync, cache verification, expiry, outage window, and spool-capacity tests pass."
+        "Current-local endpoint and runtime tests cover signed v2 snapshots, authenticated exact-path/query/empty-body requests, ETag/cursor 304 behavior, independent publisher and sync-attestation trust, cache verification, monotonic high-water state, and fresh/degraded/expired local operation.",
+        "Current-local dispatcher integration executes a native ALLOW once through UniversalGateway while DENY and invalid cache, scope, trust, generation, cursor, expiry, rollback, and key-alias cases execute zero."
       ],
       "forbidden_side_effect_negative_tests": [
-        "Expired or revoked cache, trust change, new approval, or exhausted bounds cannot allow."
+        "Expired, revoked, rollbacked, equivocated, corrupt, wrong-scope, wrong-credential, wrong-key-purpose, or physically aliased trust cannot allow.",
+        "Public or legacy Kernel dispatch of SyncedRuleSetPolicy remains DENY; only the managed cache-lease path can evaluate it.",
+        "Completion requires a bounded durable evidence spool whose record, byte, and time limits, durable acknowledgement, observability, and full-capacity high-risk fail-closed behavior are tested; that spool is not implemented in the current slice."
       ],
       "validation_commands": [
-        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
-        "uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q",
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests/test_policy_sync_routes.py packages/acgs-control-plane/tests/test_openapi_drift.py --import-mode=importlib -q",
+        "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_policy_sync.py packages/gove-zone/tests/test_runtime_identity.py packages/gove-zone/tests/test_executor_guard.py --import-mode=importlib -q",
+        "uv run python -m pytest tests/saas_beta/test_policy_sync_integration.py --import-mode=importlib -q",
         "git diff --check"
       ],
-      "evidence_artifact": "Hosted-outage and policy-sync proof",
-      "branch": null,
-      "worktree": null,
+      "evidence_artifact": "G017 current-local implementation and negative-path suites on beta/p4-policy-sync-002; independent architect verdict is implementation-only GO. G203 remains incomplete because G202 and bounded evidence-spool/capacity semantics are incomplete. Separately, aggregate G017 remains incomplete because no signed persisted wiring attestation, operator fleet status, or canonical run.json exists.",
+      "branch": "beta/p4-policy-sync-002",
+      "worktree": "saas-beta/p4-policy-sync-002",
       "pr": null,
-      "status": "planned",
-      "implementation_state": "missing",
-      "evidence_state": "unverified",
-      "blocker": null,
-      "next_safe_action": "Survey and freeze the policy sync and bounded degraded mode contract before implementation.",
+      "status": "in_progress",
+      "implementation_state": "partial",
+      "evidence_state": "local_verified",
+      "blocker": "G202 is incomplete, and the bounded evidence spool with record/byte/time limits, durable acknowledgement, observability, and high-risk fail-closed capacity behavior is not implemented.",
+      "next_safe_action": "Complete G202, then implement and failure-test the bounded durable evidence spool and capacity-exhaustion contract before marking G203 completed. G204 wiring, G205 fleet state, and canonical run.json remain separate aggregate G017 gates.",
       "mandatory": true,
       "completion_scope": "non_external"
     },

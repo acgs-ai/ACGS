@@ -213,6 +213,50 @@ class RuntimeEnrollmentResponse(BaseModel):
     receipt_id: str
 
 
+class PolicySyncScope(BaseModel):
+    """Exact environment and gate scope bound into a policy snapshot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: str
+    project_id: str
+    environment_id: str
+    gate_id: str
+
+
+class PolicySyncSnapshot(BaseModel):
+    """Short-lived, signed projection of one active environment policy head."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_: str = Field(alias="schema", serialization_alias="schema")
+    purpose: str
+    scope: PolicySyncScope
+    runtime_identity_id: str
+    credential_id: str
+    credential_generation: int
+    cursor: str
+    head_generation: int
+    head_updated_at: str
+    policy_version_id: str
+    policy_id: str
+    version: str
+    content_hash: str
+    policy_envelope: dict[str, Any]
+    activation_receipt_id: str
+    activation_receipt_hash: str
+    activation_event_hash: str
+    attestation_purpose: str
+    attestation_trust_epoch: int
+    attestation_key_id: str
+    attestation_signature_algorithm: str
+    issued_at: str
+    revocation_checked_at: str
+    fresh_until: str
+    expires_at: str
+    attestation_signature: str
+
+
 class RuntimeSignedRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

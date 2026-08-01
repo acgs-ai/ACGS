@@ -1087,7 +1087,10 @@ def _effective_now(now: datetime | None) -> datetime:
 
 
 def _nonce() -> str:
-    return b64url_encode(os.urandom(18))
+    # Namespace the full 144-bit random value with a canonical alphanumeric
+    # prefix. Raw base64url may begin with ``-`` or ``_``, while identifiers
+    # deliberately require an alphanumeric first character.
+    return "n-" + b64url_encode(os.urandom(18))
 
 
 def _require_str(value: object, field: str) -> str:

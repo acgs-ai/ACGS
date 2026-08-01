@@ -216,6 +216,39 @@ receipt-signing-key revocation when supplied, but no global receipt/nonce
 revocation service) and `policy_timeout` (hang → DENY only when configured). Set
 both for a hardened deployment.
 
+### Current-local policy-sync and managed-gateway boundary
+
+Branch `beta/p4-policy-sync-002` adds a local/test, read-only policy-sync v2
+slice. The control-plane endpoint authenticates the enrolled runtime over the
+exact raw path, query, and empty body, revalidates the active policy and its
+governed activation evidence, then returns a scope-bound signed snapshot. The
+policy publisher and policy-sync attester use distinct trust purposes and must
+use distinct physical keys; the configured production posture fails startup
+when the independent attestation provider is absent or reuses publisher trust.
+The activation receipt ID/hash and event hash are authenticated commitments in
+the snapshot. They are not locally replayed activation artifacts.
+
+The runtime accepts only the strict v2 schema, verifies both signature layers,
+scope, credential generation, cursor/head monotonicity, trust status, bounded
+freshness, expiry, and revocation-check age, and atomically persists the
+last-known-good snapshot. Its owner-only cache and high-water sidecar reject
+rollback, equivocation, missing/corrupt floor state, insecure permissions, and
+partial-write recovery fail closed. Both files share one local-filesystem trust
+boundary: an attacker able to rewrite them consistently is not stopped by this
+mechanism. Independent/off-host rollback anchoring remains unimplemented.
+
+Policy evaluation performs no network call. A fresh snapshot is used locally;
+a stale snapshot is usable only inside its signed expiry and configured degraded
+window; expiry, locally known revocation, cache corruption, or unavailable trust
+executes zero side effects. `SyncedRuleSetPolicy.evaluate()` itself returns
+DENY, so the verified policy is executable only inside its cache lease through
+the managed `UniversalGateway`. That path additionally requires a third
+physical decision-receipt key, signed receipt-v2 verification, exact runtime/
+policy/provenance bindings, expiry, and single-use consumption. It reports
+`native` only after `execute_with_receipt` succeeds. This is implementation-only
+local evidence, not persisted wiring proof, fleet state, managed evidence-plane
+acceptance, deployment, or production readiness.
+
 ## Governed-MCP gateway trust boundary
 
 The governed-MCP gateway (`packages/gove-zone/src/gove_zone/adapters/mcp_gateway.py`)

@@ -579,6 +579,26 @@ EXPECTED_RUNTIME_PLATFORM_PATHS: dict[str, dict[str, dict[str, Any]]] = {
             "tag": "runtime-identities",
         }
     },
+    "/v1/runtime-identities/{identity_id}/policy-bundle": {
+        "get": {
+            "operation_id": "runtime-identity.policy-sync",
+            "parameters": _expected_params(
+                "path:identity_id",
+                "query:cursor",
+                "header:X-ACGS-Runtime-Identity-ID",
+                "header:X-ACGS-Runtime-Key-ID",
+                "header:X-ACGS-Runtime-Audience",
+                "header:X-ACGS-Runtime-Credential-ID",
+                "header:X-ACGS-Runtime-Credential-Generation",
+                "header:X-ACGS-Runtime-Timestamp",
+                "header:X-ACGS-Runtime-Nonce",
+                "header:X-ACGS-Runtime-Body-Sha256",
+                "header:X-ACGS-Runtime-Signature",
+            ),
+            "responses": ["200", "304", "422"],
+            "tag": "runtime-identities",
+        }
+    },
 }
 
 EXPECTED_PATHS: dict[str, dict[str, dict[str, Any]]] = {
@@ -652,6 +672,8 @@ EXPECTED_COMPONENTS = {
     "RuntimeEnrollmentResponse",
     "RuntimeIdentityDescriptor",
     "RuntimeIdentityRevokeRequest",
+    "PolicySyncScope",
+    "PolicySyncSnapshot",
     "SimulateRequest",
     "SimulateResponse",
     PLATFORM_BOOTSTRAP_RESPONSE_COMPONENT,
@@ -663,6 +685,75 @@ EXPECTED_COMPONENTS = {
 }
 
 EXPECTED_SELECTED_COMPONENTS: dict[str, dict[str, Any]] = {
+    "PolicySyncScope": {
+        "properties": {
+            "environment_id": {"type": "string"},
+            "gate_id": {"type": "string"},
+            "org_id": {"type": "string"},
+            "project_id": {"type": "string"},
+        },
+        "required": ["org_id", "project_id", "environment_id", "gate_id"],
+        "type": "object",
+    },
+    "PolicySyncSnapshot": {
+        "properties": {
+            "content_hash": {"type": "string"},
+            "activation_event_hash": {"type": "string"},
+            "activation_receipt_hash": {"type": "string"},
+            "activation_receipt_id": {"type": "string"},
+            "credential_generation": {"type": "integer"},
+            "credential_id": {"type": "string"},
+            "cursor": {"type": "string"},
+            "expires_at": {"type": "string"},
+            "fresh_until": {"type": "string"},
+            "head_generation": {"type": "integer"},
+            "head_updated_at": {"type": "string"},
+            "issued_at": {"type": "string"},
+            "attestation_key_id": {"type": "string"},
+            "attestation_purpose": {"type": "string"},
+            "attestation_signature": {"type": "string"},
+            "attestation_signature_algorithm": {"type": "string"},
+            "attestation_trust_epoch": {"type": "integer"},
+            "policy_envelope": {"type": "object"},
+            "policy_id": {"type": "string"},
+            "policy_version_id": {"type": "string"},
+            "purpose": {"type": "string"},
+            "revocation_checked_at": {"type": "string"},
+            "runtime_identity_id": {"type": "string"},
+            "schema": {"type": "string"},
+            "scope": {"$ref": "#/components/schemas/PolicySyncScope"},
+            "version": {"type": "string"},
+        },
+        "required": [
+            "schema",
+            "purpose",
+            "scope",
+            "runtime_identity_id",
+            "credential_id",
+            "credential_generation",
+            "cursor",
+            "head_generation",
+            "head_updated_at",
+            "policy_version_id",
+            "policy_id",
+            "version",
+            "content_hash",
+            "policy_envelope",
+            "activation_receipt_id",
+            "activation_receipt_hash",
+            "activation_event_hash",
+            "attestation_purpose",
+            "attestation_trust_epoch",
+            "attestation_key_id",
+            "attestation_signature_algorithm",
+            "issued_at",
+            "revocation_checked_at",
+            "fresh_until",
+            "expires_at",
+            "attestation_signature",
+        ],
+        "type": "object",
+    },
     "ExportSummary": {
         "properties": {
             "bundle_hash": {"type": "string"},
@@ -1065,6 +1156,7 @@ def test_current_openapi_contract_records_missing_beta_contract_boundaries(
         if any(parameter["name"] == "cursor" for parameter in operation.get("parameters", []))
     ]
     assert cursor_parameters == [
+        ("/v1/runtime-identities/{identity_id}/policy-bundle", "get"),
         ("/orgs/{org_id}/receipts", "get"),
         ("/v1/orgs/{org_id}/receipts", "get"),
     ]

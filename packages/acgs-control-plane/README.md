@@ -26,6 +26,7 @@ production governance membrane. In the local development profile:
 | Policy registry | `POST /orgs/{org}/policies` (content-addressed versions via `RuleSetPolicy`), governed activation, dry-run `POST .../policies/simulate`; managed registry tables were added in revision `0008` |
 | Managed approvals | `POST /orgs/{org}/approvals/{approval_request_id}/votes`, `POST .../resume` for the `agent.register` ESCALATE path only |
 | Runtime enrollment | Local/test one-time runtime gate bootstrap, proof-of-possession enrollment, credential renewal, and revocation for a scoped org/project/environment gate |
+| Runtime policy sync | Local/test authenticated `GET /v1/runtime-identities/{identity_id}/policy-bundle` with a separately attested signed v2 snapshot and cursor-based `304` renewal |
 | Receipt explorer | `GET /orgs/{org}/receipts` (filter: decision/tool/actor/time, paginated), `GET .../receipts/{id}`, `POST .../receipts/{id}/verify` |
 | Audit dashboard | `GET /orgs/{org}/dashboard` — decision mix, top tools/actors, agent gauges, live chain verification |
 | Compliance export | `POST /orgs/{org}/exports` — hash-manifested evidence bundle (org, policies, agents, receipts, raw audit chain), externally recomputable via `exports.verify_export_bundle` |
@@ -108,8 +109,46 @@ The PostgreSQL gate for this slice runs disposable-database concurrency checks:
 remain isolated, renew/replay/revoke/expired paths are nonduplicating, and the
 database rejects duplicate active bootstrap or credential rows with the expected
 unique constraints. This is runtime enrollment evidence only; it is not hosted
-fleet management, policy sync, evidence ingestion, production deployment, or an
+fleet management, evidence ingestion, production deployment, or an
 external security assessment.
+
+## Runtime policy synchronization (local/test)
+
+An enrolled runtime can read its active signed policy snapshot from
+`GET /v1/runtime-identities/{identity_id}/policy-bundle`. The runtime signs the
+exact `GET` method, raw path, canonical query string, and empty body using its
+active workload credential. The route requires the runtime identity, workload
+key, audience, credential id and generation, timestamp, nonce, empty-body hash,
+and signature in the `X-ACGS-Runtime-*` headers defined by the OpenAPI contract.
+Authentication failures are refused without returning a policy snapshot, and
+the read creates no governance receipt, event, outbox row, consumption record,
+or nonce row.
+
+A `200` response uses `Cache-Control: private, no-store` and carries an
+`acgs.policy-sync.snapshot/v2` payload. It contains the signed policy envelope
+plus its exact org/project/environment/gate and runtime-credential bindings. It
+also commits to the active policy head, policy version and content hash, and the
+validated activation receipt id/hash and governance event hash. The outer
+snapshot uses the separate `acgs.policy-sync-attestation/v1` purpose. Policy
+publication and policy-sync attestation must use distinct providers and physical
+keys; provider, key-id, or public-key reuse is refused.
+
+The response includes an opaque content cursor and `ETag`. A runtime renews by
+signing the exact query `cursor=<cursor>` with a fresh timestamp and nonce. If
+that cursor still describes the fully revalidated active snapshot, the server
+returns `304` with no body; a changed policy head, publisher trust, activation
+commitment, runtime credential, or attestation trust returns a newly signed
+`200` snapshot and cursor. Missing, expired, revoked, mismatched, or tampered
+identity, credential, policy, activation, publisher-key, or attestation-trust
+state fails closed.
+
+The explicit local-development posture supplies deterministic, purpose-limited,
+separate policy-publisher and sync-attestation issuers for repeatable tests only.
+Production posture requires injected policy-registry issuance/sealing providers
+and an independent policy-sync attestation provider; missing or reused providers
+fail startup loudly. This is locally implemented and tested distribution, not
+production deployment, hosted fleet evidence, or proof that customer runtimes
+are wired to enforce the synchronized policy.
 
 When the active managed policy returns ESCALATE for `agent.register`, the
 control plane now creates a scoped pending approval request in the same managed
@@ -252,8 +291,9 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
 - **Runtime enrollment is local/test only**: revision `0011` proves scoped
   bootstrap issuance, proof-of-possession enrollment, descriptor signing,
   renewal, revocation, replay refusal, and PostgreSQL concurrency behavior under
-  local providers. It does not prove hosted fleet operations, policy sync,
-  evidence ingestion, customer runtime deployment, or production custody.
+  local providers. The authenticated policy-sync route is also implemented and
+  tested locally; neither slice proves hosted fleet operations, evidence
+  ingestion, customer runtime deployment, or production custody.
 - **Approval payload custody is local/test only**: the default approval payload
   sealer is a deterministic local AES-GCM provider. Non-local posture must inject
   production custody providers or startup fails loudly.
@@ -268,11 +308,11 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
 - **An export never references its own receipt**: the `export.generate` receipt is
   minted after the bundle is sealed, so it appears in the *next* export — evidence
   chains forward.
-- There is no authenticated customer-runtime evidence-ingestion API, signed
-  policy-sync API, independently witnessed evidence plane, deployed production
-  service, external audit, customer-use evidence, or guarantee of exactly-once
-  external effects. Horizontal operation is constrained by per-org local JSONL
-  files, and verification scans the chain.
+- There is no authenticated customer-runtime evidence-ingestion API,
+  independently witnessed evidence plane, deployed production service, external
+  audit, customer-use evidence, or guarantee of exactly-once external effects.
+  Horizontal operation is constrained by per-org local JSONL files, and
+  verification scans the chain.
 
 ## Approval proof commands
 

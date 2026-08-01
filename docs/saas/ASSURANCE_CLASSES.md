@@ -2,9 +2,11 @@
 
 **Status:** Phase-0 target beta contract (G007).
 
-**Not an implementation claim:** The classes below specify future acceptance
-semantics. The G006 survey found no shipped managed ingestion, witness,
-cross-platform adapter profile, or class-aware managed console.
+**Not an implementation claim:** The classes below specify future end-to-end
+acceptance semantics, with one explicit current-local native-path exception.
+The G006 survey found no shipped managed ingestion, witness, cross-platform
+adapter profile, or class-aware managed console; those capabilities remain
+absent.
 
 ## Current-state boundary
 
@@ -14,6 +16,17 @@ project/environment binding is a target requirement, not a universal current
 receipt property. The local control plane and local/MCP approval surfaces do not
 establish the managed evidence or approval operation defined here.
 [ROADMAP.md](../ROADMAP.md) remains the sole roadmap of record.
+
+Branch `beta/p4-policy-sync-002` implements one narrow native path for a synced
+managed policy. `UniversalGateway` holds the verified local-cache lease, requires
+policy-publisher, sync-attestation, and decision-receipt trust to use three
+distinct physical keys, mints a signed expiring receipt-v2 with exact scope,
+policy, and provenance commitments, and consumes it once before execution. A
+successful result carries `assurance_class="native"`; denial or any verification,
+cache, trust, expiry, replay, or binding failure executes zero and does not
+produce a native success result. Public/legacy evaluation of the synced policy
+returns DENY. This local result is not accepted managed evidence, persisted
+wiring proof, fleet state, or implementation of federated/observed classes.
 
 ## Target beta contract
 
@@ -57,8 +70,10 @@ eligible to issue native assurance.
 
 ## Evidence and next gate
 
-The class model is a contract for G203, G204, G301-G304, G404, and G502. It
-must receive API, storage, verifier, UI, export, and negative-path tests before
-any class is shown as implemented. Current local assurance limits remain in
+The class model is a contract for G203, G204, G301-G304, G404, and G502. The
+current-local native gateway exception above does not complete that end-to-end
+contract; API ingestion, storage, verifier, UI, export, and class-separation
+negative-path tests remain required before managed assurance is accepted.
+Current local assurance limits remain in
 [CLAIMS.md](../CLAIMS.md), [SECURITY_MODEL.md](../SECURITY_MODEL.md), and the
 [G006 survey](CURRENT_STATE_SURVEY.md).

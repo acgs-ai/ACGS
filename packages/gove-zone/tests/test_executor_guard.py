@@ -134,6 +134,39 @@ def test_executor_refuses_tampered_receipt() -> None:
     assert not tracker.called
 
 
+def test_executor_constraint_mismatch_executes_zero_and_does_not_burn(
+    tmp_path: Any,
+) -> None:
+    import dataclasses
+
+    from gove_zone import ReceiptConsumptionLedger, ReceiptRejectionReason
+
+    tracker = SideEffectTracker()
+    receipt = make_test_receipt()
+    receipt = dataclasses.replace(receipt, constraints={"schema": "expected", "value": 1})
+    receipt = dataclasses.replace(receipt, receipt_hash=receipt.compute_hash())
+    ledger_path = tmp_path / "ledger.jsonl"
+    ledger = ReceiptConsumptionLedger(ledger_path)
+
+    with pytest.raises(ReceiptValidationError) as exc_info:
+        execute_with_receipt(
+            tool_fn=tracker.run_tool,
+            args={"path": "safe.txt"},
+            receipt=receipt,
+            expected_tenant_id="tenant-A",
+            expected_execution_boundary="local-sandbox",
+            expected_action="runtime.file.write",
+            expected_actor="anonymous",
+            expected_constraints={"schema": "expected", "value": 2},
+            require_signature=False,
+            consumption_ledger=ledger,
+        )
+
+    assert exc_info.value.reason_code is ReceiptRejectionReason.CONSTRAINTS_MISMATCH
+    assert not tracker.called
+    assert not ledger_path.exists() or ledger_path.read_text(encoding="utf-8") == ""
+
+
 def test_executor_refuses_denied_receipt() -> None:
     tracker = SideEffectTracker()
     receipt = make_test_receipt("deny")

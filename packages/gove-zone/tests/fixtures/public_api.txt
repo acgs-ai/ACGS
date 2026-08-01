@@ -2,6 +2,7 @@
 # Regenerate ONLY for an intentional surface change:
 #   uv run --package gove-zone python -c 'import gove_zone; print("\n".join(sorted(gove_zone.__all__)))' >> this file (below the header)
 AllowAllPolicy
+AtomicJsonPolicyCache
 AtomicJsonRuntimeIdentityStore
 AuditChainError
 AuditError
@@ -55,6 +56,7 @@ LedgerObservability
 LocalDevelopmentFileWorkloadKeyProvider
 LocalProcessSandbox
 ManagedAgent
+ManagedPolicyProvenance
 MockAzureADAdapter
 MockGoogleWorkspaceAdapter
 MockIdentityProvider
@@ -67,6 +69,10 @@ Policy
 PolicyBundleRef
 PolicyError
 PolicyRule
+PolicySyncClient
+PolicySyncError
+PolicySyncScope
+PolicySyncSnapshot
 Principal
 PrincipalEntry
 PrincipalRegistry
@@ -103,10 +109,12 @@ RuntimeIdentityError
 SCHEMA_VERSION
 SandboxError
 SandboxProvider
+ScopedDecisionReceiptConfig
 SealedTool
 SignedRequestClient
 SigningError
 StaticReceiptTrustRegistry
+SyncedRuleSetPolicy
 TenantPolicyBinding
 TenantPolicyStore
 ToolCall
@@ -177,6 +185,7 @@ tool_calls_from_hook_payload
 validate_authority
 verify_dag_replay
 verify_enrollment_pop
+verify_policy_sync_snapshot
 verify_proof_pack
 verify_signed_runtime_request
 verify_workflow_replay

@@ -273,6 +273,11 @@ ROUTE_CONTRACTS: tuple[RouteContract, ...] = (
         "/v1/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies",
         ExecutionClass.READ_ONLY_OPERATION,
     ),
+    RouteContract(
+        "GET",
+        "/v1/runtime-identities/{identity_id}/policy-bundle",
+        ExecutionClass.READ_ONLY_OPERATION,
+    ),
     *(RouteContract(m, p, ExecutionClass.READ_ONLY_OPERATION) for m, p in _READ_PATHS),
     *(RouteContract(m, f"/v1{p}", ExecutionClass.READ_ONLY_OPERATION) for m, p in _READ_PATHS),
     *(

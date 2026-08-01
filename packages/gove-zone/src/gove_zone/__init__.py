@@ -92,6 +92,7 @@ from gove_zone.frontend_contract import (
 from gove_zone.gateway import (
     BypassAttemptError,
     GatewayResult,
+    ScopedDecisionReceiptConfig,
     SealedTool,
     UniversalGateway,
     http_json_tool,
@@ -134,6 +135,16 @@ from gove_zone.policy import (
     RiskTierPolicy,
     RuleSetPolicy,
     new_event_id,
+)
+from gove_zone.policy_sync import (
+    AtomicJsonPolicyCache,
+    ManagedPolicyProvenance,
+    PolicySyncClient,
+    PolicySyncError,
+    PolicySyncScope,
+    PolicySyncSnapshot,
+    SyncedRuleSetPolicy,
+    verify_policy_sync_snapshot,
 )
 from gove_zone.profile import GovernanceProfile
 from gove_zone.receipt import DecisionReceipt, Receipt, Validator, safe_result_hash
@@ -240,6 +251,7 @@ __all__ = [
     "AuthzReason",
     "AuthzRegistryError",
     "AtomicJsonRuntimeIdentityStore",
+    "AtomicJsonPolicyCache",
     "ChainHashAuditStore",
     "AuthorityGrant",
     "AuthorityViolationError",
@@ -278,6 +290,7 @@ __all__ = [
     "GateMode",
     "GateModeError",
     "GatewayResult",
+    "ScopedDecisionReceiptConfig",
     "GovernanceProfile",
     "SealedTool",
     "UniversalGateway",
@@ -308,6 +321,11 @@ __all__ = [
     "PolicyBundleRef",
     "PolicyRule",
     "PolicyError",
+    "PolicySyncClient",
+    "PolicySyncError",
+    "PolicySyncScope",
+    "PolicySyncSnapshot",
+    "ManagedPolicyProvenance",
     "ProductionProfileError",
     "ProofPackRejectionReason",
     "ProofPackVerificationResult",
@@ -341,6 +359,7 @@ __all__ = [
     "SigningError",
     "SignedRequestClient",
     "StaticReceiptTrustRegistry",
+    "SyncedRuleSetPolicy",
     "TenantPolicyBinding",
     "TenantPolicyStore",
     "TransformPolicy",
@@ -407,6 +426,7 @@ __all__ = [
     "verify_dag_replay",
     "verify_enrollment_pop",
     "verify_proof_pack",
+    "verify_policy_sync_snapshot",
     "verify_signed_runtime_request",
     "verify_workflow_replay",
 ]

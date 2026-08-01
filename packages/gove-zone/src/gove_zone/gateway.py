@@ -59,6 +59,7 @@ surfaces operate on plain dicts; the LangGraph surface lazily imports
 from __future__ import annotations
 
 import contextvars
+import hmac
 import inspect
 import json
 import uuid
@@ -66,7 +67,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from gove_zone.audit import ChainHashAuditStore
 from gove_zone.consumption import ReceiptConsumptionLedger
@@ -82,14 +83,22 @@ from gove_zone.executor import execute_with_receipt
 from gove_zone.integration import tool_calls_from_hook_payload
 from gove_zone.kernel import Kernel
 from gove_zone.policy import Policy
+from gove_zone.policy_sync import ManagedPolicyProvenance, PolicySyncError, SyncedRuleSetPolicy
 from gove_zone.profile import GovernanceProfile
 from gove_zone.receipt import DecisionReceipt, Validator
 from gove_zone.rejection import HUMAN_APPROVAL, REVISE_AND_RETRY, rejection_dict
 from gove_zone.tool import ToolCall, normalize_path_context
+from gove_zone.trust import (
+    DECISION_RECEIPT_PURPOSE,
+    ReceiptTrustRegistry,
+    ReceiptTrustScope,
+    TrustConfigurationError,
+)
 
 __all__ = [
     "BypassAttemptError",
     "GatewayResult",
+    "ScopedDecisionReceiptConfig",
     "SealedTool",
     "UniversalGateway",
     "http_json_tool",
@@ -104,6 +113,7 @@ BYPASS_RULE = "BYPASS_ATTEMPT"
 _SYNTHETIC_POLICY_VERSION = "gateway/synthesized/v1"
 
 _ACTOR_ALLOWLIST_RULE = "ACTOR_NOT_ALLOWED"
+_POLICY_SYNC_FAIL_CLOSED_RULE = "POLICY_SYNC_FAIL_CLOSED"
 
 #: One-shot execution grant bound to a specific SealedTool *instance*. Set by
 #: ``invoke`` immediately around the executor gate; consumed by that sealed
@@ -112,6 +122,10 @@ _ACTOR_ALLOWLIST_RULE = "ACTOR_NOT_ALLOWED"
 #: is detected as a bypass.
 _ACTIVE_GRANT: contextvars.ContextVar[_GateGrant | None] = contextvars.ContextVar(
     "gove_zone_gateway_grant", default=None
+)
+
+_ACTIVE_MANAGED_BINDING: contextvars.ContextVar[tuple[int, ManagedPolicyProvenance] | None] = (
+    contextvars.ContextVar("gove_zone_gateway_managed_binding", default=None)
 )
 
 
@@ -189,6 +203,32 @@ class SealedTool:
         return f"SealedTool({self.name!r})"
 
 
+@dataclass(frozen=True, slots=True)
+class ScopedDecisionReceiptConfig:
+    """Managed receipt-v2 scope and decision-receipt trust contract."""
+
+    project_id: str
+    environment_id: str
+    gate_id: str
+    trust_epoch: int
+    trust_registry: ReceiptTrustRegistry
+    trust_purpose: str = DECISION_RECEIPT_PURPOSE
+
+    def __post_init__(self) -> None:
+        for field_name in ("project_id", "environment_id", "gate_id", "trust_purpose"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise TrustConfigurationError(f"{field_name} is required for managed receipts")
+        if type(self.trust_epoch) is not int or self.trust_epoch <= 0:
+            raise TrustConfigurationError("trust_epoch must be a positive integer")
+        if self.trust_registry is None:
+            raise TrustConfigurationError("trust_registry is required for managed receipts")
+        if self.trust_purpose != DECISION_RECEIPT_PURPOSE:
+            raise TrustConfigurationError(
+                "managed receipts require exactly the decision-receipt trust purpose"
+            )
+
+
 @dataclass(frozen=True)
 class GatewayResult:
     """Uniform outcome of one governed invocation, shared by every surface.
@@ -215,6 +255,7 @@ class GatewayResult:
     receipt: DecisionReceipt | None = None
     envelope: dict[str, Any] | None = None
     error_class: str = ""
+    assurance_class: str = ""
 
     @property
     def executed(self) -> bool:
@@ -245,6 +286,8 @@ class GatewayResult:
             payload["envelope"] = self.envelope
         if self.error_class:
             payload["error_class"] = self.error_class
+        if self.assurance_class:
+            payload["assurance_class"] = self.assurance_class
         return payload
 
 
@@ -282,6 +325,7 @@ class UniversalGateway:
         ledger_path: str | Path | None = None,
         receipt_ttl_seconds: float | None = None,
         allowed_actors: frozenset[str] | set[str] | None = None,
+        scoped_receipt_config: ScopedDecisionReceiptConfig | None = None,
     ) -> None:
         self.tenant_id = tenant_id
         self.execution_boundary = execution_boundary
@@ -292,6 +336,56 @@ class UniversalGateway:
         self.policy_bundle_id = policy_bundle_id or policy.version
         self.receipt_ttl_seconds = receipt_ttl_seconds
         self.allowed_actors = frozenset(allowed_actors) if allowed_actors is not None else None
+        self.scoped_receipt_config = scoped_receipt_config
+        self._managed_policy = isinstance(policy, SyncedRuleSetPolicy)
+
+        if self._managed_policy:
+            if scoped_receipt_config is None:
+                raise ProductionProfileError(
+                    "managed policy execution requires scoped decision-receipt configuration"
+                )
+            if profile.signer is None:
+                raise ProductionProfileError(
+                    "managed policy execution requires a decision-receipt signer"
+                )
+            if not profile.require_signature:
+                raise ProductionProfileError(
+                    "managed policy execution requires trusted signature verification"
+                )
+            if (
+                isinstance(receipt_ttl_seconds, bool)
+                or not isinstance(receipt_ttl_seconds, (int, float))
+                or receipt_ttl_seconds <= 0
+            ):
+                raise ProductionProfileError(
+                    "managed policy execution requires a positive receipt TTL"
+                )
+            if execution_boundary != scoped_receipt_config.gate_id:
+                raise ProductionProfileError(
+                    "managed execution boundary must match the configured gate id"
+                )
+            try:
+                scoped_receipt_config.trust_registry.resolve(
+                    scope=ReceiptTrustScope(
+                        tenant_id,
+                        scoped_receipt_config.project_id,
+                        scoped_receipt_config.environment_id,
+                        scoped_receipt_config.trust_purpose,
+                    ),
+                    trust_epoch=scoped_receipt_config.trust_epoch,
+                    algorithm=profile.signer.algorithm,
+                    key_id=profile.signer.key_id,
+                    now_iso=datetime.now(UTC).isoformat(),
+                    mode="execution",
+                )
+            except (TrustConfigurationError, ValueError) as exc:
+                raise ProductionProfileError(
+                    "managed policy execution has no trusted decision-receipt verifier"
+                ) from exc
+        elif scoped_receipt_config is not None:
+            raise ProductionProfileError(
+                "scoped decision-receipt configuration requires a synced managed policy"
+            )
 
         if profile.require_expiry and receipt_ttl_seconds is None:
             # Fail loud at construction instead of rejecting 100% of calls at
@@ -400,6 +494,40 @@ class UniversalGateway:
             state=dict(state or {}),
         )
 
+        active_binding = _ACTIVE_MANAGED_BINDING.get()
+        if self._managed_policy and (active_binding is None or active_binding[0] != id(self)):
+            assert isinstance(self.policy, SyncedRuleSetPolicy)
+            try:
+                with self.policy.receipt_binding_scope() as provenance:
+                    self._validate_managed_provenance(provenance)
+                    binding_token = _ACTIVE_MANAGED_BINDING.set((id(self), provenance))
+                    try:
+                        return self.invoke(
+                            actor,
+                            tool,
+                            args,
+                            goal=goal,
+                            path=path,
+                            state=state,
+                        )
+                    finally:
+                        _ACTIVE_MANAGED_BINDING.reset(binding_token)
+            except PolicySyncError:
+                record, audit_hash = self._append_synthesized_deny(
+                    call,
+                    rule=_POLICY_SYNC_FAIL_CLOSED_RULE,
+                    reason="local signed policy is unavailable or invalid",
+                )
+                return GatewayResult(
+                    status="denied",
+                    tool=tool,
+                    actor=actor,
+                    audit_hash=audit_hash,
+                    envelope=rejection_dict(
+                        record, audit_hash, resumable=False, resolution=REVISE_AND_RETRY
+                    ),
+                )
+
         if self.allowed_actors is not None and actor not in self.allowed_actors:
             record, audit_hash = self._append_synthesized_deny(
                 call,
@@ -418,7 +546,16 @@ class UniversalGateway:
 
         previous_audit_hash = self._audit.last_hash()
         try:
-            record, audit_hash = self._kernel_for(actor).evaluate_and_record(call)
+            kernel = self._kernel_for(actor)
+            managed_provenance = self._managed_provenance()
+            if managed_provenance is None:
+                record, audit_hash = kernel.evaluate_and_record(call)
+            else:
+                assert isinstance(self.policy, SyncedRuleSetPolicy)
+                record = self.policy._evaluate_managed(call, managed_provenance)
+                record = kernel._attach_context(record, call)
+                audited = kernel._append_validated(record)
+                audit_hash = audited.audit_hash
         except AuditError:
             # Decision could not be recorded -> nothing may run.
             return GatewayResult(status="error", tool=tool, actor=actor, error_class="AuditError")
@@ -463,36 +600,86 @@ class UniversalGateway:
             else dict(call.args)
         )
 
-        receipt = DecisionReceipt.from_record(
-            record,
-            audit_hash=audit_hash,
-            previous_audit_hash=previous_audit_hash,
-            tenant_id=self.tenant_id,
-            execution_boundary=self.execution_boundary,
-            policy_bundle_id=self.policy_bundle_id,
-            policy_hash=self.policy.version,
-            request_id=record.decision_request_hash or record.event_id,
-            validator=self.validator,
-            authority=self.authority,
-            expires_at=self._receipt_expires_at(),
-            signer=self.profile.signer,
-        )
+        managed_provenance = self._managed_provenance()
+        managed_constraints: dict[str, Any] | None = None
+        if managed_provenance is not None:
+            provenance_hash = managed_provenance.compute_hash()
+            if record.policy_provenance_hash != provenance_hash:
+                raise ProductionProfileError(
+                    "managed policy decision is not bound to the verified policy provenance"
+                )
+            config = self.scoped_receipt_config
+            signer = self.profile.signer
+            assert config is not None
+            assert signer is not None
+            managed_constraints = {
+                "schema": "acgs.managed-policy-execution/v1",
+                "policy_provenance": managed_provenance.to_dict(),
+                "policy_provenance_hash": provenance_hash,
+            }
+            receipt = DecisionReceipt.from_record_v2(
+                record,
+                audit_hash=audit_hash,
+                previous_audit_hash=previous_audit_hash,
+                tenant_id=self.tenant_id,
+                project_id=config.project_id,
+                environment_id=config.environment_id,
+                trust_epoch=config.trust_epoch,
+                execution_boundary=self.execution_boundary,
+                policy_bundle_id=managed_provenance.policy_version_id,
+                policy_hash=managed_provenance.content_hash,
+                request_id=record.decision_request_hash or record.event_id,
+                validator=self.validator,
+                authority=self.authority,
+                signer=signer,
+                constraints=managed_constraints,
+                expires_at=self._receipt_expires_at(),
+            )
+        else:
+            receipt = DecisionReceipt.from_record(
+                record,
+                audit_hash=audit_hash,
+                previous_audit_hash=previous_audit_hash,
+                tenant_id=self.tenant_id,
+                execution_boundary=self.execution_boundary,
+                policy_bundle_id=self.policy_bundle_id,
+                policy_hash=self.policy.version,
+                request_id=record.decision_request_hash or record.event_id,
+                validator=self.validator,
+                authority=self.authority,
+                expires_at=self._receipt_expires_at(),
+                signer=self.profile.signer,
+            )
 
         grant = _GateGrant(self._tools[tool])
         token = _ACTIVE_GRANT.set(grant)
         try:
-            result = execute_with_receipt(
-                tool_fn=self._tools[tool],
-                args=exec_args,
-                receipt=receipt,
-                expected_tenant_id=self.tenant_id,
-                expected_execution_boundary=self.execution_boundary,
-                expected_action=tool,
-                expected_actor=actor,
-                expected_audit_hash=audit_hash,
-                policy=self.policy,
+            gate_kwargs: dict[str, Any] = {
+                "tool_fn": self._tools[tool],
+                "args": exec_args,
+                "receipt": receipt,
+                "expected_tenant_id": self.tenant_id,
+                "expected_execution_boundary": self.execution_boundary,
+                "expected_action": tool,
+                "expected_actor": actor,
+                "expected_audit_hash": audit_hash,
                 **self._gate_kwargs(),
-            )
+            }
+            if managed_provenance is None:
+                gate_kwargs["policy"] = self.policy
+            else:
+                config = self.scoped_receipt_config
+                assert config is not None
+                gate_kwargs.update(
+                    expected_policy_hash=managed_provenance.content_hash,
+                    expected_policy_bundle_id=managed_provenance.policy_version_id,
+                    expected_constraints=managed_constraints,
+                    expected_project_id=config.project_id,
+                    expected_environment_id=config.environment_id,
+                    trust_registry=config.trust_registry,
+                    trust_purpose=config.trust_purpose,
+                )
+            result = execute_with_receipt(**gate_kwargs)
         except ProductionProfileError:
             # Misconfiguration (production posture, no verifier): fail loud,
             # never degrade into a per-call error envelope.
@@ -527,6 +714,7 @@ class UniversalGateway:
             audit_hash=audit_hash,
             result=result,
             receipt=receipt,
+            assurance_class="native" if managed_provenance is not None else "",
         )
 
     # -- bypass detection ---------------------------------------------------- #
@@ -591,6 +779,61 @@ class UniversalGateway:
         if self.receipt_ttl_seconds is None:
             return ""
         return (datetime.now(UTC) + timedelta(seconds=self.receipt_ttl_seconds)).isoformat()
+
+    def _managed_provenance(self) -> ManagedPolicyProvenance | None:
+        active = _ACTIVE_MANAGED_BINDING.get()
+        if active is None or active[0] != id(self):
+            return None
+        return active[1]
+
+    def _validate_managed_provenance(self, provenance: ManagedPolicyProvenance) -> None:
+        config = self.scoped_receipt_config
+        if config is None:
+            raise ProductionProfileError("managed receipt configuration is unavailable")
+        scope = provenance.scope
+        if (
+            scope.org_id != self.tenant_id
+            or scope.project_id != config.project_id
+            or scope.environment_id != config.environment_id
+            or scope.gate_id != config.gate_id
+        ):
+            raise ProductionProfileError(
+                "managed policy provenance scope does not match the execution context"
+            )
+        signer = self.profile.signer
+        assert signer is not None
+        try:
+            decision_key = config.trust_registry.resolve(
+                scope=ReceiptTrustScope(
+                    self.tenant_id,
+                    config.project_id,
+                    config.environment_id,
+                    DECISION_RECEIPT_PURPOSE,
+                ),
+                trust_epoch=config.trust_epoch,
+                algorithm=signer.algorithm,
+                key_id=signer.key_id,
+                now_iso=datetime.now(UTC).isoformat(),
+                mode="execution",
+            )
+            signer_public_bytes = getattr(signer, "public_bytes", None)
+            if not callable(signer_public_bytes) or not hmac.compare_digest(
+                signer_public_bytes(), cast(Any, decision_key.verifier).public_bytes()
+            ):
+                raise TrustConfigurationError(
+                    "decision-receipt signer does not match its exact trusted key"
+                )
+        except (TrustConfigurationError, ValueError) as exc:
+            raise ProductionProfileError(
+                "managed policy execution has no exact trusted decision-receipt signer"
+            ) from exc
+        if decision_key.public_key_fingerprint in {
+            provenance.policy_key_fingerprint,
+            provenance.attestation_key_fingerprint,
+        }:
+            raise ProductionProfileError(
+                "managed execution requires three distinct physical trust keys"
+            )
 
     def _gate_kwargs(self) -> dict[str, Any]:
         # The strict profile's as_gate_kwargs() already emits

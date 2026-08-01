@@ -558,6 +558,7 @@ class DecisionReceipt:
         expected_action: str | None = None,
         expected_policy_hash: str | None = None,
         expected_policy_bundle_id: str | None = None,
+        expected_constraints: dict[str, Any] | None = None,
         expected_project_id: str | None = None,
         expected_environment_id: str | None = None,
         expected_validator_role: str | None = None,
@@ -1048,6 +1049,15 @@ class DecisionReceipt:
                 f"got {self.policy_bundle_id}",
                 reason_code=ReceiptRejectionReason.POLICY_BUNDLE_MISMATCH,
             )
+
+        if expected_constraints is not None:
+            from gove_zone.decision import canonical_json as _canonical_json
+
+            if _canonical_json(self.constraints) != _canonical_json(expected_constraints):
+                raise ReceiptValidationError(
+                    "receipt constraints do not exactly match the gate contract",
+                    reason_code=ReceiptRejectionReason.CONSTRAINTS_MISMATCH,
+                )
 
         # 12b. Validator role mismatch (optional)
         if expected_validator_role is not None and self.validator_role != expected_validator_role:

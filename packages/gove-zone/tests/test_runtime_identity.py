@@ -15,6 +15,7 @@ del cryptography
 from cryptography.hazmat.primitives import serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import ed25519  # noqa: E402
 
+from gove_zone import runtime_identity as runtime_identity_module  # noqa: E402
 from gove_zone.runtime_identity import (  # noqa: E402
     AtomicJsonRuntimeIdentityStore,
     GateScope,
@@ -543,6 +544,40 @@ def test_signed_request_requires_idempotency_for_mutations_before_transport() ->
     )
     safe_request = captured.pop()
     assert "Idempotency-Key" not in safe_request.headers
+
+
+@pytest.mark.parametrize("raw_nonce", [b"\xf8" + b"\x00" * 17, b"\xfc" + b"\x00" * 17])
+def test_generated_signed_request_nonce_prefix_is_always_canonical(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_nonce: bytes,
+) -> None:
+    descriptor, workload, _ = _descriptor()
+    captured: list[RuntimeHttpRequest] = []
+
+    def deterministic_urandom(length: int) -> bytes:
+        assert length == 18
+        return raw_nonce
+
+    monkeypatch.setattr(runtime_identity_module.os, "urandom", deterministic_urandom)
+    client = SignedRequestClient(
+        descriptor=descriptor,
+        key_provider=workload,
+        transport=lambda request: (
+            captured.append(request) or RuntimeHttpResponse(status_code=200, body=b"{}")
+        ),
+        audience=AUDIENCE,
+    )
+
+    client.request(
+        method="GET",
+        path="/v1/runtime-identities/runtime-1",
+        timestamp=ISSUED_AT,
+    )
+
+    generated = captured[0].headers["x-acgs-runtime-nonce"]
+    assert generated == "n-" + b64url_encode(raw_nonce)
+    assert generated[0].isalnum()
+    assert b64url_decode(generated.removeprefix("n-")) == raw_nonce
 
 
 def test_runtime_enrollment_renew_requires_and_emits_idempotency_key() -> None:

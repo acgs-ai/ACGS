@@ -73,9 +73,10 @@ class DecisionRecord:
     path: tuple[str, ...] = ()
     state_hash: str | None = None
     decision_request_hash: str = ""
+    policy_provenance_hash: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "decision": self.decision.value,
             "tool": self.tool,
             "argument_hash": self.argument_hash,
@@ -91,3 +92,6 @@ class DecisionRecord:
             "state_hash": self.state_hash,
             "decision_request_hash": self.decision_request_hash,
         }
+        if self.policy_provenance_hash:
+            payload["policy_provenance_hash"] = self.policy_provenance_hash
+        return payload

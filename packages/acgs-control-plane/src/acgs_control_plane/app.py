@@ -108,6 +108,11 @@ from acgs_control_plane.policy_registry import (
     local_policy_registry_issuer,
     local_policy_registry_receipt_sealer,
 )
+from acgs_control_plane.policy_sync import (
+    PolicySyncAuth,
+    PolicySyncService,
+    local_policy_sync_attestation_issuer,
+)
 from acgs_control_plane.rbac import Permission, Role, role_allows
 from acgs_control_plane.runtime_enrollment import (
     RuntimeBootstrapPepper,
@@ -134,6 +139,7 @@ from acgs_control_plane.schemas import (
     PolicyActivateRequest,
     PolicyPublishRequest,
     PolicyResponse,
+    PolicySyncSnapshot,
     ReceiptDetail,
     ReceiptListResponse,
     ReceiptSummary,
@@ -431,6 +437,7 @@ def create_app(
     policy_registry_issuer: Any | None = None,
     policy_registry_receipt_sealer: Any | None = None,
     policy_registry_receipt_issuer: Any | None = None,
+    policy_sync_attestation_issuer: Any | None = None,
     approval_payload_sealer: Any | None = None,
     runtime_enrollment_issuer: Any | None = None,
     runtime_enrollment_receipt_sealer: Any | None = None,
@@ -712,6 +719,21 @@ def create_app(
             )
         )
     blockers = production_blockers(drift, production_providers)
+    if (
+        settings.runtime_posture is RuntimePosture.PRODUCTION
+        and policy_sync_attestation_issuer is None
+    ):
+        blockers = tuple(
+            sorted(
+                (
+                    *blockers,
+                    PostureBlocker(
+                        "POLICY_SYNC_ATTESTATION_PROVIDER_REQUIRED",
+                        "policy-sync-attestation-provider",
+                    ),
+                )
+            )
+        )
     app.state.readiness_blockers = blockers
     if settings.runtime_posture is RuntimePosture.PRODUCTION:
         raise ProductionPostureBlocked(blockers)
@@ -806,6 +828,35 @@ def create_app(
             )
         effective_policy_registry_issuer = policy_registry_issuer
         effective_policy_registry_receipt_sealer = policy_registry_receipt_sealer
+    if settings.runtime_posture is RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED:
+        effective_policy_sync_attestation_issuer = (
+            policy_sync_attestation_issuer or local_policy_sync_attestation_issuer()
+        )
+    else:
+        if policy_sync_attestation_issuer is None:
+            raise ProductionPostureBlocked(
+                (
+                    PostureBlocker(
+                        "POLICY_SYNC_ATTESTATION_PROVIDER_REQUIRED",
+                        "policy-sync-attestation-provider",
+                    ),
+                )
+            )
+        effective_policy_sync_attestation_issuer = policy_sync_attestation_issuer
+    if (
+        effective_policy_sync_attestation_issuer is effective_policy_registry_issuer
+        or effective_policy_sync_attestation_issuer.key_id
+        == effective_policy_registry_issuer.key_id
+    ):
+        engine.dispose()
+        raise ProductionPostureBlocked(
+            (
+                PostureBlocker(
+                    "POLICY_SYNC_ATTESTATION_PROVIDER_REUSED",
+                    "policy-sync-attestation-provider",
+                ),
+            )
+        )
     app.state.policy_registry_service = PolicyRegistryService(
         app.state.session_factory,
         issuer=effective_policy_registry_issuer,
@@ -848,6 +899,12 @@ def create_app(
         receipt_sealer=effective_runtime_receipt_sealer,
         bootstrap_pepper=cast(RuntimeBootstrapPepper, effective_runtime_bootstrap_pepper),
         descriptor_signer=effective_runtime_descriptor_signer,
+    )
+    app.state.policy_sync_service = PolicySyncService(
+        app.state.session_factory,
+        attestation_issuer=effective_policy_sync_attestation_issuer,
+        policy_registry_issuer=effective_policy_registry_issuer,
+        receipt_sealer=effective_policy_registry_receipt_sealer,
     )
     try:
         app.state.mutation_inventory_seal = build_mutation_inventory_seal(app)
@@ -1294,6 +1351,102 @@ def _register_routes(app: FastAPI) -> None:
             body_sha256=body_sha256,
             idempotency_key=cast(str, idempotency_key),
         )
+
+    @app.get(
+        "/v1/runtime-identities/{identity_id}/policy-bundle",
+        response_model=PolicySyncSnapshot,
+        responses={304: {"description": "The signed policy cursor is current."}},
+        tags=["runtime-identities"],
+        operation_id="runtime-identity.policy-sync",
+    )
+    async def sync_runtime_policy(
+        identity_id: str,
+        request: Request,
+        runtime_identity_id: Annotated[
+            str | None, Header(alias="X-ACGS-Runtime-Identity-ID")
+        ] = None,
+        key_id: Annotated[str | None, Header(alias="X-ACGS-Runtime-Key-ID")] = None,
+        audience: Annotated[str | None, Header(alias="X-ACGS-Runtime-Audience")] = None,
+        credential_id: Annotated[str | None, Header(alias="X-ACGS-Runtime-Credential-ID")] = None,
+        credential_generation: Annotated[
+            str | None, Header(alias="X-ACGS-Runtime-Credential-Generation")
+        ] = None,
+        timestamp: Annotated[str | None, Header(alias="X-ACGS-Runtime-Timestamp")] = None,
+        nonce: Annotated[str | None, Header(alias="X-ACGS-Runtime-Nonce")] = None,
+        body_sha256: Annotated[str | None, Header(alias="X-ACGS-Runtime-Body-Sha256")] = None,
+        signature: Annotated[str | None, Header(alias="X-ACGS-Runtime-Signature")] = None,
+        cursor: Annotated[str | None, Query(max_length=49)] = None,
+    ) -> Response | PolicySyncSnapshot:
+        if runtime_identity_id is not None and runtime_identity_id != identity_id:
+            raise RuntimeEnrollmentHttpError(
+                401,
+                "RUNTIME_AUTHENTICATION_FAILED",
+                "unauthorized",
+                "runtime request authentication failed",
+            )
+        missing = [
+            name
+            for name, value in {
+                "X-ACGS-Runtime-Identity-ID": runtime_identity_id,
+                "X-ACGS-Runtime-Key-ID": key_id,
+                "X-ACGS-Runtime-Audience": audience,
+                "X-ACGS-Runtime-Credential-ID": credential_id,
+                "X-ACGS-Runtime-Credential-Generation": credential_generation,
+                "X-ACGS-Runtime-Timestamp": timestamp,
+                "X-ACGS-Runtime-Nonce": nonce,
+                "X-ACGS-Runtime-Body-Sha256": body_sha256,
+                "X-ACGS-Runtime-Signature": signature,
+            }.items()
+            if value is None
+        ]
+        if missing:
+            raise RuntimeEnrollmentHttpError(
+                400,
+                "RUNTIME_SIGNATURE_HEADERS_REQUIRED",
+                "bad_request",
+                f"runtime signed request headers are missing: {', '.join(missing)}",
+            )
+        try:
+            parsed_generation = int(cast(str, credential_generation))
+        except ValueError as exc:
+            raise RuntimeEnrollmentHttpError(
+                400,
+                "CREDENTIAL_GENERATION_MALFORMED",
+                "bad_request",
+                "runtime credential generation header must be an integer",
+            ) from exc
+        service: PolicySyncService = request.app.state.policy_sync_service
+        raw_path = request.scope.get("raw_path")
+        result = service.fetch(
+            identity_id=identity_id,
+            auth=PolicySyncAuth(
+                key_id=cast(str, key_id),
+                credential_id=cast(str, credential_id),
+                credential_generation=parsed_generation,
+                audience=cast(str, audience),
+                timestamp=cast(str, timestamp),
+                nonce=cast(str, nonce),
+                body_sha256=cast(str, body_sha256),
+                signature=cast(str, signature),
+            ),
+            raw_query=request.url.query,
+            raw_path=raw_path if isinstance(raw_path, bytes) else b"",
+            body=await request.body(),
+            cursor=cursor,
+        )
+        headers = {
+            "ETag": result.etag,
+            "Cache-Control": "private, no-store",
+            "Pragma": "no-cache",
+        }
+        if result.not_modified:
+            return Response(status_code=304, headers=headers)
+        response = JSONResponse(
+            status_code=200,
+            content=result.snapshot.model_dump(mode="json", by_alias=True),
+            headers=headers,
+        )
+        return response
 
     @app.post(
         "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/runtime-identities/{identity_id}/revoke",

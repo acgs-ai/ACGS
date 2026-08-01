@@ -2,11 +2,11 @@
 
 **Status:** Phase-0 target beta contract (G008).
 
-**Not an implementation claim:** This is a versioned contract for future
-management, policy, approval, fleet, and evidence APIs. It does not claim that
-the current control plane exposes /v1, browser sessions, a BFF, generated
-clients, project/environment scope, idempotency, ingestion, exports, or the
-resources described here.
+**Not an implementation claim:** This is the versioned beta contract for
+management, policy, approval, fleet, and evidence APIs, with explicit
+current-local exceptions. Those exceptions do not claim browser sessions, a
+BFF, generated clients, accepted evidence ingestion, exports, deployment, or
+the complete resource model described here.
 
 ## Current-state boundary
 
@@ -30,6 +30,25 @@ implement heartbeat, capability or version reporting, workload-key rotation,
 policy sync, proven-wired or evidence-current fleet state, accepted evidence
 ingestion, browser/BFF wiring, hosted providers, production deployment, or final
 canonical run evidence.
+
+Current-local exception for G202/G203: branch `beta/p4-policy-sync-002` adds the
+read-only
+`GET /v1/runtime-identities/{identity_id}/policy-bundle` endpoint. An enrolled
+runtime signs the exact raw path, canonical query, and empty request body. The
+endpoint revalidates active SQL policy/trust/credential/gate state and governed
+activation commitments, then returns a strict v2 snapshot bound to organization,
+project, environment, gate, runtime identity, credential generation, policy
+version/content hash, activation receipt/event hashes, cursor/head generation,
+freshness, expiry, and revocation-check time. The policy publisher and snapshot
+attester have separate trust purposes and physical keys; production posture
+fails startup without an independent attestation provider. `cursor` plus ETag
+supports exact 304 responses without extending local freshness.
+
+This exception is narrower than the target endpoint families below. It is not a
+policy authoring/review/rollback API, heartbeat or fleet-status API, persisted
+wiring attestation, evidence-ingestion API, browser/BFF boundary, generated
+client, hosted service, or production deployment. Its activation hashes are
+authenticated commitments, not embedded artifacts that the runtime can replay.
 
 This contract implements the product-level target in
 [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md), preserves provenance in
