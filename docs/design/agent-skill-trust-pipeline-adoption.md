@@ -380,9 +380,19 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    therefore defines shell containment semantics explicitly: a shell grant is
    treated as granting the process's ambient file and network capabilities unless
    the launch runs under an OS-level sandbox or capability-brokered executor that
-   materially enforces the narrower ceilings. Declarations that pair a shell grant
-   with narrower denials no such mechanism enforces are rejected at the step-2
-   gate rather than accepted as unenforceable promises, and wherever sandboxed or
+   materially enforces the narrower ceilings. Whether such a mechanism exists is
+   a property of the execution host, not of the checkout, so the static step-2
+   gate cannot decide enforceability: it could reject a declaration a production
+   sandbox would enforce, or accept one under an assumed sandbox that is absent
+   where the skill actually runs. The split is therefore: schema validation at
+   the step-2 gate records the containment capabilities a declaration requires
+   (a shell grant paired with narrower file or network denials requires a
+   sandbox or broker able to enforce them) as machine-readable requirements;
+   host deployment/admission fails closed when the executor profile it is
+   admitting the skill into cannot supply the recorded requirements; and the
+   executor fails closed again at execution time when the active profile does
+   not provide them, so a profile downgraded after admission cannot silently
+   turn the denials into unenforceable promises. Wherever sandboxed or
    brokered enforcement is claimed it must be proven by end-to-end negative tests
    on the transitive effects themselves (the spawned process's denied write
    outside the allowed directory, its denied socket) rather than on the launch
