@@ -902,7 +902,20 @@ enumerated entries still passes. The host policy must therefore deny
    names out of it) rather than trusting the normalized string, with
    absolute-path and parent-traversal negative tests proving an archive or
    manifest entry naming an absolute host path or a `../`-escaping path is
-   rejected rather than materialized outside the snapshot root. Paths, entry types,
+    rejected rather than materialized outside the snapshot root. Confined
+    extraction bounds where entries land, not what extracting them costs:
+    an attacker-supplied compressed archive can expand a tiny input into
+    enormous regular files, sparse entries that materialize to huge sizes,
+    or millions of individually valid entries before any runtime executor
+    budget applies, exhausting the admitting host's storage, memory, or
+    inodes while every path stays beneath the root, every entry has an
+    allowed type, and every digest verifies. Snapshot admission must
+    therefore impose resource limits on extraction itself (a maximum entry
+    count, per-entry and total-uncompressed-size ceilings, sparse-file
+    materialization limits, and a maximum decompression ratio), failing
+    admission closed when any limit is exceeded, with an archive-bomb
+    negative test proving a high-ratio or many-entry archive is rejected
+    during admission without exhausting the admitting host. Paths, entry types,
    mode bits, lengths, and content hashes still leave security-relevant
    filesystem metadata unbound: a skill installed from a privileged archive can
    carry ownership, POSIX ACLs, security labels, or extended attributes such as
@@ -1206,7 +1219,21 @@ enumerated entries still passes. The host policy must therefore deny
    an equivalent isolation that guarantees no mounted subtree inside an
    allowed directory exposes out-of-ceiling content, with a bind-mount escape
    negative test proving an access through a mount point inside an allowed
-   directory fails to reach the denied tree. No-follow, descriptor-relative resolution still
+    directory fails to reach the denied tree. No-cross-mount resolution still
+    presumes the ceiling root itself is authentic: a mount-capable workload
+    can bind-mount a denied tree over the allowed ceiling root before the
+    broker opens that root, so traversal begins inside the substituted
+    mount, `RESOLVE_NO_XDEV` observes no mount crossing, and the bind-mount
+    escape test above passes because it exercises only a mounted subtree
+    beneath the root, never replacement of the root itself. The ceiling must
+    therefore be bound to a protected root descriptor whose mount and inode
+    identity is established and verified before execution, with every
+    resolution performed descriptor-relative to that pinned root, or
+    resolution must run inside a private, immutable mount namespace no
+    other workload can alter, with a root-replacement negative test proving
+    an access attempted after a denied tree is bind-mounted over the
+    ceiling root itself fails closed rather than resolving inside the
+    substituted mount. No-follow, descriptor-relative resolution still
    cannot see hard links: an allowed directory can contain a hard link to a
    denied file on the same filesystem, so the allowed pathname resolves
    beneath the ceiling root while reading or writing it accesses the same
@@ -1330,7 +1357,20 @@ enumerated entries still passes. The host policy must therefore deny
    top-level executable before the receipt is issued, with a negative test
    proving an allowed script invoked with a code-bearing argument (an eval
    expression, or a path to an unadmitted plugin or module) is denied rather
-   than launched. This step
+    than launched. Argument admission governs argv, not the input channel:
+    when the launcher leaves the spawned process's standard input connected
+    to caller-controlled data, an admitted script or interpreter can read
+    and evaluate code delivered on stdin while its executable and every
+    argument satisfy the argument schema, so the appended-command and
+    code-bearing-argument tests both pass because no shell syntax and no
+    argument carries the payload. The launcher must therefore close
+    standard input by default (or connect it to a null source), and any
+    allowed script that legitimately consumes standard input must have
+    that input bound and validated as exact bytes under its per-script
+    input schema, content-bound the same way as by-reference inputs, with
+    a stdin-code negative test proving code delivered on standard input to
+    an allowed script is never evaluated: the launch is denied or the
+    input never reaches the process. This step
    therefore defines shell containment semantics explicitly: a shell grant is
    treated as granting the process's ambient file and network capabilities unless
    the launch runs under an OS-level sandbox or capability-brokered executor that
@@ -1800,19 +1840,43 @@ enumerated entries still passes. The host policy must therefore deny
     connection, and the CPU, memory, PID, wall-clock, storage,
     descriptor, and I/O-bandwidth budgets above apply only to shell
     launches, so both footprint tests pass while the host is denied
-    service. Handler admission must therefore also record enforceable
-    per-invocation resource budgets (CPU, memory, process/thread count,
-    open-file/socket descriptor limits, storage, and disk and network
-    I/O bandwidth) imposed on the handler and any work it spawns, or the
-    handler must execute as isolated or rate-limited service capacity
-    whose exhaustion cannot starve other workloads, with admission
-    failing closed when the active executor profile cannot supply the
-    recorded budgets or isolation, and a handler-driven exhaustion
-    negative test proving an admitted handler that allocates memory,
-    forks, opens descriptors or sockets, or saturates an allowed disk or
-    network endpoint in a loop is throttled, denied, or terminated while
-    other workloads' capacity is preserved, rather than only shell
-    exhaustion being tested. Recording that a handler's footprint includes credentials
+     service. Handler admission must therefore also record enforceable
+     per-invocation resource budgets (CPU, memory, a wall-clock execution
+     deadline, process/thread count, open-file/socket descriptor limits,
+     storage, and disk and network I/O bandwidth) imposed on the handler
+     and any work it spawns, or the handler must execute as isolated or
+     rate-limited service capacity whose exhaustion cannot starve other
+     workloads, with admission failing closed when the active executor
+     profile cannot supply the recorded budgets or isolation, and a
+     handler-driven exhaustion negative test proving an admitted handler
+     that allocates memory, forks, opens descriptors or sockets, or
+     saturates an allowed disk or network endpoint in a loop is throttled,
+     denied, or terminated while other workloads' capacity is preserved,
+     rather than only shell exhaustion being tested. The wall-clock
+     deadline is required independently of the consumption budgets: an
+     admitted handler that sleeps, deadlocks, or waits forever consumes
+     almost no CPU or I/O yet occupies a dispatcher worker indefinitely,
+     and the shell wall-clock budget above does not apply to handler
+     invocations, so every listed exhaustion test can pass while dispatch
+     capacity is starved; a non-terminating-handler negative test must
+     prove an admitted handler that never returns is terminated at its
+     deadline and its dispatcher capacity reclaimed. Per-invocation
+     budgets bound each call, not their sum: a skill that submits many
+     concurrent admitted-handler invocations keeps every call within its
+     recorded per-invocation limits while their aggregate memory,
+     threads, descriptors, or I/O exhausts the host, so, exactly as the
+     shell containment contract requires for launches, handler execution
+     must also run under shared admission control with aggregate resource
+     quotas scoped to the skill, tenant, and execution boundary, enforced
+     across all concurrent and queued handler invocations attributed to
+     that scope (an invocation whose admission would exceed the aggregate
+     quota is denied, queued, or throttled rather than run), and neither
+     per-invocation budgets nor isolated service capacity alone satisfies
+     this requirement without the aggregate bound, with a concurrent
+     many-handler-call exhaustion negative test proving many simultaneous
+     individually-within-budget handler invocations from one skill are
+     collectively bounded and other workloads' capacity is
+     preserved. Recording that a handler's footprint includes credentials
     identifies the channel, not the principal: an admitted handler that
     resolves a mutable ambient credential or default context (a Kubernetes
     context, a cloud role, a default account) executes as whatever that
@@ -1953,7 +2017,26 @@ enumerated entries still passes. The host policy must therefore deny
      that each receipt executes once. This requires concurrent-replay
      negative tests presenting an ordinary non-approval skill receipt and
      an ordinary authenticated non-skill receipt to the execution gate in
-     parallel and proving each side effect runs at most once. Atomic
+      parallel and proving each side effect runs at most once.
+      Execution-gate consumption makes each issued receipt run at most
+      once, not each request yield at most one receipt: the
+      invocation-context compare-and-consume above protects
+      skill-originated issuance, but an ordinary authenticated non-skill
+      request retried at issuance rather than replaying the already-issued
+      receipt mints a distinct signed receipt per retry, and each of those
+      receipts individually passes atomic consumption, so one logical
+      request runs its side effect once per retry. Non-skill issuance must
+      therefore be atomic and idempotent over a trusted request identity:
+      the issuance path derives a nonce or idempotency key from the
+      authenticated request (carried by the caller's authenticated
+      transport or minted and returned on first issuance, never freely
+      re-choosable by the retrying caller), binds it into the receipt, and
+      answers a retry carrying the same key by replaying the
+      already-issued receipt rather than minting a new one, with a
+      concurrent retry-to-issuance negative test presenting parallel
+      retries of one authenticated non-skill request to issuance and
+      proving at most one executable receipt exists and its side effect
+      runs at most once. Atomic
      consumption presumes the ledger's own integrity: if a governed skill can
      write the consumption store, it can delete a consumed receipt's key or
      restore an earlier ledger snapshot, making a still-valid signed receipt
