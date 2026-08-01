@@ -204,8 +204,12 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    `allow_implicit_invocation: true` flag, so shipping the repair alone would turn a
    previously inert, unowned, unsigned skill into an automatic instruction source
    before any control below exists. The repair must therefore set
-   `allow_implicit_invocation: false` in `agents/openai.yaml`, and the flag stays
-   disabled through the phased rollout until the skill is authenticated and its
+   `allow_implicit_invocation: false` in `agents/openai.yaml`, and that flag alone
+   covers only the Codex host. Repairing the frontmatter equally makes the Claude
+   mirror at `.claude/skills/govern-zone/SKILL.md` model-selectable, so the repair
+   must also set `disable-model-invocation: true` in that copy's frontmatter, the
+   same flag this repository already uses on its manual Claude skills. Both flags
+   stay disabled through the phased rollout until the skill is authenticated and its
    actions are actually constrained: the step-5 identity/digest and approved ceiling
    plus the step-6 host interception and enforcement. The step-2 loadability gate and
    a step-3 card are prerequisites but not sufficient, because neither prevents an
@@ -230,9 +234,17 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    drift apart, so a later repair could govern the Codex copy while Claude keeps
    loading stale or differently permissioned instructions. The gate must therefore
    enforce mirror parity for the shared skill body and security metadata (permission
-   declaration, pinned digest): either generate one copy from a canonical source or
-   fail on any content divergence between the mirrors. Cheap, deterministic, catches
-   the entire class.
+   declaration, pinned digest), but as a *normalized* comparison, not a raw byte
+   diff, because the two copies legitimately diverge in host-specific
+   representation: once step 4 applies host schemas, the Codex copy carries its
+   `permissions:` declaration under `metadata:` or in a sidecar while the Claude
+   copy may hold it in frontmatter, and only the Codex copy ships an
+   `agents/openai.yaml` adapter. The parity check therefore compares a canonical
+   instruction body and the security values after normalizing each copy's
+   host-specific encoding, and allows host adapter files to exist only on their
+   host's side; either generate both copies from one canonical source or fail on
+   divergence of the normalized body or security metadata. Cheap, deterministic,
+   catches the entire class.
    One repo-hygiene prerequisite: the root `.gitignore` ignores `.agents` wholesale, so
    only the two already-tracked `govern-zone` files survive; any new skill or sidecar
    under `.agents/skills/**` is invisible to a CI checkout (`git check-ignore` confirms
@@ -269,11 +281,16 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    `requires_governance_gate`, `deny_behavior`, `evidence_outputs`, `owner`), and
    introducing `permissions:` beside it would create two sources of truth with no
    precedence rule (`allowed_tools` could permit shell while `permissions.shell`
-   denies it). This step therefore includes reconciling the two before rollout:
-   `permissions:` supersedes `allowed_tools` as the capability declaration, the
-   remaining `skill-schema.md` fields (owner, risk, gate, evidence outputs) fold into
-   the step-3 skill card, and `docs/skills/skill-schema.md` is updated to record that
-   mapping so cards, validators, and the future executor read exactly one contract.
+   denies it).    This step therefore includes reconciling the two before rollout:
+   `permissions:` supersedes `allowed_tools` as the capability declaration; the
+   descriptive `skill-schema.md` fields (owner, risk, gate, evidence outputs) fold
+   into the step-3 skill card; and `deny_behavior` (enforcement input, not card
+   prose: it distinguishes per skill whether a denied action stops, escalates,
+   or requires human approval) is carried into the canonical replacement alongside
+   `permissions:`, with a defined fail-closed mapping (an absent or unrecognized
+   value means stop, never proceed) before the old field is removed.
+   `docs/skills/skill-schema.md` is then updated to record that mapping so cards,
+   validators, and the future executor read exactly one contract.
 5. **Skill identity and permission ceiling.** A trusted name/version/artifact digest per
    skill, plus an independently reviewed maximum permission set held outside the skill.
    Without these, step 6 would enforce a caller-controlled declaration.
