@@ -444,7 +444,20 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
     Consuming the grant must therefore happen at receipt issuance as an atomic
     compare-and-consume (or an idempotent issuance operation keyed on the
     grant) against shared durable state, so at most one executable receipt can
-    ever be minted from one grant. Issuance-time consumption bounds minting,
+    ever be minted from one grant. Atomic consumption presumes the grant
+    ledger's own integrity: if a governed skill or child process can write or
+    restore that shared state, it can delete a consumed grant's consumption
+    record or roll the ledger back to an earlier snapshot, resurrecting a
+    consumed, unexpired grant so a second distinct signed receipt is minted
+    from it — and because the receipt-consumption ledger accepts each distinct
+    receipt once, the promised one-grant/one-side-effect bound is lost while
+    every grant-race test above still passes. The grant ledger must therefore
+    itself be authenticated, monotonic and rollback-refusing, and held outside
+    agent and child-process write authority — the same trust class required of
+    the receipt-consumption store below — with a grant-ledger tamper/rollback
+    negative test proving that deleting or rolling back a consumed grant's
+    record before re-presenting that grant does not allow a second executable
+    receipt to be minted from it. Issuance-time consumption bounds minting,
     not execution: the one minted `ALLOW` receipt is itself a bearer
     credential, and an execution gate that is stateless across calls — as
     `execute_with_receipt` is without a shared receipt-consumption ledger —
@@ -480,7 +493,21 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    version bound into ceiling records and receipts so a verifier rejects a digest
    computed under an unknown scheme, and a structural-substitution negative test
    proving a tree that permutes the same content across different paths or entry
-   boundaries yields a different digest and is rejected. Paths, entry types,
+   boundaries yields a different digest and is rejected. Normalized relative
+   paths that are distinct on the case-sensitive filesystem where verification
+   runs can still collide on the admitted host: a case-folding or
+   Unicode-normalizing host filesystem resolves entries such as
+   `scripts/run.py` and `Scripts/run.py` (or NFC/NFD variants of the same
+   name) to the same file, the digest validly binds both entries, and
+   installation order then decides which entry's bytes execute under the
+   allowlisted path — so the bytes of a nominally unapproved entry can run
+   under an approved name while every digest check passes. Manifest
+   validation must therefore define path canonicalization for each supported
+   host filesystem (case folding and Unicode normalization form included) and
+   reject any manifest whose entries collide after canonicalization for the
+   target host, with a cross-platform path-collision negative test proving a
+   manifest containing case-folded or Unicode-normalization-equivalent path
+   pairs is rejected rather than installed. Paths, entry types,
    mode bits, lengths, and content hashes still leave security-relevant
    filesystem metadata unbound: a skill installed from a privileged archive can
    carry ownership, POSIX ACLs, security labels, or extended attributes such as
