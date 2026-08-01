@@ -450,7 +450,25 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    version bound into ceiling records and receipts so a verifier rejects a digest
    computed under an unknown scheme, and a structural-substitution negative test
    proving a tree that permutes the same content across different paths or entry
-   boundaries yields a different digest and is rejected. "Outside the
+   boundaries yields a different digest and is rejected. Paths, entry types,
+   mode bits, lengths, and content hashes still leave security-relevant
+   filesystem metadata unbound: a skill installed from a privileged archive can
+   carry ownership, POSIX ACLs, security labels, or extended attributes such as
+   a Linux `security.capability`, and changing that metadata changes what
+   identical file bytes may access or execute with while the manifest digest is
+   unchanged; the read-only snapshot below then preserves rather than
+   authenticates whatever metadata existed at authentication time, so every
+   listed content-mutation test can pass for an artifact carrying unapproved
+   execution authority. Snapshot construction must therefore strip and
+   normalize security-relevant metadata to a fixed approved baseline (no
+   setuid/setgid or capability bits, canonical ownership, no ACLs or
+   security-relevant extended attributes), or every security-relevant
+   ownership, ACL, and extended-attribute value must be bound into the manifest
+   digest and rechecked when the snapshot is constructed, with a
+   metadata-substitution negative test proving an artifact whose bytes match
+   the approved digest but whose ownership, ACL, or `security.capability`
+   metadata differs is rejected rather than executed with that authority.
+   "Outside the
    skill" is necessary but not sufficient: if the agent, or any skill it runs, can
    write the location holding the ceiling record, the caller can widen the ceiling
    before issuance, the receipt then faithfully binds the tampered value, and the
@@ -536,17 +554,29 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
     without ever entering that list, and its loader origin would then be
     accepted with no declared/approved permission intersection while the
     missing-declaration test above still passes for the skills that are listed.
-    Membership is therefore defined by invocability, not prose: every
-    model-invocable skill (anything a host can select or implicitly invoke)
-    is in the governed set, and a documentation-only skill carries an explicit
+    Membership is therefore defined by loadability, not prose and not the
+    invocation path: every loadable skill is in the governed set regardless of
+    who invokes it. Scoping the set to model-selectable or implicitly invoked
+    skills would leave explicit user invocation ungoverned, and
+    `disable-model-invocation: true` makes a skill unselectable by the model,
+    not unloadable: a user who explicitly invokes a manual skill (the
+    checked-in `maintain-acgs` and `pr-evidence` skills are exactly this
+    shape) loads the same instructions with the same power to direct tool
+    calls, so that path needs the same mandatory declaration and ceiling
+    checks. A documentation-only skill carries an explicit
     deny-by-default/no-capability declaration (an empty permission set) rather
     than being exempted by classification, so admission fails closed for any
-    model-invocable skill without a declaration and a tool instruction emitted
+    loadable skill without a declaration and a tool instruction emitted
     from a nominally documentation-only skill is denied against its empty
-    declared set, with a real-handler negative test proving a tool call
+    declared set, with real-handler negative tests proving a tool call
     originating from a documentation-classified skill with a no-capability
     declaration produces no receipt and no side effect rather than being
-    governed under the agent's non-skill ceiling. Binding is only as
+    governed under the agent's non-skill ceiling, and an explicit-invocation
+    case proving a tool call directed by a manual skill the user explicitly
+    invoked (its `disable-model-invocation` flag notwithstanding) is governed
+    under that skill's declaration and ceiling, and denied when the skill
+    lacks a valid declaration, rather than executing under the agent's
+    non-skill ceiling. Binding is only as
    strong as receipt authentication: hash-binding the skill digest and permission
    fields makes them part of the receipt's content hash, but with an unsigned
    receipt a caller can alter those fields and recompute the hash, so mutation
@@ -606,7 +636,20 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    semantics (`openat2`-style `RESOLVE_BENEATH`) or an equivalent filesystem
    sandbox that confines the resolved target — with negative tests proving both a
    symlink escape inside an allowed path and a check-to-open path race fail to
-   touch the outside location. No-follow, descriptor-relative resolution still
+   touch the outside location. Beneath-style resolution is a pathname
+   property, not a mount property: an allowed directory can contain a bind
+   mount or another mounted subtree that exposes a denied location, and
+   `RESOLVE_BENEATH` still permits the access because the pathname remains
+   lexically beneath the ceiling root (Linux provides the separate
+   `RESOLVE_NO_XDEV` control precisely for mount-point crossings, bind mounts
+   included), so the symlink, race, and hard-link tests here can all pass
+   while a read or write reaches the denied tree. Directory-ceiling
+   resolution must therefore also refuse to cross mount points within the
+   ceiling (`RESOLVE_NO_XDEV`-style no-cross-mount resolution) or run under
+   an equivalent isolation that guarantees no mounted subtree inside an
+   allowed directory exposes out-of-ceiling content, with a bind-mount escape
+   negative test proving an access through a mount point inside an allowed
+   directory fails to reach the denied tree. No-follow, descriptor-relative resolution still
    cannot see hard links: an allowed directory can contain a hard link to a
    denied file on the same filesystem, so the allowed pathname resolves
    beneath the ceiling root while reading or writing it accesses the same
@@ -746,9 +789,22 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
     (the origin context's session binding and its nonce or handle identity), and
     every skill-originated receipt, not only approval-gated ones, must be
     consumed atomically at the execution gate against shared durable state of
-    the same class as the grant ledger, with a concurrent-replay negative test
-    presenting an ordinary non-approval skill receipt to the execution gate in
-    parallel and proving its side effect runs at most once. Context freshness bounds the credential,
+     the same class as the grant ledger, with a concurrent-replay negative test
+     presenting an ordinary non-approval skill receipt to the execution gate in
+     parallel and proving its side effect runs at most once. Binding and
+     consumption authenticate origin and prevent reuse, not liveness: a
+     receipt minted just before its invocation ends and first presented
+     afterward is still unused in the consumption ledger, its session and
+     nonce bindings prove where it originated, the short context lifetime
+     constrains only the origin context before issuance, and the receipt's
+     own expiry can outlive that context, so a delayed first use executes
+     while every stale-context and concurrent-replay test above passes. The
+     execution gate must therefore revalidate invocation liveness at
+     consumption, verifying that the bound session or handle is still active,
+     and receipt expiry must be capped to the originating invocation's
+     lifetime, with a negative test proving a receipt first presented after
+     its originating invocation has ended is denied without a side
+     effect. Context freshness bounds the credential,
    not the influence: rejecting a stale context does not remove the skill's
    instructions from the conversation, so a skill can direct the model to defer
    a tool call until after its invocation is marked ended, and the later call is
