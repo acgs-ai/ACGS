@@ -447,10 +447,29 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
       also be bound to the originating request/audit hash of the escalated or
       explicitly approvable decision it responds to, plus the tenant, execution boundary,
      and policy bundle/version in force, and mismatch negative tests must prove
-      a grant presented in a different tenant, under a different policy
-      bundle/version, across a different execution boundary, or against a
-       request whose audit hash differs is rejected without a side effect.
-       Binding the policy bundle id/version detects substitution, not
+       a grant presented in a different tenant, under a different policy
+       bundle/version, across a different execution boundary, or against a
+        request whose audit hash differs is rejected without a side effect.
+        Binding the final arguments and the originating audit hash pins the
+        references the human saw, not the bytes they designate: when the
+        approved request names a mutable manifest or configuration file, an
+        attacker can replace that file's content after the human approves
+        it but before the grant is consumed: the actor, action, final path
+        arguments, audit hash, and every bound enforcement identity still
+        match, and the fresh evaluation snapshots the replacement, minting
+        a valid receipt for bytes the human never reviewed (the
+        authorization-to-handler content-binding requirement below closes
+        only the subsequent authorization-to-execution window). The grant
+        and its approval evidence must therefore also bind the content
+        digest or immutable snapshot identity of every mutable file or
+        security-relevant by-reference input the reviewed request
+        designates, and grant consumption must re-resolve each reference
+        and reject the grant when the current content no longer matches
+        what was reviewed, with a reviewed-content substitution negative
+        test that approves a request naming a mutable manifest, replaces
+        that file's content before presenting the grant, and proves
+        consumption is refused without a side effect.
+        Binding the policy bundle id/version detects substitution, not
        rollback: when an older, more permissive policy bundle and its
        active tenant binding are restored together, receipt issuance,
        grant consumption, and execution all observe the same stale
@@ -1200,12 +1219,22 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
     the handler deployment digest, executor profile, and receipt all still
     verify. The ceiling record and receipt must therefore bind the stable
     principal, account, or role identifier (with its scope and trust epoch)
-    that the handler was admitted to act as, and the execution gate must
-    re-resolve the handler's effective credential at execution time and
+    that the handler was admitted to act as, and the execution gate must,
+    atomically with launch, resolve the handler's effective credential,
     fail closed when it designates a different principal, scope, or epoch,
-    with a credential-substitution negative test proving a swapped ambient
+    and pin the verified result as an immutable credential instance (a
+    materialized session, token, or non-reswitchable handle) that is the
+    only credential the handler consumes; a gate that merely re-resolves
+    and checks, leaving the handler to re-read the mutable ambient
+    credential afterward, reopens the window, because the context can
+    designate the approved principal during the check and be repointed
+    before the handler resolves or uses it. This requires a
+    credential-substitution negative test proving a swapped ambient
     credential or context is denied rather than executed against a
-    principal the admission never named. Interception alone is still
+    principal the admission never named, and a concurrent
+    switch-versus-use negative test racing an ambient-credential repoint
+    against handler launch and use, proving the side effect only ever runs
+    as the pinned verified principal. Interception alone is still
    not sufficient, because an agent issues ordinary tool calls outside any skill
    invocation and the current hook cannot tell the difference:
    `.claude/hooks/acgs-emit-receipt.py::main` receives only the tool payload and
@@ -1239,7 +1268,26 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
      ledger, so one origin context yields at most one signed receipt, with
      a concurrent multi-issuance negative test racing retried issuance on
      the same context and proving at most one executable receipt is ever
-     minted and the side effect runs at most once.
+     minted and the side effect runs at most once. One-shot consumption,
+     read strictly, conflicts with the approval path above: a
+     skill-originated request that returns `ESCALATE` consumes its
+     invocation context when the signed non-executable escalation receipt
+     is issued, yet a granted approval requires a fresh evaluation to issue
+     the executable `ALLOW`/`TRANSFORM` receipt for that same request, so
+     strict one-receipt consumption rejects the approved issuance while
+     minting a new context for it would abandon the one-context/one-receipt
+     protection. Context consumption must therefore be modeled as an atomic
+     state transition rather than a single-shot flag: issuing the
+     non-executable escalation receipt atomically transitions the bound
+     context into an escalated state tied to that decision's approval
+     grant, from which consuming the matching grant may issue at most one
+     executable approved receipt under the same bound context, after which
+     the context is terminally consumed, and every other issuance path out
+     of either state fails closed. A negative test must race retried
+     post-approval issuance on the same escalated context and prove one
+     origin context never yields more than one non-executable escalation
+     receipt followed by at most one executable receipt, with the side
+     effect still running at most once.
      Validating the context protects only up to
     issuance: a skill-issued `ALLOW` that involves no human approval yields a
     valid signed receipt whose planned bindings carry no session, nonce, or live
