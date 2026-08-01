@@ -666,7 +666,26 @@ enumerated entries still passes. The host policy must therefore deny
       credential-substitution negative test spanning approval to grant
       presentation: approve a request while the handler resolves the
       staging principal, repoint the ambient credential to production, and
-      prove the grant is refused without a side effect. Binding the
+      prove the grant is refused without a side effect. Rechecking the
+      principal at consumption still does not recheck where the effect
+      lands: the same principal can remain valid for multiple clusters,
+      projects, regions, or namespaces, so while the grant sits unconsumed
+      a mutable default target can move from the approved staging context
+      to production with the principal, ceiling record, configuration
+      snapshot, and handler deployment digest all unchanged; consumption
+      then passes, the fresh evaluation mints a receipt bound to the newly
+      current production target, and the launch-time target check also
+      passes because the receipt already names that target. The grant and
+      its approval evidence must therefore also bind the resolved ambient
+      target context (the endpoint, cluster or project, region, namespace,
+      and equivalent target identifiers) the admitted footprint resolved
+      to at approval, and consumption must recheck that binding against
+      the currently resolved target, failing closed on any change, with an
+      approval-to-consumption target-substitution negative test that
+      approves a request while the default target designates staging,
+      repoints the target context to production before presenting the
+      grant, and proves the grant is refused without a side effect.
+      Binding the
       originating audit hash also presumes the bound event persists: when a
       governed skill can write the local audit store, it can delete or
       truncate the recorded escalation after the grant is issued, and the
@@ -1908,12 +1927,55 @@ enumerated entries still passes. The host policy must therefore deny
     with that intersection retained for the child's lifetime and propagated to
     any further descendants, with a negative test proving a child agent launched
     from a skill context is denied when it attempts an action above the parent
-    skill's ceiling. For ordinary
+    skill's ceiling. Child agent sessions are not the only descendants that
+    can re-enter the gate: an allowed shell process launched from a skill
+    context can, when its declared containment permits the host tool
+    gateway's transport and it inherits an authenticated agent or tool
+    credential (both of which this design permits when declared), invoke an
+    admitted tool directly, and the gateway then authenticates that request
+    as ordinary non-skill traffic governed by the broader agent ceiling; the
+    shell sandbox contains the process's own local effects, not the remote
+    handler's, so a restricted skill can launder an out-of-ceiling action
+    through its descendant process while every child-agent and nested-skill
+    test passes. Skill origin must therefore propagate to spawned processes
+    exactly as it does to child agent sessions: every tool request
+    originating from a descendant process of a skill-launched shell must
+    carry the full parent skill stack (host-derived from the launch, never
+    self-reported) and be governed by the same non-amplifying intersection,
+    or descendant processes must be denied the gateway transport and any
+    inheritable gateway credential at launch, with an end-to-end
+    subprocess-to-tool negative test proving a tool call issued by a process
+    spawned from a skill's allowed script is either governed by the parent
+    skill's ceiling or refused at the gateway, never executed under the
+    broader non-skill ceiling. For ordinary
    tool use outside any skill invocation, the host must authenticate an explicit
    non-skill origin, governed by the agent's normal policy ceiling; demanding a skill
    digest on every request would block all governed non-skill tool use. The gate
    fails closed when a request carries no authenticated origin at all, or when a
-   skill-originated request arrives without its loader-issued context. The
+   skill-originated request arrives without its loader-issued context.
+   Authenticating the non-skill origin proves only who issued the request,
+   and only at issuance: revoking the requesting actor's credential, role,
+   or session after receipt issuance but before first presentation
+   invalidates nothing, because the execution gate's freshness rechecks
+   cover the skill invocation context, approver, signer, policy, and
+   handler admission while never re-examining the requesting actor's
+   current authorization state, so the signed receipt still executes under
+   a principal that has lost authority. Every receipt must therefore bind
+   the requesting actor's credential and session identifiers and the
+   actor-authorization epoch under which it was issued, and the execution
+   gate must revalidate that state against fresh, monotonic,
+   rollback-protected actor-authorization and credential-revocation state
+   (the same trust class as the approver-authorization store), serialized
+   with receipt consumption and launch under the same epoch-or-lease
+   discipline as the other freshness domains, failing closed when the
+   credential, role, or session is revoked or that state is unavailable,
+   with a post-issuance actor-revocation negative test proving an unused
+   receipt is refused at the execution gate after the requesting actor's
+   credential, role, or session is revoked, and a concurrent
+   revoke-versus-execute negative test racing an actor revocation against
+   receipt presentation and proving either the side effect committed
+   before the revocation took effect or execution is refused without a
+   side effect, never both. The
    non-skill origin rule authenticates how a request was issued, not what
    influenced it: a user or the model can load a registered `SKILL.md`
    through an ordinary `Read` call or `cat` rather than the host's skill
