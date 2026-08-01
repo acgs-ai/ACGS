@@ -317,7 +317,22 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    arguments. The permission intersection must therefore be evaluated against the
    final executable arguments, re-running after any policy transformation and
    denying (fail closed) when the transformed request crosses the ceiling, with the
-   post-transform check recorded in the receipt. Receipt binding governs
+   post-transform check recorded in the receipt. Even then, argument-level checks
+   govern only the launch, not the launched process: an allowed
+   `shell.allowed_scripts` entry spawns a process that inherits the host's ambient
+   file and network capabilities, so a declaration that permits that script while
+   denying network access or writes outside a directory promises containment that
+   rechecking the command and its transformed arguments cannot deliver. This step
+   therefore defines shell containment semantics explicitly: a shell grant is
+   treated as granting the process's ambient file and network capabilities unless
+   the launch runs under an OS-level sandbox or capability-brokered executor that
+   materially enforces the narrower ceilings. Declarations that pair a shell grant
+   with narrower denials no such mechanism enforces are rejected at the step-2
+   gate rather than accepted as unenforceable promises, and wherever sandboxed or
+   brokered enforcement is claimed it must be proven by end-to-end negative tests
+   on the transitive effects themselves (the spawned process's denied write
+   outside the allowed directory, its denied socket) rather than on the launch
+   arguments. Receipt binding governs
    only actions that reach the executor, and today's host coverage is narrow:
    `.claude/hooks/acgs-emit-receipt.py::_classify` intercepts the edit tools and a few
    orchestration commands, so ordinary `Read` and general `Bash` calls bypass the
