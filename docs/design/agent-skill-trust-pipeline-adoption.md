@@ -639,9 +639,24 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
      and credential-revocation state (the same trust class as the grant
      ledger below), failing closed when the credential is revoked, the role
      is withdrawn, or that state is unavailable, with a post-revocation
-     negative test proving a grant signed by a since-revoked approver
-     credential, or issued under a since-withdrawn approver role, is rejected
-     at consumption without a side effect. Single-use must hold under concurrency:
+      negative test proving a grant signed by a since-revoked approver
+      credential, or issued under a since-withdrawn approver role, is rejected
+      at consumption without a side effect. Revalidation alone still leaves a
+      validate-then-consume race: the consumer can validate the old active
+      authorization state, the revocation can then commit, and the
+      already-validated grant can still be consumed to mint a fresh executable
+      receipt after the approver lost authority, while the sequential
+      post-revocation test above passes. Approver-state validation, the
+      grant's compare-and-consume, and receipt issuance must therefore be
+      serialized against approver credential and role transitions (for
+      example, via an approver-authorization epoch or lease acquired
+      atomically with consumption and rechecked at issuance commit), so that
+      issuance either commits before the revocation takes effect or fails
+      closed, with a concurrent revoke-versus-consume negative test racing an
+      approver credential or role revocation against grant consumption and
+      proving either the executable receipt was issued before the revocation
+      committed or consumption is refused without a side effect, never both.
+      Single-use must hold under concurrency:
     marking the grant used at execution time is too late, because two
     evaluations presenting the same still-unused grant could each validate it
     and mint separate executable receipts before either execution burns it, so
@@ -1204,9 +1219,17 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
      process-control and IPC authority (and the declaration documents it),
      or the executor profile must isolate or broker those channels (separate
       PID and IPC namespaces, or equivalent brokering of signals, tracing,
-      and shared IPC), with an end-to-end negative test proving the launched
-      process cannot signal, trace, or otherwise affect another host process
-      through those channels. Namespaces, descriptors, and ceilings also
+      and shared IPC). Separate PID and IPC namespaces alone do not close the
+      abstract-socket channel: Linux abstract Unix-domain sockets are scoped
+      to the network namespace, not the IPC namespace, so a sandbox that
+      shares the host network namespace still lets the launched process reach
+      host services over abstract sockets while satisfying that stated
+      isolation profile. The isolation profile must therefore also include a
+      separate network namespace or explicit brokering of abstract-socket
+      access, with an end-to-end negative test exercising that exact profile
+      and proving the launched process cannot signal, trace, connect to a
+      host abstract Unix-domain socket, or otherwise affect another host
+      process through those channels. Namespaces, descriptors, and ceilings also
       assume the process keeps the identity it was launched with: when the
       execution host exposes a setuid or setgid helper, retains
       supplementary groups or Linux capabilities, permits `sudo`, or
@@ -1359,10 +1382,22 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
     handler's executable and dependency closure, held and verified outside
     agent and handler write authority, and the execution gate must recheck
     that digest against the implementation bytes actually resolved and loaded
-    at execution time, failing closed on mismatch, with an in-place mutation
-    negative test proving a handler whose code is replaced in place while its
-    name, identity, and advertised schema/version remain unchanged is denied
-    rather than executed. Binding the reviewed implementation receipts only the outer
+     at execution time, failing closed on mismatch, with an in-place mutation
+     negative test proving a handler whose code is replaced in place while its
+     name, identity, and advertised schema/version remain unchanged is denied
+     rather than executed. Rechecking the digest and then loading from mutable
+     storage still leaves a check-to-load race: an agent-controlled writer can
+     replace a dependency after verification but before a lazy import or
+     execution-time load, so unreviewed code performs the side effect while
+     the sequential in-place-mutation test passes. The gate must therefore
+     execute the handler only from verified bytes: either the verified handler
+     and its dependency closure are materialized into an immutable snapshot
+     from which every load (lazy imports included) resolves, or loading and
+     verification go through the same protected handles so the bytes verified
+     are exactly the bytes executed, with a concurrent swap-versus-load
+     negative test racing a dependency replacement against a lazy or
+     execution-time load and proving the swapped code never runs.
+     Binding the reviewed implementation receipts only the outer
    tool call, not what the handler does to fulfill it: an admitted MCP
    server, plugin, or host handler internally performs its own filesystem,
    network, and process effects, those nested effects need not pass back
