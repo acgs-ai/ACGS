@@ -266,18 +266,29 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    maintained as two host-facing copies, per-file checks can pass while the copies
    drift apart, so a later repair could govern the Codex copy while Claude keeps
    loading stale or differently permissioned instructions. The gate must therefore
-   enforce mirror parity for the shared skill body and security metadata (permission
-   declaration, pinned digest), but as a *normalized* comparison, not a raw byte
-   diff, because the two copies legitimately diverge in host-specific
+   enforce mirror parity for the shared skill body and security metadata (the
+   permission declaration and semantics), but as a *normalized* comparison, not
+   a raw byte diff, because the two copies legitimately diverge in host-specific
    representation: once step 4 applies host schemas, the Codex copy carries its
    `permissions:` declaration under `metadata:` or in a sidecar while the Claude
    copy may hold it in frontmatter, and only the Codex copy ships an
-   `agents/openai.yaml` adapter. The parity check therefore compares a canonical
-   instruction body and the security values after normalizing each copy's
-   host-specific encoding, and allows host adapter files to exist only on their
-   host's side; either generate both copies from one canonical source or fail on
-   divergence of the normalized body or security metadata. Cheap, deterministic,
-   catches the entire class.
+   `agents/openai.yaml` adapter. That same intentional divergence means the
+   step-5 artifact digest is *not* a parity value: the canonical tree manifest
+   binds every path and entry, so two compliant host mirrors necessarily
+   produce different full-tree digests, and requiring digest equality across
+   mirrors would either fail compliant mirrors permanently or force hashing a
+   normalized view that omits host-specific bytes the host actually loads.
+   Each host copy therefore carries its own full-tree digest computed over
+   exactly the bytes that host loads, both digests are tied to a common
+   canonical-source/release identity recorded alongside them, and parity is
+   checked separately on the normalized instruction body and the permission
+   semantics, never on digest equality. The parity check therefore compares a
+   canonical instruction body and the security values after normalizing each
+   copy's host-specific encoding, and allows host adapter files to exist only
+   on their host's side; either generate both copies from one canonical source
+   or fail on divergence of the normalized body, the permission semantics, or
+   the shared canonical-source identity the per-host digests are tied to.
+   Cheap, deterministic, catches the entire class.
    One repo-hygiene prerequisite: the root `.gitignore` ignores `.agents` wholesale, so
    only the two already-tracked `govern-zone` files survive; any new skill or sidecar
    under `.agents/skills/**` is invisible to a CI checkout (`git check-ignore` confirms
@@ -432,7 +443,21 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    reject any pair that is not the active one, with tamper and rollback tests at
    both issuance and execution proving that a widened, digest-mismatched, or
    reverted ceiling record is rejected, including the rollback of a previously
-   valid ceiling-and-skill pair as a matched set. A pinned
+   valid ceiling-and-skill pair as a matched set. Freshness checks at issuance
+   and execution bound only work that has not yet launched: a long-running or
+   detached process started under a then-active pair has already passed both
+   checks, so revoking or narrowing the pair afterward leaves that process's
+   ambient file and network capabilities intact, and the rollback and
+   revocation tests above can pass while stale authority keeps producing side
+   effects. Revocation must therefore either be made effective against running
+   work (process trees and brokered resources launched under a
+   ceiling-and-skill pair are tied to a revocable capability lease that the
+   host closes when the active pair changes, with a negative test proving a
+   still-running child process's file and network effects are cut off after
+   revocation) or be explicitly scoped to future launches only, with that
+   residual risk recorded in the ceiling record and receipt and a test
+   documenting that a pre-revocation process retains its capabilities until it
+   exits. A pinned
    digest proves what was approved, not what executes: if a bundled script or
    resource changes after the loader authenticates the artifact digest but before
    the tool runs, the loader context and receipt still carry the old trusted
@@ -475,12 +500,29 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    schema accepts a skill with no `permissions:` block, and if absence is read as
    "no additional restriction" the implementation falls back to the full approved
    ceiling, so a new or partially migrated skill widens its authority by omitting
-   the declaration while the outside-declaration tests still pass on skills that
-   do declare. For skills in the governed set, a missing, malformed, or
-   unrecognized permission declaration must therefore fail admission (no
-   ceiling fallback, no receipt), with a real-handler negative test proving a
-   governed skill lacking a valid declaration produces no receipt and no side
-   effect. Binding is only as
+    the declaration while the outside-declaration tests still pass on skills that
+    do declare. For skills in the governed set, a missing, malformed, or
+    unrecognized permission declaration must therefore fail admission (no
+    ceiling fallback, no receipt), with a real-handler negative test proving a
+    governed skill lacking a valid declaration produces no receipt and no side
+    effect. The governed set itself must not be decided by content
+    classification: step 3 seeds it from the skills whose current prose directs
+    governed capabilities, but a model-selectable skill classified as
+    documentation-only can later be compromised or emit a tool instruction
+    without ever entering that list, and its loader origin would then be
+    accepted with no declared/approved permission intersection while the
+    missing-declaration test above still passes for the skills that are listed.
+    Membership is therefore defined by invocability, not prose: every
+    model-invocable skill (anything a host can select or implicitly invoke)
+    is in the governed set, and a documentation-only skill carries an explicit
+    deny-by-default/no-capability declaration (an empty permission set) rather
+    than being exempted by classification, so admission fails closed for any
+    model-invocable skill without a declaration and a tool instruction emitted
+    from a nominally documentation-only skill is denied against its empty
+    declared set, with a real-handler negative test proving a tool call
+    originating from a documentation-classified skill with a no-capability
+    declaration produces no receipt and no side effect rather than being
+    governed under the agent's non-skill ceiling. Binding is only as
    strong as receipt authentication: hash-binding the skill digest and permission
    fields makes them part of the receipt's content hash, but with an unsigned
    receipt a caller can alter those fields and recompute the hash, so mutation
@@ -648,7 +690,20 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    discarded, with a delayed-call negative test proving a tool call deferred
    until after invocation end, issued from a context that loaded the skill, is
    still governed by the skill's ceiling rather than the broader non-skill
-   ceiling. A single
+   ceiling. Isolation holds only as far as its output boundary: when the
+   isolated context returns generated output into the caller's broader model
+   context, a malicious skill can encode a delayed tool instruction in that
+   output, and the receiving caller (which is not part of the delegation
+   stack) performs the requested action under its non-skill ceiling while the
+   delayed-call test inside the isolated context still passes. Output returned
+   from an isolated skill context must therefore either be terminal (delivered
+   to the user or a non-model sink, never re-entering any model context as
+   consumable instructions), or taint its recipient: the full skill stack of
+   the isolated context propagates into every model context that consumes the
+   output, intersected as above and retained until that recipient context is
+   discarded, with a negative test proving a tool call issued by a caller
+   after consuming isolated-context output is still governed by the
+   originating skill's ceiling rather than the caller's broader ceiling. A single
    origin identity is not enough once skills compose: when one skill invokes
    another, or several are active concurrently, attributing the request to any
    single skill would let a restricted outer skill route an action through a
