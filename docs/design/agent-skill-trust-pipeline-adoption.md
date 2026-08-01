@@ -199,7 +199,21 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
 
 ## Proposed sequence
 
-1. **Fix what is broken.** Both `govern-zone` skill copies (in flight). One ordering
+1. **Fix what is broken.** Both `govern-zone` skill copies (in flight). One
+   placement constraint first: these are generated, managed artifacts, not
+   hand-maintained files. Their bodies identify themselves as auto-generated,
+   `.claude/ecc-tools.json` lists both copies and `agents/openai.yaml` under
+   `managedFiles`, and `docs/CLAIM_AUDIT.md` already defers wording fixes in this
+   skill to the skill-extraction generator rather than its output. Hand-patching
+   the outputs would therefore last only until the next ECC regeneration, which
+   could restore the malformed body, the camelCase falsehood, and
+   `allow_implicit_invocation: true` in one pass, silently invalidating the
+   step-2 parity gate and the step-5 digest. The repair, including the invocation
+   flags below, must land in the generator or its canonical source, with the
+   host copies regenerated from it; if the generator cannot be fixed on this
+   timeline, replace the generated skill with a hand-owned canonical source and
+   remove the copies from the generator's managed set, so no automated pass can
+   overwrite the repaired artifacts. One ordering
    constraint: repairing the frontmatter is exactly what arms the
    `allow_implicit_invocation: true` flag, so shipping the repair alone would turn a
    previously inert, unowned, unsigned skill into an automatic instruction source
@@ -295,7 +309,15 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    skill, plus an independently reviewed maximum permission set held outside the skill.
    Without these, step 6 would enforce a caller-controlled declaration.
 6. **Wire `permissions:` into the kernel** as a deny-only policy input bound into the
-   receipt and checked against the step-5 identity and ceiling. Receipt binding governs
+   receipt and checked against the step-5 identity and ceiling. Deny-only is not a
+   one-shot pre-check: existing policies can return `TRANSFORM`, and
+   `kernel.py::dispatch` then executes `record.transformed_args`, so a request that
+   entered within the ceiling can be rewritten into a path, command, or endpoint
+   outside the declared/approved set while the receipt correctly binds those final
+   arguments. The permission intersection must therefore be evaluated against the
+   final executable arguments, re-running after any policy transformation and
+   denying (fail closed) when the transformed request crosses the ceiling, with the
+   post-transform check recorded in the receipt. Receipt binding governs
    only actions that reach the executor, and today's host coverage is narrow:
    `.claude/hooks/acgs-emit-receipt.py::_classify` intercepts the edit tools and a few
    orchestration commands, so ordinary `Read` and general `Bash` calls bypass the
