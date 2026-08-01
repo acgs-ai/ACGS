@@ -1257,10 +1257,38 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
         than leaving the child to re-read mutable defaults, with a shell
         target-substitution negative test proving an allowed script
         authorized while its credential's target designated staging is
-        refused launch, without a side effect, after that target is
-        repointed to production under an unchanged principal, scope, and
-        epoch.
-       Files, sockets, environment, and credentials still do
+         refused launch, without a side effect, after that target is
+         repointed to production under an unchanged principal, scope, and
+         epoch. Binding the principal and target still authorizes only who
+         the spawned process acts as and where its effects land, not the
+         configuration that selects the operation: an allowed script that
+         consumes a permitted non-secret environment value or an unnamed
+         default configuration (a `DEPLOY_MODE` variable, a feature flag, a
+         configuration file the script reads by convention) executes
+         whatever operation that value selects at launch, so changing the
+         value after authorization alters the executed operation while the
+         script, its arguments, the credential principal, the target, and
+         the receipt all remain unchanged; the allowlisted-environment rule
+         above names which variables survive (secrets stripped), never
+         which values were authorized, and the admitted-handler
+         ambient-configuration rule later in this design covers only
+         admitted handlers, not spawned scripts. Each allowed script's
+         security-relevant ambient inputs must therefore be enumerated at
+         admission (the environment values, configuration files and
+         defaults, and feature flags its operation depends on), bound by
+         resolved value or content digest into the shell grant, its
+         approvals, and its receipts at authorization, and resolved
+         atomically with launch into the same pinned immutable snapshot the
+         spawned process consumes (the allowlisted environment and
+         configuration materialized from the bound values, never re-read
+         from mutable host state), failing closed on mismatch, with a shell
+         ambient-configuration substitution negative test proving an
+         allowed script authorized while `DEPLOY_MODE` (or an equivalent
+         flag or default) held its reviewed value is refused launch,
+         without a side effect, or cannot have its executed operation
+         altered by the change, after that value is modified between
+         authorization and launch.
+        Files, sockets, environment, and credentials still do
      not exhaust ambient authority: a launch that shares the host's PID or
      IPC namespace lets the spawned process signal or trace same-UID
      processes, connect over abstract Unix-domain sockets, and read or write
