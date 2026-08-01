@@ -199,7 +199,14 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
 
 ## Proposed sequence
 
-1. **Fix what is broken.** Both `govern-zone` skill copies (in flight).
+1. **Fix what is broken.** Both `govern-zone` skill copies (in flight). One ordering
+   constraint: repairing the frontmatter is exactly what arms the
+   `allow_implicit_invocation: true` flag, so shipping the repair alone would turn a
+   previously inert, unowned, unsigned skill into an automatic instruction source
+   before any control below exists. The repair must therefore set
+   `allow_implicit_invocation: false` in `agents/openai.yaml`, to be re-enabled only
+   once the step-2 gate and a step-3 card cover the skill (or those minimum controls
+   land atomically with this step).
 2. **Add a loadability gate.** A root test that every `SKILL.md` under `.claude/skills/**`
    and `.agents/skills/**` parses `---`-delimited frontmatter with a `name` and
    `   description`, and enforces the host's skill schema (see step 4 for why the generic
@@ -208,7 +215,14 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    agent installation, so an ordinary checkout or CI runner cannot invoke it. The gate
    must therefore vendor a pinned copy of the validator (license permitting) or encode
    the same schema rules as a repo-local check, with a recorded upstream version to diff
-   against on host upgrades. Cheap, deterministic, catches the entire class.
+   against on host upgrades. The gate must also cover host companion manifests, not
+   only `SKILL.md`: Codex registration of `govern-zone` additionally depends on
+   `.agents/skills/govern-zone/agents/openai.yaml`, and `quick_validate.py` reads only
+   `SKILL.md`, so a malformed or schema-incompatible companion manifest keeps the
+   skill unloadable while a frontmatter-only gate passes. Validate each companion
+   manifest against a pinned schema and check that it belongs to (and correctly
+   references) the skill directory that contains it. Cheap, deterministic, catches
+   the entire class.
    One repo-hygiene prerequisite: the root `.gitignore` ignores `.agents` wholesale, so
    only the two already-tracked `govern-zone` files survive; any new skill or sidecar
    under `.agents/skills/**` is invisible to a CI checkout (`git check-ignore` confirms
@@ -234,7 +248,16 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    in a sidecar manifest, not beside `name` as in NVIDIA's catalog. That is also why
    the step-2 gate must enforce the host schema via its vendored validator or
    equivalent repo-local check: a frontmatter-parses check alone would approve a skill
-   the host itself rejects.
+   the host itself rejects. This repository also already documents a governed-skill
+   metadata contract in `docs/skills/skill-schema.md` (`allowed_tools`, `risk_level`,
+   `requires_governance_gate`, `deny_behavior`, `evidence_outputs`, `owner`), and
+   introducing `permissions:` beside it would create two sources of truth with no
+   precedence rule (`allowed_tools` could permit shell while `permissions.shell`
+   denies it). This step therefore includes reconciling the two before rollout:
+   `permissions:` supersedes `allowed_tools` as the capability declaration, the
+   remaining `skill-schema.md` fields (owner, risk, gate, evidence outputs) fold into
+   the step-3 skill card, and `docs/skills/skill-schema.md` is updated to record that
+   mapping so cards, validators, and the future executor read exactly one contract.
 5. **Skill identity and permission ceiling.** A trusted name/version/artifact digest per
    skill, plus an independently reviewed maximum permission set held outside the skill.
    Without these, step 6 would enforce a caller-controlled declaration.
@@ -246,8 +269,18 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    receipt path entirely, and the `.agents` tree has no runtime gate at all. This step
    therefore includes the host-side interception that routes every governed capability
    through `execute_with_receipt`; until that wiring exists, the enforcement claim is
-   limited to calls already routed through that boundary. This is the differentiating
-   step and should get a design of its own.
+   limited to calls already routed through that boundary. Interception alone is still
+   not sufficient, because an agent issues ordinary tool calls outside any skill
+   invocation and the current hook cannot tell the difference:
+   `.claude/hooks/acgs-emit-receipt.py::main` receives only the tool payload and
+   assigns `PAPERCLIP_AGENT_ID` or a generic actor, with no skill digest or
+   loader-issued invocation identity. A compromised skill could direct a normal
+   Bash/Edit call that is then governed only as an unscoped agent action, bypassing
+   its ceiling. Every intercepted request must therefore carry an unforgeable,
+   host-bound skill invocation context (the step-5 identity and digest, issued by the
+   loader, not self-reported in the payload) that selects which ceiling applies, and
+   the gate must fail closed when a tool request arrives without that context. This
+   is the differentiating step and should get a design of its own.
 7. **Evals** for the skills that encode repo conventions, where drift is silent.
 8. **Full OMS-style signing** can come last; step 5 needs only a pinned digest and an
    approval record, not the complete certificate-chain apparatus, though the two should
