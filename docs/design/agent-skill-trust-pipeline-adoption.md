@@ -286,7 +286,15 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    manifests and `.github/workflows/**` and fetches of external documentation URLs,
    with no `disable-model-invocation` flag, so it is model-selectable like the rest.
    File reads and network access are inside the governed capability set this proposal
-   opened with, not exempt from it. The skill step 1 restores must
+   opened with, not exempt from it. The step-1 invocation hold therefore applies to
+   this whole set, not only to the repaired mirror: a card and a loadability gate do
+   not constrain what a selected skill directs, so every acting skill above must set
+   `disable-model-invocation: true` (and its Codex counterpart must not set
+   `allow_implicit_invocation: true`) until the step-5 authenticated identity and
+   ceiling and the step-6 interception land; otherwise `phase-gate` and
+   `source-driven-development` stay model-selectable through the phased rollout
+   while directing shell commands and network reads with no enforcement behind
+   them. The skill step 1 restores must
    not sit outside the controls this proposal exists for), and make a card the entry
    ticket for any currently untracked local skill (`worktree-lanes`,
    `headless-delegation`, `deploy-drift-check`, `pr-queue`, `codex-execution-workflow`)
@@ -319,10 +327,21 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    `TRANSFORM` receipt that is the only thing the executor will accept, and a
    negative test must prove the original denied or escalated receipt can never
    run, approved or not. The approval grant is itself a credential and must be
-   bound to the exact request it approves: authenticated to the granting human,
-   tied to the actor, skill identity/digest, action, and final arguments the new
-    receipt represents, single-use, and bounded by an expiry, with the grant
-    recorded as evidence in that receipt. Binding alone does not establish
+    bound to the exact request it approves: authenticated to the granting human,
+    tied to the actor, skill identity/digest, action, and final arguments the new
+     receipt represents, single-use, and bounded by an expiry, with the grant
+     recorded as evidence in that receipt. That tuple alone does not identify a
+     decision: the same actor, skill, action, and arguments can recur in another
+     tenant, under another policy bundle/version, or in a later request, and
+     single-use plus expiry prevent a second use, not first use against a
+     different decision than the one the human saw. The grant must therefore
+     also be bound to the originating request/audit hash of the denied or
+     escalated decision it responds to, plus the tenant, execution boundary,
+     and policy bundle/version in force, and mismatch negative tests must prove
+     a grant presented in a different tenant, under a different policy
+     bundle/version, across a different execution boundary, or against a
+     request whose audit hash differs is rejected without a side effect.
+     Binding alone does not establish
     separation of duties: exact-request binding proves *what* was approved, not
     that an independent authority approved it, so when the requesting actor is
     itself an authenticated human, nothing above stops that same principal from
@@ -368,9 +387,17 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    executor accepts capabilities nobody approved. The ceiling record must therefore
    live outside agent write authority entirely, be authenticated (integrity-protected
    under a key or review path the agent cannot exercise), and be version-bound to the
-   specific skill digest it approves, with tamper and rollback tests at both issuance
-   and execution proving that a widened, reverted, or digest-mismatched ceiling record
-   is rejected. A pinned
+   specific skill digest it approves. Authenticity and version-binding alone cannot
+   detect rollback: an authentic older ceiling remains correctly version-matched to
+   its authentic older skill digest, so reverting both together satisfies every
+   signature and binding check while restoring capabilities that were since
+   narrowed. Validation must therefore also consult trusted freshness state — an
+   active-version/revocation record or monotonic counter held outside agent write
+   authority that identifies the currently approved ceiling-and-skill pair — and
+   reject any pair that is not the active one, with tamper and rollback tests at
+   both issuance and execution proving that a widened, digest-mismatched, or
+   reverted ceiling record is rejected, including the rollback of a previously
+   valid ceiling-and-skill pair as a matched set. A pinned
    digest proves what was approved, not what executes: if a bundled script or
    resource changes after the loader authenticates the artifact digest but before
    the tool runs, the loader context and receipt still carry the old trusted
@@ -381,9 +408,19 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    acceptable substitute: it leaves a window between the recheck and `exec`, and
    says nothing about resources a script reads after launch, so authenticated
    bytes could still change while the receipt carries the approved digest. The
-    executed snapshot digest is bound into the receipt, with tests mutating skill
-    bytes both between load and launch and after launch (a bundled resource read
-    mid-execution) proving the mutated content is never executed or read. That
+     executed snapshot digest is bound into the receipt, with tests mutating skill
+     bytes both between load and launch and after launch (a bundled resource read
+     mid-execution) proving the mutated content is never executed or read.
+     Immutability of the snapshot is not containment of what it references: a
+     read-only content-addressed directory can still preserve a symlink such as
+     `scripts/run.py -> /tmp/run.py`, whose digest and link entry are unchanged
+     while the external target is replaced after authentication, so unapproved
+     bytes execute while every in-snapshot mutation test passes. Snapshot
+     construction and resource loading must therefore reject symlinks and other
+     references that escape the snapshot, or materialize their targets inside
+     the confined snapshot and include those bytes in the hashed content, with a
+     negative test that mutates an external link target between authentication
+     and use and proves the mutated target is never executed or read. That
     snapshot bounds the guarantee to bundled skill content, and the claim must
     say so: a snapshotted script still resolves its interpreter, imports
     installed packages, and invokes binaries through `PATH`, and those
@@ -398,7 +435,17 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
     interpreter/dependency closure into the approval and receipt; no broader
     identity claim may be made without that binding.
 6. **Wire `permissions:` into the kernel** as a deny-only policy input bound into the
-   receipt and checked against the step-5 identity and ceiling. Binding is only as
+   receipt and checked against the step-5 identity and ceiling. Deny-only narrowing
+   presumes a declaration exists, and absence must not be an escape hatch: the host
+   schema accepts a skill with no `permissions:` block, and if absence is read as
+   "no additional restriction" the implementation falls back to the full approved
+   ceiling, so a new or partially migrated skill widens its authority by omitting
+   the declaration while the outside-declaration tests still pass on skills that
+   do declare. For skills in the governed set, a missing, malformed, or
+   unrecognized permission declaration must therefore fail admission (no
+   ceiling fallback, no receipt), with a real-handler negative test proving a
+   governed skill lacking a valid declaration produces no receipt and no side
+   effect. Binding is only as
    strong as receipt authentication: hash-binding the skill digest and permission
    fields makes them part of the receipt's content hash, but with an unsigned
    receipt a caller can alter those fields and recompute the hash, so mutation
@@ -496,19 +543,33 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    loader-issued invocation identity. A compromised skill could direct a normal
    Bash/Edit call that is then governed only as an unscoped agent action, bypassing
    its ceiling. Every intercepted request must therefore carry an unforgeable,
-   host-bound origin. For requests the host identifies as skill-originated, that
+   host-bound    origin. For requests the host identifies as skill-originated, that
    origin is the loader-issued invocation context (the step-5 identity and digest,
-   not self-reported in the payload), which selects the skill's ceiling. A single
+   not self-reported in the payload), which selects the skill's ceiling.
+   Unforgeability authenticates the issuer, not freshness: a context minted for a
+   previously active broader skill, if cacheable or replayable, lets a later call
+   select that skill's ceiling after its invocation has ended. Each context must
+   therefore be bound to the host session and to the exact tool-call/request
+   digest it authorizes, carry a short lifetime and a nonce or be held as a
+   non-exportable live handle, and be validated before any receipt is issued,
+   with stale-context and cross-call replay negative tests proving a context
+   from an ended invocation, or one minted for a different tool call, is
+   rejected before receipt issuance. A single
    origin identity is not enough once skills compose: when one skill invokes
    another, or several are active concurrently, attributing the request to any
    single skill would let a restricted outer skill route an action through a
    broader inner skill and escape its own ceiling. The loader-issued context must
    therefore carry the authenticated origin/delegation stack of every skill
-   contributing to the request, and the effective ceiling is the intersection of
-   all stacked skill ceilings (before intersecting with the declaration as
-   above), with nested- and concurrent-skill negative tests proving that invoking
-   or overlapping with another skill can only narrow authority, never amplify
-   it. For ordinary
+   contributing to the request, and the effective permission set is the
+   intersection of every stacked skill's approved ceiling *and* every stacked
+   skill's own declared permissions, not the ceilings intersected with a single
+   declaration: if an outer skill's ceiling permits network while its own
+   declaration omits it, and an inner skill both declares and is approved for
+   network, applying only the inner declaration would let the call through an
+   authority the outer skill explicitly declined. Nested- and concurrent-skill
+   negative tests must include that narrower-outer-declaration case, proving
+   that invoking or overlapping with another skill can only narrow authority,
+   never amplify it. For ordinary
    tool use outside any skill invocation, the host must authenticate an explicit
    non-skill origin, governed by the agent's normal policy ceiling; demanding a skill
    digest on every request would block all governed non-skill tool use. The gate
