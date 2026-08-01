@@ -346,8 +346,17 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    never revives the original receipt. A granted approval triggers a freshly
    evaluated request through the full policy path, producing a new `ALLOW` or
    `TRANSFORM` receipt that is the only thing the executor will accept, and a
-   negative test must prove the original denied or escalated receipt can never
-   run, approved or not. Approval is also bounded below the permission ceiling,
+    negative test must prove the original denied or escalated receipt can never
+    run, approved or not. Approval is also not a general override of denial:
+    a grant can respond only to an explicit `ESCALATE`, or to a decision the
+    policy itself marks approvable, so `deny_behavior: require human approval`
+    selects escalation as a skill's deny handling rather than making every
+    denial grantable. A hard `DENY` (an absolute control such as tenant
+    isolation or a forbidden destructive action) remains denied regardless of
+    any grant: the fresh post-approval evaluation must deny it again, and a
+    real-handler negative test must prove a hard-denied request accompanied by
+    an otherwise valid approval grant yields no executable receipt and no side
+    effect. Approval is also bounded below the permission ceiling,
    never a way over it: a grant can resolve only policy-level escalation for
    requests whose final arguments remain inside every effective permission
    ceiling (the step-5 approved ceiling intersected with the declaration and,
@@ -366,8 +375,8 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
      tenant, under another policy bundle/version, or in a later request, and
      single-use plus expiry prevent a second use, not first use against a
      different decision than the one the human saw. The grant must therefore
-     also be bound to the originating request/audit hash of the denied or
-     escalated decision it responds to, plus the tenant, execution boundary,
+      also be bound to the originating request/audit hash of the escalated or
+      explicitly approvable decision it responds to, plus the tenant, execution boundary,
      and policy bundle/version in force, and mismatch negative tests must prove
      a grant presented in a different tenant, under a different policy
      bundle/version, across a different execution boundary, or against a
@@ -532,10 +541,26 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    signer path — so this step requires signed receipt issuance for the
    skill-trust stage (the kernel's opt-in Ed25519 signing mode is the starting
    point) with verification by a trusted verifier at the executor gate against
-   key material held outside agent write authority, and a recomputed-forgery
-   negative test proving a receipt whose skill digest, ceiling, or permission
-   fields were altered and re-hashed (and, absent the issuance key,
-   re-signed) is rejected without a side effect. Signing and hash-binding prove
+    key material held outside agent write authority, and a recomputed-forgery
+    negative test proving a receipt whose skill digest, ceiling, or permission
+    fields were altered and re-hashed (and, absent the issuance key,
+    re-signed) is rejected without a side effect. Write protection on key
+    material is not enough, because that forgery test only holds while the
+    issuance key is actually out of the attacker's reach: a shell-enabled
+    skill whose grant includes ambient credentials (an option the containment
+    contract below explicitly permits when documented) could read a
+    filesystem-resident issuance private key and mint correctly signed
+    receipts with widened skill bindings without modifying anything. The
+    issuance private key must therefore also be held outside agent and
+    child-process read authority: receipt signing happens through an isolated
+    signer (a separate process or service boundary, or a non-exportable key in
+    an OS keystore or hardware-backed store) that governed agents and their
+    spawned processes can neither read nor invoke directly, reachable only
+    through the issuance path that performs the checks above, and a
+    key-exfiltration/unauthorized-signing negative test must prove a
+    shell-enabled skill granted ambient credentials can neither read the
+    issuance key material nor obtain a validly signed receipt outside the
+    issuance path. Signing and hash-binding prove
    integrity, not that the verifier understands the new fields: during a rolling
    deployment or on a stale executor worker, skill fields encoded into an existing
    extensible receipt field would let an older gate validate the signature and the
@@ -566,7 +591,19 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    semantics (`openat2`-style `RESOLVE_BENEATH`) or an equivalent filesystem
    sandbox that confines the resolved target — with negative tests proving both a
    symlink escape inside an allowed path and a check-to-open path race fail to
-   touch the outside location. Direct network capabilities have the same
+   touch the outside location. No-follow, descriptor-relative resolution still
+   cannot see hard links: an allowed directory can contain a hard link to a
+   denied file on the same filesystem, so the allowed pathname resolves
+   beneath the ceiling root while reading or writing it accesses the same
+   inode as the outside file, and both tests above pass while an
+   out-of-ceiling side effect runs. Directory ceilings must therefore also
+   handle hard links explicitly, either by confining the capability to an
+   isolated filesystem view in which outside inodes are simply not reachable
+   through allowed paths, or by rejecting (or specially vetting) multi-linked
+   entries whose link count shows the inode is shared beyond the ceiling
+   boundary, with a cross-boundary hard-link negative test proving that a
+   hard link inside an allowed directory to a denied file fails to read or
+   write the outside content. Direct network capabilities have the same
    resolution gap: a network ceiling scoped to allowed origins is not enforced
    by validating the requested endpoint or the post-policy arguments, because
    an allowed URL can redirect to a forbidden origin, and a hostname can
@@ -744,10 +781,18 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    context for every subsequent tool call — a permitted write silently
    dismantling the gate. The interceptor and its configuration must therefore
    live outside agent write authority (host-installed, not resolved from the
-   writable checkout), or be authenticated against a pinned digest and
-   revalidated before every execution, with a hook-tampering negative test
-   proving that a modified hook or settings file yields fail-closed denial of
-   subsequent governed calls, not silent bypass. This is the
+   writable checkout), or be authenticated against a pinned digest with the
+   host then executing the verified bytes themselves, from an immutable
+   snapshot or protected copy materialized at verification time, never
+   re-opened from the writable path after verification: revalidating the
+   digest and then reloading the file leaves the same check-to-use window
+   step 5 already rejects for pre-launch digest revalidation of skill
+   artifacts, in which a skill replaces the hook after the check passes but
+   before the host loads it, bypassing routing or forging the origin context.
+   The hook-tampering negative test must prove both that a modified hook or
+   settings file yields fail-closed denial of subsequent governed calls, not
+   silent bypass, and that a hook swapped in after verification is never the
+   code that executes. This is the
    differentiating step and should get a design of its own.
 7. **Evals** for the skills that encode repo conventions, where drift is silent.
 8. **Full OMS-style signing** can come last; step 5 needs only a pinned digest and an
