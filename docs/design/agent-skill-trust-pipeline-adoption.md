@@ -1935,9 +1935,42 @@ enumerated entries still passes. The host policy must therefore deny
    transitive effect itself is contained: an admitted, unmodified handler
    whose internal behavior attempts a write outside the invoking skill's
    file ceiling or a connection outside its network ceiling fails to perform
-   that effect (or the invocation is denied at issuance under the recorded
-    footprint), rather than passing because only the outer call was
-    checked. That footprint records where the handler's effects may land,
+    that effect (or the invocation is denied at issuance under the recorded
+     footprint), rather than passing because only the outer call was
+     checked. Filesystem, network, credential, and process capabilities
+     enumerate where a handler's effects land, not every channel a shared
+     host exposes: an admitted local plugin or per-invocation handler
+     sharing the host's namespaces can signal or trace same-UID
+     processes, write shared memory segments or message queues, connect
+     to an abstract Unix-domain socket, receive inbound connections on a
+     listener it opens, use an inherited open descriptor or credential
+     handle, or acquire privilege through a setuid/setgid helper, `sudo`,
+     or user-namespace creation, all without attempting the
+     out-of-ceiling filesystem write or network-origin connection the
+     footprint test above exercises, the same channels the shell
+     containment contract already treats as separate containment
+     surfaces for spawned processes. The handler footprint review and
+     the broker or containment alternative must therefore cover those
+     channels with the same explicitness: process-control and IPC access
+     (signals, tracing, shared memory, message queues, abstract
+     Unix-domain sockets) either recorded as authority the admission
+     grants or isolated/brokered by the executor profile, inherited
+     descriptors and credential handles closed at handler launch or
+     explicitly recorded in the footprint, inbound listeners denied or
+     recorded as declared listener authority subject to the same review,
+     and OS identity and privilege controls (a non-privileged identity,
+     `no_new_privs` or the platform equivalent, and denied or brokered
+     setuid/setgid helpers, `sudo`, and user-namespace creation)
+     enforced for handler execution exactly as for shell launches, with
+     end-to-end negative tests proving an admitted, unmodified handler
+     attempting each channel (a same-UID signal or trace, a
+     shared-memory or message-queue write, an abstract-socket
+     connection, use of an inherited credential handle, an undeclared
+     inbound listener, and each privilege-escalation path the host
+     exposes) fails to affect another process, use the handle, receive
+     the connection, or acquire elevated identity, rather than only the
+     filesystem-write and network-origin cases being
+     tested. That footprint records where the handler's effects may land,
     not how much it may consume: an admitted local plugin, MCP server, or
     host handler fed adversarial arguments can allocate unbounded memory,
     fork descendants, exhaust the descriptor table, or saturate shared
