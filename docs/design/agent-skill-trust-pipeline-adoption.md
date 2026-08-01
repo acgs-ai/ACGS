@@ -886,7 +886,23 @@ enumerated entries still passes. The host policy must therefore deny
    reject any manifest whose entries collide after canonicalization for the
    target host, with a cross-platform path-collision negative test proving a
    manifest containing case-folded or Unicode-normalization-equivalent path
-   pairs is rejected rather than installed. Paths, entry types,
+   pairs is rejected rather than installed. Canonicalization and collision
+   rejection still authenticate names rather than confine them: when snapshot
+   construction consumes an archive or installer manifest, an entry can be
+   syntactically relative yet normalize to a parent traversal (`../...`), or
+   be absolute, and the canonical manifest then merely authenticates that
+   escaping name; extraction materializes or overwrites a host file outside
+   the skill root before any runtime receipt enforcement, while the
+   structural-substitution, path-collision, and symlink tests all pass
+   because each checks the manifest, never where entries land. Manifest
+   validation and snapshot construction must therefore reject any entry that
+   is absolute or whose normalized path does not remain strictly beneath the
+   skill root, and extraction must be confined descriptor-relative to the
+   skill root (openat-style resolution that cannot follow `..` or absolute
+   names out of it) rather than trusting the normalized string, with
+   absolute-path and parent-traversal negative tests proving an archive or
+   manifest entry naming an absolute host path or a `../`-escaping path is
+   rejected rather than materialized outside the snapshot root. Paths, entry types,
    mode bits, lengths, and content hashes still leave security-relevant
    filesystem metadata unbound: a skill installed from a privileged archive can
    carry ownership, POSIX ACLs, security labels, or extended attributes such as
@@ -1590,7 +1606,20 @@ enumerated entries still passes. The host policy must therefore deny
    run without a receipt despite the repository-wide invariant. Real-handler
    negative tests must prove an unknown or newly exposed tool is denied rather
    than silently passed through both when invoked from a skill and when
-   invoked from an authenticated non-skill context. Admission by name is still
+   invoked from an authenticated non-skill context. Scoping that closed
+   world to side-effectful actions leaves the disclosure half of the ceiling
+   unenforced: a newly exposed read-only MCP or plugin tool is absent from
+   the registry, performs no write, and can still read files or secrets far
+   outside a skill's `file_read` ceiling, so unknown-tool tests that
+   exercise only effectful tools pass while data leaves the boundary
+   ungoverned. Every capability-bearing tool, reads, queries, and listings
+   included, must therefore resolve against an admitted registry entry whose
+   declared capability class the ceiling decision covers, with only
+   operations explicitly proven pure (computing over inputs already supplied
+   in the request, touching no host state and disclosing nothing beyond it)
+   eligible for exemption, and the unknown-tool negative tests must include
+   an unrecognized read-only tool proving it is denied rather than silently
+   passed through. Admission by name is still
    not admission of code: the registry authenticates that a tool or alias is
    admitted, not which implementation the name resolves to, so an admitted MCP
    alias rebound to a different server, or a plugin or host handler upgraded
@@ -2042,7 +2071,21 @@ enumerated entries still passes. The host policy must therefore deny
    revoke-versus-execute negative test racing an actor revocation against
    receipt presentation and proving either the side effect committed
    before the revocation took effect or execution is refused without a
-   side effect, never both. The
+   side effect, never both. Serializing the actor recheck with consumption
+   and launch bounds only the launch: an admitted handler can queue work
+   and a shell process can delay its write, so the launch commits while
+   the actor is authorized, a launch-scoped lease then ends, and the actor
+   is revoked before the governed side effect occurs; the delayed effect
+   runs under a revoked principal while the post-issuance and concurrent
+   revoke-versus-execute tests pass because both settle at launch. The
+   actor-authorization lease must therefore follow the same discipline as
+   the policy-version lease: held until the governed effect commits or
+   completes, or the launched work kept revocable or brokered so an actor
+   revocation halts or re-vets in-flight work before its effect, with a
+   delayed-effect actor-revocation negative test revoking the requesting
+   actor after launch but before a deferred side effect and proving the
+   effect either committed before the revocation took effect or does not
+   occur. The
    non-skill origin rule authenticates how a request was issued, not what
    influenced it: a user or the model can load a registered `SKILL.md`
    through an ordinary `Read` call or `cat` rather than the host's skill
