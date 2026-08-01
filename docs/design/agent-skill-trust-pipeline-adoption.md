@@ -1595,6 +1595,26 @@ enumerated entries still passes. The host policy must therefore deny
     test proving that many simultaneous individually-within-budget
     launches from one skill are collectively bounded and other workloads
     retain CPU, memory, PID, storage, descriptor, and bandwidth capacity.
+    Host-resource quotas bound what a launch consumes locally, not what
+    it effects remotely: an admitted action that is cheap on the host but
+    high-impact externally (sending a message, creating a cloud
+    resource, charging an account) lets a skill issue many distinct
+    allowed requests while every process stays within all of the CPU,
+    memory, storage, descriptor, and bandwidth quotas above, and each
+    request receives its own valid receipt and executes exactly once, so
+    receipt idempotency and host-resource admission control never bound
+    the aggregate external effect or spend. The containment contract
+    must therefore also impose atomic count, rate, and (where the action
+    carries a quantifiable magnitude) value budgets on externally
+    visible actions, scoped to the skill, actor, tenant, and action,
+    enforced at admission across all concurrent and queued requests
+    attributed to that scope (a request whose admission would exceed the
+    aggregate external-effect budget is denied, queued, or escalated
+    rather than run), with a concurrent many-request negative test
+    driving a low-host-resource but externally effectful handler and
+    proving the aggregate count, rate, or value of its external effects
+    is bounded even though every individual request is allowed and every
+    host-resource quota is respected.
     Whether such a mechanism exists is
    a property of the execution host, not of the checkout, so the static step-2
    gate cannot decide enforceability: it could reject a declaration a production
@@ -2069,15 +2089,36 @@ enumerated entries still passes. The host policy must therefore deny
       distinct executable receipt, and replay deduplication that matches
       only retries already carrying the returned key never fires. The
       trusted request identity must therefore exist before any first
-      attempt is admitted: either the caller's authenticated transport
-      supplies a stable idempotency identity with every first attempt, or
-      the issuance path atomically maps the authenticated request digest
-      to at most one issuance (compare-and-swap on that digest against
-      shared durable state of the same trust class as the consumption
-      ledger) before minting, with a parallel keyless initial-attempt
+      attempt is admitted, and it must be a per-operation identity, not a
+      content digest: deduplicating solely on a digest of the
+      authenticated actor, action, and arguments conflates two distinct
+      intentional operations that happen to carry identical content, so
+      the durable mapping answers the second operation with the first
+      issuance, whose receipt may already be consumed, and the second
+      legitimate operation can never obtain an executable receipt, while
+      evicting the mapping to recover instead lets a delayed duplicate of
+      the first operation mint another. The caller's authenticated
+      transport must supply a stable per-operation idempotency identity
+      with every first attempt (a message, sequence, or delivery identity
+      that is unique per intentional operation even when actor, action,
+      and arguments are identical), and the issuance path atomically maps
+      that identity to at most one issuance (compare-and-swap on that
+      identity against shared durable state of the same trust class as
+      the consumption ledger) before minting; a request whose transport
+      supplies no per-operation identity is rejected at admission rather
+      than deduplicated by content digest. The identity-to-issuance
+      mapping must carry a defined retry lifetime, retained at least as
+      long as the mapped receipt remains executable, with any duplicate
+      presented within that lifetime replaying the already-issued receipt
+      and never minting a new one, with a keyless initial-attempt
       negative test presenting duplicate authenticated first attempts
-      carrying no idempotency key and proving at most one executable
-      receipt is minted and its side effect runs at most once. Atomic
+      carrying no per-operation identity and proving they are denied
+      without minting any executable receipt, and a distinct-operation
+      negative test presenting two intentional operations with identical
+      actor, action, and arguments but distinct per-operation identities
+      and proving each obtains its own executable receipt while a
+      duplicate of either within its retry lifetime replays rather than
+      re-mints. Atomic
      consumption presumes the ledger's own integrity: if a governed skill can
      write the consumption store, it can delete a consumed receipt's key or
      restore an earlier ledger snapshot, making a still-valid signed receipt
