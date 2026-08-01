@@ -194,7 +194,8 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    for why the generic check alone is not enough). Cheap, deterministic, catches the
    entire class.
 3. **Skill cards for the skills that can act.** Start with the tracked skills that run
-   commands or touch privileged paths (`maintain-acgs` today), and make a card the entry
+   commands or touch privileged paths (`maintain-acgs`, `phase-gate`, and `pr-evidence`
+   today: all three direct git, test, lint, or hash-check commands), and make a card the entry
    ticket for any currently untracked local skill (`worktree-lanes`,
    `headless-delegation`, `deploy-drift-check`, `pr-queue`, `codex-execution-workflow`)
    before it lands in the repository.
