@@ -736,9 +736,26 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    with any file outside the ceiling, or reject (or specially vet)
    multi-linked entries whose link count shows the inode is shared beyond the
    ceiling boundary, with a cross-boundary hard-link negative test proving
-   that a hard link inside an allowed directory to a denied file fails to
-   read or write the outside content, including when the capability runs
-   inside a mount-namespace or bind-mount view of the allowed directory. Direct network capabilities have the same
+    that a hard link inside an allowed directory to a denied file fails to
+    read or write the outside content, including when the capability runs
+    inside a mount-namespace or bind-mount view of the allowed directory. All
+    of these path-escape defenses share an assumption the filesystem does not
+    guarantee: that an inode genuinely beneath the ceiling only carries
+    in-ceiling effects. A FIFO or device node inside an allowed directory
+    resolves cleanly under descriptor-relative, no-follow, no-cross-mount
+    resolution — no symlink, mount point, or hard link is traversed — yet
+    writing the FIFO delivers commands to whatever more-privileged process
+    reads the other end, and opening the device node reaches kernel or
+    hardware state that has nothing to do with the directory, so every
+    symlink, race, bind-mount, and hard-link test above can pass while an
+    out-of-ceiling side effect runs. Directory capabilities must therefore be
+    restricted to regular files and directories, failing closed on any other
+    inode type (FIFOs, device nodes, sockets) unless a specific special inode
+    is explicitly brokered as its own reviewed capability, with FIFO and
+    device-node negative tests proving the external effect itself does not
+    occur: a write to an in-ceiling FIFO is denied and no command reaches the
+    privileged reader, and an open of an in-ceiling device node is denied
+    rather than reaching the device. Direct network capabilities have the same
    resolution gap: a network ceiling scoped to allowed origins is not enforced
    by validating the requested endpoint or the post-policy arguments, because
    an allowed URL can redirect to a forbidden origin, and a hostname can
@@ -853,10 +870,25 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    compatible schema or implementation version) into the ceiling record and
    the receipt, and the execution gate must recheck that binding against the
    implementation actually resolved at execution time, failing closed on
-   mismatch, with a handler-substitution negative test proving that rebinding
-   an admitted alias to a different server, or swapping the handler behind an
-   admitted tool name, is denied rather than executed under the stale
-   admission. Binding the reviewed implementation receipts only the outer
+    mismatch, with a handler-substitution negative test proving that rebinding
+    an admitted alias to a different server, or swapping the handler behind an
+    admitted tool name, is denied rather than executed under the stale
+    admission. Logical identity and version are themselves aliases: when an
+    admitted handler lives in mutable storage or loads a mutable deployment,
+    its code can be replaced in place while the alias, server/handler
+    identity, and advertised schema or version are all preserved, so the
+    identity/version recheck passes and unreviewed code runs with broader
+    side effects — the handler-substitution test passes because nothing it
+    checks changed. The admission binding must therefore be to immutable
+    code, not names: each admitted entry must bind a content-addressed
+    deployment digest (or an equivalent signature) computed over the
+    handler's executable and dependency closure, held and verified outside
+    agent and handler write authority, and the execution gate must recheck
+    that digest against the implementation bytes actually resolved and loaded
+    at execution time, failing closed on mismatch, with an in-place mutation
+    negative test proving a handler whose code is replaced in place while its
+    name, identity, and advertised schema/version remain unchanged is denied
+    rather than executed. Binding the reviewed implementation receipts only the outer
    tool call, not what the handler does to fulfill it: an admitted MCP
    server, plugin, or host handler internally performs its own filesystem,
    network, and process effects, those nested effects need not pass back
