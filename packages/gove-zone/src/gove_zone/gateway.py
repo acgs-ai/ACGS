@@ -1043,11 +1043,16 @@ class UniversalGateway:
         tool_calls_from_hook_payload`) are expanded and **every** proposed call
         is evaluated and audited individually, so a denied action cannot be
         smuggled past a per-tool rule by wrapping it in a batch. The single
-        returned ``permissionDecision`` is the worst individual verdict:
+        returned ``permissionDecision`` is the worst individual verdict.
+        In unmanaged legacy mode:
         any DENY → ``"deny"``; else any ESCALATE/TRANSFORM → ``"ask"`` (a hook
         cannot rewrite the runtime's arguments, so a transform requires a
         human); else ``"allow"``, minting one signed receipt per call whose
         anchors ride along under ``"gove_zone"]["receipts"]``.
+
+        In managed-policy mode, ALLOW remains decision-only and fail-closed:
+        the hook returns ``"deny"`` with no receipt and no side effect because
+        execution must enter through the native receipt gate.
 
         Fail-closed: an unrecordable decision (audit failure) or any
         governance error returns ``"deny"``.
@@ -1063,11 +1068,38 @@ class UniversalGateway:
                 action_kind, "deny", f"actor {actor!r} is not in the gateway actor allowlist"
             )
 
+        active_binding = _ACTIVE_MANAGED_BINDING.get()
+        if self._managed_policy and (active_binding is None or active_binding[0] != id(self)):
+            assert isinstance(self.policy, SyncedRuleSetPolicy)
+            try:
+                with self.policy.receipt_binding_scope() as provenance:
+                    self._validate_managed_provenance(provenance)
+                    binding_token = _ACTIVE_MANAGED_BINDING.set((id(self), provenance))
+                    try:
+                        return self.handle_claude_hook(
+                            payload, actor=actor, action_kind=action_kind
+                        )
+                    finally:
+                        _ACTIVE_MANAGED_BINDING.reset(binding_token)
+            except PolicySyncError:
+                return _hook_response(
+                    action_kind, "deny", "local signed policy is unavailable or invalid"
+                )
+
         decided: list[tuple[Any, str, str]] = []  # (record, audit_hash, previous_audit_hash)
         for call in calls:
             previous_audit_hash = self._audit.last_hash()
             try:
-                record, audit_hash = self._kernel_for(actor).evaluate_and_record(call)
+                kernel = self._kernel_for(actor)
+                managed_provenance = self._managed_provenance()
+                if managed_provenance is None:
+                    record, audit_hash = kernel.evaluate_and_record(call)
+                else:
+                    assert isinstance(self.policy, SyncedRuleSetPolicy)
+                    record = self.policy._evaluate_managed(call, managed_provenance)
+                    record = kernel._attach_context(record, call)
+                    audited = kernel._append_validated(record)
+                    audit_hash = audited.audit_hash
             except GoveZoneError as exc:
                 return _hook_response(
                     action_kind, "deny", f"governance decision unavailable: {type(exc).__name__}"
@@ -1076,7 +1108,9 @@ class UniversalGateway:
 
         denied = [record for record, _, _ in decided if record.decision is Decision.DENY]
         if denied:
-            return _hook_response(action_kind, "deny", denied[0].reason or "denied by policy")
+            response = _hook_response(action_kind, "deny", denied[0].reason or "denied by policy")
+            response["gove_zone"] = _hook_decision_commitments(decided)
+            return response
         needs_human = [
             record
             for record, _, _ in decided
@@ -1084,11 +1118,26 @@ class UniversalGateway:
         ]
         if needs_human:
             record = needs_human[0]
-            return _hook_response(
+            response = _hook_response(
                 action_kind,
                 "ask",
                 record.reason or f"{record.decision.value} requires human review",
             )
+            response["gove_zone"] = _hook_decision_commitments(decided)
+            return response
+
+        # A Claude PreToolUse hook is a decision surface, not the native
+        # receipt-consuming executor.  Managed ALLOW therefore remains
+        # fail-closed here: preserve the truthful audited ALLOW commitment,
+        # but never grant host permission or mint a legacy receipt anchor.
+        if self._managed_policy:
+            response = _hook_response(
+                action_kind,
+                "deny",
+                "managed ALLOW requires execution through the native receipt gate",
+            )
+            response["gove_zone"] = _hook_decision_commitments(decided)
+            return response
 
         anchors: list[dict[str, Any]] = []
         for record, audit_hash, previous_audit_hash in decided:
@@ -1249,6 +1298,27 @@ def _hook_response(action_kind: str, decision: str, reason: str) -> dict[str, An
             "permissionDecision": decision,
             "permissionDecisionReason": reason,
         }
+    }
+
+
+def _hook_decision_commitments(decided: Sequence[tuple[Any, str, str]]) -> dict[str, Any]:
+    """Return leak-safe evidence for audited, non-executable hook decisions."""
+    return {
+        "execution_classification": "decision_only",
+        "decisions": [
+            {
+                "tool": record.tool,
+                "decision": record.decision.value,
+                "audit_hash": audit_hash,
+                "policy_version": record.policy_version,
+                **(
+                    {"policy_provenance_hash": record.policy_provenance_hash}
+                    if record.policy_provenance_hash
+                    else {}
+                ),
+            }
+            for record, audit_hash, _ in decided
+        ],
     }
 
 

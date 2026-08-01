@@ -792,6 +792,27 @@ def test_decision_record_serializes_policy_provenance_only_when_present() -> Non
     assert managed.to_dict()["policy_provenance_hash"] == "b" * 64
 
 
+def test_synced_policy_exposes_read_only_signed_snapshot_currentness(tmp_path: Path) -> None:
+    signer = Ed25519Signer.generate(key_id="policy-key")
+    cache = AtomicJsonPolicyCache(
+        tmp_path / "policy.json", descriptor=_descriptor(), trust_registry=_registry(signer)
+    )
+    snapshot = _snapshot(signer)
+    cache.install(snapshot, now=NOW)
+    policy = SyncedRuleSetPolicy(cache, clock=lambda: NOW)
+
+    currentness = policy.current_snapshot_currentness()
+
+    assert currentness == {
+        "issued_at": snapshot.issued_at,
+        "fresh_until": snapshot.fresh_until,
+        "expires_at": snapshot.expires_at,
+        "mode": "degraded_lkg",
+    }
+    with pytest.raises(TypeError):
+        currentness["mode"] = "expired"  # type: ignore[index]
+
+
 def test_receipt_binding_scope_holds_verified_lease_against_replacement(tmp_path: Path) -> None:
     signer = Ed25519Signer.generate(key_id="policy-key")
     path = tmp_path / "policy.json"

@@ -22,6 +22,7 @@ from collections.abc import Callable, Generator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Self, TextIO, cast
 
 from gove_zone._fsprobe import filesystem_is_lock_safe
@@ -1062,6 +1063,20 @@ class SyncedRuleSetPolicy(Policy):
         if now < _parse_timestamp(snapshot.expires_at, "expires_at"):
             return "degraded_lkg"
         return "expired"
+
+    def current_snapshot_currentness(self) -> Mapping[str, str]:
+        """Return immutable liveness fields from the installed signed snapshot."""
+        snapshot = self._cache.snapshot
+        if snapshot is None:
+            raise PolicySyncError("policy cache is unavailable")
+        return MappingProxyType(
+            {
+                "issued_at": snapshot.issued_at,
+                "fresh_until": snapshot.fresh_until,
+                "expires_at": snapshot.expires_at,
+                "mode": self.mode,
+            }
+        )
 
     @contextlib.contextmanager
     def receipt_binding_scope(self) -> Generator[ManagedPolicyProvenance, None, None]:

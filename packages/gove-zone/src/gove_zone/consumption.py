@@ -378,6 +378,18 @@ class ReceiptConsumptionLedger:
         """
         return self._scan_consumed(audit_event_hash)
 
+    def entry_for(self, audit_event_hash: str) -> dict[str, Any] | None:
+        """Return a defensive copy of the exact persisted entry for an audit anchor."""
+        found: dict[str, Any] | None = None
+        for _line_number, record in self._iter_records():
+            if record.get("consumed_key") == audit_event_hash:
+                if found is not None:
+                    raise ConsumptionLedgerError(
+                        "consumption ledger contains duplicate entries for one audit anchor"
+                    )
+                found = dict(record)
+        return found
+
     @staticmethod
     def _safe_warning(msg: str, *args: object) -> None:
         """Emit a WARNING that can NEVER propagate into the enforcement path.

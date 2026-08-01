@@ -140,6 +140,20 @@ def test_resume_replay_blocked_with_ledger(tmp_path):
     assert ei.value.audit_event_hash == receipt.audit_event_hash
 
 
+def test_exact_entry_lookup_is_read_only_and_returns_defensive_copy(tmp_path):
+    pending, receipt, _ = _approved(tmp_path)
+    ledger = ReceiptConsumptionLedger(tmp_path / "consumed.jsonl")
+    ex, _calls = _executor(ledger=ledger)
+    resume_with_receipt(ex, pending, receipt)
+
+    entry = ledger.entry_for(receipt.audit_event_hash)
+
+    assert entry is not None
+    assert entry["consumed_key"] == receipt.audit_event_hash
+    entry["consumed_key"] = "mutated"
+    assert ledger.entry_for(receipt.audit_event_hash)["consumed_key"] == receipt.audit_event_hash
+
+
 def test_replay_without_ledger_pins_stateless_gate(tmp_path):
     # Documents the opt-in posture: no ledger -> the stateless gate still
     # executes a valid receipt N times. This is the behavior F1 names; the

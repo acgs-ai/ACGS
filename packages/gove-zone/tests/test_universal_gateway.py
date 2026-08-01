@@ -60,7 +60,7 @@ def make_policy() -> RuleSetPolicy:
             PolicyRule(
                 rule_id="escalate-deploy",
                 effect=Decision.ESCALATE,
-                tools=frozenset({"deploy"}),
+                tools=frozenset({"deploy", "runtime.deploy"}),
                 reason="deploy requires human approval",
             ),
             PolicyRule(
@@ -414,6 +414,16 @@ def test_claude_hook_deny_and_allow(tmp_path: Path) -> None:
         actor="claude-session-1",
     )
     assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    (decision_commitment,) = denied["gove_zone"]["decisions"]
+    assert decision_commitment == {
+        "tool": "runtime.Bash",
+        "decision": "deny",
+        "audit_hash": audit_events(tmp_path)[0]["event_hash"],
+        "policy_version": make_policy().version,
+    }
+    assert "receipts" not in denied["gove_zone"]
+    assert denied["gove_zone"]["execution_classification"] == "decision_only"
+    assert "assurance_class" not in denied["gove_zone"]
 
     allowed = gateway.handle_claude_hook(
         {"tool_name": "Read", "tool_input": {"file_path": "/tmp/x"}},
@@ -468,6 +478,30 @@ def test_claude_hook_actor_allowlist(tmp_path: Path) -> None:
     gateway = make_gateway(tmp_path, allowed_actors=frozenset({"alice"}))
     response = gateway.handle_claude_hook({"tool_name": "Read", "tool_input": {}}, actor="mallory")
     assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "gove_zone" not in response
+
+
+def test_claude_hook_evaluated_escalation_exposes_decision_only_commitment(
+    tmp_path: Path,
+) -> None:
+    gateway = make_gateway(tmp_path)
+    effects: list[str] = []
+    gateway.register_tool("deploy", lambda: effects.append("ran"))
+
+    response = gateway.handle_claude_hook(
+        {"tool_name": "deploy", "tool_input": {}}, actor="claude-session-1"
+    )
+
+    assert response["hookSpecificOutput"]["permissionDecision"] == "ask"
+    (commitment,) = response["gove_zone"]["decisions"]
+    assert commitment["decision"] == "escalate"
+    assert commitment["audit_hash"]
+    assert commitment["policy_version"] == make_policy().version
+    assert set(commitment) == {"tool", "decision", "audit_hash", "policy_version"}
+    assert "receipts" not in response["gove_zone"]
+    assert response["gove_zone"]["execution_classification"] == "decision_only"
+    assert "assurance_class" not in response["gove_zone"]
+    assert effects == []
 
 
 # -- REST surface ------------------------------------------------------------------- #
