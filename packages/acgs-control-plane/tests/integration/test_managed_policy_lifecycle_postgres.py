@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from acgs_control_plane.app import create_app
 from acgs_control_plane.config import RuntimePosture, Settings
-from acgs_control_plane.migrations import DatabaseSchemaState, upgrade_database
+from acgs_control_plane.migrations import HEAD_REVISION, DatabaseSchemaState, upgrade_database
 from acgs_control_plane.models import (
     EnvironmentPolicyHead,
     ManagedDecisionReceipt,
@@ -244,7 +244,7 @@ def _postgres_policy_app(tmp_path: Path) -> tuple[Any, TestClient, dict[str, Any
 
     _reset_postgres_schema(database_url)
     result = upgrade_database(database_url, expected_database=EXPECTED_DATABASE)
-    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert result.after.state is DatabaseSchemaState(f"version_{HEAD_REVISION}")
 
     app = create_app(
         Settings(
