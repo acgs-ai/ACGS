@@ -322,7 +322,17 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    bound to the exact request it approves: authenticated to the granting human,
    tied to the actor, skill identity/digest, action, and final arguments the new
     receipt represents, single-use, and bounded by an expiry, with the grant
-    recorded as evidence in that receipt. Single-use must hold under concurrency:
+    recorded as evidence in that receipt. Binding alone does not establish
+    separation of duties: exact-request binding proves *what* was approved, not
+    that an independent authority approved it, so when the requesting actor is
+    itself an authenticated human, nothing above stops that same principal from
+    granting its own approval. The grant must therefore be issued by an
+    authorized approver distinct from the requesting actor — the separation the
+    existing `escalation.py::approve_escalation` path already enforces by
+    rejecting a validator whose identity equals the proposer — and a
+    self-approval negative test through the real handler must prove a grant
+    issued by the requesting principal for its own request is rejected without
+    a side effect. Single-use must hold under concurrency:
     marking the grant used at execution time is too late, because two
     evaluations presenting the same still-unused grant could each validate it
     and mint separate executable receipts before either execution burns it, so
@@ -330,11 +340,23 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
     Consuming the grant must therefore happen at receipt issuance as an atomic
     compare-and-consume (or an idempotent issuance operation keyed on the
     grant) against shared durable state, so at most one executable receipt can
-    ever be minted from one grant. Negative tests must prove a grant
+    ever be minted from one grant. Issuance-time consumption bounds minting,
+    not execution: the one minted `ALLOW` receipt is itself a bearer
+    credential, and an execution gate that is stateless across calls — as
+    `execute_with_receipt` is without a shared receipt-consumption ledger —
+    would execute that same receipt's side effect repeatedly while every
+    grant-race test above still passes. Approval-gated receipts must therefore
+    also be consumed atomically at the execution gate, against shared durable
+    state of the same class as the grant ledger, so one grant yields at most
+    one executable receipt and that receipt yields at most one execution.
+    Negative tests must prove a grant
     presented for altered arguments or a different skill, an expired grant, and a
     grant replayed for a second execution are all rejected without a side effect,
     and a concurrent-use test must prove that two evaluations racing on the same
-    grant yield exactly one executable receipt and at most one side effect.
+    grant yield exactly one executable receipt and at most one side effect —
+    plus a concurrent-replay test of the issued receipt itself, presenting the
+    one minted receipt to the execution gate in parallel and proving the side
+    effect runs at most once.
    `docs/skills/skill-schema.md` is then updated to record that mapping so cards,
    validators, and the future executor read exactly one contract.
 5. **Skill identity and permission ceiling.** A trusted name/version/artifact digest per
@@ -376,7 +398,23 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
     interpreter/dependency closure into the approval and receipt; no broader
     identity claim may be made without that binding.
 6. **Wire `permissions:` into the kernel** as a deny-only policy input bound into the
-   receipt and checked against the step-5 identity and ceiling. Deny-only is not a
+   receipt and checked against the step-5 identity and ceiling. Binding is only as
+   strong as receipt authentication: hash-binding the skill digest and permission
+   fields makes them part of the receipt's content hash, but with an unsigned
+   receipt a caller can alter those fields and recompute the hash, so mutation
+   tests that change fields without rehashing prove nothing. The deployed hook
+   path is exactly that unsigned case — `.claude/settings.json` selects
+   `GOVE_ZONE_PROFILE=dev` and `integration.py::emit_receipt_for_hook` has no
+   signer path — so this step requires signed receipt issuance for the
+   skill-trust stage (the kernel's opt-in Ed25519 signing mode is the starting
+   point) with verification by a trusted verifier at the executor gate against
+   key material held outside agent write authority, and a recomputed-forgery
+   negative test proving a receipt whose skill digest, ceiling, or permission
+   fields were altered and re-hashed (and, absent the issuance key,
+   re-signed) is rejected without a side effect. Until signed issuance and
+   trusted verification exist on the hook path, the skill-trust result is
+   explicitly limited to non-adversarial unsigned development use and must
+   never be described as enforcement. Deny-only is not a
    one-shot pre-check: existing policies can return `TRANSFORM`, and
    `kernel.py::dispatch` then executes `record.transformed_args`, so a request that
    entered within the ceiling can be rewritten into a path, command, or endpoint
@@ -440,7 +478,17 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    receipt path entirely, and the `.agents` tree has no runtime gate at all. This step
    therefore includes the host-side interception that routes every governed capability
    through `execute_with_receipt`; until that wiring exists, the enforcement claim is
-   limited to calls already routed through that boundary. Interception alone is still
+   limited to calls already routed through that boundary. "Every governed
+   capability" must be closed-world, not a curated mapping: `_classify` today
+   returns `None` for any action it does not recognize and the hook exits
+   successfully, so a newly exposed side-effectful MCP or plugin tool, or an
+   alias absent from the mapping, executes with no ceiling decision at all, and
+   adding mappings for today's Read/Bash/Edit cases would satisfy every listed
+   test while future tools bypass the pipeline. Interception must therefore
+   resolve every skill-originated action against an exhaustive admitted-tool
+   registry and fail closed on any tool or alias not in it, with a real-handler
+   negative test proving an unknown or newly exposed tool invoked from a skill
+   is denied rather than silently passed through. Interception alone is still
    not sufficient, because an agent issues ordinary tool calls outside any skill
    invocation and the current hook cannot tell the difference:
    `.claude/hooks/acgs-emit-receipt.py::main` receives only the tool payload and
@@ -465,7 +513,19 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    non-skill origin, governed by the agent's normal policy ceiling; demanding a skill
    digest on every request would block all governed non-skill tool use. The gate
    fails closed when a request carries no authenticated origin at all, or when a
-   skill-originated request arrives without its loader-issued context. This is the
+   skill-originated request arrives without its loader-issued context. The
+   interception layer is itself inside the threat model: the current hook is
+   executed directly from its working-tree path (`.claude/hooks/acgs-emit-receipt.py`,
+   selected by `.claude/settings.json`) on each intercepted call, so a skill whose
+   `file_write` ceiling covers the checkout can edit the hook or its
+   configuration to disable routing or forge the supposedly host-bound origin
+   context for every subsequent tool call — a permitted write silently
+   dismantling the gate. The interceptor and its configuration must therefore
+   live outside agent write authority (host-installed, not resolved from the
+   writable checkout), or be authenticated against a pinned digest and
+   revalidated before every execution, with a hook-tampering negative test
+   proving that a modified hook or settings file yields fail-closed denial of
+   subsequent governed calls, not silent bypass. This is the
    differentiating step and should get a design of its own.
 7. **Evals** for the skills that encode repo conventions, where drift is silent.
 8. **Full OMS-style signing** can come last; step 5 needs only a pinned digest and an
