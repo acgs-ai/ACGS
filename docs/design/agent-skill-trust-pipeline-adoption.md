@@ -109,8 +109,8 @@ The defect existed in *two* copies, the same blob mirrored at
 checks that a skill is loadable, let alone correct.
 
 That is the argument for this proposal in one example: a governance repository shipped an
-implicitly-invocable skill that was malformed *and* factually wrong about its own
-conventions, and no gate noticed.
+implicit-invocation-enabled but unverified-loadable skill that was malformed *and*
+factually wrong about its own conventions, and no gate noticed.
 
 ## What to adopt
 
@@ -868,7 +868,23 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    shell interpretation of a command string, or by a parser that rejects
    wrappers, substitutions, redirections, and command chaining outright, with
    a negative test proving a command string that references an allowed script
-   with an appended command is denied rather than launched. This step
+   with an appended command is denied rather than launched. An argv launch
+   still hands caller-supplied arguments to the reviewed executable, and
+   arguments can themselves carry code: an `--eval` expression, or a module,
+   plugin, or configuration path the approved script loads and executes, lets
+   the caller run unapproved code inside a reviewed process while the
+   allowed-script check on the top-level executable passes, and hashing
+   by-reference inputs at authorization proves which bytes were supplied, not
+   that those bytes were admitted as executable content. Each allowed script
+   must therefore either carry a per-script argument schema, reviewed at
+   admission, that rejects command-, code-, and plugin-bearing arguments
+   outright, or every executable input its arguments can name (scripts,
+   modules, plugins, and any configuration the script evaluates as code) must
+   itself be recursively admitted and content-bound the same way as the
+   top-level executable before the receipt is issued, with a negative test
+   proving an allowed script invoked with a code-bearing argument (an eval
+   expression, or a path to an unadmitted plugin or module) is denied rather
+   than launched. This step
    therefore defines shell containment semantics explicitly: a shell grant is
    treated as granting the process's ambient file and network capabilities unless
    the launch runs under an OS-level sandbox or capability-brokered executor that
