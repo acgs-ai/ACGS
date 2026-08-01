@@ -1594,6 +1594,8 @@ try:
                 contracts.append(os.path.join(current_root, "recovery-contract.env"))
             if "proof-nonce.hex" in files:
                 nonce_files.append(os.path.join(current_root, "proof-nonce.hex"))
+    if len(contracts) > 1:
+        fail("cleanup refused duplicate recovery contracts")
     intent_server_records: list[tuple[str, str, str]] = []
     intent_client_records: list[tuple[str, str, str]] = []
     intent_names: list[str] = []

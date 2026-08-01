@@ -25377,7 +25377,7 @@ def _external_intent_cleanup_helper(
 ) -> str:
     source = (ROOT / "scripts/evidence/clean_sibling_cleanup.sh").read_text(encoding="utf-8")
     assert hashlib.sha256(source.encode("utf-8")).hexdigest() == (
-        "bada908c5cff471de5513925aae2912b8170e9918fde6925e792d3544449633a"
+        "0b3d8c9d74cd1ce348df21e5033ccfe24efc584a39742c814552343ebf7579aa"
     )
     helper = _shell_function(source, "clean_sibling_retain_recovery_contracts")
     helper = (
@@ -25786,6 +25786,15 @@ def test_clean_sibling_duplicate_contracts_in_external_root_refuse_before_docker
         duplicate = duplicate_dir / "recovery-contract.env"
         duplicate.write_bytes(contract.read_bytes())
         duplicate.chmod(0o600)
+        final_name = f"{names['server_name']}.intent"
+        payload = (recovery_root / final_name).read_bytes()
+        digest = hashlib.sha256(payload).hexdigest()
+        atomic_temp = (
+            recovery_root / f".acgs-clean-sibling.atomic.intent.{final_name}."
+            f"{len(payload)}.{digest}.tmp.12345.1"
+        )
+        atomic_temp.write_bytes(payload)
+        atomic_temp.chmod(0o600)
         before.update(_recovery_state_snapshot(recovery_root))
 
     completed, context = _run_external_intent_cleanup(
