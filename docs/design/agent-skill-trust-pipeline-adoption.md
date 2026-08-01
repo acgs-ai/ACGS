@@ -293,9 +293,25 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
     pending queued work attributable to unadmitted skill contexts, or
     restart the execution boundary into a state where none of them
     survive, with a pre-hold background-work negative test that launches a
-    detached child (or schedules deferred work) from a skill context
-    before hold activation and proves it produces no further effects once
-    the hold is in force. The step-2 loadability gate and
+     detached child (or schedules deferred work) from a skill context
+     before hold activation and proves it produces no further effects once
+     the hold is in force. Invocation and tool-request gating still governs
+     only formal skill activation, and ordinary ingestion is neither: during
+     the interval a non-skill context can read a held `SKILL.md` through an
+     ordinary `Read` or `cat` (none of the three denied invocation paths),
+     and every later tool call that follows those instructions retains the
+     context's unrestricted non-skill authority, while the
+     activation-on-read rule that would catch this is exactly the step-6
+     machinery the interval lacks (this design defers direct-read handling
+     to step 6). The hold must therefore also deny ordinary ingestion and
+     extraction of unadmitted skill artifacts during the interval (reads,
+     copies, and transformations of their instruction files by non-loader
+     contexts are refused), or taint the consuming context so that its
+     subsequent tool requests are denied while the hold is in force, with a
+     read-then-call negative test that reads a held `SKILL.md` through an
+     ordinary file read before any invocation and proves either the read
+     itself is refused or the reading context's subsequent tool call is
+     denied while the hold is in force. The step-2 loadability gate and
    a step-3 card are prerequisites but not sufficient, because neither prevents an
    automatically selected skill from directing actions beyond its intended
    authority; a schema-valid, well-described skill can still instruct anything.
@@ -653,10 +669,30 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
       atomically with consumption and rechecked at issuance commit), so that
       issuance either commits before the revocation takes effect or fails
       closed, with a concurrent revoke-versus-consume negative test racing an
-      approver credential or role revocation against grant consumption and
-      proving either the executable receipt was issued before the revocation
-      committed or consumption is refused without a side effect, never both.
-      Single-use must hold under concurrency:
+       approver credential or role revocation against grant consumption and
+       proving either the executable receipt was issued before the revocation
+       committed or consumption is refused without a side effect, never both.
+       Serialized consumption still ends the approver's accountability at
+       issuance: when an approver compromise is discovered after grant
+       consumption has minted the executable receipt but before that receipt
+       is first presented, revoking the credential or role has no effect,
+       because the execution gate revalidates the policy, signer, and handler
+       freshness domains but not the approver, so an attacker can pre-mint an
+       unused receipt with the compromised credential and execute it after
+       revocation while the revoke-versus-consume test passes (the revocation
+       there races consumption, not execution). Approval-gated receipts must
+       therefore bind the approver's credential and role identifiers and the
+       approver-authorization epoch under which the grant was consumed, and
+       the execution gate must revalidate that state against the same fresh,
+       monotonic, rollback-protected approver-authorization and
+       credential-revocation store, serialized with receipt consumption and
+       launch under the same epoch-or-lease discipline as the other freshness
+       domains, failing closed when the credential is revoked, the role is
+       withdrawn, or the bound epoch is superseded, with a negative test
+       revoking the approver credential after receipt issuance but before the
+       receipt is first presented and proving the receipt is refused at the
+       execution gate without a side effect.
+       Single-use must hold under concurrency:
     marking the grant used at execution time is too late, because two
     evaluations presenting the same still-unused grant could each validate it
     and mint separate executable receipts before either execution burns it, so
@@ -986,9 +1022,26 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    after the check and before the host opens it. Directory ceilings must be
    enforced at filesystem resolution — descriptor-relative opens with no-follow
    semantics (`openat2`-style `RESOLVE_BENEATH`) or an equivalent filesystem
-   sandbox that confines the resolved target — with negative tests proving both a
-   symlink escape inside an allowed path and a check-to-open path race fail to
-   touch the outside location. Beneath-style resolution is a pathname
+    sandbox that confines the resolved target — with negative tests proving both a
+    symlink escape inside an allowed path and a check-to-open path race fail to
+    touch the outside location. Resolution-time checks validate where a name
+    pointed at open, not where the open file lives when it is written: when
+    another workload can rename an already-open in-ceiling file (or one of
+    its ancestor directories) into a denied directory, the skill retains the
+    descriptor from the validated open and writes after the relocation, so
+    the written content materializes in the denied location while every
+    symlink, check-to-open, mount, and hard-link test passes because the
+    open itself was clean. Writable directory ceilings must therefore either
+    place writable targets in a private, immutable-to-outsiders namespace or
+    view whose entries no other workload can rename or relocate (with
+    results exposed to shared locations only through a controlled publish
+    step), or broker writes through a commit step that revalidates, on the
+    still-open descriptor at write or commit time, that the target's
+    destination and parent-directory identity remain beneath the ceiling,
+    failing closed on relocation, with a rename-after-open negative test
+    proving a file renamed into a denied directory after a validated open
+    receives no further writes through the retained descriptor, or that its
+    content never becomes visible at the denied location. Beneath-style resolution is a pathname
    property, not a mount property: an allowed directory can contain a bind
    mount or another mounted subtree that exposes a denied location, and
    `RESOLVE_BENEATH` still permits the access because the pathname remains
@@ -1395,9 +1448,31 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
      from which every load (lazy imports included) resolves, or loading and
      verification go through the same protected handles so the bytes verified
      are exactly the bytes executed, with a concurrent swap-versus-load
-     negative test racing a dependency replacement against a lazy or
-     execution-time load and proving the swapped code never runs.
-     Binding the reviewed implementation receipts only the outer
+      negative test racing a dependency replacement against a lazy or
+      execution-time load and proving the swapped code never runs.
+      Verified bytes are verified against whichever admission record the
+      gate consults, and admissions are retired as well as granted: when an
+      ordinary authenticated non-skill call uses this registry after a
+      handler has been retired, restoring the previously valid registry
+      entry together with its old immutable handler snapshot makes every
+      identity, digest, receipt, and loaded-byte recheck succeed against the
+      same stale admission, so retired code executes while the
+      handler-substitution, in-place-mutation, and swap-versus-load tests
+      all pass because nothing they check changed. Unlike the policy,
+      ceiling, signer, and executor-profile state elsewhere in this design,
+      a registry alone has no rollback-refusing active-version state, so the
+      admitted-tool registry must carry the same discipline: the active
+      handler admission is held as monotonic, rollback-refusing freshness
+      state (a registry version or admission epoch) scoped to its tenant
+      and execution boundary and held outside agent and handler write
+      authority, validated at receipt issuance and rechecked at the
+      execution gate, so a superseded or retired admission fails closed
+      even when its registry entry and deployment snapshot are
+      byte-identical to a formerly valid state, with a matched
+      registry-and-deployment rollback negative test restoring a retired
+      registry entry together with its old handler snapshot and proving
+      execution is refused rather than run under the stale admission.
+      Binding the reviewed implementation receipts only the outer
    tool call, not what the handler does to fulfill it: an admitted MCP
    server, plugin, or host handler internally performs its own filesystem,
    network, and process effects, those nested effects need not pass back
