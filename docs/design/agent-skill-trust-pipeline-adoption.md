@@ -485,7 +485,20 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    reject any pair that is not the active one, with tamper and rollback tests at
    both issuance and execution proving that a widened, digest-mismatched, or
    reverted ceiling record is rejected, including the rollback of a previously
-   valid ceiling-and-skill pair as a matched set. Freshness checks at issuance
+   valid ceiling-and-skill pair as a matched set. Authenticity, version
+   binding, and freshness still authenticate only the ceiling-and-skill pair
+   and its currency, not where that pair applies: when the same skill digest
+   is installed in multiple tenants or execution boundaries, a ceiling
+   approved for tenant A can be selected as the active pair while issuing a
+   tenant-B receipt, and binding tenant B into that receipt does not prove
+   the ceiling was ever approved there. Every ceiling record and active-pair
+   entry must therefore also be bound to the tenant, execution boundary, and
+   applicable host or executor profile it was approved for, with those
+   fields rechecked against the requesting deployment context at both
+   issuance and execution, and cross-tenant and cross-boundary substitution
+   negative tests proving a ceiling approved in one tenant or execution
+   boundary cannot authorize a receipt issued or executed in
+   another. Freshness checks at issuance
    and execution bound only work that has not yet launched: a long-running or
    detached process started under a then-active pair has already passed both
    checks, so revoking or narrowing the pair afterward leaves that process's
@@ -494,9 +507,19 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    effects. Revocation must therefore either be made effective against running
    work (process trees and brokered resources launched under a
    ceiling-and-skill pair are tied to a revocable capability lease that the
-   host closes when the active pair changes, with a negative test proving a
-   still-running child process's file and network effects are cut off after
-   revocation) or be explicitly scoped to future launches only, with that
+   host closes when the active pair changes; lease acquisition must itself be
+   atomic with the revocation transition, because closing "every currently
+   registered lease" leaves a race in which execution validates the outgoing
+   pair, revocation switches the active pair and closes the registered
+   leases, and the already-validated request then registers a fresh lease and
+   launches after revocation — active-pair validation and lease registration
+   must be serialized against the pair-change transition (one transaction, or
+   an epoch check at registration that fails closed when the pair changed
+   since validation), with negative tests proving a still-running child
+   process's file and network effects are cut off after revocation and a
+   concurrent revoke-versus-launch race proving no stale process survives or
+   starts regardless of interleaving) or be explicitly scoped to future
+   launches only, with that
    residual risk recorded in the ceiling record and receipt and a test
    documenting that a pre-revocation process retains its capabilities until it
    exits. A pinned
@@ -685,7 +708,19 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    `shell.allowed_scripts` entry spawns a process that inherits the host's ambient
    file and network capabilities, so a declaration that permits that script while
    denying network access or writes outside a directory promises containment that
-   rechecking the command and its transformed arguments cannot deliver. This step
+   rechecking the command and its transformed arguments cannot deliver. Nor is
+   the allowlist itself enforced by inspecting a general shell command string:
+   `sh -c 'scripts/approved.sh; unapproved-command'` mentions the approved
+   path yet executes additional code, and wrappers, command substitution, and
+   redirection give the same bypass, so a sandbox that bounds transitive file
+   and network effects still does not preserve the allowed-script restriction.
+   `shell.allowed_scripts` must therefore be enforced by an argv-based
+   launcher that directly resolves and executes the approved executable from
+   the immutable step-5 snapshot with caller-supplied arguments, never through
+   shell interpretation of a command string, or by a parser that rejects
+   wrappers, substitutions, redirections, and command chaining outright, with
+   a negative test proving a command string that references an allowed script
+   with an appended command is denied rather than launched. This step
    therefore defines shell containment semantics explicitly: a shell grant is
    treated as granting the process's ambient file and network capabilities unless
    the launch runs under an OS-level sandbox or capability-brokered executor that
@@ -712,7 +747,20 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    admitting the skill into cannot supply the recorded requirements; and the
    executor fails closed again at execution time when the active profile does
    not provide them, so a profile downgraded after admission cannot silently
-   turn the denials into unenforceable promises. Wherever sandboxed or
+   turn the denials into unenforceable promises. Those checks are only as
+   trustworthy as the profile they consult: if the active executor profile is
+   represented by writable configuration, a skill can edit it to claim
+   sandbox or broker capabilities the executor does not actually provide,
+   and both the admission and execution checks then pass before the process
+   launches with ambient authority — the proposal protects ceilings and
+   signer state from agent writes, and the executor profile needs the same
+   trust requirement. The profile must therefore be derived from the actual
+   dispatching executor's own capabilities, or be an authenticated,
+   versioned record held outside agent and child-process write authority,
+   with the profile identity and version bound into the receipt and
+   rechecked at execution, and a profile-tampering negative test proving a
+   forged or edited profile cannot satisfy the containment requirements: the
+   launch is denied rather than run uncontained. Wherever sandboxed or
    brokered enforcement is claimed it must be proven by end-to-end negative tests
    on the transitive effects themselves (the spawned process's denied write
    outside the allowed directory, its denied socket, its denied environment
@@ -791,7 +839,18 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
     consumed atomically at the execution gate against shared durable state of
      the same class as the grant ledger, with a concurrent-replay negative test
      presenting an ordinary non-approval skill receipt to the execution gate in
-     parallel and proving its side effect runs at most once. Binding and
+     parallel and proving its side effect runs at most once. Atomic
+     consumption presumes the ledger's own integrity: if a governed skill can
+     write the consumption store, it can delete a consumed receipt's key or
+     restore an earlier ledger snapshot, making a still-valid signed receipt
+     unused again so its side effect runs repeatedly while every
+     concurrent-replay test passes. Consumption state must therefore be kept
+     in an authenticated, monotonic store — one that refuses rollback to an
+     earlier state — held outside agent and child-process write authority, of
+     the same trust class as the ceiling and freshness records, with a
+     negative test proving that tampering with or rolling back the ledger
+     before replaying a consumed receipt does not make that receipt
+     executable again. Binding and
      consumption authenticate origin and prevent reuse, not liveness: a
      receipt minted just before its invocation ends and first presented
      afterward is still unused in the consumption ledger, its session and
@@ -839,14 +898,25 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    perform the requested above-ceiling action without inheriting the skill
    stack, while every direct-output and delayed-call test above still passes.
    Skill-produced persistent artifacts must therefore carry origin metadata
-   recording the producing skill stack, and the host must either propagate
+   recording the producing skill stack, and that metadata must be
+   host-assigned and held outside the producing skill's write authority — a
+   mandatory label applied by the host or write broker at write time, or an
+   authenticated out-of-band provenance record keyed to the artifact — never
+   a self-carried marker, because a restricted skill that controls an
+   allowed file, queue entry, or adjacent sidecar can omit or forge
+   provenance it writes itself, letting a later broader context consume the
+   artifact without inheriting the restricted ceiling; the provenance must
+   also be preserved across copies and updates of the artifact. The host
+   must then either propagate
    the originating ceiling (intersected as above) into every model context
    that consumes such an artifact, retained until that context is discarded,
    or prevent skill-written artifacts from re-entering any model context as
-   consumable instructions at all, with a negative test proving a tool call
+   consumable instructions at all, with negative tests proving a tool call
    issued by a context after reading a skill-written artifact is still
    governed by the producing skill's ceiling rather than the reader's broader
-   ceiling. Model contexts are not the only consumers of persisted artifacts:
+   ceiling, and that a skill write attempting to strip, omit, or forge an
+   artifact's provenance is denied or still yields a host-assigned record
+   identifying the producing skill stack. Model contexts are not the only consumers of persisted artifacts:
    a write the ceiling permits can target a machine-consumed control artifact
    (a CI workflow, a host hook, a package script, any executable that CI or
    another host process later runs directly), and that consumer never enters
