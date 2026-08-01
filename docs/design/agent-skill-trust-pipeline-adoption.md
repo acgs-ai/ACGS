@@ -221,7 +221,13 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    `SKILL.md`, so a malformed or schema-incompatible companion manifest keeps the
    skill unloadable while a frontmatter-only gate passes. Validate each companion
    manifest against a pinned schema and check that it belongs to (and correctly
-   references) the skill directory that contains it. Cheap, deterministic, catches
+   references) the skill directory that contains it. And because `govern-zone` is
+   maintained as two host-facing copies, per-file checks can pass while the copies
+   drift apart, so a later repair could govern the Codex copy while Claude keeps
+   loading stale or differently permissioned instructions. The gate must therefore
+   enforce mirror parity for the shared skill body and security metadata (permission
+   declaration, pinned digest): either generate one copy from a canonical source or
+   fail on any content divergence between the mirrors. Cheap, deterministic, catches
    the entire class.
    One repo-hygiene prerequisite: the root `.gitignore` ignores `.agents` wholesale, so
    only the two already-tracked `govern-zone` files survive; any new skill or sidecar
@@ -277,10 +283,15 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    loader-issued invocation identity. A compromised skill could direct a normal
    Bash/Edit call that is then governed only as an unscoped agent action, bypassing
    its ceiling. Every intercepted request must therefore carry an unforgeable,
-   host-bound skill invocation context (the step-5 identity and digest, issued by the
-   loader, not self-reported in the payload) that selects which ceiling applies, and
-   the gate must fail closed when a tool request arrives without that context. This
-   is the differentiating step and should get a design of its own.
+   host-bound origin. For requests the host identifies as skill-originated, that
+   origin is the loader-issued invocation context (the step-5 identity and digest,
+   not self-reported in the payload), which selects the skill's ceiling. For ordinary
+   tool use outside any skill invocation, the host must authenticate an explicit
+   non-skill origin, governed by the agent's normal policy ceiling; demanding a skill
+   digest on every request would block all governed non-skill tool use. The gate
+   fails closed when a request carries no authenticated origin at all, or when a
+   skill-originated request arrives without its loader-issued context. This is the
+   differentiating step and should get a design of its own.
 7. **Evals** for the skills that encode repo conventions, where drift is silent.
 8. **Full OMS-style signing** can come last; step 5 needs only a pinned digest and an
    approval record, not the complete certificate-chain apparatus, though the two should
