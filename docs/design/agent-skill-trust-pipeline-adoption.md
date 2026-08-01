@@ -252,12 +252,22 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    once the host reloads its skill registrations that replacement is
    selectable and directs the same unrestricted tool calls before steps 5-6
    exist, while every flag-tampering and explicit-invocation test for the
-   enumerated entries still passes. The host policy must therefore deny
-   every repo-local skill by default, enabling only identities externally
-   admitted through the step-5 review, and it must reject *every*
-   invocation path for unadmitted skills (model selection, implicit
-   invocation, and explicit user invocation alike), not
-   only the two automatic paths. The in-repo flags only remove automatic
+enumerated entries still passes. The host policy must therefore deny
+    every repo-local skill by default, enabling a skill only when its
+    identity has been externally admitted through the step-5 review *and*
+    the step-6 host interception and enforcement routing for its actions
+    is active, and it must reject *every* invocation path for skills not
+    meeting both conditions (model selection, implicit
+    invocation, and explicit user invocation alike), not
+    only the two automatic paths. Admission alone must not lift the hold:
+    when step-5 admission lands before step-6 interception, the newly
+    admitted skill's actions are not yet constrained by anything (the
+    in-repo flags block only the automatic paths), so an explicit user
+    invocation can load the admitted skill and direct unrestricted tool
+    calls during exactly the rollout interval between admission and
+    enforcement; invocation and instruction ingestion for an admitted
+    skill therefore stay denied until the step-6 routing that constrains
+    its actions is enforcing. The in-repo flags only remove automatic
    selection, and a user who explicitly loads a held or manual skill during
    the interval loads the same instructions with the same power to direct
    unrestricted tool calls before the step-5 identity and step-6 interception
@@ -268,9 +278,15 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    companion-manifest flags does not make a held skill invocable while the
    host-policy hold is in force, that (an explicit-invocation case)
    a user's explicit invocation of a held skill is refused while the hold is
-   in force, and that (a default-deny case) a loadable skill newly created
-   or renamed in the checkout during the interval is not invocable by any
-   path until its identity has been externally admitted. The hold gates
+    in force, that (a default-deny case) a loadable skill newly created
+    or renamed in the checkout during the interval is not invocable by any
+    path until its identity has been externally admitted and the step-6
+    interception is active, and that (a step-5-before-step-6
+    explicit-invocation case) a skill whose identity is externally
+    admitted while the step-6 interception and enforcement routing is not
+    yet active has an explicit user invocation refused, with no
+    instruction ingestion and no side effect, until that routing is
+    enforcing. The hold gates
    invocation, and invocation gating cannot reach contexts that predate it:
    a skill already loaded into a live model session before the hold is
    enabled needs no new invocation, so its retained instructions keep
@@ -544,7 +560,23 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
         what was reviewed, with a reviewed-content substitution negative
         test that approves a request naming a mutable manifest, replaces
         that file's content before presenting the grant, and proves
-        consumption is refused without a side effect.
+        consumption is refused without a side effect. Re-resolving the
+        digest and then letting the fresh evaluation read the path again
+        leaves a check-to-snapshot gap when another workload can mutate
+        the reviewed file concurrently: the reviewed bytes can match at
+        the consumption check, be replaced immediately afterward, and be
+        snapshotted into a valid executable receipt for content the human
+        never reviewed, an interleaving the sequential substitution test
+        above cannot catch. Consumption must therefore be atomic with
+        capture: each reviewed reference is resolved once into an
+        immutable verified snapshot (or read and verified through a
+        protected handle), and exactly that verified snapshot or handle
+        is what the fresh evaluation binds into the receipt and the
+        execution consumes, never a second independent read of the
+        mutable path, with a concurrent replace-versus-consume negative
+        test racing a content replacement against grant consumption and
+        proving no interleaving yields a receipt or side effect over
+        bytes that differ from what was reviewed.
         Binding the policy bundle id/version detects substitution, not
        rollback: when an older, more permissive policy bundle and its
        active tenant binding are restored together, receipt issuance,
@@ -598,7 +630,25 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
       evaluation, failing closed on any change, with a context-substitution
       negative test that approves a request and then substitutes the active
       ceiling or the admitted handler before presenting the grant, proving
-      the stale grant is rejected without a side effect. Those versioned
+      the stale grant is rejected without a side effect. Those identities
+      version the enforcement machinery, not the handler's ambient inputs:
+      an unnamed feature flag, environment value, configuration default,
+      or service-discovery record the admitted handler depends on can
+      change after human approval but before grant consumption while
+      every identity above stays unchanged, the fresh evaluation then
+      issues a receipt bound to the new configuration, and the
+      launch-time pinned-configuration rule faithfully executes behavior
+      the approver never reviewed. The grant and its approval evidence
+      must therefore also bind the handler's security-relevant ambient
+      configuration snapshot (the resolved values or content digests of
+      those flags, environment values, configuration defaults, and
+      service-discovery records, as enumerated at handler admission), and
+      consumption must recheck the currently resolved configuration
+      against that binding, failing closed on any change, with an
+      approval-to-consumption configuration-substitution negative test
+      that approves a request, changes an ambient flag or
+      service-discovery record before presenting the grant, and proves
+      the grant is refused without a side effect. Those versioned
       identities still do not pin the principal the handler will act as:
       the admitted handler resolves a mutable ambient credential or default
       context, so while the grant sits unconsumed that credential can be
@@ -1344,7 +1394,24 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
     resource-exhaustion negative test proving a launched process that
     attempts to exceed its budget (an unbounded fork loop, allocation, or
     disk write) is terminated or denied and the host-level exhaustion does
-    not occur. Whether such a mechanism exists is
+    not occur. Those budgets still leave two shared substrates
+    ungoverned: an allowed script that repeatedly opens files or sockets
+    can exhaust the host-wide descriptor table, and one that saturates an
+    allowed disk or network endpoint can starve other workloads of I/O
+    bandwidth, all without exceeding any CPU, memory, PID, wall-clock, or
+    storage quota, so the exhaustion test above passes while another
+    workload is still denied service. The recorded budgets must therefore
+    also include enforceable open-file/socket (descriptor) limits and
+    disk and network I/O bandwidth quotas imposed on the spawned process
+    and its entire descendant tree, or the executor profile must
+    explicitly isolate those shared resources (a per-launch descriptor
+    allocation and an I/O-scheduling or bandwidth class separating the
+    launch from other workloads), with descriptor-exhaustion and
+    I/O-bandwidth-exhaustion negative tests proving a launched process
+    that opens descriptors or sockets in a loop, or saturates an allowed
+    disk or network endpoint, is throttled, denied, or terminated and
+    other workloads' descriptor and bandwidth availability is preserved.
+    Whether such a mechanism exists is
    a property of the execution host, not of the checkout, so the static step-2
    gate cannot decide enforceability: it could reject a declaration a production
    sandbox would enforce, or accept one under an assumed sandbox that is absent
@@ -1497,9 +1564,25 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
       execution gate, so a superseded or retired admission fails closed
       even when its registry entry and deployment snapshot are
       byte-identical to a formerly valid state, with a matched
-      registry-and-deployment rollback negative test restoring a retired
-      registry entry together with its old handler snapshot and proving
-      execution is refused rather than run under the stale admission.
+       registry-and-deployment rollback negative test restoring a retired
+       registry entry together with its old handler snapshot and proving
+       execution is refused rather than run under the stale admission.
+       Rollback-refusing admission state still leaves the gate's recheck
+       a point-in-time read: a retirement can commit after the gate
+       observes the admission as active and validates the immutable
+       handler snapshot, and the already-validated invocation then
+       launches under the retired authority, an interleaving the matched
+       rollback test cannot catch because nothing is restored. Admission
+       validation, receipt consumption, and launch must therefore be
+       serialized against active-admission transitions the same way
+       policy freshness and executor-profile validation are serialized
+       elsewhere in this design: the gate acquires an admission epoch or
+       lease atomically with the validation and holds it through launch,
+       revalidating or failing closed when the admission state changes
+       before the launch commits, with a concurrent retire-versus-launch
+       negative test racing a handler-admission retirement against an
+       in-flight validated invocation and proving no interleaving lets
+       the retired handler perform the side effect.
       Binding the reviewed implementation receipts only the outer
    tool call, not what the handler does to fulfill it: an admitted MCP
    server, plugin, or host handler internally performs its own filesystem,
