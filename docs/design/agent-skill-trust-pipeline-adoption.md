@@ -245,8 +245,18 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    skill selectable during exactly the interval when no identity or interception
    exists to catch it. During the phased interval the hold must therefore also be
    enforced in host policy held outside agent write authority, and that
-   denylist must reject *every* invocation path for the held skills — model
-   selection, implicit invocation, and explicit user invocation alike — not
+   hold must be default-deny over the repository's skills, not a denylist
+   enumerating the known held names: the same checkout write authority that
+   could clear the in-repo flags can equally create a new loadable skill,
+   or copy or rename a held skill's directory under a different name, and
+   once the host reloads its skill registrations that replacement is
+   selectable and directs the same unrestricted tool calls before steps 5-6
+   exist, while every flag-tampering and explicit-invocation test for the
+   enumerated entries still passes. The host policy must therefore deny
+   every repo-local skill by default, enabling only identities externally
+   admitted through the step-5 review, and it must reject *every*
+   invocation path for unadmitted skills (model selection, implicit
+   invocation, and explicit user invocation alike), not
    only the two automatic paths. The in-repo flags only remove automatic
    selection, and a user who explicitly loads a held or manual skill during
    the interval loads the same instructions with the same power to direct
@@ -254,11 +264,13 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    exist, so a hold scoped to automatic invocation leaves the exact exposure
    it was created to close (step 6 already applies the same
    loadability-not-invocation-path reasoning to the governed set). The
-   negative tests must prove both that modifying the in-repo frontmatter or
+   negative tests must prove that modifying the in-repo frontmatter or
    companion-manifest flags does not make a held skill invocable while the
-   host-policy denylist is in force, and — an explicit-invocation case — that
+   host-policy hold is in force, that (an explicit-invocation case)
    a user's explicit invocation of a held skill is refused while the hold is
-   in force. The step-2 loadability gate and
+   in force, and that (a default-deny case) a loadable skill newly created
+   or renamed in the checkout during the interval is not invocable by any
+   path until its identity has been externally admitted. The step-2 loadability gate and
    a step-3 card are prerequisites but not sufficient, because neither prevents an
    automatically selected skill from directing actions beyond its intended
    authority; a schema-valid, well-described skill can still instruct anything.
@@ -738,9 +750,27 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    entered within the ceiling can be rewritten into a path, command, or endpoint
    outside the declared/approved set while the receipt correctly binds those final
    arguments. The permission intersection must therefore be evaluated against the
-   final executable arguments, re-running after any policy transformation and
-   denying (fail closed) when the transformed request crosses the ceiling, with the
-   post-transform check recorded in the receipt. Argument-level checks are also
+    final executable arguments, re-running after any policy transformation and
+    denying (fail closed) when the transformed request crosses the ceiling, with the
+    post-transform check recorded in the receipt. Checking and binding the
+    final arguments still authorizes only the argument strings, not the
+    state they point at: when a final argument names mutable input outside
+    the immutable step-5 skill snapshot (an allowed deployment manifest
+    path, a configuration file the ceiling permits), another permitted
+    writer can replace that content after the post-transform check and
+    before the admitted handler reads it, so a different operation executes
+    while the receipt still binds the approved path string, and the
+    symlink, path-race, skill-resource, and handler-identity tests all pass
+    because the pathname and the handler are unchanged. Every
+    security-relevant by-reference input must therefore be bound by
+    content, not by name: hashed or snapshotted at authorization time, with
+    that digest or snapshot identity recorded in the receipt, and the
+    handler made to consume exactly those verified bytes or the
+    already-resolved descriptors rather than re-reading the mutable path
+    after authorization, with a negative test that replaces an authorized
+    by-reference input's content between authorization and handler read and
+    proves the handler consumes the authorized bytes or the execution is
+    denied, never the swapped content. Argument-level checks are also
    insufficient for the direct filesystem capabilities: a `file_read` or
    `file_write` ceiling scoped to a directory is not enforced by validating the
    final path argument, because an allowed path can traverse a symlink to a
@@ -1020,12 +1050,29 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
      constrains only the origin context before issuance, and the receipt's
      own expiry can outlive that context, so a delayed first use executes
      while every stale-context and concurrent-replay test above passes. The
-     execution gate must therefore revalidate invocation liveness at
-     consumption, verifying that the bound session or handle is still active,
-     and receipt expiry must be capped to the originating invocation's
-     lifetime, with a negative test proving a receipt first presented after
-     its originating invocation has ended is denied without a side
-     effect. Context freshness bounds the credential,
+      execution gate must therefore revalidate invocation liveness at
+      consumption, verifying that the bound session or handle is still active,
+      and receipt expiry must be capped to the originating invocation's
+      lifetime, with a negative test proving a receipt first presented after
+      its originating invocation has ended is denied without a side
+      effect. That recheck closes only the sequential case, not the race:
+      liveness validation, receipt consumption, and launch are separate
+      steps, so the gate can observe the handle as active, invocation
+      termination can mark it ended, and the already-validated request can
+      then consume the receipt and launch the side effect after the bound
+      authority expired, while the first-presentation-after-end test passes
+      because its presentation began before termination. Liveness
+      validation, receipt consumption, and launch must therefore be
+      serialized against the invocation-termination transition, the same
+      way step 5 serializes active-pair validation and lease registration
+      against ceiling revocation: the launch holds a revocable lease tied
+      to the invocation handle, acquired atomically with the liveness check
+      (one transaction, or an epoch check at consumption that fails closed
+      when the invocation ended since validation) and closed by
+      termination, with a concurrent end-versus-launch negative test
+      proving that racing invocation termination against receipt
+      consumption never launches the side effect after the invocation has
+      ended, regardless of interleaving. Context freshness bounds the credential,
    not the influence: rejecting a stale context does not remove the skill's
    instructions from the conversation, so a skill can direct the model to defer
    a tool call until after its invocation is marked ended, and the later call is
@@ -1129,6 +1176,26 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    digest on every request would block all governed non-skill tool use. The gate
    fails closed when a request carries no authenticated origin at all, or when a
    skill-originated request arrives without its loader-issued context. The
+   non-skill origin rule authenticates how a request was issued, not what
+   influenced it: a user or the model can load a registered `SKILL.md`
+   through an ordinary `Read` call or `cat` rather than the host's skill
+   loader, and every later tool call that follows those instructions is
+   then honestly authenticated as non-skill origin and governed under the
+   broader normal ceiling with no loader-issued skill stack, while the
+   explicit-, implicit-, and delayed-invocation tests all pass because no
+   formal invocation ever occurred. Ingestion of a registered skill
+   artifact into a model context must therefore itself count as activating
+   that skill: the host either treats a read of a registered skill's
+   instruction files as a skill activation that propagates the skill's
+   identity and ceiling into the consuming context (intersected and
+   retained until that context is discarded, exactly as the
+   isolated-context output and skill-written artifact rules above
+   require), or prevents ordinary non-loader contexts from consuming
+   registered skill artifacts as instructions at all, with a negative test
+   proving a tool call issued by a context that read a registered
+   `SKILL.md` through an ordinary file read is governed by that skill's
+   ceiling rather than the reader's broader non-skill ceiling, or that the
+   read itself is refused. The
    interception layer is itself inside the threat model: the current hook is
    executed directly from its working-tree path (`.claude/hooks/acgs-emit-receipt.py`,
    selected by `.claude/settings.json`) on each intercepted call, so a skill whose
