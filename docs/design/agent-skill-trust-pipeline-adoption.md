@@ -1513,6 +1513,22 @@ enumerated entries still passes. The host policy must therefore deny
     that opens descriptors or sockets in a loop, or saturates an allowed
     disk or network endpoint, is throttled, denied, or terminated and
     other workloads' descriptor and bandwidth availability is preserved.
+    Per-launch budgets bound each process tree, not their sum: a skill
+    that issues many distinct allowed script invocations concurrently
+    keeps every launch within its recorded per-launch limits while the
+    aggregate CPU, memory, PID, storage, descriptor, or bandwidth use of
+    those launches exhausts the host, and single-use receipts prevent
+    replaying one receipt, not issuing many separately authorized calls,
+    so every exhaustion test above passes while other workloads are still
+    denied service. The containment contract must therefore also impose
+    shared admission control and aggregate resource quotas scoped to the
+    skill, tenant, and execution boundary, enforced across all concurrent
+    and queued launches attributed to that scope (a launch whose admission
+    would exceed the aggregate quota is denied, queued, or throttled
+    rather than run), with a concurrent many-launch exhaustion negative
+    test proving that many simultaneous individually-within-budget
+    launches from one skill are collectively bounded and other workloads
+    retain CPU, memory, PID, storage, descriptor, and bandwidth capacity.
     Whether such a mechanism exists is
    a property of the execution host, not of the checkout, so the static step-2
    gate cannot decide enforceability: it could reject a declaration a production
@@ -1732,10 +1748,27 @@ enumerated entries still passes. The host policy must therefore deny
        elsewhere in this design: the gate acquires an admission epoch or
        lease atomically with the validation and holds it through launch,
        revalidating or failing closed when the admission state changes
-       before the launch commits, with a concurrent retire-versus-launch
-       negative test racing a handler-admission retirement against an
-       in-flight validated invocation and proving no interleaving lets
-       the retired handler perform the side effect.
+        before the launch commits, with a concurrent retire-versus-launch
+        negative test racing a handler-admission retirement against an
+        in-flight validated invocation and proving no interleaving lets
+        the retired handler perform the side effect. An admission lease
+        that ends at launch still stops short of the effect: an admitted
+        handler can queue asynchronous work or defer its side effect, so
+        the launch commits under the active admission, the lease is
+        released, retirement then commits, and the queued effect runs
+        under the retired admission even though the launch-scoped race
+        test passes (the same launch-versus-effect gap the
+        policy-version, actor-authorization, and executor-profile leases
+        close elsewhere in this design). The admission lease must
+        therefore be held until the governed effect commits or
+        completes, or the handler's in-flight and queued work must
+        remain revocable or brokered so a retirement revokes or
+        re-validates it before its effect commits (the same effect-held
+        lease discipline the other freshness leases apply), with a
+        delayed post-launch effect negative test retiring a handler
+        admission after launch but before a queued or deferred effect
+        and proving the effect never commits under the retired
+        admission.
       Binding the reviewed implementation receipts only the outer
    tool call, not what the handler does to fulfill it: an admitted MCP
    server, plugin, or host handler internally performs its own filesystem,
