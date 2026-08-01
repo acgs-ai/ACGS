@@ -466,7 +466,25 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
       evaluation, failing closed on any change, with a context-substitution
       negative test that approves a request and then substitutes the active
       ceiling or the admitted handler before presenting the grant, proving
-      the stale grant is rejected without a side effect. Binding the
+      the stale grant is rejected without a side effect. Those versioned
+      identities still do not pin the principal the handler will act as:
+      the admitted handler resolves a mutable ambient credential or default
+      context, so while the grant sits unconsumed that credential can be
+      repointed from the approved staging role to a production role with
+      the ceiling record, executor profile, permission-language version,
+      and handler deployment digest all unchanged; consumption then passes,
+      the fresh evaluation mints a receipt bound to the new principal, and
+      the execution-time principal re-resolution also passes because
+      production is now the current designation. The grant and its approval
+      evidence must therefore also bind the effective credential principal
+      (the stable principal, account, or role identifier, with its scope
+      and trust epoch) that the handler's ambient credential resolved to at
+      approval, and consumption must recheck that binding against the
+      currently resolved principal, failing closed on any change, with a
+      credential-substitution negative test spanning approval to grant
+      presentation: approve a request while the handler resolves the
+      staging principal, repoint the ambient credential to production, and
+      prove the grant is refused without a side effect. Binding the
       originating audit hash also presumes the bound event persists: when a
       governed skill can write the local audit store, it can delete or
       truncate the recorded escalation after the grant is issued, and the
@@ -950,7 +968,20 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    therefore defines shell containment semantics explicitly: a shell grant is
    treated as granting the process's ambient file and network capabilities unless
    the launch runs under an OS-level sandbox or capability-brokered executor that
-   materially enforces the narrower ceilings. Ambient capability is not only
+   materially enforces the narrower ceilings. Even an enforced network ceiling
+   is directional: a grant that names only selected outbound origins constrains
+   where the process may connect, but says nothing about `bind()` or `listen()`,
+   so an executor can satisfy every redirect, DNS-rebinding, and denied-connect
+   test above while still letting the approved script expose a TCP service that
+   other workloads reach and drive through arbitrarily many externally initiated
+   operations under the one launch receipt. Inbound listener authority must
+   therefore be defined as its own capability, distinct from outbound origin
+   authority and denied by default for any declaration that names only outbound
+   origins, with the executor profile required to enforce that distinction
+   (and the grant rejected when it cannot), and a negative test proving that
+   a process launched under an outbound-only grant cannot create a reachable
+   listener: another workload's attempt to connect to a socket the sandboxed
+   process binds and listens on fails. Ambient capability is not only
    files and sockets: the spawned process also inherits the host environment and
    open handles (cloud tokens, API keys, credential-agent sockets), and file and
    network ceilings alone do not stop an allowed script from using or
@@ -1016,7 +1047,21 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    with the profile identity and version bound into the receipt and
    rechecked at execution, and a profile-tampering negative test proving a
    forged or edited profile cannot satisfy the containment requirements: the
-   launch is denied rather than run uncontained. Wherever sandboxed or
+   launch is denied rather than run uncontained. Authentication and version
+   binding admit any profile that was ever validly issued, not the one
+   currently in force: when the executor is downgraded (its sandbox or
+   resource controls removed), an older, correctly authenticated profile
+   record can be restored and still pass the version-binding and
+   execution-time checks while claiming containment capabilities the
+   dispatching executor no longer provides. The active profile version must
+   therefore be held in monotonic, rollback-refusing freshness state of the
+   same trust class as the ceiling and signer freshness state, with any
+   profile older than the recorded active version rejected at admission, at
+   grant consumption, and at execution, and a matched profile/configuration
+   rollback negative test that downgrades the executor's actual
+   configuration, restores the older authenticated profile that claims the
+   removed capabilities, and proves the launch fails closed rather than
+   running uncontained. Wherever sandboxed or
    brokered enforcement is claimed it must be proven by end-to-end negative tests
    on the transitive effects themselves (the spawned process's denied write
    outside the allowed directory, its denied socket, its denied environment
