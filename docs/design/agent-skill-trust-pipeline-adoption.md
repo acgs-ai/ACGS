@@ -7,14 +7,20 @@ Scope: `.claude/skills/**`, `.agents/skills/**`, and the governance story around
 ## Why this document exists
 
 Agent skills are executable policy. A skill can tell an agent to run commands, read
-files, call tools, or make decisions on a user's behalf, and in this repo several load
-implicitly — `.agents/skills/govern-zone/agents/openai.yaml` sets
-`allow_implicit_invocation: true`, so its content becomes standing context for every
-Codex run without anyone opting in.
+files, call tools, or make decisions on a user's behalf, and in this repo at least one
+is eligible for automatic invocation: `.agents/skills/govern-zone/agents/openai.yaml`
+sets `allow_implicit_invocation: true`, so Codex may trigger the skill and load its
+instructions into a run without anyone opting in. (The `SKILL.md` body loads on
+trigger, not as standing context in every run.)
 
-We have 24 skill directories across two trees. None of them has an owner record, a
-declared permission set, an eval, or an integrity check. For a repository whose product
-is governed execution, that is the least governed surface we own.
+The repository tracks six `SKILL.md` paths across the two trees: `govern-zone` mirrored
+in both, plus `maintain-acgs`, `phase-gate`, `pr-evidence`, and
+`source-driven-development` under `.claude/skills/`. The working tree where the scan
+below was run carried 24 skill directories, most of them local-only and untracked, so
+counts and findings involving untracked skills are recorded evidence, not reproducible
+from a clean checkout. None of these skills has an owner record, a declared permission
+set, an eval, or an integrity check. For a repository whose product is governed
+execution, that is the least governed surface we own.
 
 NVIDIA published a four-layer trust pipeline for exactly this problem
 ([NVIDIA/skills](https://github.com/NVIDIA/skills), Apache-2.0 + CC-BY-4.0, 324 skills).
@@ -53,8 +59,10 @@ skillspector scan .claude/skills --recursive --no-llm --format markdown
 skillspector scan .agents/skills --recursive --no-llm --format markdown
 ```
 
-**Findings: 7 HIGH, 6 MEDIUM. Zero true positives.** Every HIGH was a heuristic misfire
-on one of this repo's own idioms, verified by reading each flagged line:
+**Reported: 7 HIGH, 6 MEDIUM.** Six of the seven HIGH findings were captured in the
+notes below; each was verified as a heuristic misfire on one of this repo's own idioms
+by reading the flagged line. The seventh HIGH was not preserved when these notes were
+written, so the zero-true-positive verdict is claimed only for the six itemized here:
 
 | Rule | Where | Verdict |
 |---|---|---|
@@ -62,6 +70,10 @@ on one of this repo's own idioms, verified by reading each flagged line:
 | AS1 | `worktree-lanes:82` | False positive — a documentation cross-reference to `.claude/rules/headless-delegation.md`, not access |
 | P6 "Direct Prompt Extraction" | `pr-evidence:32` | False positive — "paste literal commands and literal outputs" is our verification-discipline rule |
 | P6 ×3 | `imagegen-frontend-web:3,6,399` | False positive — fires on emphatic rule blocks ("HARD OUTPUT RULE — READ FIRST") |
+
+Of the flagged skills, `maintain-acgs` and `pr-evidence` are tracked in this
+repository; `worktree-lanes` and `imagegen-frontend-web` were local-only untracked
+skills, so those rows cannot be re-derived from a clean checkout.
 
 The finding list was not the value. **The structural output was.** SkillSpector reported
 `.claude/skills/govern-zone` as `Skill: unknown`, because it cannot parse a name from a
@@ -72,7 +84,7 @@ blob mirrored at `.claude/skills/govern-zone/SKILL.md` and
 checks that a skill is loadable, let alone correct.
 
 That is the argument for this proposal in one example: a governance repository shipped an
-implicitly-loaded skill that was broken *and* factually wrong about its own conventions,
+implicitly-invocable skill that was broken *and* factually wrong about its own conventions,
 and no gate noticed.
 
 ## What to adopt
@@ -94,10 +106,18 @@ omit it, so the trust-pipeline doc's claim that capabilities "are declared in th
 `SKILL.md` frontmatter" is aspirational for a good share of their own skills. Second, and
 more important: **nothing enforces it at runtime.** It is documentation.
 
-That gap is precisely where gove-zone fits. A declared permission set is a policy input.
-The kernel already binds actor, action, arguments, and policy into a receipt; a skill's
-declared `permissions` block is another binding, checkable at the executor gate. They
-declare; we enforce. This is the one item that is both borrowable and differentiating.
+That gap is precisely where gove-zone fits, with a caveat the design must own: the
+`permissions:` block is declared by the skill itself, so a compromised or unreviewed
+skill (the very thing this pipeline exists to constrain) can simply declare the broader
+access it wants. Binding the declaration into a receipt makes it tamper-evident, not
+trustworthy. Enforcement therefore needs two inputs the declaration cannot supply: a
+trusted skill identity (name, version, and artifact digest, which is why an integrity
+mechanism must precede this step), and an independently reviewed maximum permission set
+held outside the skill. The declared block then operates only as an additional deny
+gate: it can narrow the approved ceiling, never widen it. With those in place, the
+kernel's existing actor/action/argument/policy binding extends naturally. They declare;
+we authenticate, cap, and enforce. This is the one item that is both borrowable and
+differentiating.
 
 ### 2. Skill cards
 
@@ -106,16 +126,17 @@ type with a least-privilege note, actionable risk/mitigation pairs, output schem
 version tied to the signing identifier. We have `docs/CLAIMS.md` at repo level and nothing
 per capability.
 
-Their "good risk statements" guidance is the same instinct as our
-`.claude/rules/claim-safety.md` safe/unsafe wording table — vague risks rewritten as
-testable ones:
+Their "good risk statements" guidance is the same instinct as the safe/unsafe claim
+wording boundaries this repo tracks in `AGENTS.md` ("Claim boundaries") and
+`docs/CLAIMS.md`: vague risks rewritten as testable ones:
 
 | Weak | Stronger |
 |---|---|
 | The skill could make mistakes. | The skill may generate incorrect remediation steps; users must review proposed code changes before execution. |
 | The skill writes files. | The skill may overwrite generated reports in the configured output directory; it must not write outside that directory. |
 
-Worth cross-linking the two rule sets rather than maintaining separate vocabularies.
+Worth pointing skill cards at those tracked claim boundaries rather than maintaining a
+separate vocabulary.
 
 ### 3. Per-skill eval sets
 
@@ -135,10 +156,17 @@ snake_case for Python modules" would have caught it.
 
 ### 4. Directory-tree signing
 
-OMS is close to what `packages/acgs-proofpack-verifier` already does for receipt bundles:
-detached signature, pinned trust anchor, offline verification, strict about unsigned
-additions. If we sign our own skill directories, adopt OMS rather than inventing a format
-— it interoperates, and the verifier already exists as a pip package.
+OMS signs a whole directory tree: detached signature, pinned trust anchor via a
+certificate chain, offline verification, strict rejection of files added after signing.
+The closest artifact in this repo, `packages/acgs-proofpack-verifier`, is a useful
+conceptual contrast rather than a reusable implementation: it signs only the receipt (a
+pack-level signature over the evidence manifest and other artifacts is explicitly
+documented as requiring a format change), verifies against an operator-supplied public
+key with no PKI, certificate chain, or trust-store bootstrap, and does not treat extra
+directory files as unsigned additions. If we sign our own skill directories, adopt OMS
+rather than extending the verifier or inventing a format: it interoperates and already
+solves the directory-signature problem. The trust-anchor and key-distribution work
+remains ours either way.
 
 ## What not to adopt
 
@@ -162,17 +190,25 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
 2. **Add a loadability gate.** A root test that every `SKILL.md` under `.claude/skills/**`
    and `.agents/skills/**` parses `---`-delimited frontmatter with a `name` and
    `description`. Cheap, deterministic, catches the entire class.
-3. **Skill cards for the skills that can act.** Not all 24 — start with those that run
-   commands or touch privileged paths: `maintain-acgs`, `worktree-lanes`,
-   `headless-delegation`, `deploy-drift-check`, `pr-queue`, `codex-execution-workflow`.
+3. **Skill cards for the skills that can act.** Start with the tracked skills that run
+   commands or touch privileged paths (`maintain-acgs` today), and make a card the entry
+   ticket for any currently untracked local skill (`worktree-lanes`,
+   `headless-delegation`, `deploy-drift-check`, `pr-queue`, `codex-execution-workflow`)
+   before it lands in the repository.
 4. **Declared `permissions:` on the same set**, initially documentation-only.
-5. **Wire `permissions:` into the kernel** as a policy input bound into the receipt. This
-   is the differentiating step and should get a design of its own.
-6. **Evals** for the skills that encode repo conventions, where drift is silent.
-7. **Signing** last — it is the least valuable layer until the content is worth pinning.
+5. **Skill identity and permission ceiling.** A trusted name/version/artifact digest per
+   skill, plus an independently reviewed maximum permission set held outside the skill.
+   Without these, step 6 would enforce a caller-controlled declaration.
+6. **Wire `permissions:` into the kernel** as a deny-only policy input bound into the
+   receipt and checked against the step-5 identity and ceiling. This is the
+   differentiating step and should get a design of its own.
+7. **Evals** for the skills that encode repo conventions, where drift is silent.
+8. **Full OMS-style signing** can come last; step 5 needs only a pinned digest and an
+   approval record, not the complete certificate-chain apparatus, though the two should
+   converge.
 
-Steps 2 and 3 are small and independently useful. Step 5 is a real design task and should
-not be bundled with the rest.
+Steps 2 and 3 are small and independently useful. Steps 5 and 6 are a real design task
+and should not be bundled with the rest.
 
 ## References
 
@@ -181,5 +217,5 @@ not be bundled with the rest.
 - `docs/agent-skill-trust-pipeline.mdx`, `docs/signing-agent-skills.mdx`,
   `docs/skill-cards.mdx` in the NVIDIA/skills repo
 - OpenSSF Model Signing (OMS), `model-signing` on PyPI
-- Local counterparts: `.claude/rules/claim-safety.md`,
-  `.claude/rules/security-sensitive-files.md`, `packages/acgs-proofpack-verifier`
+- Local counterparts: `AGENTS.md` (claim boundaries and the security-sensitive file
+  list), `docs/CLAIMS.md`, `packages/acgs-proofpack-verifier`
