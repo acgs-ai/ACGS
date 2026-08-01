@@ -1114,11 +1114,28 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    step 5 already rejects for pre-launch digest revalidation of skill
    artifacts, in which a skill replaces the hook after the check passes but
    before the host loads it, bypassing routing or forging the origin context.
-   The hook-tampering negative test must prove both that a modified hook or
-   settings file yields fail-closed denial of subsequent governed calls, not
-   silent bypass, and that a hook swapped in after verification is never the
-   code that executes. This is the
-   differentiating step and should get a design of its own.
+    The hook-tampering negative test must prove both that a modified hook or
+    settings file yields fail-closed denial of subsequent governed calls, not
+    silent bypass, and that a hook swapped in after verification is never the
+    code that executes. Verified hook bytes are not the whole executable
+    surface: the hook runs under an interpreter resolved from the writable
+    checkout (the project `.venv`) and imports `gove_zone.integration` and the
+    rest of the governance package on each call, so a skill whose write
+    ceiling covers the checkout can leave the verified hook and settings
+    untouched while modifying an imported gate dependency — the governance
+    package, the permission parser, or the executor implementation — and every
+    subsequent intercepted call then executes compromised gate code that can
+    bypass receipt validation while every hook-tampering test above passes.
+    The interceptor's interpreter and its complete governance dependency
+    closure must therefore be protected the same way as the hook itself:
+    host-installed immutable code outside agent write authority, or
+    authenticated against pinned digests with the host executing the verified
+    bytes from the same immutable materialization (never re-imported from the
+    writable checkout after verification), with a negative test that mutates
+    an imported gate dependency while preserving the hook bytes and proves
+    subsequent governed calls fail closed rather than execute the compromised
+    gate. This is the
+    differentiating step and should get a design of its own.
 7. **Evals** for the skills that encode repo conventions, where drift is silent.
 8. **Full OMS-style signing** can come last; step 5 needs only a pinned digest and an
    approval record, not the complete certificate-chain apparatus, though the two should
