@@ -234,7 +234,17 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    same flag this repository already uses on its manual Claude skills. Both flags
    stay disabled through the phased rollout until the skill is authenticated and its
    actions are actually constrained: the step-5 identity/digest and approved ceiling
-   plus the step-6 host interception and enforcement. The step-2 loadability gate and
+   plus the step-6 host interception and enforcement. The flags alone cannot carry
+   that hold, because they live in the same writable checkout that ordinary agent
+   tool calls can edit: a prompt-injected agent or another acting skill can clear
+   `disable-model-invocation` or restore `allow_implicit_invocation` and make the
+   skill selectable during exactly the interval when no identity or interception
+   exists to catch it. During the phased interval the hold must therefore also be
+   enforced in host policy held outside agent write authority (a host-level
+   denylist of the held skills for model selection and implicit invocation), with
+   a negative test proving that modifying the in-repo frontmatter or
+   companion-manifest flags does not make a held skill invocable while the
+   host-policy denylist is in force. The step-2 loadability gate and
    a step-3 card are prerequisites but not sufficient, because neither prevents an
    automatically selected skill from directing actions beyond its intended
    authority; a schema-valid, well-described skill can still instruct anything.
@@ -326,7 +336,17 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    evaluated request through the full policy path, producing a new `ALLOW` or
    `TRANSFORM` receipt that is the only thing the executor will accept, and a
    negative test must prove the original denied or escalated receipt can never
-   run, approved or not. The approval grant is itself a credential and must be
+   run, approved or not. Approval is also bounded below the permission ceiling,
+   never a way over it: a grant can resolve only policy-level escalation for
+   requests whose final arguments remain inside every effective permission
+   ceiling (the step-5 approved ceiling intersected with the declaration and,
+   under composition, every stacked skill's set). When the denial came from the
+   declared/approved permission intersection itself, the fresh evaluation must
+   deny again (the independently reviewed maximum is not an overridable
+   suggestion), and an above-ceiling-with-valid-approval negative test through
+   the real handler must prove a request outside the ceiling yields no
+   executable receipt and no side effect even when it carries an otherwise
+   valid approval grant. The approval grant is itself a credential and must be
     bound to the exact request it approves: authenticated to the granting human,
     tied to the actor, skill identity/digest, action, and final arguments the new
      receipt represents, single-use, and bounded by an expiry, with the grant
@@ -502,7 +522,18 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    therefore defines shell containment semantics explicitly: a shell grant is
    treated as granting the process's ambient file and network capabilities unless
    the launch runs under an OS-level sandbox or capability-brokered executor that
-   materially enforces the narrower ceilings. Whether such a mechanism exists is
+   materially enforces the narrower ceilings. Ambient capability is not only
+   files and sockets: the spawned process also inherits the host environment and
+   open handles (cloud tokens, API keys, credential-agent sockets), and file and
+   network ceilings alone do not stop an allowed script from using or
+   exfiltrating those credentials. The containment contract must therefore treat
+   inherited credentials explicitly: either the shell grant is defined as
+   granting the ambient credentials the process inherits (and the declaration
+   documents that), or the sandboxed/brokered launch must run with an
+   allowlisted environment (secrets stripped) and inherited descriptors and
+   credential-agent handles closed, with negative tests proving the spawned
+   process can neither read a denied environment token nor use an inherited
+   credential handle. Whether such a mechanism exists is
    a property of the execution host, not of the checkout, so the static step-2
    gate cannot decide enforceability: it could reject a declaration a production
    sandbox would enforce, or accept one under an assumed sandbox that is absent
@@ -517,7 +548,8 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    turn the denials into unenforceable promises. Wherever sandboxed or
    brokered enforcement is claimed it must be proven by end-to-end negative tests
    on the transitive effects themselves (the spawned process's denied write
-   outside the allowed directory, its denied socket) rather than on the launch
+   outside the allowed directory, its denied socket, its denied environment
+   token and credential-handle use) rather than on the launch
    arguments. Receipt binding governs
    only actions that reach the executor, and today's host coverage is narrow:
    `.claude/hooks/acgs-emit-receipt.py::_classify` intercepts the edit tools and a few
@@ -525,7 +557,18 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    receipt path entirely, and the `.agents` tree has no runtime gate at all. This step
    therefore includes the host-side interception that routes every governed capability
    through `execute_with_receipt`; until that wiring exists, the enforcement claim is
-   limited to calls already routed through that boundary. "Every governed
+   limited to calls already routed through that boundary. Routing "through" the
+   gate must mean the gate performs the side effect, not that it observes it:
+   on the Claude path the interceptor is a `PreToolUse` hook, and
+   `.claude/hooks/acgs-emit-receipt.py` only emits evidence and returns before
+   the host performs the original tool call, so calling `execute_with_receipt`
+   around validation or a no-op inside that hook would pass every receipt and
+   positive-handler test while the real host side effect still runs outside the
+   executor. Interception must therefore take the form of a dispatcher or proxy
+   in which the downstream host operation itself is the `tool_fn` the gate
+   executes, so the host performs the side effect only as the gate's callee,
+   with a test proving that when the gate denies, no subsequent direct host
+   execution path performs the operation. "Every governed
    capability" must be closed-world, not a curated mapping: `_classify` today
    returns `None` for any action it does not recognize and the hook exits
    successfully, so a newly exposed side-effectful MCP or plugin tool, or an
@@ -554,7 +597,20 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    non-exportable live handle, and be validated before any receipt is issued,
    with stale-context and cross-call replay negative tests proving a context
    from an ended invocation, or one minted for a different tool call, is
-   rejected before receipt issuance. A single
+   rejected before receipt issuance. Context freshness bounds the credential,
+   not the influence: rejecting a stale context does not remove the skill's
+   instructions from the conversation, so a skill can direct the model to defer
+   a tool call until after its invocation is marked ended, and the later call is
+   honestly labeled with the authenticated non-skill origin and governed under
+   the agent's broader ceiling. Because the host cannot reliably attribute a
+   later model action to the prior prompt that caused it, skill execution must
+   either run in an isolated capability-scoped context whose ceiling governs
+   everything the model does within it, or the host must conservatively retain
+   and intersect every loaded skill's ceiling until that model context is
+   discarded, with a delayed-call negative test proving a tool call deferred
+   until after invocation end, issued from a context that loaded the skill, is
+   still governed by the skill's ceiling rather than the broader non-skill
+   ceiling. A single
    origin identity is not enough once skills compose: when one skill invokes
    another, or several are active concurrently, attributing the request to any
    single skill would let a restricted outer skill route an action through a
