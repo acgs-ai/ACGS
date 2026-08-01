@@ -98,15 +98,19 @@ skills, so those rows cannot be re-derived from a clean checkout.
 
 The finding list was not the value. **The structural output was.** SkillSpector reported
 `.claude/skills/govern-zone` as `Skill: unknown`, because it cannot parse a name from a
-file whose first line is a ` ```markdown ` fence instead of YAML frontmatter. That is a
-real defect — the skill silently never loaded — and it existed in *two* copies, the same
-blob mirrored at `.claude/skills/govern-zone/SKILL.md` and
+file whose first line is a ` ```markdown ` fence instead of YAML frontmatter. That proves
+the file is malformed by the scanner's parsing rules, not how either host handled it:
+as noted above, no host-load evidence exists either way, so the skill is best described
+as malformed and unverified-loadable rather than as one the hosts demonstrably skipped.
+(A real host registration test is exactly what the step-2 loadability gate below adds.)
+The defect existed in *two* copies, the same blob mirrored at
+`.claude/skills/govern-zone/SKILL.md` and
 `.agents/skills/govern-zone/SKILL.md`. It went unnoticed indefinitely because nothing
 checks that a skill is loadable, let alone correct.
 
 That is the argument for this proposal in one example: a governance repository shipped an
-implicitly-invocable skill that was broken *and* factually wrong about its own conventions,
-and no gate noticed.
+implicitly-invocable skill that was malformed *and* factually wrong about its own
+conventions, and no gate noticed.
 
 ## What to adopt
 
@@ -597,13 +601,18 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    beneath the ceiling root while reading or writing it accesses the same
    inode as the outside file, and both tests above pass while an
    out-of-ceiling side effect runs. Directory ceilings must therefore also
-   handle hard links explicitly, either by confining the capability to an
-   isolated filesystem view in which outside inodes are simply not reachable
-   through allowed paths, or by rejecting (or specially vetting) multi-linked
-   entries whose link count shows the inode is shared beyond the ceiling
-   boundary, with a cross-boundary hard-link negative test proving that a
-   hard link inside an allowed directory to a denied file fails to read or
-   write the outside content. Direct network capabilities have the same
+   handle hard links explicitly, and an unspecified isolated filesystem view
+   is not sufficient: a mount namespace or bind-mounted allowed directory
+   hides the outside pathname but preserves the hard-linked inode, so writing
+   the visible in-ceiling name still mutates the denied file. The remediation
+   must either materialize the allowed directory onto a copied or
+   copy-on-write filesystem whose entries are fresh inodes sharing no storage
+   with any file outside the ceiling, or reject (or specially vet)
+   multi-linked entries whose link count shows the inode is shared beyond the
+   ceiling boundary, with a cross-boundary hard-link negative test proving
+   that a hard link inside an allowed directory to a denied file fails to
+   read or write the outside content, including when the capability runs
+   inside a mount-namespace or bind-mount view of the allowed directory. Direct network capabilities have the same
    resolution gap: a network ceiling scoped to allowed origins is not enforced
    by validating the requested endpoint or the post-policy arguments, because
    an allowed URL can redirect to a forbidden origin, and a hostname can
@@ -682,7 +691,21 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    resolve every skill-originated action against an exhaustive admitted-tool
    registry and fail closed on any tool or alias not in it, with a real-handler
    negative test proving an unknown or newly exposed tool invoked from a skill
-   is denied rather than silently passed through. Interception alone is still
+   is denied rather than silently passed through. Admission by name is still
+   not admission of code: the registry authenticates that a tool or alias is
+   admitted, not which implementation the name resolves to, so an admitted MCP
+   alias rebound to a different server, or a plugin or host handler upgraded
+   to code with broader side effects, executes different code while the same
+   skill identity, action, and arguments pass every registry and receipt
+   check. Each admitted registry entry must therefore bind the implementation
+   it was reviewed against (the resolved server or handler identity and its
+   compatible schema or implementation version) into the ceiling record and
+   the receipt, and the execution gate must recheck that binding against the
+   implementation actually resolved at execution time, failing closed on
+   mismatch, with a handler-substitution negative test proving that rebinding
+   an admitted alias to a different server, or swapping the handler behind an
+   admitted tool name, is denied rather than executed under the stale
+   admission. Interception alone is still
    not sufficient, because an agent issues ordinary tool calls outside any skill
    invocation and the current hook cannot tell the difference:
    `.claude/hooks/acgs-emit-receipt.py::main` receives only the tool payload and
@@ -740,7 +763,23 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    output, intersected as above and retained until that recipient context is
    discarded, with a negative test proving a tool call issued by a caller
    after consuming isolated-context output is still governed by the
-   originating skill's ceiling rather than the caller's broader ceiling. A single
+   originating skill's ceiling rather than the caller's broader ceiling. That
+   propagation rule covers only output returned directly into another model
+   context; persistence is a second return path. A restricted skill can write
+   delayed instructions into an artifact its ceiling permits (an allowed
+   file, a queue entry, any durable store), and after the isolated context is
+   discarded a broader non-skill context that later reads the artifact would
+   perform the requested above-ceiling action without inheriting the skill
+   stack, while every direct-output and delayed-call test above still passes.
+   Skill-produced persistent artifacts must therefore carry origin metadata
+   recording the producing skill stack, and the host must either propagate
+   the originating ceiling (intersected as above) into every model context
+   that consumes such an artifact, retained until that context is discarded,
+   or prevent skill-written artifacts from re-entering any model context as
+   consumable instructions at all, with a negative test proving a tool call
+   issued by a context after reading a skill-written artifact is still
+   governed by the producing skill's ceiling rather than the reader's broader
+   ceiling. A single
    origin identity is not enough once skills compose: when one skill invokes
    another, or several are active concurrently, attributing the request to any
    single skill would let a restricted outer skill route an action through a
