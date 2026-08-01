@@ -400,7 +400,22 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    validators, and the future executor read exactly one contract.
 5. **Skill identity and permission ceiling.** A trusted name/version/artifact digest per
    skill, plus an independently reviewed maximum permission set held outside the skill.
-   Without these, step 6 would enforce a caller-controlled declaration. "Outside the
+   Without these, step 6 would enforce a caller-controlled declaration. Before OMS
+   signing lands, that artifact digest is the security identity everything below binds
+   to (the ceiling's version-binding, the executed snapshot, the loader-issued origin
+   context, and the receipt), so its computation must itself be defined, not left to
+   the implementation. Hashing file contents in traversal order while omitting paths,
+   entry types, modes, or unambiguous length boundaries lets structurally different
+   skill trees collide on the same digest without breaking the underlying hash (the
+   same bytes redistributed across files or paths), while every listed single-file
+   mutation test still passes. The digest must therefore be computed over a versioned,
+   collision-resistant canonical tree manifest that binds, for every entry, its
+   normalized relative path, entry type, relevant mode bits, and content length and
+   hash under an unambiguous, length-delimited encoding, with the manifest scheme
+   version bound into ceiling records and receipts so a verifier rejects a digest
+   computed under an unknown scheme, and a structural-substitution negative test
+   proving a tree that permutes the same content across different paths or entry
+   boundaries yields a different digest and is rejected. "Outside the
    skill" is necessary but not sufficient: if the agent, or any skill it runs, can
    write the location holding the ceiling record, the caller can widen the ceiling
    before issuance, the receipt then faithfully binds the tampered value, and the
@@ -478,7 +493,17 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    key material held outside agent write authority, and a recomputed-forgery
    negative test proving a receipt whose skill digest, ceiling, or permission
    fields were altered and re-hashed (and, absent the issuance key,
-   re-signed) is rejected without a side effect. Until signed issuance and
+   re-signed) is rejected without a side effect. Signing and hash-binding prove
+   integrity, not that the verifier understands the new fields: during a rolling
+   deployment or on a stale executor worker, skill fields encoded into an existing
+   extensible receipt field would let an older gate validate the signature and the
+   actor/action/argument bindings while silently ignoring the skill ceiling, and
+   every new-executor test above would still pass. Skill-governed receipts must
+   therefore carry a new receipt schema version or a critical purpose/extension
+   marker that a verifier must reject when it does not support it, and a
+   compatibility test must prove the current pre-skill executor fails closed on a
+   skill-governed receipt rather than executing it under pre-skill semantics.
+   Until signed issuance and
    trusted verification exist on the hook path, the skill-trust result is
    explicitly limited to non-adversarial unsigned development use and must
    never be described as enforcement. Deny-only is not a
@@ -595,9 +620,22 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    therefore be bound to the host session and to the exact tool-call/request
    digest it authorizes, carry a short lifetime and a nonce or be held as a
    non-exportable live handle, and be validated before any receipt is issued,
-   with stale-context and cross-call replay negative tests proving a context
-   from an ended invocation, or one minted for a different tool call, is
-   rejected before receipt issuance. Context freshness bounds the credential,
+    with stale-context and cross-call replay negative tests proving a context
+    from an ended invocation, or one minted for a different tool call, is
+    rejected before receipt issuance. Validating the context protects only up to
+    issuance: a skill-issued `ALLOW` that involves no human approval yields a
+    valid signed receipt whose planned bindings carry no session, nonce, or live
+    handle, and the shared consumption ledger above is scoped to approval-gated
+    receipts, so against a stateless `execute_with_receipt` that same bearer
+    receipt can be presented repeatedly for matching actor/action/arguments and
+    run the side effect multiple times while every stale-context test still
+    passes. The live invocation must therefore be bound into the receipt itself
+    (the origin context's session binding and its nonce or handle identity), and
+    every skill-originated receipt, not only approval-gated ones, must be
+    consumed atomically at the execution gate against shared durable state of
+    the same class as the grant ledger, with a concurrent-replay negative test
+    presenting an ordinary non-approval skill receipt to the execution gate in
+    parallel and proving its side effect runs at most once. Context freshness bounds the credential,
    not the influence: rejecting a stale context does not remove the skill's
    instructions from the conversation, so a skill can direct the model to defer
    a tool call until after its invocation is marked ended, and the later call is
@@ -623,9 +661,21 @@ tracking alongside the Microsoft AGT comparison as a narrative competitor.
    declaration omits it, and an inner skill both declares and is approved for
    network, applying only the inner declaration would let the call through an
    authority the outer skill explicitly declined. Nested- and concurrent-skill
-   negative tests must include that narrower-outer-declaration case, proving
-   that invoking or overlapping with another skill can only narrow authority,
-   never amplify it. For ordinary
+    negative tests must include that narrower-outer-declaration case, proving
+    that invoking or overlapping with another skill can only narrow authority,
+    never amplify it. Composition also crosses session boundaries: an acting
+    skill can use an admitted orchestration tool to launch a subagent or team,
+    and that child normally receives a fresh host session and model context, so
+    the parent's session-bound origin cannot be reused there and the
+    retained-ceiling rule for the parent context does not carry over; the child
+    could then issue the requested action under its broader non-skill ceiling
+    while every nested-skill and delayed-call test passes. Agent delegation from
+    a skill context must therefore either be denied, or every child session must
+    be minted a non-amplifying origin derived from the full parent skill stack,
+    with that intersection retained for the child's lifetime and propagated to
+    any further descendants, with a negative test proving a child agent launched
+    from a skill context is denied when it attempts an action above the parent
+    skill's ceiling. For ordinary
    tool use outside any skill invocation, the host must authenticate an explicit
    non-skill origin, governed by the agent's normal policy ceiling; demanding a skill
    digest on every request would block all governed non-skill tool use. The gate
