@@ -648,12 +648,28 @@ enumerated entries still passes. The host policy must therefore deny
        records and the grant ledger), with receipt issuance, grant
        consumption, and execution each validating the policy bundle in
        force against that state and failing closed when the bundle is
-       older than the recorded active version or the state is
-       unavailable, and a matched bundle-and-binding rollback negative
-        test that restores an older permissive bundle together with its
-        active tenant binding and proves a request the current policy
-        denies yields no executable receipt and no side effect.
-        Validating policy freshness at issuance, consumption, and execution
+        older than the recorded active version or the state is
+        unavailable, and a matched bundle-and-binding rollback negative
+         test that restores an older permissive bundle together with its
+         active tenant binding and proves a request the current policy
+         denies yields no executable receipt and no side effect.
+         Identity and version name the bundle, not its bytes: a policy
+         bundle or custom policy implementation mutated in place while
+         retaining its id and version satisfies every freshness and
+         lease check above, so the changed policy can mint a valid
+         receipt for an action the reviewed bytes denied; the current
+         tenant path demonstrates the gap by assigning
+         `policy_hash=policy.version` rather than hashing the loaded
+         implementation or serialized bundle. The freshness record and
+         the receipt must therefore bind a content digest computed over
+         the policy's code, configuration, dependencies, and applicable
+         runtime (not its declared identity and version alone), and
+         evaluation must run only over immutable verified bytes matching
+         that digest, with a same-version mutation negative test that
+         mutates a policy bundle in place while retaining its id and
+         version and proves an action the reviewed bytes denied yields
+         no executable receipt and no side effect.
+         Validating policy freshness at issuance, consumption, and execution
         still leaves a check-to-launch race the rollback test does not
         cover: the gate validates a receipt against the then-active policy
         version, a policy transition then installs a version that denies
@@ -773,6 +789,22 @@ enumerated entries still passes. The host policy must therefore deny
       closed when it does not, with a negative test that deletes or
       truncates the bound audit event before presenting the grant and
       proves consumption is refused without a side effect.
+      Anchoring the originating escalation event protects grants, not
+      ordinary receipts: a non-approval `ALLOW` receipt binds the hash
+      of its own decision event, the local audit store is then deleted
+      or truncated, and the signed receipt still consumes and executes
+      because the retention requirement above is scoped to the
+      escalation event a grant originates from and the universal
+      consumption rule does not require the bound event to remain
+      anchored. Authenticated, rollback-resistant audit retention and
+      execution-time presence verification must therefore apply to
+      every executable receipt: the decision event each executable
+      receipt binds must be held or anchored in the same trust class of
+      storage, and receipt presentation must confirm that event remains
+      present and anchored there, failing closed when it does not, with
+      a negative test that truncates an ordinary receipt's decision
+      event after issuance but before presentation and proves execution
+      is refused without a side effect.
       Binding alone does not establish
     separation of duties: exact-request binding proves *what* was approved, not
     that an independent authority approved it, so when the requesting actor is
@@ -1515,10 +1547,24 @@ enumerated entries still passes. The host policy must therefore deny
      requests, or the listener grant must reserve a verified maximum
      accepted-operation count with the executor profile terminating the
      listener when that bound is reached, with a declared-listener
-     amplification negative test driving many externally initiated requests
-     at an allowed listener and proving the operations it performs are
-     bounded and accounted rather than unlimited under the single launch
-     receipt. Ambient capability is not only
+      amplification negative test driving many externally initiated requests
+      at an allowed listener and proving the operations it performs are
+      bounded and accounted rather than unlimited under the single launch
+      receipt. Bounding accepted operations bounds admissions, not their
+      fan-out: one accepted listener request can trigger many downstream
+      external operations, so a listener capped by accepted-operation
+      count can still amplify a single request into unbounded messages,
+      resource creations, or charges under one launch receipt, and the
+      per-transitive-effect reservation requirement below is explicitly
+      limited to admitted handlers. Every operation an allowed listener
+      accepts must therefore debit the scoped external-effect and rate
+      budgets per downstream effect it triggers, or carry a verified
+      maximum downstream effect count and value enforced by terminating
+      the work when that bound is reached, with a single-request fan-out
+      negative test driving one accepted listener request that attempts
+      many downstream external effects and proving those effects are
+      bounded and accounted rather than unlimited under the single
+      launch receipt. Ambient capability is not only
    files and sockets: the spawned process also inherits the host environment and
    open handles (cloud tokens, API keys, credential-agent sockets), and file and
    network ceilings alone do not stop an allowed script from using or
@@ -1958,10 +2004,28 @@ enumerated entries still passes. The host policy must therefore deny
     execution boundary), with the exemption refused and the operation
     falling back to registry admission when those budgets cannot be
     imposed, and a pathological-input exhaustion negative test proving a
-    pure-exempt operation driven with pathological input, alone or
-    concurrently, is throttled, denied, or terminated and other
-    workloads retain CPU, memory, and dispatcher capacity.
-    Admission by name is still
+     pure-exempt operation driven with pathological input, alone or
+     concurrently, is throttled, denied, or terminated and other
+     workloads retain CPU, memory, and dispatcher capacity.
+     Per-call budgets attach to the dispatched operation, but the
+     governance path computes first: canonicalization, permission
+     matching, policy evaluation, and audit serialization all run over
+     caller-supplied arguments before the pure operation or any handler
+     or shell budget applies, so oversized or pathological arguments
+     can exhaust the dispatcher inside the governance path itself while
+     every budget above is never reached; the current kernel defaults
+     `policy_timeout` to `None`, and even the optional watchdog leaves
+     a timed-out evaluation thread running rather than cancelling it.
+     The dispatcher must therefore enforce ingress size and
+     structural-depth limits on requests before governance work begins,
+     and the entire pre-dispatch governance path must run under
+     cancellable per-call and aggregate resource budgets whose
+     exhaustion terminates the work rather than abandoning the thread,
+     with a denied-request exhaustion negative test driving oversized
+     or pathological arguments that are ultimately denied and proving
+     the governance path itself is bounded and other workloads retain
+     dispatcher capacity.
+     Admission by name is still
    not admission of code: the registry authenticates that a tool or alias is
    admitted, not which implementation the name resolves to, so an admitted MCP
    alias rebound to a different server, or a plugin or host handler upgraded
@@ -2018,12 +2082,28 @@ enumerated entries still passes. The host policy must therefore deny
       same immutable snapshot or protected handles as the handler bytes,
       with a runtime-substitution negative test proving a handler whose
       interpreter or shared library is replaced while its own bytes
-      remain unchanged is denied rather than executed; where a
-      deployment cannot yet supply a verifiable runtime closure, the
-      admission and receipt must record the runtime as an explicitly
-      unverified boundary, and no implementation-identity claim may
-      extend over it.
-      Verified bytes are verified against whichever admission record the
+       remain unchanged is denied rather than executed; where a
+       deployment cannot yet supply a verifiable runtime closure, the
+       admission and receipt must record the runtime as an explicitly
+       unverified boundary, and no implementation-identity claim may
+       extend over it.
+       An explicitly unverified runtime also disqualifies the
+       reviewed-footprint alternative below: footprint-based admission
+       accepts a handler on the strength of its recorded effect
+       footprint, and a substituted unverified interpreter, loader, or
+       shared library can drive that same bound handler to filesystem
+       or network effects absent from the reviewed footprint while the
+       gate still accepts the recorded boundary. Footprint-based
+       admission must therefore require a verifiable runtime closure,
+       and any handler whose runtime remains explicitly unverified must
+       execute only under OS-level containment or a capability broker
+       that independently enforces the invoking skill's effective
+       ceiling on its transitive effects, with a substituted-runtime
+       footprint negative test proving a footprint-admitted handler
+       whose unverified interpreter or shared library is replaced
+       cannot perform a filesystem or network effect absent from its
+       reviewed footprint.
+       Verified bytes are verified against whichever admission record the
       gate consults, and admissions are retired as well as granted: when an
       ordinary authenticated non-skill call uses this registry after a
       handler has been retired, restoring the previously valid registry
