@@ -506,11 +506,30 @@ enumerated entries still passes. The host policy must therefore deny
      different decision than the one the human saw. The grant must therefore
       also be bound to the originating request/audit hash of the escalated or
       explicitly approvable decision it responds to, plus the tenant, execution boundary,
-     and policy bundle/version in force, and mismatch negative tests must prove
-       a grant presented in a different tenant, under a different policy
-       bundle/version, across a different execution boundary, or against a
-         request whose audit hash differs is rejected without a side effect.
-         Single-use and expiry bound a grant only as reliably as the clock
+      and policy bundle/version in force, and mismatch negative tests must prove
+        a grant presented in a different tenant, under a different policy
+        bundle/version, across a different execution boundary, or against a
+          request whose audit hash differs is rejected without a side effect.
+          Tenant, execution boundary, and policy version still leave the
+          deployment dimensions unbound: staging and production
+          deployments can share a tenant, execution boundary, policy
+          bundle/version, actor, skill, action, and final arguments,
+          differing only in project and environment, and the originating
+          audit hash does not close that gap in the current model because
+          `DecisionRecord.to_dict()` contains neither field, so a grant
+          collected against the staging decision is consumable against
+          the production one while every mismatch test above passes. The
+          grant's explicit scope and the originating decision record must
+          therefore both bind `project_id` and `environment_id` (the
+          decision serialization extended to carry both deployment
+          dimensions so the bound audit hash covers them), the trusted
+          approval channel must render both dimensions to the approving
+          human alongside the other bound fields, and cross-project and
+          cross-environment grant-substitution negative tests must prove
+          a grant collected in one project or one environment, presented
+          against an otherwise identical decision in a different project
+          or a different environment, is rejected without a side effect.
+          Single-use and expiry bound a grant only as reliably as the clock
          that evaluates them: `docs/SECURITY_MODEL.md` and ADV14 record that
          expiry today is host-clock-bound with no built-in trusted time
          source, so a verifier whose host clock is set backward or frozen
@@ -1760,18 +1779,27 @@ enumerated entries still passes. The host policy must therefore deny
         capability's participation ends and no further recheck ever
         runs, so a hard link created afterward by a same-filesystem
         workload immediately exposes the committed bytes through the
-        denied path. The writable target must therefore reside, for its
-        entire lifetime, in storage where outsiders cannot create links
-        to it (a private mount namespace, a filesystem whose entries
-        only the broker can link, or an equivalent broker-private
-        store), or the governed write must land in such broker-private
-        storage and be published only through a broker-controlled copy
-        whose destination also has that no-outside-link property for the
-        published object's lifetime, with the link-after-open negative
-        test extended to race hard-link creation both before commit and
-        after commit and proving a link added to the target at any
-        point in its lifetime never makes the governed content
-        readable through the out-of-ceiling path. All
+         denied path. The writable target must therefore reside, for its
+         entire lifetime, in storage where outsiders cannot create links
+         to it, and a private mount namespace is not that storage: mount
+         namespaces isolate mount topology, not inode link operations,
+         so when the namespace exposes the same underlying filesystem
+         that another workload's namespace also maps, that workload can
+         hard-link the inode through its own mount after commit while
+         the target's private view never shows it. The no-outside-link
+         property requires a distinct or access-controlled filesystem
+         whose link operations are exclusively broker-owned (an
+         equivalent broker-private store), or the governed write must
+         land in such broker-private
+         storage and be published only through a broker-controlled copy
+         whose destination also has that no-outside-link property for the
+         published object's lifetime, with the link-after-open negative
+         test extended to race hard-link creation both before commit and
+         after commit, the post-commit attack issued from a different
+         mount namespace that maps the same underlying filesystem, and
+         proving a link added to the target at any
+         point in its lifetime never makes the governed content
+         readable through the out-of-ceiling path. All
      of these path-escape defenses share an assumption the filesystem does not
     guarantee: that an inode genuinely beneath the ceiling only carries
     in-ceiling effects. A FIFO or device node inside an allowed directory
@@ -2689,11 +2717,25 @@ enumerated entries still passes. The host policy must therefore deny
      growth must therefore be governed by its own hierarchical
      audit-event and audit-byte quotas, per-skill and per-actor totals
      nesting under tenant-wide and execution-boundary-wide totals,
-      backed by authenticated rotation and checkpointing or a bounded
-      authenticated remote sink, with fail-closed backpressure applied
-      to the submitting scope when its quota is reached (never dropped
-       events and never execution without a recorded event), and the
-       enclosing tenant-wide and execution-boundary-wide allowances must
+       backed by authenticated rotation and checkpointing or a bounded
+       authenticated remote sink, with fail-closed backpressure applied
+       to the submitting scope when its quota is reached (never dropped
+        events and never execution without a recorded event). Those two
+        rules bind admitted requests, and they cannot both hold for the
+        over-quota stream itself: appending a durable event for every
+        backpressure denial grows the exhausted scope's storage without
+        bound, while refusing the attempt with no evidence at all
+        contradicts the stated evidence rule. Requests arriving after a
+        scope's quota is exhausted must therefore be refused at a
+        pre-admission rejection boundary that is explicitly outside the
+        per-request audit obligation (nothing is admitted, so no
+        per-request event is owed and no execution can occur), with the
+        rejected attempts kept auditable through bounded authenticated
+        aggregation: a fixed-size, tamper-evident per-scope record of
+        over-quota attempt counts, byte totals, and first/last
+        timestamps, updated in place rather than appended per attempt.
+        The
+        enclosing tenant-wide and execution-boundary-wide allowances must
        preserve capacity for unrelated submitters through a
        sybil-resistant partition or scheduling rule: bounding each child
        scope's share individually below the enclosing total is not
@@ -2710,14 +2752,18 @@ enumerated entries still passes. The host policy must therefore deny
        can consume, while events
        still required by unexpired receipts are retained through their
        receipts' retention obligations, with a many-small-denials
-       storage-exhaustion negative test driving a sustained stream of
-       small denied requests, including coordinated submissions spread
-       across multiple actor scopes whose combined shares would sum to
-       the enclosing allowance, and proving audit storage stays
-       within its declared quotas, fail-closed backpressure lands only on
-       the exhausting scopes, and unrelated governed requests in the same
-       enclosing scope still record their required evidence and execute
-       out of the protected reserve.
+        storage-exhaustion negative test driving a sustained stream of
+        small denied requests, including coordinated submissions spread
+        across multiple actor scopes whose combined shares would sum to
+        the enclosing allowance and continued submissions after the
+        exhausting scope's quota is already full, and proving audit
+        storage stays
+        within its declared quotas, fail-closed backpressure lands only on
+        the exhausting scopes, the post-exhaustion attempts add no
+        per-request audit growth while remaining visible in the bounded
+        aggregate record, and unrelated governed requests in the same
+        enclosing scope still record their required evidence and execute
+        out of the protected reserve.
      Admission by name is still
    not admission of code: the registry authenticates that a tool or alias is
    admitted, not which implementation the name resolves to, so an admitted MCP
@@ -3874,11 +3920,41 @@ enumerated entries still passes. The host policy must therefore deny
      extractions matching no registered artifact identity must be
      refused as instruction sources for ordinary non-loader contexts,
      with a historical-version extraction negative test proving a tool
-     call issued by a context that obtained a superseded `SKILL.md`
-     version through a history or object read is governed by the
-     originating skill's ceiling rather than the reader's broader
-     non-skill ceiling, or that the historical extraction is refused. The
-     interception layer is itself inside the threat model: the current hook is
+      call issued by a context that obtained a superseded `SKILL.md`
+      version through a history or object read is governed by the
+      originating skill's ceiling rather than the reader's broader
+      non-skill ceiling, or that the historical extraction is refused.
+      Path, copy, and repository-object tracking all key on local
+      storage: a network-enabled non-skill context can instead fetch
+      the same registered or superseded `SKILL.md` from a raw
+      repository URL, a mirror, or an artifact service, where the
+      broker observes an ordinary HTTP response rather than a
+      registered local path or a VCS object read, so none of the
+      propagation rules above attaches skill origin, the instructions
+      enter the model context as untrusted network content, and later
+      calls that follow them execute under the broader non-skill
+      ceiling while the direct-read, copy-then-read, VCS-extraction,
+      and historical-version tests all pass. Ingestion tracking must
+      therefore extend to network-fetched instruction artifacts:
+      content entering through a network capability whose bytes match
+      a registered skill's instruction files (current or superseded
+      versions, matched through the same authenticated index of
+      registered historical versions and superseded blob identities
+      the history-read rule uses) carries that skill's origin and
+      propagates its identity and ceiling exactly as a local read
+      does, or untrusted network content entering a model context must
+      be conservatively tainted so the consuming context's subsequent
+      calls are governed no more broadly than the untrusted
+      network-content class permits rather than trusted as ordinary
+      non-skill instructions, or such fetches must be refused as
+      instruction sources for ordinary non-loader contexts, with a
+      network-fetch laundering negative test proving a tool call
+      issued by a context that obtained a registered or superseded
+      `SKILL.md` through a raw URL, mirror, or artifact-service fetch
+      is governed by the originating skill's ceiling (or by the
+      conservative network-content taint) rather than the reader's
+      broader non-skill ceiling, or that the fetch itself is refused. The
+      interception layer is itself inside the threat model: the current hook is
    executed directly from its working-tree path (`.claude/hooks/acgs-emit-receipt.py`,
    selected by `.claude/settings.json`) on each intercepted call, so a skill whose
    `file_write` ceiling covers the checkout can edit the hook or its
