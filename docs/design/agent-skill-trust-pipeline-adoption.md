@@ -685,6 +685,27 @@ enumerated entries still passes. The host policy must therefore deny
         only its digest to the approver, and proves an approval collected
         without the content, summary, or diff rendered yields no
         consumable grant and no side effect.
+        Rendering the verified bytes faithfully re-opens for content the
+        display-spoofing gap the bound-field escaping rule above closes
+        for fields: a referenced manifest or configuration can carry
+        ANSI terminal-control sequences, label-overwriting newlines, or
+        Unicode bidirectional-control code points, so rendering the
+        exact reviewed content, a summary quoting it, or a diff of it
+        verbatim hides or visually reorders a destructive operation
+        while the bound digest and the displayed bytes remain exact and
+        every destructive-referenced-content test above passes. The
+        trusted channel's content, summary, and diff renderings must
+        therefore apply the same display-safety discipline as bound
+        fields: reject referenced content carrying unsafe
+        display-control code points, or render every such code point as
+        an unambiguous visible escape without changing the verified
+        bytes the bound digest names, with a referenced-content
+        spoofing negative test proving a referenced manifest carrying
+        ANSI terminal-control, label-overwriting newline, and Unicode
+        bidirectional-control payloads either fails rendering or is
+        displayed with the destructive operation unambiguously visible,
+        and that an approval collected over a spoofed rendering yields
+        no consumable grant and no side effect.
         Rendering and digest-binding the referenced content presume the
         content is safe to show and to commit to: when a reviewed
         by-reference input is itself a credential, a private key, or
@@ -748,9 +769,33 @@ enumerated entries still passes. The host policy must therefore deny
          evaluation must run only over immutable verified bytes matching
          that digest, with a same-version mutation negative test that
          mutates a policy bundle in place while retaining its id and
-          version and proves an action the reviewed bytes denied yields
-          no executable receipt and no side effect.
-          A content digest binds the bytes, not the heap: the kernel
+           version and proves an action the reviewed bytes denied yields
+           no executable receipt and no side effect.
+           A digest over the policy's configuration also publishes a
+           commitment to what that configuration contains: when a policy
+           construction input carries a credential, token, private
+           allowlist value, or another low-entropy secret, binding an
+           ordinary content digest of the configuration into the
+           freshness record and the receipt exposes an offline-guessable
+           commitment to anyone who knows the surrounding code and the
+           non-secret configuration, and the secret-handling rules
+           elsewhere in this design cover argument fields, reviewed
+           by-reference inputs, and handler ambient inputs, never policy
+           construction inputs. Secret-classified policy configuration
+           must therefore be bound through a secret-store version
+           identifier or a keyed commitment (a MAC or salted commitment
+           whose key never leaves the trusted gate) verified against the
+           captured bytes inside the isolated evaluator, with freshness
+           records, receipts, and ceiling records carrying only that
+           non-disclosing binding alongside the ordinary digest over the
+           non-secret remainder, and a policy-secret serialization
+           negative test proving that for a policy whose configuration
+           carries a secret no freshness record, receipt, or ceiling
+           record emits the value or any offline-guessable digest of it,
+           while substitution of the secret configuration between review
+           and evaluation is still detected and refused without a side
+           effect.
+           A content digest binds the bytes, not the heap: the kernel
           accepts an arbitrary `Policy` instance and invokes it
           repeatedly, and an implementation can retain mutable in-memory
           state that changes its decisions between evaluations without
@@ -2111,9 +2156,31 @@ enumerated entries still passes. The host policy must therefore deny
     submission, with a sustained over-quota submission negative test
     driving continuous individually valid launches from multiple
     skills against one shared boundary and proving dispatcher memory
-    and durable queue storage stay within the declared queue budgets
-    while other workloads' submissions still make progress.
-    Host-resource quotas bound what a launch consumes locally, not what
+     and durable queue storage stay within the declared queue budgets
+     while other workloads' submissions still make progress.
+     Hierarchical queue budgets cap what the queue stores, not who can
+     use it: one skill, or coordinated skills submitting under several
+     child scopes, can fill the tenant-wide or execution-boundary-wide
+     queue allowance with individually valid submissions and reclaim
+     each slot the moment it drains, so unrelated workloads never find
+     free capacity even though every declared queue budget holds and
+     the promise that other submissions make progress goes unenforced.
+     Queue admission must therefore apply the same sybil-resistant
+     capacity partitioning the audit quotas below require: the
+     concurrently admitted child-scope queue allocations must
+     collectively leave a protected reserve of each enclosing allowance
+     (their sum bounded strictly below the enclosing total, with
+     creation of new child scopes itself a governed,
+     allocation-consuming admission rather than a free identity), or
+     scheduling must guarantee each submitter a minimum reserved queue
+     capacity no set of other scopes can consume, with backpressure
+     landing only on the exhausting scopes, and the sustained
+     over-quota submission test must also drive a continuous submitter
+     and coordinated submissions spread across child scopes whose
+     shares would sum to the enclosing allowance, proving unrelated
+     submitters still enqueue and make progress out of the protected
+     reserve.
+     Host-resource quotas bound what a launch consumes locally, not what
     it effects remotely: an admitted action that is cheap on the host but
     high-impact externally (sending a message, creating a cloud
     resource, charging an account) lets a skill issue many distinct
@@ -3037,8 +3104,31 @@ enumerated entries still passes. The host policy must therefore deny
      earlier state — held outside agent and child-process write authority, of
      the same trust class as the ceiling and freshness records, with a
      negative test proving that tampering with or rolling back the ledger
-     before replaying a consumed receipt does not make that receipt
-     executable again. Binding and
+      before replaying a consumed receipt does not make that receipt
+      executable again.
+      A ledger that retains one record per consumed receipt forever is
+      bounded by lifetime request count, not by exposure: each consumed
+      receipt eventually reaches its trusted expiry and can never again
+      replay successfully, yet its consumption record remains, and the
+      bounded replay structure above covers only per-operation
+      transport identities, not these consumption entries, so ordinary
+      sustained distinct executable traffic grows the authenticated
+      store without bound and an actor can exhaust the protected ledger
+      through nothing but unique requests. The consumption state must
+      therefore also be representable in bounded authenticated form:
+      authenticated, rollback-refusing compaction that discards a
+      consumption record only after the receipt's trusted, suspend-aware
+      expiry has verifiably passed and expiry alone suffices to refuse
+      it, a bounded expiry-window structure retaining individual records
+      only within the maximum receipt lifetime, or another
+      rollback-refusing representation whose size is independent of
+      lifetime request count, never compaction that forgets a
+      still-executable receipt's consumption, with a consumption-store
+      growth negative test driving sustained unique receipt issuance
+      and consumption and proving the authenticated consumption state
+      stays within its declared bound while a still-valid consumed
+      receipt replayed after compaction and an expired receipt are both
+      refused without a side effect. Binding and
      consumption authenticate origin and prevent reuse, not liveness: a
      receipt minted just before its invocation ends and first presented
      afterward is still unused in the consumption ledger, its session and
@@ -3144,8 +3234,32 @@ enumerated entries still passes. The host policy must therefore deny
    allowed file, queue entry, or adjacent sidecar can omit or forge
    provenance it writes itself, letting a later broader context consume the
     artifact without inheriting the restricted ceiling; the provenance must
-    also be preserved across copies and updates of the artifact. Under
-    multiple writers, preservation alone is not enough: a restricted skill
+     also be preserved across copies and updates of the artifact.
+     Copies and updates preserve the label on the same artifact, not on
+     what is computed from it: when a broader non-skill process
+     transforms a labeled skill-produced artifact (a `sed` pipeline
+     writing a new file, template rendering, compilation, archive
+     extraction), the output is neither a copy nor an update of the
+     original, so this preservation rule never attaches provenance to
+     it, and the copy-and-transform rule below is scoped to registered
+     skill instruction files, so the broader context can read the
+     derived output, or obtain a fresh receipt over it, under its
+     broader ceiling while every preservation and mixed-writer test
+     passes. Every output an operation derives from a
+     provenance-labeled input must therefore inherit the intersection
+     of every labeled input's contributing origin stacks, assigned by
+     the host or write broker at output-commit time exactly as
+     write-time labels are and accumulated with any label the output
+     already carries, and operations whose input-to-output derivation
+     the broker cannot track must be refused read access to labeled
+     inputs or have every artifact they can write conservatively
+     labeled with those inputs' contributors, with a derived-artifact
+     laundering negative test proving a non-skill transformation of a
+     restricted-labeled artifact yields an output whose next reader,
+     and any receipt minted over that output, is governed at or below
+     the restricted intersection, never the transformer's broader
+     ceiling. Under
+     multiple writers, preservation alone is not enough: a restricted skill
     can append instructions to an artifact previously labeled as non-skill
     or broader-skill output, or a later broad writer can replace the
     restricted writer's label, and the next reader then inherits authority
@@ -3375,8 +3489,34 @@ enumerated entries still passes. The host policy must therefore deny
     non-model sinks), with a live-channel laundering negative test
     proving a tool call issued by a broader context after consuming a
     restricted skill's live-channel payload is still governed by the
-    sending skill's ceiling rather than the receiver's broader
-    ceiling. A single
+     sending skill's ceiling rather than the receiver's broader
+     ceiling.
+     Model contexts are not the only live receivers: a restricted skill
+     can send instructions over an allowed live channel to a privileged
+     machine consumer that never enters a model context (an RPC worker,
+     an event-driven daemon, an orchestration service), and because the
+     origin-carrying rule above gates only payloads entering model
+     contexts while the machine-consumer topology covers only durable
+     artifacts and namespaces, the worker interprets the live payload
+     with its own broader filesystem, credential, and network authority
+     and no receipt. Live machine-interpreted endpoints must therefore
+     be governed exactly as durable consumer namespaces are: the
+     consumer topology names every live endpoint a privileged machine
+     consumer interprets, skill-connectable channels are intersected
+     against those endpoints under the same admission, mapping-change
+     revalidation, and consumer-side origin-gating or confinement rules
+     (the consumer verifies the payload's host-assigned sending skill
+     stack and refuses or confines interpretation within the sending
+     ceiling), or permission to send to such an endpoint must be
+     admitted and reviewed as carrying the full transitive authority of
+     every operation its payloads can trigger, with the same
+     fail-closed narrowing where neither is enforceable, and a live
+     machine-consumer negative test proving a payload sent under an
+     admitted ceiling to a privileged worker endpoint is not
+     interpreted with that worker's broader authority, and that a newly
+     attached privileged consumer on a live endpoint triggers
+     revalidation of the admission before it first interprets skill
+     payloads. A single
    origin identity is not enough once skills compose: when one skill invokes
    another, or several are active concurrently, attributing the request to any
    single skill would let a restricted outer skill route an action through a
