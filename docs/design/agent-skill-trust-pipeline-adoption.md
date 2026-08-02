@@ -667,9 +667,32 @@ enumerated entries still passes. The host policy must therefore deny
          evaluation must run only over immutable verified bytes matching
          that digest, with a same-version mutation negative test that
          mutates a policy bundle in place while retaining its id and
-         version and proves an action the reviewed bytes denied yields
-         no executable receipt and no side effect.
-         Validating policy freshness at issuance, consumption, and execution
+          version and proves an action the reviewed bytes denied yields
+          no executable receipt and no side effect.
+          A content digest binds the bytes, not the heap: the kernel
+          accepts an arbitrary `Policy` instance and invokes it
+          repeatedly, and an implementation can retain mutable in-memory
+          state that changes its decisions between evaluations without
+          any change to its code, configuration, dependencies, or
+          version (the fail-closed test suite's flip-flop policy already
+          demonstrates decisions alternating across calls), so a
+          stateful policy whose digest was approved while it denied a
+          call can later mint an `ALLOW` receipt for the same call while
+          every digest, freshness, and immutable-verified-bytes check
+          above passes. Policy evaluation must therefore be isolated
+          from mutable runtime state: each evaluation runs against a
+          stateless or freshly instantiated policy constructed only from
+          the verified bytes and bound configuration, or any persistent
+          evaluation state is treated as policy input, captured in an
+          authenticated state snapshot whose identity is bound into the
+          freshness record and the receipt and validated at issuance,
+          consumption, and execution, failing closed on mismatch, with a
+          state-mutation negative test that mutates a policy instance's
+          in-memory state between evaluations while retaining its code,
+          configuration, dependencies, and version and proves an action
+          the approved state denied yields no executable receipt and no
+          side effect.
+          Validating policy freshness at issuance, consumption, and execution
         still leaves a check-to-launch race the rollback test does not
         cover: the gate validates a receipt against the then-active policy
         version, a policy transition then installs a version that denies
@@ -1312,13 +1335,23 @@ enumerated entries still passes. The host policy must therefore deny
     place writable targets in a private, immutable-to-outsiders namespace or
     view whose entries no other workload can rename or relocate (with
     results exposed to shared locations only through a controlled publish
-    step), or broker writes through a commit step that revalidates, on the
-    still-open descriptor at write or commit time, that the target's
-    destination and parent-directory identity remain beneath the ceiling,
-    failing closed on relocation, with a rename-after-open negative test
-    proving a file renamed into a denied directory after a validated open
-    receives no further writes through the retained descriptor, or that its
-    content never becomes visible at the denied location. Beneath-style resolution is a pathname
+    step), or serialize the governed write against relocation so no
+    outside workload can rename or relocate the target or an ancestor
+    directory while any written byte remains unpublished; a commit step
+    that merely revalidates, on the still-open descriptor, that the
+    target remains beneath the ceiling before each subsequent write is
+    not sufficient, because bytes already written reside in the inode and
+    relocate with it, becoming visible through the denied directory even
+    though every later write is blocked. Written content must therefore
+    land in private staging that outsiders cannot relocate and be
+    published to the shared location only through a commit step that
+    revalidates the destination's identity beneath the ceiling, or the
+    target must be held under serialization that excludes outside
+    relocation for the duration of the write, with a rename-after-open
+    negative test proving that when the target is renamed into a denied
+    directory after a validated open, no written content, bytes already
+    written before the relocation included, ever becomes visible at the
+    denied location. Beneath-style resolution is a pathname
    property, not a mount property: an allowed directory can contain a bind
    mount or another mounted subtree that exposes a denied location, and
    `RESOLVE_BENEATH` still permits the access because the pathname remains
@@ -1784,6 +1817,22 @@ enumerated entries still passes. The host policy must therefore deny
     test proving that many simultaneous individually-within-budget
     launches from one skill are collectively bounded and other workloads
     retain CPU, memory, PID, storage, descriptor, and bandwidth capacity.
+    Per-skill aggregates bound each skill's sum, not the boundary's:
+    when several admitted skills share one execution boundary, each can
+    remain within its own aggregate quota while their combined CPU,
+    memory, PID, storage, descriptor, or bandwidth use exhausts the
+    shared host, and a many-launch test driven from a single skill never
+    exercises that combination. The aggregate quotas must therefore be
+    hierarchical: per-skill totals nest under tenant-wide and
+    execution-boundary-wide totals, each enforced at admission across
+    every concurrent and queued launch attributed to that tenant or
+    boundary regardless of originating skill (a launch whose admission
+    would exceed any enclosing total is denied, queued, or throttled
+    rather than run), with a cross-skill shared-boundary exhaustion
+    negative test proving simultaneous individually-within-quota
+    launches from distinct skills sharing one execution boundary are
+    collectively bounded by the boundary-wide limit and other workloads
+    retain capacity.
     Host-resource quotas bound what a launch consumes locally, not what
     it effects remotely: an admitted action that is cheap on the host but
     high-impact externally (sending a message, creating a cloud
@@ -2469,9 +2518,27 @@ enumerated entries still passes. The host policy must therefore deny
       without minting any executable receipt, and a distinct-operation
       negative test presenting two intentional operations with identical
       actor, action, and arguments but distinct per-operation identities
-      and proving each obtains its own executable receipt while a
-      duplicate of either within its retry lifetime replays rather than
-      re-mints. Atomic
+       and proving each obtains its own executable receipt while a
+       duplicate of either within its retry lifetime replays rather than
+       re-mints. A retry lifetime that ends when the mapped receipt
+       stops being executable leaves the identity reusable afterward:
+       once the mapping is evicted, a transport that redelivers the same
+       per-operation identity after the mapped receipt has expired
+       presents an identity the compare-and-swap no longer recognizes,
+       so the delayed duplicate is treated as a new issuance and mints a
+       second executable receipt for an operation that already ran.
+       Receipt expiry must therefore never make the operation's identity
+       reusable: the identity-to-issuance mapping must decay into a
+       non-reusable tombstone retained beyond receipt expiry, or the
+       per-operation identity must be drawn from a monotonic delivery
+       sequence whose already-consumed positions are permanently
+       refused, with the tombstone or delivery watermark held in the
+       same authenticated, rollback-refusing trust class as the
+       consumption ledger, and a delayed-duplicate negative test
+       presenting the same per-operation identity after the mapped
+       receipt has expired and its retry lifetime has elapsed and
+       proving no new executable receipt is minted and no side effect
+       runs. Atomic
      consumption presumes the ledger's own integrity: if a governed skill can
      write the consumption store, it can delete a consumed receipt's key or
      restore an earlier ledger snapshot, making a still-valid signed receipt
