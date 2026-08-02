@@ -25,10 +25,13 @@ Read these before changing anything. They are not style preferences.
    `@generated`, `DO NOT EDIT`, or lock-file semantics must not be hand-edited. Change the
    generator and regenerate; `scripts/verify_constitutional_hashes.py` gates every PR.
 2. **Nested git repos are real boundaries.** `packages/acgs-lite`, `packages/Acgs-Swarm`,
-   `packages/clinicalguard`, and `packages/acgs-control-plane` are independent repos
+   `packages/clinicalguard`, and `packages/ACGS-agency-agents` are independent repos
    registered in `.gitmodules`. Run `git add` / `git commit` **from inside the package**,
    never from the parent. Parent gitlink pointer drift is out of scope unless that *is* the
-   task.
+   task. `packages/acgs-control-plane` is **not** among them — it is an ordinary tracked
+   directory (`040000 tree`), so stage it from the parent like any other path. Confirm
+   against `.gitmodules` and `git ls-tree` rather than assuming; extraction to a submodule
+   is proposed but not landed.
 3. **`acgs-lite` is published to PyPI.** Do not break its public API or its published
    `requires-python = ">=3.10"` floor. The workspace-local floor is 3.11; the difference is
    deliberate.

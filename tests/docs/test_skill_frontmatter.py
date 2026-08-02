@@ -7,9 +7,11 @@ parseable ``---``-delimited YAML frontmatter declaring at least a ``name`` and a
 Why this exists: ``.agents/skills/govern-zone/SKILL.md`` and its mirrored twin under
 ``.claude/skills/`` both opened with a literal ```` ```markdown ```` fence instead of
 frontmatter. Codex logged ``missing YAML frontmatter delimited by ---`` and the skill
-silently never loaded, even though its ``agents/openai.yaml`` sets
-``allow_implicit_invocation: true``. NVIDIA's SkillSpector surfaced the same file as
-``Skill: unknown``. Nothing in CI noticed, in either copy, for the life of the file.
+was never loadable at all — so the ``allow_implicit_invocation: true`` in its
+``agents/openai.yaml``, which makes it eligible for model-initiated invocation without
+the user naming it, could never take effect either. NVIDIA's SkillSpector surfaced the
+same file as ``Skill: unknown``. Nothing in CI noticed, in either copy, for the life of
+the file.
 
 SCOPE — artifact validation only. This module checks that skill metadata is
 *well formed and discoverable*. It deliberately does NOT interpret ``permissions:``
@@ -18,9 +20,18 @@ A skill passing this gate is parseable, not trusted.
 
 No third-party parser is used on purpose: PyYAML is not a dependency of this workspace,
 and adding one to run a syntax check would be a worse trade than the deliberately small
-strict reader below. The reader accepts the subset of YAML that skill frontmatter
-actually uses and refuses anything else, so an unrecognised construct fails the gate
-rather than being silently skipped.
+strict reader below.
+
+The reader therefore defines its own accepted subset and **rejects everything outside
+it** rather than guessing. Accepted: ``key: value`` with plain or fully-quoted scalars,
+booleans, block scalars (``|``, ``|-``, ``>``, ``>-``), and nested mappings or sequences
+(recorded as present, not deep-parsed). Rejected: unbalanced quotes, aliases (``*``),
+anchors (``&``), tags (``!``), flow collections (``{``, ``[``), directives (``%``), and
+tabs anywhere in the block. Those all parse to *something* if treated as literal text,
+which is precisely the trap — a real YAML parser rejects them, so accepting them here
+would pass the undiscoverable artifact this gate exists to catch. If a skill legitimately
+needs one of them, extend the reader; do not widen it by treating the construct as a
+string.
 """
 
 from __future__ import annotations
@@ -73,10 +84,29 @@ def _split_frontmatter(text: str, path: str) -> str:
     return rest[:end]
 
 
-def _parse_scalar(raw: str) -> object:
+# YAML indicators this reader does not interpret. A scalar opening with one of these
+# means real YAML would do something we are not modelling (alias, anchor, tag, flow
+# collection, directive), so the value is rejected rather than kept as a literal string.
+UNSUPPORTED_SCALAR_LEADS = ("*", "&", "!", "{", "[", "%", "|", ">", "@", "`")
+
+
+def _parse_scalar(raw: str, path: str, line_no: int, key: str) -> object:
     value = raw.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+    if value[:1] in ('"', "'"):
+        quote = value[0]
+        if len(value) < 2 or value[-1] != quote or value.count(quote) % 2 != 0:
+            raise FrontmatterError(
+                f"{path}: line {line_no} key {key!r} opens with {quote!r} but the quote is "
+                f"not closed. A real YAML parser rejects this, so the skill would be "
+                f"undiscoverable at runtime even though this gate saw a value."
+            )
         return value[1:-1]
+    if value[:1] in UNSUPPORTED_SCALAR_LEADS:
+        raise FrontmatterError(
+            f"{path}: line {line_no} key {key!r} uses the YAML construct {value[:1]!r}, "
+            f"which this reader does not validate. Rewrite it as a plain or quoted scalar, "
+            f"or extend the reader — do not leave it unchecked."
+        )
     if value in ("true", "True"):
         return True
     if value in ("false", "False"):
@@ -90,6 +120,11 @@ def _parse_frontmatter(block: str, path: str) -> dict[str, object]:
     Supports ``key: scalar``, block scalars (``|``, ``|-``, ``>``, ``>-``), and nested
     mappings or sequences (recorded as present, not deep-parsed). Anything else raises.
     """
+    if "\t" in block:
+        raise FrontmatterError(
+            f"{path}: frontmatter contains a tab character. YAML forbids tabs for "
+            f"indentation, so a real parser rejects the file — use spaces."
+        )
     data: dict[str, object] = {}
     lines = block.split("\n")
     i = 0
@@ -138,7 +173,7 @@ def _parse_frontmatter(block: str, path: str) -> dict[str, object]:
                 )
             data[key] = {}
             continue
-        data[key] = _parse_scalar(raw)
+        data[key] = _parse_scalar(raw, path, i + 1, key)
         i += 1
     return data
 
@@ -223,6 +258,14 @@ MALFORMED_CASES = {
     "duplicate-key": "---\nname: x\nname: y\n---\nbody\n",
     "dangling-key": "---\nname: x\nmetadata:\n---\nbody\n",
     "stray-indent": "---\n  name: x\n---\nbody\n",
+    # Raised in review of this gate: the first reader kept these as literal strings,
+    # so it passed artifacts a real YAML parser rejects — exactly the undiscoverable
+    # class the gate claims to prevent.
+    "unterminated-quote": '---\nname: x\ndescription: "unterminated\n---\nbody\n',
+    "undefined-alias": "---\nname: x\ndescription: y\nmetadata: *missing\n---\nbody\n",
+    "anchor": "---\nname: x\ndescription: &a y\n---\nbody\n",
+    "flow-mapping": "---\nname: x\ndescription: {a: b}\n---\nbody\n",
+    "tab-indent": "---\nname: x\ndescription: y\nmeta:\n\t- a\n---\nbody\n",
 }
 
 
