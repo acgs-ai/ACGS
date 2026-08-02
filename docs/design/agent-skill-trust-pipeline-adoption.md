@@ -648,6 +648,35 @@ enumerated entries still passes. The host policy must therefore deny
         only its digest to the approver, and proves an approval collected
         without the content, summary, or diff rendered yields no
         consumable grant and no side effect.
+        Rendering and digest-binding the referenced content presume the
+        content is safe to show and to commit to: when a reviewed
+        by-reference input is itself a credential, a private key, or
+        another low-entropy secret, binding its ordinary content digest
+        into the grant evidence publishes an offline-guessable
+        commitment through artifacts that travel beyond the trusted
+        boundary, and rendering the content or a diff on the approval
+        channel discloses the secret to the approver and to every
+        surface the prompt reaches; the secret ambient-input handling
+        later in this design covers only ambient inputs an admitted
+        handler consumes, never the explicit referenced inputs reviewed
+        here. Reviewed by-reference inputs must therefore also be
+        classified for secrecy, and a secret-classified referenced
+        input bound through a secret-store version identifier or a
+        keyed commitment (a MAC or salted commitment whose key never
+        leaves the trusted gate) verified against the captured bytes
+        inside the trust boundary rather than through an ordinary
+        content digest, with the trusted approval channel rendering a
+        non-disclosing trusted description for that reference (the
+        secret's identity, store version, and relevant metadata, never
+        its value, an unkeyed digest of it, or a content diff), grant
+        evidence, receipts, and ceiling records carrying only the
+        non-disclosing binding, and a secret-reference serialization
+        negative test proving that for a secret-classified referenced
+        input no approval prompt, grant evidence, receipt, or ceiling
+        record emits the value or any offline-guessable digest of it,
+        while substitution of the referenced secret between review and
+        consumption is still detected and refused without a side
+        effect.
         Binding the policy bundle id/version detects substitution, not
        rollback: when an older, more permissive policy bundle and its
        active tenant binding are restored together, receipt issuance,
@@ -1458,7 +1487,30 @@ enumerated entries still passes. The host policy must therefore deny
     negative test proving that when the target is renamed into a denied
     directory after a validated open, no written content, bytes already
     written before the relocation included, ever becomes visible at the
-    denied location. Beneath-style resolution is a pathname
+    denied location. Resolution, rename, mount, and hard-link controls
+    govern where names resolve and where written content lands, not what
+    an in-ceiling object's metadata grants: with `file_write` authority
+    over an in-ceiling directory, an admitted metadata operation or an
+    allowed script can run `chmod`, `setfacl`, or `setxattr` on an
+    in-ceiling file to expose its contents to outside principals or to
+    change how another process executes it (a newly executable or setuid
+    mode, a widened ACL, an altered security label or extended
+    attribute), while every no-follow, beneath-resolution, mount,
+    rename, and hard-link check here passes because the pathname never
+    escapes the ceiling; the snapshot metadata normalization above
+    applies only while constructing the immutable skill snapshot, never
+    to runtime mutation of files the ceiling permits. Runtime changes to
+    ownership, mode, ACLs, security labels, and extended attributes must
+    therefore be defined as distinct deny-by-default capabilities, never
+    implied by `file_write` or any other filesystem capability, granted
+    only through explicit declaration and review and brokered under
+    reviewed constraints naming the permitted targets and attribute
+    transitions, with an ACL/mode escalation negative test proving a
+    skill holding `file_write` over a directory cannot change an
+    in-ceiling file's mode, ACL, ownership, label, or extended
+    attributes to expose it to an outside principal or alter how another
+    process executes it unless the metadata-mutation capability was
+    explicitly declared and approved. Beneath-style resolution is a pathname
    property, not a mount property: an allowed directory can contain a bind
    mount or another mounted subtree that exposes a denied location, and
    `RESOLVE_BENEATH` still permits the access because the pathname remains
@@ -3043,7 +3095,31 @@ enumerated entries still passes. The host policy must therefore deny
     skill's update against a broader reader and proving the reader
     observes either the old content under the old provenance or the new
     content under the accumulated provenance, never the restricted
-    content under the broader ceiling. The host
+    content under the broader ceiling.
+    The atomic commit serializes visibility, not history: when the
+    out-of-band provenance store is restored to an earlier authentic
+    record after a restricted skill's update has committed, the
+    artifact's current content carries a stale broader label that
+    authentication and writer isolation both accept, because the
+    restored record is genuinely host-assigned and validly
+    authenticated for an earlier version of the same artifact, so a
+    later reader consumes the restricted instructions without
+    inheriting the restricted contributor's ceiling while every
+    atomicity, mixed-writer, and provenance-stripping test above
+    passes. Each provenance record must therefore be bound to the
+    exact artifact version it labels (the content identity or a
+    monotonic version counter of the bytes it governs) and held in
+    monotonic rollback-refusing storage of the same trust class as the
+    other freshness records in this design, with consumption failing
+    closed, the reader refused or the artifact quarantined, whenever
+    the artifact's current content has no provenance record matching
+    its version at or above the recorded version watermark, and a
+    matched content/provenance rollback negative test restoring an
+    earlier authentic provenance record after a restricted skill's
+    update (with and without the matching earlier content) and proving
+    a later reader either observes matched content and provenance
+    governed at the restricted intersection or is refused, never the
+    current content under the stale broader label. The host
     must then either propagate
    the originating ceiling (intersected as above) into every model context
    that consumes such an artifact, retained until that context is discarded,
