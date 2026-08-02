@@ -833,10 +833,28 @@ enumerated entries still passes. The host policy must therefore deny
        launch under the same epoch-or-lease discipline as the other freshness
        domains, failing closed when the credential is revoked, the role is
        withdrawn, or the bound epoch is superseded, with a negative test
-       revoking the approver credential after receipt issuance but before the
-       receipt is first presented and proving the receipt is refused at the
-       execution gate without a side effect.
-       Single-use must hold under concurrency:
+        revoking the approver credential after receipt issuance but before the
+        receipt is first presented and proving the receipt is refused at the
+        execution gate without a side effect. Execution-gate revalidation
+        still ends the approver's accountability at launch: an approved
+        handler that queues work or an allowed script that defers its side
+        effect can commit launch while the approver is still authorized, this
+        launch-scoped lease can end, and the approver credential can then be
+        revoked before the deferred effect occurs, so a grant forged during a
+        subsequently discovered approver compromise still takes effect after
+        revocation, unlike the effect-held actor, signer, policy, profile,
+        and handler-admission leases elsewhere in this design, while the
+        pre-presentation revocation test above passes because it races
+        revocation against presentation, not against a deferred effect. The
+        approver-authorization lease must therefore be held until the
+        governed effect commits or completes, or the launched work kept
+        revocable or brokered so approver credential or role revocation
+        revokes or re-validates in-flight and queued work before its effect
+        commits, with a delayed-effect approver-revocation negative test
+        revoking the approver credential after launch but before a deferred
+        side effect and proving the effect either committed before the
+        revocation or never occurs.
+        Single-use must hold under concurrency:
     marking the grant used at execution time is too late, because two
     evaluations presenting the same still-unused grant could each validate it
     and mint separate executable receipts before either execution burns it, so
@@ -1323,10 +1341,27 @@ enumerated entries still passes. The host policy must therefore deny
       materialized view, and that this holds when the capability runs inside a
       mount-namespace or bind-mount view of the allowed directory, and a
       concurrent swap-versus-materialization negative test must prove that
-      replacing a vetted entry with a hard link to a denied file between
-      vetting and materialization fails closed rather than disclosing the
-      denied content into the materialized view. All
-    of these path-escape defenses share an assumption the filesystem does not
+       replacing a vetted entry with a hard link to a denied file between
+       vetting and materialization fails closed rather than disclosing the
+       denied content into the materialized view. Vetting bounds the links
+       that exist when the tree is admitted, not the links outsiders add
+       afterward: when a writable target lives on a filesystem another
+       workload can access, that workload can create an out-of-ceiling hard
+       link to a previously single-linked target after this
+       pre-materialization vetting but before the governed write commits, so
+       the open descriptor and its in-ceiling parent remain valid, the
+       rename-after-open and destination revalidation checks pass, and the
+       committed write becomes visible through the newly created denied
+       path. The writable target must therefore live where outsiders cannot
+       create links to it (a private namespace or filesystem whose entries
+       only the broker can link), or the brokered commit step must
+       atomically recheck the target's inode identity and link count at
+       every write or commit and fail closed when a new cross-boundary link
+       exists, with a link-after-open negative test proving a hard link
+       added to a validated writable target after open but before commit
+       never makes the written content visible through the out-of-ceiling
+       path. All
+     of these path-escape defenses share an assumption the filesystem does not
     guarantee: that an inode genuinely beneath the ceiling only carries
     in-ceiling effects. A FIFO or device node inside an allowed directory
     resolves cleanly under descriptor-relative, no-follow, no-cross-mount
@@ -1473,9 +1508,30 @@ enumerated entries still passes. The host policy must therefore deny
        credential resolved to the staging principal is refused launch,
        without a side effect, after that credential is repointed to
        production, and a concurrent switch-versus-use negative test racing
-        an ambient-credential repoint against script launch and use,
-        proving the spawned process only ever acts as the pinned verified
-        principal. Pinning the shell credential's principal verifies who
+         an ambient-credential repoint against script launch and use,
+         proving the spawned process only ever acts as the pinned verified
+         principal. Materializing an immutable credential instance also
+         decouples it from revocation: when an allowed script or admitted
+         handler materializes a bearer session or token at launch, revoking
+         the ambient service credential or its role after launch does not
+         necessarily invalidate the pinned instance before a deferred write
+         or downstream call occurs, and the actor lease covers the
+         requesting actor, not this distinct cloud, cluster, or service
+         principal, so the effect can run under authority whose trust epoch
+         has since been retired while every substitution and
+         switch-versus-use test above passes. The pinned credential
+         instance, on the shell path here and on the admitted-handler path
+         later in this design alike, must therefore be tied to a revocable
+         authorization lease held until the governed effect commits or
+         completes, revoked or re-validated when the source credential or
+         role is revoked, or the executor profile must require and verify
+         that the downstream service enforces revocation of the
+         materialized instance itself, with post-launch
+         credential-revocation negative tests for both the shell and
+         admitted-handler paths revoking the source credential or role
+         after launch but before a deferred effect and proving the effect
+         either committed before the revocation or never occurs.
+         Pinning the shell credential's principal verifies who
         the spawned process acts as, not where its effects land: the same
         principal, scope, and trust epoch can remain valid while the
         credential's resolved target changes (a Kubernetes context can keep
@@ -1598,9 +1654,26 @@ enumerated entries still passes. The host policy must therefore deny
     launch from other workloads), with descriptor-exhaustion and
     I/O-bandwidth-exhaustion negative tests proving a launched process
     that opens descriptors or sockets in a loop, or saturates an allowed
-    disk or network endpoint, is throttled, denied, or terminated and
-    other workloads' descriptor and bandwidth availability is preserved.
-    Per-launch budgets bound each process tree, not their sum: a skill
+     disk or network endpoint, is throttled, denied, or terminated and
+     other workloads' descriptor and bandwidth availability is preserved.
+     Byte-based storage quotas, descriptor limits, and bandwidth classes
+     still leave shared filesystem object capacity ungoverned: a spawned
+     process tree or admitted handler that repeatedly creates and closes
+     zero-length files exhausts a shared filesystem's inode or
+     directory-entry capacity while never exceeding any storage-byte quota,
+     simultaneous-descriptor limit, or I/O-bandwidth class listed here, and
+     the archive-admission entry-count limit bounds extraction, not runtime
+     creation, so every exhaustion test above passes while other workloads
+     can no longer create files. The recorded budgets must therefore also
+     include per-invocation and aggregate filesystem-object (inode and
+     directory-entry) quotas imposed on spawned process trees and admitted
+     handlers, or the executor profile must confine their writes to an
+     isolated filesystem with a bounded inode pool, with a sequential
+     empty-file exhaustion negative test proving a governed process or
+     handler that creates and closes zero-length files in a loop is denied
+     or terminated and the shared filesystem's object capacity is
+     preserved.
+     Per-launch budgets bound each process tree, not their sum: a skill
     that issues many distinct allowed script invocations concurrently
     keeps every launch within its recorded per-launch limits while the
     aggregate CPU, memory, PID, storage, descriptor, or bandwidth use of
@@ -1633,10 +1706,38 @@ enumerated entries still passes. The host policy must therefore deny
     aggregate external-effect budget is denied, queued, or escalated
     rather than run), with a concurrent many-request negative test
     driving a low-host-resource but externally effectful handler and
-    proving the aggregate count, rate, or value of its external effects
-    is bounded even though every individual request is allowed and every
-    host-resource quota is respected.
-    Admission charges the outer request, not its transitive effects: an
+     proving the aggregate count, rate, or value of its external effects
+     is bounded even though every individual request is allowed and every
+     host-resource quota is respected. Atomic admission presumes the budget
+     state's own integrity: when a governed skill or descendant process can
+     write or restore the backing state for these count, rate, and value
+     budgets, it can reset its recorded usage after each admitted request
+     and obtain an unlimited sequence of individually valid receipts and
+     external effects, because atomicity orders concurrent updates but
+     neither authenticates the counters nor prevents rollback, protections
+     the receipt-consumption and grant ledgers above already require.
+     External-effect budget accounting must therefore be kept in
+     authenticated, monotonic, rollback-refusing state held outside agent
+     and child-process write authority, the same trust class as those
+     ledgers, with a counter-reset/rollback negative test proving that
+     deleting or rolling back budget state between admitted requests does
+     not allow the aggregate count, rate, or value bound to be exceeded.
+     Admission must also charge the request that actually executes: policy
+     can return `TRANSFORM`, and the permission intersection is
+     re-evaluated against the final executable arguments, but a budget
+     debit reserved from the original request's magnitude lets a transform
+     that increases the request's quantity or value execute the larger
+     final operation against the smaller reservation while staying inside
+     the permission ceiling, so the aggregate effect budget is exceeded
+     while every admission and ceiling test passes. The external-effect
+     budget must therefore be reserved atomically against the final
+     transformed action and arguments, recomputed after any policy
+     transformation, with that reservation bound into the receipt the
+     executor validates, and a transform-that-increases-value negative
+     test proving a transform that raises a request's count or value
+     beyond the remaining aggregate budget is denied, queued, or escalated
+     rather than run.
+     Admission charges the outer request, not its transitive effects: an
     admitted handler that batches operations, fans one request out to
     many downstream calls, or retries after an ambiguous downstream
     timeout consumes one admission and one single-use receipt while
