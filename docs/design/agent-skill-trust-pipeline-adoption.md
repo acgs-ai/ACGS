@@ -1698,9 +1698,28 @@ enumerated entries still passes. The host policy must therefore deny
      of caller-controlled verification settings, refusing the connection
      when peer authentication fails, with an invalid-certificate/MITM
      negative test proving a connection to an allowed origin whose peer
-     presents an invalid or mismatched certificate is refused by the
-     broker even when the caller disables verification, and no request
-     data reaches the unauthenticated peer. Even then, argument-level checks
+      presents an invalid or mismatched certificate is refused by the
+      broker even when the caller disables verification, and no request
+      data reaches the unauthenticated peer.
+      Authenticating the peer still grants the whole service: one allowed
+      origin can expose both benign and privileged operations (a readable
+      `GET /docs` and an authenticated destructive `DELETE /admin/...` on
+      the same API), and the broker admits both because their scheme,
+      authority, resolution, presented host, and TLS identity are
+      identical, while the ambient-credential and external-effect budget
+      requirements only authenticate the caller and bound aggregate
+      counts, so a single destructive same-origin request remains inside
+      the stated ceiling. Network authority must therefore be bound to
+      protocol-specific operations where the protocol expresses them (for
+      HTTP, the allowed methods and resource/path constraints recorded in
+      the ceiling and enforced by the broker on every request), or an
+      origin grant must be explicitly treated as authority over every
+      operation the entire service exposes, granted only when that
+      full-service reach is itself reviewed and intended, with a
+      same-origin disallowed-operation negative test proving a request to
+      an allowed origin whose method or resource falls outside the
+      recorded operation constraints is refused by the broker rather than
+      sent. Even then, argument-level checks
    govern only the launch, not the launched process: an allowed
    `shell.allowed_scripts` entry spawns a process that inherits the host's ambient
    file and network capabilities, so a declaration that permits that script while
@@ -2390,16 +2409,26 @@ enumerated entries still passes. The host policy must therefore deny
      growth must therefore be governed by its own hierarchical
      audit-event and audit-byte quotas, per-skill and per-actor totals
      nesting under tenant-wide and execution-boundary-wide totals,
-     backed by authenticated rotation and checkpointing or a bounded
-     authenticated remote sink, with fail-closed backpressure applied
-     to the submitting scope when its quota is reached (never dropped
-     events and never execution without a recorded event), while events
-     still required by unexpired receipts are retained through their
-     receipts' retention obligations, with a many-small-denials
-     storage-exhaustion negative test driving a sustained stream of
-     small denied requests and proving audit storage stays within its
-     declared quotas while unrelated governed requests still record
-     their required evidence and execute.
+      backed by authenticated rotation and checkpointing or a bounded
+      authenticated remote sink, with fail-closed backpressure applied
+      to the submitting scope when its quota is reached (never dropped
+      events and never execution without a recorded event), and the
+      enclosing tenant-wide and execution-boundary-wide allowances must
+      preserve capacity for unrelated submitters: either fair-share
+      reservation bounds each child scope's usable share strictly below
+      the enclosing total so that no single scope, and no coordinated set
+      of skills submitting under multiple actor scopes, can consume the
+      entire enclosing allowance, or an authenticated rotation policy
+      reclaims space from the exhausting scope's over-quota events before
+      any unrelated scope is backpressured, while events
+      still required by unexpired receipts are retained through their
+      receipts' retention obligations, with a many-small-denials
+      storage-exhaustion negative test driving a sustained stream of
+      small denied requests, including coordinated submissions spread
+      across multiple actor scopes, and proving audit storage stays
+      within its declared quotas, fail-closed backpressure lands only on
+      the exhausting scopes, and unrelated governed requests in the same
+      enclosing scope still record their required evidence and execute.
      Admission by name is still
    not admission of code: the registry authenticates that a tool or alias is
    admitted, not which implementation the name resolves to, so an admitted MCP
@@ -2630,11 +2659,31 @@ enumerated entries still passes. The host policy must therefore deny
      quota is denied, queued, or throttled rather than run), and neither
      per-invocation budgets nor isolated service capacity alone satisfies
      this requirement without the aggregate bound, with a concurrent
-     many-handler-call exhaustion negative test proving many simultaneous
-      individually-within-budget handler invocations from one skill are
-      collectively bounded and other workloads' capacity is
-      preserved.
-      The enumerated budgets cover host CPU, memory, processes,
+      many-handler-call exhaustion negative test proving many simultaneous
+       individually-within-budget handler invocations from one skill are
+       collectively bounded and other workloads' capacity is
+       preserved.
+       Consumption budgets bound what execution takes from the host, not
+       what it emits: an admitted handler that returns or streams a huge
+       result, or an allowed script that continuously writes stdout and
+       stderr, can exhaust dispatcher serialization buffers, response
+       transport, downstream model context, or durable result logging
+       while staying within every listed CPU, memory, process,
+       descriptor, storage, I/O-bandwidth, and execution-deadline budget,
+       and the output-byte and output-token bounds above are scoped to
+       pure-operation exemptions, so neither this handler budget list nor
+       the shell budget contract bounds result output. Shell and handler
+       execution must therefore also carry per-invocation and aggregate
+       output-byte limits (and output-token limits where results enter a
+       model context), enforced through streaming backpressure or
+       termination of the workload at the bound rather than unbounded
+       buffering of an over-limit result, with a result-output exhaustion
+       negative test proving an admitted handler or allowed script that
+       streams an oversized result is throttled or terminated at its
+       recorded output bound while other workloads retain
+       response-channel, transport, model-context, and result-logging
+       capacity.
+       The enumerated budgets cover host CPU, memory, processes,
       descriptors, storage, and I/O, not accelerators: on a GPU- or
       accelerator-equipped execution host, an admitted handler or
       allowed script can allocate all device memory or saturate
