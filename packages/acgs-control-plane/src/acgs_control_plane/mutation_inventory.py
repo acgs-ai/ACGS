@@ -17,7 +17,7 @@ import textwrap
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
-from types import MappingProxyType
+from types import CodeType, MappingProxyType
 from typing import Any
 
 from fastapi import FastAPI
@@ -34,6 +34,7 @@ from acgs_control_plane.managed_mutations import (
     CONTROL_PLANE_RUNTIME_IDENTITY_ENROLL_ACTION,
     CONTROL_PLANE_RUNTIME_IDENTITY_RENEW_ACTION,
     CONTROL_PLANE_RUNTIME_IDENTITY_REVOKE_ACTION,
+    CONTROL_PLANE_RUNTIME_REPORT_ACCEPT_ACTION,
     TENANT_BOOTSTRAP_ACTION,
 )
 from acgs_control_plane.rbac import Permission
@@ -59,6 +60,7 @@ class MutationDefinition:
     permission: str | None
     scope: str
     static_symbols: tuple[str, ...]
+    delegated_symbols: tuple[str, ...] = ()
     allowed_static_findings: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
@@ -249,6 +251,54 @@ _UNVERSIONED_CANONICAL_MUTATION_DEFINITIONS: tuple[MutationDefinition, ...] = (
         ),
     ),
     MutationDefinition(
+        operation_id="runtime-report.accept",
+        method="POST",
+        path="/v1/runtime-identities/{identity_id}/reports",
+        action=CONTROL_PLANE_RUNTIME_REPORT_ACCEPT_ACTION,
+        effect_class=MutationEffectClass.SQL_ATOMIC,
+        dispatcher="managed-mutation-uow.execute_with_receipt",
+        service="acgs_control_plane.runtime_reports.RuntimeReportService",
+        state_key="runtime_report_service",
+        service_method="accept",
+        permission=None,
+        scope="runtime-signed-current-credential",
+        static_symbols=(
+            "acgs_control_plane.runtime_reports.RuntimeReportService.accept",
+            "acgs_control_plane.managed_mutations._execute_verified_operation",
+        ),
+        delegated_symbols=(
+            "acgs_control_plane.runtime_reports.RuntimeReportService._accept_serialized",
+            "acgs_control_plane.runtime_reports.RuntimeReportService._replay_after_conflict",
+            "acgs_control_plane.runtime_reports.RuntimeReportService._verify_challenge",
+            "acgs_control_plane.runtime_reports._authenticate_runtime_request",
+            "acgs_control_plane.runtime_reports._replay_report_operation",
+            "acgs_control_plane.runtime_reports._verified_policy_provenance",
+            "acgs_control_plane.runtime_reports._validate_anchored_report_lineage",
+            "acgs_control_plane.runtime_reports._validate_current_report_head",
+            "acgs_control_plane.runtime_reports.verify_policy_sync_snapshot",
+            "acgs_control_plane.runtime_reports.verify_wiring_attestation",
+            "acgs_control_plane.runtime_reports.verify_signed_runtime_request",
+            "acgs_control_plane.runtime_reports.validate_current_runtime_identity_binding",
+            "acgs_control_plane.runtime_reports._decision_record",
+            "acgs_control_plane.runtime_enrollment.RuntimeEnrollmentService._issue_receipt",
+            "acgs_control_plane.runtime_enrollment.RuntimeEnrollmentService._record_non_executable",
+            "acgs_control_plane.managed_mutations.ManagedMutationUnitOfWork.execute",
+            "acgs_control_plane.managed_mutations.ManagedMutationUnitOfWork._prevalidate_native_receipt",
+            "acgs_control_plane.managed_mutations.ManagedMutationUnitOfWork._execute_reserved_attempt",
+            "acgs_control_plane.managed_mutations.AesGcmReceiptArtifactSealer.seal",
+            "acgs_control_plane.managed_mutations.AesGcmReceiptArtifactSealer.unseal",
+            "acgs_control_plane.managed_mutations._execute_verified_operation",
+            "acgs_control_plane.managed_mutations.validate_managed_replay_artifacts",
+            "acgs_control_plane.trust.InProcessPlatformIssuer.signer_for_scope",
+            "acgs_control_plane.trust.SqlReceiptTrustRegistry.resolve",
+            "gove_zone.executor.execute_with_receipt",
+            "gove_zone.policy_sync.verify_policy_sync_snapshot",
+            "gove_zone.runtime_identity.InMemoryEd25519WorkloadKeyProvider.public_key_bytes",
+            "gove_zone.signing.Ed25519Signer.sign",
+            "gove_zone.wiring_attestation.verify_wiring_attestation",
+        ),
+    ),
+    MutationDefinition(
         operation_id="environment-policy.publish",
         method="POST",
         path="/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies",
@@ -432,6 +482,7 @@ def _definition_index(definitions: Sequence[MutationDefinition]) -> dict[str, di
             "permission": definition.permission,
             "scope": definition.scope,
             "static_symbols": list(definition.static_symbols),
+            "delegated_symbols": list(definition.delegated_symbols),
             "allowed_static_findings": {
                 symbol: list(findings)
                 for symbol, findings in sorted(definition.allowed_static_findings.items())
@@ -576,17 +627,45 @@ def _service_binding_snapshot(
                 detail="request refused before handler",
             )
         )
-    return (
-        {
-            "state_key": state_key,
-            "service_type": service_type_name,
-            "service_instance": _object_fingerprint(service),
-            "bound_method": _callable_fingerprint(getattr(service, method_name, None)),
-            "class_method": _callable_fingerprint(getattr(service_type, method_name, None)),
-            "dispatcher": definition.get("dispatcher"),
-        },
-        tuple(blockers),
-    )
+    record = {
+        "state_key": state_key,
+        "service_type": service_type_name,
+        "service_instance": _object_fingerprint(service),
+        "bound_method": _callable_fingerprint(getattr(service, method_name, None)),
+        "class_method": _callable_fingerprint(getattr(service_type, method_name, None)),
+        "dispatcher": definition.get("dispatcher"),
+        "delegated_callables": [
+            {
+                "symbol": symbol,
+                "callable": _callable_fingerprint(_resolve_symbol(str(symbol))),
+            }
+            for symbol in definition.get("delegated_symbols", ())
+        ],
+    }
+    if operation_id == "runtime-report.accept":
+        runtime_service = getattr(service, "_runtime_service", None)
+        providers = getattr(runtime_service, "_providers", None)
+        descriptor_signer = getattr(service, "_descriptor_signer", None)
+        issuer = getattr(providers, "issuer", None)
+        receipt_sealer = getattr(providers, "receipt_sealer", None)
+        record["runtime_provider_bindings"] = {
+            "runtime_service": _object_fingerprint(runtime_service),
+            "providers": _object_fingerprint(providers),
+            "descriptor_signer": _object_fingerprint(descriptor_signer),
+            "descriptor_signer_key_id": getattr(descriptor_signer, "key_id", None),
+            "descriptor_sign": _callable_fingerprint(getattr(descriptor_signer, "sign", None)),
+            "descriptor_public_key": _callable_fingerprint(
+                getattr(descriptor_signer, "public_key_bytes", None)
+            ),
+            "issuer": _object_fingerprint(issuer),
+            "issuer_signer_for_scope": _callable_fingerprint(
+                getattr(issuer, "signer_for_scope", None)
+            ),
+            "receipt_sealer": _object_fingerprint(receipt_sealer),
+            "receipt_seal": _callable_fingerprint(getattr(receipt_sealer, "seal", None)),
+            "receipt_unseal": _callable_fingerprint(getattr(receipt_sealer, "unseal", None)),
+        }
+    return record, tuple(blockers)
 
 
 def _dependency_calls(route: APIRoute) -> Iterable[Any]:
@@ -686,13 +765,7 @@ def _callable_fingerprint(call: Any) -> dict[str, Any] | None:
     code = getattr(function, "__code__", None)
     code_payload: dict[str, Any] | None = None
     if code is not None:
-        code_payload = {
-            "argcount": code.co_argcount,
-            "kwonlyargcount": code.co_kwonlyargcount,
-            "names": list(code.co_names),
-            "varnames": list(code.co_varnames),
-            "bytecode": code.co_code.hex(),
-        }
+        code_payload = _code_payload(code)
     return {
         "module": getattr(function, "__module__", type(function).__module__),
         "qualname": getattr(function, "__qualname__", type(function).__qualname__),
@@ -701,6 +774,36 @@ def _callable_fingerprint(call: Any) -> dict[str, Any] | None:
         "code_hash": _hash_json(code_payload) if code_payload is not None else None,
         "closure_permissions": sorted(_permissions_from_callable(call)),
     }
+
+
+def _code_payload(code: CodeType) -> dict[str, Any]:
+    """Fingerprint nested callback bodies as well as their containing callable."""
+
+    return {
+        "argcount": code.co_argcount,
+        "kwonlyargcount": code.co_kwonlyargcount,
+        "names": list(code.co_names),
+        "varnames": list(code.co_varnames),
+        "bytecode": code.co_code.hex(),
+        "constants": [_code_constant_payload(value) for value in code.co_consts],
+    }
+
+
+def _code_constant_payload(value: Any) -> dict[str, Any]:
+    if isinstance(value, CodeType):
+        return {"kind": "code", "value": _code_payload(value)}
+    if value is None:
+        return {"kind": "none"}
+    if type(value) in {bool, int, float, complex, str}:
+        return {"kind": type(value).__name__, "value": repr(value)}
+    if type(value) is bytes:
+        return {"kind": "bytes", "value": value.hex()}
+    if type(value) is tuple:
+        return {"kind": "tuple", "value": [_code_constant_payload(item) for item in value]}
+    if type(value) is frozenset:
+        items = [_code_constant_payload(item) for item in value]
+        return {"kind": "frozenset", "value": sorted(items, key=_hash_json)}
+    raise TypeError(f"unsupported callable constant type: {_safe_symbol(value)}")
 
 
 _FORBIDDEN_CALLS = {

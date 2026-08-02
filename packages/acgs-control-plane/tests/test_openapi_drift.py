@@ -81,6 +81,24 @@ PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": False,
         "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
     },
+    "query:runtime_build_digest": {
+        "in": "query",
+        "name": "runtime_build_digest",
+        "required": True,
+        "schema": {"type": "string"},
+    },
+    "query:configuration_digest": {
+        "in": "query",
+        "name": "configuration_digest",
+        "required": True,
+        "schema": {"type": "string"},
+    },
+    "query:policy_snapshot_hash": {
+        "in": "query",
+        "name": "policy_snapshot_hash",
+        "required": True,
+        "schema": {"type": "string"},
+    },
     "query:cursor": {
         "in": "query",
         "name": "cursor",
@@ -98,6 +116,12 @@ PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
         "name": "limit",
         "required": False,
         "schema": {"default": 50, "maximum": 500, "minimum": 1, "type": "integer"},
+    },
+    "query:fleet_limit": {
+        "in": "query",
+        "name": "limit",
+        "required": False,
+        "schema": {"default": 50, "maximum": 100, "minimum": 1, "type": "integer"},
     },
     "query:offset": {
         "in": "query",
@@ -601,12 +625,89 @@ EXPECTED_RUNTIME_PLATFORM_PATHS: dict[str, dict[str, dict[str, Any]]] = {
     },
 }
 
+EXPECTED_RUNTIME_REPORT_PATHS: dict[str, dict[str, dict[str, Any]]] = {
+    "/v1/runtime-identities/{identity_id}/attestation-challenges": {
+        "get": {
+            "operation_id": "runtime-attestation-challenge.issue",
+            "parameters": _expected_params(
+                "path:identity_id",
+                "query:runtime_build_digest",
+                "query:configuration_digest",
+                "query:policy_snapshot_hash",
+                "header:X-ACGS-Runtime-Identity-ID",
+                "header:X-ACGS-Runtime-Key-ID",
+                "header:X-ACGS-Runtime-Audience",
+                "header:X-ACGS-Runtime-Credential-ID",
+                "header:X-ACGS-Runtime-Credential-Generation",
+                "header:X-ACGS-Runtime-Timestamp",
+                "header:X-ACGS-Runtime-Nonce",
+                "header:X-ACGS-Runtime-Body-Sha256",
+                "header:X-ACGS-Runtime-Signature",
+            ),
+            "responses": ["200", "422"],
+            "tag": "runtime-identities",
+        }
+    },
+    "/v1/runtime-identities/{identity_id}/reports": {
+        "post": {
+            "operation_id": "runtime-report.accept",
+            "parameters": _expected_params(
+                "path:identity_id",
+                "header:X-ACGS-Runtime-Identity-ID",
+                "header:X-ACGS-Runtime-Key-ID",
+                "header:X-ACGS-Runtime-Audience",
+                "header:X-ACGS-Runtime-Credential-ID",
+                "header:X-ACGS-Runtime-Credential-Generation",
+                "header:X-ACGS-Runtime-Timestamp",
+                "header:X-ACGS-Runtime-Nonce",
+                "header:X-ACGS-Runtime-Body-Sha256",
+                "header:X-ACGS-Runtime-Signature",
+                "header:Idempotency-Key",
+            ),
+            "responses": ["201", "422"],
+            "tag": "runtime-identities",
+        }
+    },
+    "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/fleet": {
+        "get": {
+            "operation_id": "runtime-fleet.read",
+            "parameters": _expected_params(
+                "path:project_id",
+                "path:environment_id",
+                "path:org_id",
+                "query:cursor",
+                "query:fleet_limit",
+                "header:X-API-Key",
+            ),
+            "responses": ["200", "422"],
+            "tag": "runtime-identities",
+        }
+    },
+    "/v1/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/fleet": {
+        "get": {
+            "operation_id": "v1_runtime-fleet.read",
+            "parameters": _expected_params(
+                "path:project_id",
+                "path:environment_id",
+                "path:org_id",
+                "query:cursor",
+                "query:fleet_limit",
+                "header:X-API-Key",
+            ),
+            "responses": ["200", "422"],
+            "tag": "runtime-identities",
+        }
+    },
+}
+
+
 EXPECTED_PATHS: dict[str, dict[str, dict[str, Any]]] = {
     **EXPECTED_V0_PATHS,
     **EXPECTED_MANAGED_POLICY_PATHS,
     **EXPECTED_APPROVAL_PATHS,
     **EXPECTED_RUNTIME_IDENTITY_PATHS,
     **EXPECTED_RUNTIME_PLATFORM_PATHS,
+    **EXPECTED_RUNTIME_REPORT_PATHS,
     "/v1": {
         "get": {
             "operation_id": "get_v1_metadata",
@@ -672,6 +773,12 @@ EXPECTED_COMPONENTS = {
     "RuntimeEnrollmentResponse",
     "RuntimeIdentityDescriptor",
     "RuntimeIdentityRevokeRequest",
+    "RuntimeAttestationChallengeResponse",
+    "RuntimeReportRequest",
+    "RuntimeReportResponse",
+    "FleetState",
+    "FleetRuntime",
+    "FleetResponse",
     "PolicySyncScope",
     "PolicySyncSnapshot",
     "SimulateRequest",
@@ -1130,6 +1237,7 @@ def test_current_openapi_contract_records_missing_beta_contract_boundaries(
     del outside_idempotent_routes["paths"]["/v1/runtime-enrollments"]
     del outside_idempotent_routes["components"]["schemas"]["RuntimeEnrollmentRequest"]
     del outside_idempotent_routes["paths"]["/v1/runtime-identities/{identity_id}/renew"]
+    del outside_idempotent_routes["paths"]["/v1/runtime-identities/{identity_id}/reports"]
     for prefix in ("", "/v1"):
         del outside_idempotent_routes["paths"][f"{prefix}/orgs/{{org_id}}/agents"]["post"]
         del outside_idempotent_routes["paths"][f"{prefix}{managed_policy_publish_path}"]["post"]
@@ -1156,14 +1264,22 @@ def test_current_openapi_contract_records_missing_beta_contract_boundaries(
         if any(parameter["name"] == "cursor" for parameter in operation.get("parameters", []))
     ]
     assert cursor_parameters == [
+        (
+            "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/fleet",
+            "get",
+        ),
         ("/v1/runtime-identities/{identity_id}/policy-bundle", "get"),
         ("/orgs/{org_id}/receipts", "get"),
+        (
+            "/v1/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/fleet",
+            "get",
+        ),
         ("/v1/orgs/{org_id}/receipts", "get"),
     ]
     assert all(
         "next_cursor" not in json.dumps(component, sort_keys=True)
         for name, component in schema["components"]["schemas"].items()
-        if name != "ReceiptListResponse"
+        if name not in {"FleetResponse", "ReceiptListResponse"}
     )
 
 

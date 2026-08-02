@@ -157,6 +157,10 @@ def test_public_api_exposes_only_managed_policy_project_environment_routes(
             for method, path in (
                 (
                     "GET",
+                    "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/fleet",
+                ),
+                (
+                    "GET",
                     "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies",
                 ),
                 (

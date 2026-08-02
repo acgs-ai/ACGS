@@ -61,6 +61,10 @@ _ALEMBIC_MANAGED_TABLE_NAMES = frozenset(
         "runtime_enrollment_idempotency",
         "runtime_operation_idempotency",
         "runtime_request_nonces",
+        "runtime_reports",
+        "runtime_report_heads",
+        "runtime_wiring_attestations",
+        "runtime_wiring_challenge_consumptions",
     }
 )
 _LEGACY_CREATE_ALL_TABLE_NAMES = frozenset(

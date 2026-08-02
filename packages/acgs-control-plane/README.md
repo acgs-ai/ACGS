@@ -27,6 +27,7 @@ production governance membrane. In the local development profile:
 | Managed approvals | `POST /orgs/{org}/approvals/{approval_request_id}/votes`, `POST .../resume` for the `agent.register` ESCALATE path only |
 | Runtime enrollment | Local/test one-time runtime gate bootstrap, proof-of-possession enrollment, credential renewal, and revocation for a scoped org/project/environment gate |
 | Runtime policy sync | Local/test authenticated `GET /v1/runtime-identities/{identity_id}/policy-bundle` with a separately attested signed v2 snapshot and cursor-based `304` renewal |
+| Runtime reports and fleet | Local/test authenticated append-only status/wiring reports plus a cursor-paginated, current-state-derived fleet projection |
 | Receipt explorer | `GET /orgs/{org}/receipts` (filter: decision/tool/actor/time, paginated), `GET .../receipts/{id}`, `POST .../receipts/{id}/verify` |
 | Audit dashboard | `GET /orgs/{org}/dashboard` — decision mix, top tools/actors, agent gauges, live chain verification |
 | Compliance export | `POST /orgs/{org}/exports` — hash-manifested evidence bundle (org, policies, agents, receipts, raw audit chain), externally recomputable via `exports.verify_export_bundle` |
@@ -64,10 +65,14 @@ projection and remain invisible to the explorer and export bundle. Native
 receipt-v2 explorer/export support remains future work.
 
 Agent registration idempotency is part of Alembic revision `0007`. The current
-schema head is `0011`: revision `0008` adds the managed policy registry,
+schema head is `0012`: revision `0008` adds the managed policy registry,
 revision `0009` adds the approval request/vote/outcome/resume substrate,
 revision `0010` binds approval votes to the approved resume action, and revision
-`0011` adds the runtime enrollment identity tables.
+`0011` adds the runtime enrollment identity tables. Forward-only revision `0012`
+adds authenticated append-only runtime reports, monotonic per-identity report-head
+anchors, receipt-bound immutable report projections, and report-bound wiring
+attestation/challenge-consumption records. These are local database and cryptographic
+lineage controls; they are not a hosted-runtime or production-readiness claim.
 `POST /orgs/{org}/agents` requires an `Idempotency-Key` header before
 receipt issuance or persistence. Reusing the same key with the same canonical
 request replays the original terminal outcome after validating the stored row
@@ -150,6 +155,36 @@ fail startup loudly. This is locally implemented and tested distribution, not
 production deployment, hosted fleet evidence, or proof that customer runtimes
 are wired to enforce the synchronized policy.
 
+## Runtime reports and fleet projection (local/test)
+
+An enrolled runtime can submit a signed status or wiring report to
+`POST /v1/runtime-identities/{identity_id}/reports`. Admission bounds the raw
+body and enforces strict I-JSON before model parsing. Acceptance revalidates the
+active identity, gate, credential generation, current policy head, signed policy
+snapshot, provenance, freshness, and exact next sequence inside the governed SQL
+transaction. Exact ALLOW, DENY, and ESCALATE outcomes are sealed and replayed
+only after the applicable receipt, consumption, event, outbox, report,
+request-nonce, and wiring-attestation lineage has been revalidated; missing or
+tampered terminal state fails closed.
+
+Wiring reports additionally require a deterministic, side-effect-free signed
+challenge and a genuine public-gateway wiring artifact. The accepted artifact is
+an observed local conformance result, not independent evidence that a deployed
+customer runtime enforces policy.
+
+Authorized operators and auditors can read
+`GET /orgs/{org}/projects/{project}/environments/{environment}/fleet`. The route
+uses stable cursor pagination and derives registration, online, policy-current,
+and proven-wired state from the latest accepted report and current durable
+bindings. Fleet validation is intentionally bounded: it authenticates the signed
+current history checkpoint and exact terminal rows, while a separate full-history
+reconciliation walk detects gaps or corruption in older, unqueried rows. Immediate
+detection of arbitrary corruption outside the bounded read set is not claimed, and
+database rollback detection requires an independent external witness. A later report
+with a different build, configuration, policy, or credential tuple clears
+`proven_wired`. Evidence ingestion remains explicitly unavailable; the response does
+not infer evidence from registration or reports.
+
 When the active managed policy returns ESCALATE for `agent.register`, the
 control plane now creates a scoped pending approval request in the same managed
 evidence path as the ESCALATE receipt. The parked request binds the
@@ -210,7 +245,7 @@ uv run --package acgs-control-plane uvicorn --factory acgs_control_plane.app:cre
 
 This posture is deliberately non-production: its legacy bootstrap may create only the frozen
 pre-Alembic v0 tables, and `/readyz` always returns 503. For a migration-managed database, run the
-secret-safe operator CLI to the current head (`0011` at this writing), then set
+secret-safe operator CLI to the current head (`0012` at this writing), then set
 `ACP_CREATE_TABLES=0`. Schema currency is reported separately from production readiness.
 `ACP_RUNTIME_POSTURE=production` currently refuses before constructing a database engine because
 legacy mutation routes still exist; an exact current schema does not weaken that blocker.
@@ -284,15 +319,18 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
   managed receipt-v2 evidence and a SQL single-use ledger, but the remaining legacy routes still
   differ from gove-zone's secure `require_signature=True` profile. Production posture refuses while
   those legacy mutation routes remain.
-- **Schema mutation is operator-only**: Alembic revisions `0001` through `0011` are advanced
+- **Schema mutation is operator-only**: Alembic revisions `0001` through `0012` are advanced
   through `python -m acgs_control_plane.migration_cli`; schema-managed startup performs an exact,
   read-only revision preflight and never migrates. The legacy `create_all` bootstrap remains
   available only under the explicit local-development posture above.
-- **Runtime enrollment is local/test only**: revision `0011` proves scoped
+- **Runtime enrollment and reporting are local/test only**: revisions `0011` and `0012`
+  exercise scoped
   bootstrap issuance, proof-of-possession enrollment, descriptor signing,
   renewal, revocation, replay refusal, and PostgreSQL concurrency behavior under
-  local providers. The authenticated policy-sync route is also implemented and
-  tested locally; neither slice proves hosted fleet operations, evidence
+  local providers. Authenticated policy sync, receipt-bound append-only runtime
+  reports, cryptographically revalidated wiring lineage, and the derived fleet
+  read model are implemented and tested locally; these
+  slices do not prove hosted production operations, independent evidence
   ingestion, customer runtime deployment, or production custody.
 - **Approval payload custody is local/test only**: the default approval payload
   sealer is a deterministic local AES-GCM provider. Non-local posture must inject

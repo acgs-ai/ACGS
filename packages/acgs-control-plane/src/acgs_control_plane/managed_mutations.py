@@ -16,6 +16,7 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import Any, Protocol
 
 import sqlalchemy as sa
@@ -46,6 +47,7 @@ from acgs_control_plane.models import (
     ManagedMutationAttempt,
     ManagedOutboxMessage,
     ManagedReceiptConsumption,
+    ManagedTrustKey,
     new_id,
     utcnow,
 )
@@ -61,6 +63,7 @@ CONTROL_PLANE_RUNTIME_BOOTSTRAP_ISSUE_ACTION = "control-plane.runtime-bootstrap.
 CONTROL_PLANE_RUNTIME_IDENTITY_ENROLL_ACTION = "control-plane.runtime-identity.enroll"
 CONTROL_PLANE_RUNTIME_IDENTITY_RENEW_ACTION = "control-plane.runtime-identity.renew"
 CONTROL_PLANE_RUNTIME_IDENTITY_REVOKE_ACTION = "control-plane.runtime-identity.revoke"
+CONTROL_PLANE_RUNTIME_REPORT_ACCEPT_ACTION = "control-plane.runtime-report.accept"
 TENANT_BOOTSTRAP_ACTION = "tenant.bootstrap"
 TENANT_BOOTSTRAP_EXECUTION_BOUNDARY = "control-plane:tenant.bootstrap/v1"
 _BOUNDARY_SCHEMA = "acgs-control-plane:managed-mutation-uow/v1"
@@ -201,6 +204,106 @@ class ManagedReplayArtifacts:
     sealed_receipt: DecisionReceipt
     event: ManagedGovernanceEvent
     outbox: ManagedOutboxMessage
+
+
+@dataclass(frozen=True)
+class ManagedReplayPreload:
+    """Read-only rows used to validate many replay lineages without N+1 SQL."""
+
+    trust_keys: tuple[ManagedTrustKey, ...]
+    events: tuple[ManagedGovernanceEvent, ...]
+    event_heads: tuple[ManagedGovernanceEventHead, ...]
+    outboxes: tuple[ManagedOutboxMessage, ...]
+    consumptions: tuple[ManagedReceiptConsumption, ...]
+    attempts: tuple[ManagedMutationAttempt, ...]
+    events_by_receipt: Mapping[str, tuple[ManagedGovernanceEvent, ...]]
+    events_by_scope_sequence: Mapping[tuple[str, str, str, int], tuple[ManagedGovernanceEvent, ...]]
+    event_heads_by_scope: Mapping[tuple[str, str, str], tuple[ManagedGovernanceEventHead, ...]]
+    valid_event_suffixes: Mapping[tuple[str, str, str], frozenset[int]]
+    outboxes_by_receipt_event: Mapping[tuple[str, str], tuple[ManagedOutboxMessage, ...]]
+    consumptions_by_receipt: Mapping[str, tuple[ManagedReceiptConsumption, ...]]
+    attempts_by_scope_receipt_hash: Mapping[
+        tuple[str, str, str, str], tuple[ManagedMutationAttempt, ...]
+    ]
+    trust_keys_by_scope_purpose: Mapping[tuple[str, str, str, str], tuple[ManagedTrustKey, ...]]
+    bounded_current_projection: bool
+
+
+def build_managed_replay_preload(
+    *,
+    trust_keys: tuple[ManagedTrustKey, ...],
+    events: tuple[ManagedGovernanceEvent, ...],
+    event_heads: tuple[ManagedGovernanceEventHead, ...],
+    outboxes: tuple[ManagedOutboxMessage, ...],
+    consumptions: tuple[ManagedReceiptConsumption, ...],
+    attempts: tuple[ManagedMutationAttempt, ...],
+    bounded_current_projection: bool = False,
+) -> ManagedReplayPreload:
+    """Build immutable, duplicate-preserving indexes and event-chain suffix proofs."""
+
+    def grouped(rows: tuple[Any, ...], key: Callable[[Any], Any]) -> Mapping[Any, tuple[Any, ...]]:
+        values: dict[Any, list[Any]] = {}
+        for row in rows:
+            values.setdefault(key(row), []).append(row)
+        return MappingProxyType({item_key: tuple(group) for item_key, group in values.items()})
+
+    by_sequence = grouped(
+        events, lambda row: (row.org_id, row.project_id, row.environment_id, row.sequence)
+    )
+    heads_by_scope = grouped(
+        event_heads, lambda row: (row.org_id, row.project_id, row.environment_id)
+    )
+    valid_suffixes: dict[tuple[str, str, str], frozenset[int]] = {}
+    for scope, heads in () if bounded_current_projection else heads_by_scope.items():
+        if len(heads) != 1:
+            valid_suffixes[scope] = frozenset()
+            continue
+        head = heads[0]
+        valid: set[int] = set()
+        expected_successor_hash = head.last_event_hash
+        for sequence in range(head.last_sequence, 0, -1):
+            candidates = by_sequence.get((*scope, sequence), ())
+            if len(candidates) != 1:
+                break
+            current = candidates[0]
+            expected_hash = sha256_json(
+                {
+                    "schema": "managed-mutation-event-chain/v1",
+                    "sequence": current.sequence,
+                    "previous_hash": current.previous_hash,
+                    "payload_digest": current.payload_digest,
+                }
+            )
+            if current.event_hash != expected_hash or current.event_hash != expected_successor_hash:
+                break
+            valid.add(sequence)
+            expected_successor_hash = current.previous_hash
+        valid_suffixes[scope] = frozenset(valid)
+    return ManagedReplayPreload(
+        trust_keys=trust_keys,
+        events=events,
+        event_heads=event_heads,
+        outboxes=outboxes,
+        consumptions=consumptions,
+        attempts=attempts,
+        events_by_receipt=grouped(events, lambda row: row.managed_receipt_id),
+        events_by_scope_sequence=by_sequence,
+        event_heads_by_scope=heads_by_scope,
+        valid_event_suffixes=MappingProxyType(valid_suffixes),
+        outboxes_by_receipt_event=grouped(
+            outboxes, lambda row: (row.managed_receipt_id, row.managed_event_id)
+        ),
+        consumptions_by_receipt=grouped(consumptions, lambda row: row.managed_receipt_id),
+        attempts_by_scope_receipt_hash=grouped(
+            attempts,
+            lambda row: (row.org_id, row.project_id, row.environment_id, row.receipt_hash),
+        ),
+        trust_keys_by_scope_purpose=grouped(
+            trust_keys,
+            lambda row: (row.org_id, row.project_id, row.environment_id, row.purpose),
+        ),
+        bounded_current_projection=bounded_current_projection,
+    )
 
 
 def managed_mutation_execution_boundary(
@@ -1255,6 +1358,9 @@ def validate_managed_replay_artifacts(
     expected_result_hash: str,
     receipt_sealer: ReceiptArtifactSealer,
     trust_purpose: str = DECISION_RECEIPT_PURPOSE,
+    historical_trust_verification: bool = True,
+    preload: ManagedReplayPreload | None = None,
+    current_trust_at: str | None = None,
 ) -> ManagedReplayArtifacts:
     if receipt is None:
         raise ManagedReplayArtifactValidationError("managed replay receipt is missing")
@@ -1281,6 +1387,9 @@ def validate_managed_replay_artifacts(
         expected_args=expected_args,
         receipt_sealer=receipt_sealer,
         trust_purpose=trust_purpose,
+        historical_trust_verification=historical_trust_verification,
+        preload=preload,
+        current_trust_at=current_trust_at,
     )
     event = _validated_replay_event(
         session,
@@ -1289,16 +1398,18 @@ def validate_managed_replay_artifacts(
         expected_actor=expected_actor,
         expected_action=expected_action,
         expected_result_hash=expected_result_hash,
+        preload=preload,
     )
-    outbox = _validated_replay_outbox(session, receipt, event)
+    outbox = _validated_replay_outbox(session, receipt, event, preload=preload)
     if expected_decision_normalized == Decision.ALLOW.value:
-        _validated_replay_allow_consumption(session, receipt)
+        _validated_replay_allow_consumption(session, receipt, preload=preload)
         _validated_replay_allow_attempt(
             session,
             receipt,
             expected_actor=expected_actor,
             expected_action=expected_action,
             expected_args=expected_args,
+            preload=preload,
         )
     else:
         _validate_no_allow_consumption(session, receipt)
@@ -1315,6 +1426,9 @@ def _validated_replay_sealed_receipt(
     expected_args: Mapping[str, Any],
     receipt_sealer: ReceiptArtifactSealer,
     trust_purpose: str,
+    historical_trust_verification: bool,
+    preload: ManagedReplayPreload | None,
+    current_trust_at: str | None,
 ) -> DecisionReceipt:
     try:
         sealed_receipt = receipt.projection.get("sealed_receipt")
@@ -1353,12 +1467,48 @@ def _validated_replay_sealed_receipt(
                 verifier=None,
                 require_signature=True,
                 require_expiry=False,
-                trust_registry=SqlReceiptTrustRegistry(session, lock_rows=True),
-                historical_trust_verification=True,
+                trust_registry=SqlReceiptTrustRegistry(
+                    session,
+                    lock_rows=preload is None,
+                    preloaded_rows=preload.trust_keys if preload is not None else None,
+                    preloaded_index=(
+                        preload.trust_keys_by_scope_purpose if preload is not None else None
+                    ),
+                ),
+                historical_trust_verification=historical_trust_verification,
                 trust_purpose=trust_purpose,
                 now_iso=sealed.timestamp,
                 max_clock_skew_seconds=DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
             )
+            if current_trust_at is not None:
+                sealed.verify(
+                    expected_tenant_id=receipt.org_id,
+                    expected_execution_boundary=receipt.execution_boundary,
+                    expected_action=expected_action,
+                    expected_actor=expected_actor,
+                    expected_audit_hash=receipt.audit_event_hash,
+                    expected_args=dict(expected_args),
+                    expected_policy_hash=receipt.policy_hash,
+                    expected_policy_bundle_id=receipt.policy_bundle_id,
+                    expected_project_id=receipt.project_id,
+                    expected_environment_id=receipt.environment_id,
+                    expected_validator_role=receipt.projection.get("validator_role"),
+                    expected_authority=receipt.projection.get("authority"),
+                    verifier=None,
+                    require_signature=True,
+                    require_expiry=False,
+                    trust_registry=SqlReceiptTrustRegistry(
+                        session,
+                        preloaded_rows=preload.trust_keys if preload is not None else None,
+                        preloaded_index=(
+                            preload.trust_keys_by_scope_purpose if preload is not None else None
+                        ),
+                    ),
+                    historical_trust_verification=False,
+                    trust_purpose=trust_purpose,
+                    now_iso=current_trust_at,
+                    max_clock_skew_seconds=DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
+                )
         except ReceiptValidationError as exc:
             terminal_non_executable_reasons = {
                 Decision.DENY.value: ReceiptRejectionReason.DENIED_RECEIPT,
@@ -1408,17 +1558,22 @@ def _validated_replay_event(
     expected_actor: str,
     expected_action: str,
     expected_result_hash: str,
+    preload: ManagedReplayPreload | None,
 ) -> ManagedGovernanceEvent:
-    events = list(
-        session.scalars(
-            sa.select(ManagedGovernanceEvent)
-            .where(
-                ManagedGovernanceEvent.org_id == receipt.org_id,
-                ManagedGovernanceEvent.project_id == receipt.project_id,
-                ManagedGovernanceEvent.environment_id == receipt.environment_id,
-                ManagedGovernanceEvent.managed_receipt_id == receipt.id,
+    events = (
+        preload.events_by_receipt.get(receipt.id, ())
+        if preload is not None
+        else list(
+            session.scalars(
+                sa.select(ManagedGovernanceEvent)
+                .where(
+                    ManagedGovernanceEvent.org_id == receipt.org_id,
+                    ManagedGovernanceEvent.project_id == receipt.project_id,
+                    ManagedGovernanceEvent.environment_id == receipt.environment_id,
+                    ManagedGovernanceEvent.managed_receipt_id == receipt.id,
+                )
+                .with_for_update()
             )
-            .with_for_update()
         )
     )
     if len(events) != 1:
@@ -1451,11 +1606,16 @@ def _validated_replay_event(
         raise ManagedReplayArtifactValidationError("managed replay event scope is invalid")
     if event.payload_digest != sha256_json(event.payload):
         raise ManagedReplayArtifactValidationError("managed replay event digest is invalid")
-    _validate_replay_event_chain(session, event)
+    _validate_replay_event_chain(session, event, preload=preload)
     return event
 
 
-def _validate_replay_event_chain(session: Session, event: ManagedGovernanceEvent) -> None:
+def _validate_replay_event_chain(
+    session: Session,
+    event: ManagedGovernanceEvent,
+    *,
+    preload: ManagedReplayPreload | None = None,
+) -> None:
     expected_event_hash = sha256_json(
         {
             "schema": "managed-mutation-event-chain/v1",
@@ -1466,23 +1626,43 @@ def _validate_replay_event_chain(session: Session, event: ManagedGovernanceEvent
     )
     if event.event_hash != expected_event_hash:
         raise ManagedReplayArtifactValidationError("managed replay event hash is invalid")
-    head = session.get(
-        ManagedGovernanceEventHead,
-        (event.org_id, event.project_id, event.environment_id),
-        with_for_update=True,
+    scope = (event.org_id, event.project_id, event.environment_id)
+    heads = preload.event_heads_by_scope.get(scope, ()) if preload is not None else ()
+    head = (
+        heads[0]
+        if len(heads) == 1
+        else None
+        if preload is not None
+        else session.get(
+            ManagedGovernanceEventHead,
+            (event.org_id, event.project_id, event.environment_id),
+            with_for_update=True,
+        )
     )
     if head is None or event.sequence < 1 or event.sequence > head.last_sequence:
         raise ManagedReplayArtifactValidationError("managed replay event head is invalid")
+    if preload is not None and preload.bounded_current_projection:
+        if event.sequence == head.last_sequence and event.event_hash != head.last_event_hash:
+            raise ManagedReplayArtifactValidationError(
+                "managed replay current event head is invalid"
+            )
+        return
     if event.sequence == 1:
         if event.previous_hash != _GENESIS_HASH:
             raise ManagedReplayArtifactValidationError("managed replay genesis link is invalid")
     else:
-        previous_event = _event_at_sequence(session, event, sequence=event.sequence - 1)
+        previous_event = _event_at_sequence(
+            session, event, sequence=event.sequence - 1, preload=preload
+        )
         if previous_event is None or previous_event.event_hash != event.previous_hash:
             raise ManagedReplayArtifactValidationError("managed replay previous link is invalid")
+    if preload is not None:
+        if event.sequence not in preload.valid_event_suffixes.get(scope, frozenset()):
+            raise ManagedReplayArtifactValidationError("managed replay event suffix is invalid")
+        return
     previous_hash = event.event_hash
     for sequence in range(event.sequence + 1, head.last_sequence + 1):
-        next_event = _event_at_sequence(session, event, sequence=sequence)
+        next_event = _event_at_sequence(session, event, sequence=sequence, preload=preload)
         if next_event is None or next_event.previous_hash != previous_hash:
             raise ManagedReplayArtifactValidationError("managed replay next link is invalid")
         expected_next_hash = sha256_json(
@@ -1507,7 +1687,13 @@ def _event_at_sequence(
     event: ManagedGovernanceEvent,
     *,
     sequence: int,
+    preload: ManagedReplayPreload | None = None,
 ) -> ManagedGovernanceEvent | None:
+    if preload is not None:
+        matches = preload.events_by_scope_sequence.get(
+            (event.org_id, event.project_id, event.environment_id, sequence), ()
+        )
+        return matches[0] if len(matches) == 1 else None
     return session.scalars(
         sa.select(ManagedGovernanceEvent)
         .where(
@@ -1524,18 +1710,24 @@ def _validated_replay_outbox(
     session: Session,
     receipt: ManagedDecisionReceipt,
     event: ManagedGovernanceEvent,
+    *,
+    preload: ManagedReplayPreload | None = None,
 ) -> ManagedOutboxMessage:
-    outbox_rows = list(
-        session.scalars(
-            sa.select(ManagedOutboxMessage)
-            .where(
-                ManagedOutboxMessage.org_id == receipt.org_id,
-                ManagedOutboxMessage.project_id == receipt.project_id,
-                ManagedOutboxMessage.environment_id == receipt.environment_id,
-                ManagedOutboxMessage.managed_receipt_id == receipt.id,
-                ManagedOutboxMessage.managed_event_id == event.id,
+    outbox_rows = (
+        preload.outboxes_by_receipt_event.get((receipt.id, event.id), ())
+        if preload is not None
+        else list(
+            session.scalars(
+                sa.select(ManagedOutboxMessage)
+                .where(
+                    ManagedOutboxMessage.org_id == receipt.org_id,
+                    ManagedOutboxMessage.project_id == receipt.project_id,
+                    ManagedOutboxMessage.environment_id == receipt.environment_id,
+                    ManagedOutboxMessage.managed_receipt_id == receipt.id,
+                    ManagedOutboxMessage.managed_event_id == event.id,
+                )
+                .with_for_update()
             )
-            .with_for_update()
         )
     )
     if len(outbox_rows) != 1:
@@ -1559,17 +1751,23 @@ def _validated_replay_outbox(
 def _validated_replay_allow_consumption(
     session: Session,
     receipt: ManagedDecisionReceipt,
+    *,
+    preload: ManagedReplayPreload | None = None,
 ) -> None:
-    consumptions = list(
-        session.scalars(
-            sa.select(ManagedReceiptConsumption)
-            .where(
-                ManagedReceiptConsumption.org_id == receipt.org_id,
-                ManagedReceiptConsumption.project_id == receipt.project_id,
-                ManagedReceiptConsumption.environment_id == receipt.environment_id,
-                ManagedReceiptConsumption.managed_receipt_id == receipt.id,
+    consumptions = (
+        preload.consumptions_by_receipt.get(receipt.id, ())
+        if preload is not None
+        else list(
+            session.scalars(
+                sa.select(ManagedReceiptConsumption)
+                .where(
+                    ManagedReceiptConsumption.org_id == receipt.org_id,
+                    ManagedReceiptConsumption.project_id == receipt.project_id,
+                    ManagedReceiptConsumption.environment_id == receipt.environment_id,
+                    ManagedReceiptConsumption.managed_receipt_id == receipt.id,
+                )
+                .with_for_update()
             )
-            .with_for_update()
         )
     )
     if len(consumptions) != 1:
@@ -1589,17 +1787,24 @@ def _validated_replay_allow_attempt(
     expected_actor: str,
     expected_action: str,
     expected_args: Mapping[str, Any],
+    preload: ManagedReplayPreload | None = None,
 ) -> None:
-    attempts = list(
-        session.scalars(
-            sa.select(ManagedMutationAttempt)
-            .where(
-                ManagedMutationAttempt.org_id == receipt.org_id,
-                ManagedMutationAttempt.project_id == receipt.project_id,
-                ManagedMutationAttempt.environment_id == receipt.environment_id,
-                ManagedMutationAttempt.receipt_hash == receipt.receipt_hash,
+    attempts = (
+        preload.attempts_by_scope_receipt_hash.get(
+            (receipt.org_id, receipt.project_id, receipt.environment_id, receipt.receipt_hash), ()
+        )
+        if preload is not None
+        else list(
+            session.scalars(
+                sa.select(ManagedMutationAttempt)
+                .where(
+                    ManagedMutationAttempt.org_id == receipt.org_id,
+                    ManagedMutationAttempt.project_id == receipt.project_id,
+                    ManagedMutationAttempt.environment_id == receipt.environment_id,
+                    ManagedMutationAttempt.receipt_hash == receipt.receipt_hash,
+                )
+                .with_for_update()
             )
-            .with_for_update()
         )
     )
     if len(attempts) != 1:
@@ -1710,6 +1915,8 @@ def _validated_operation_args(action: str, args: Mapping[str, Any]) -> dict[str,
         return _validated_runtime_identity_renew_args(args)
     if action == CONTROL_PLANE_RUNTIME_IDENTITY_REVOKE_ACTION:
         return _validated_runtime_identity_revoke_args(args)
+    if action == CONTROL_PLANE_RUNTIME_REPORT_ACCEPT_ACTION:
+        return _validated_runtime_report_accept_args(args)
     if action != CONTROL_PLANE_AGENT_CREATE_ACTION:
         raise ReceiptValidationError(f"unsupported managed mutation action: {action}")
     allowed_fields = {"name", "description", "trust_tier", "allowed_tools"}
@@ -1737,6 +1944,53 @@ def _validated_operation_args(action: str, args: Mapping[str, Any]) -> dict[str,
         "description": description,
         "trust_tier": trust_tier,
         "allowed_tools": list(allowed_tools),
+    }
+
+
+def _validated_runtime_report_accept_args(args: Mapping[str, Any]) -> dict[str, Any]:
+    fields = {
+        "identity_id",
+        "kind",
+        "sequence",
+        "challenge_expected_sequence",
+        "report_hash",
+        "policy_version_id",
+        "projection_commitment",
+    }
+    if set(args) != fields:
+        raise ReceiptValidationError("runtime report acceptance arguments are not canonical")
+    identity_id = args.get("identity_id")
+    kind = args.get("kind")
+    sequence = args.get("sequence")
+    challenge_expected_sequence = args.get("challenge_expected_sequence")
+    report_hash = args.get("report_hash")
+    policy_version_id = args.get("policy_version_id")
+    projection_commitment = args.get("projection_commitment")
+    if not isinstance(identity_id, str) or not identity_id:
+        raise ReceiptValidationError("runtime report identity_id is invalid")
+    if kind not in {"status", "wiring"}:
+        raise ReceiptValidationError("runtime report kind is invalid")
+    if not isinstance(sequence, int) or not 1 <= sequence <= 9_007_199_254_740_991:
+        raise ReceiptValidationError("runtime report sequence is invalid")
+    if kind == "wiring":
+        if challenge_expected_sequence != sequence:
+            raise ReceiptValidationError("runtime wiring challenge sequence is invalid")
+    elif challenge_expected_sequence is not None:
+        raise ReceiptValidationError("runtime status report cannot bind a challenge sequence")
+    if not isinstance(report_hash, str) or len(report_hash) != 64:
+        raise ReceiptValidationError("runtime report hash is invalid")
+    if not isinstance(policy_version_id, str) or not policy_version_id:
+        raise ReceiptValidationError("runtime report policy version is invalid")
+    if not isinstance(projection_commitment, str) or len(projection_commitment) != 64:
+        raise ReceiptValidationError("runtime report projection commitment is invalid")
+    return {
+        "identity_id": identity_id,
+        "kind": kind,
+        "sequence": sequence,
+        "challenge_expected_sequence": challenge_expected_sequence,
+        "report_hash": report_hash,
+        "policy_version_id": policy_version_id,
+        "projection_commitment": projection_commitment,
     }
 
 

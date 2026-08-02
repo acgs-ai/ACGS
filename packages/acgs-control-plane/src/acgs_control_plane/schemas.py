@@ -276,6 +276,74 @@ class RuntimeIdentityRevokeRequest(BaseModel):
     expected_credential_generation: int = Field(ge=1)
 
 
+class RuntimeAttestationChallengeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    nonce: str
+    expected_sequence: int = Field(ge=1, le=9_007_199_254_740_991)
+    issued_at: datetime
+    expires_at: datetime
+    token: str = Field(repr=False)
+
+
+class RuntimeReportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str = Field(pattern="^(status|wiring)$")
+    sequence: int = Field(ge=1, le=9_007_199_254_740_991)
+    expires_at: datetime
+    policy_version_id: str = Field(min_length=1, max_length=64)
+    policy_head_generation: int = Field(ge=1)
+    policy_content_hash: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]+$")
+    runtime_build_digest: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]+$")
+    configuration_digest: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]+$")
+    policy_snapshot: dict[str, Any]
+    challenge_token: str | None = Field(default=None, min_length=32, max_length=2048)
+    artifact: dict[str, Any] | None = None
+
+
+class RuntimeReportResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    report_id: str
+    identity_id: str
+    kind: str
+    sequence: int
+    report_hash: str
+    receipt_id: str
+    accepted_at: datetime
+
+
+class FleetState(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    available: bool
+    reason: str = Field(min_length=1, max_length=128)
+    observed_at: datetime | None
+
+
+class FleetRuntime(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    identity_id: str
+    gate_id: str
+    registered: FleetState
+    online: FleetState
+    policy_current: FleetState
+    proven_wired: FleetState
+    evidence_current: FleetState
+
+
+class FleetResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: str
+    project_id: str
+    environment_id: str
+    runtimes: list[FleetRuntime]
+    next_cursor: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Policy registry
 # ---------------------------------------------------------------------------

@@ -16,6 +16,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -614,6 +615,15 @@ class RuntimeIdentity(Base):
             "org_id",
             "project_id",
             "environment_id",
+            "gate_id",
+            "id",
+            name="uq_runtime_identities_scope_gate_id",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
             "name",
             name="uq_runtime_identities_scope_name",
             info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
@@ -776,6 +786,16 @@ class RuntimeCredentialGeneration(Base):
             "identity_id",
             "generation",
             name="uq_runtime_credential_generation",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "identity_id",
+            "generation",
+            "id",
+            name="uq_runtime_credential_scope_generation_id",
             info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
         ),
         CheckConstraint(
@@ -978,6 +998,506 @@ class RuntimeOperationIdempotency(Base):
     operation: Mapped[str] = mapped_column(String(64), nullable=False)
     receipt_id: Mapped[str] = mapped_column(String(200), nullable=False)
     response: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RuntimeReport(Base):
+    """Append-only authenticated runtime status or wiring report."""
+
+    __tablename__ = "runtime_reports"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id"],
+            ["organizations.id"],
+            name="fk_runtime_reports_organization",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "gate_id", "identity_id"],
+            [
+                "runtime_identities.org_id",
+                "runtime_identities.project_id",
+                "runtime_identities.environment_id",
+                "runtime_identities.gate_id",
+                "runtime_identities.id",
+            ],
+            name="fk_runtime_reports_identity_gate_scope",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "gate_id"],
+            [
+                "runtime_identity_gates.org_id",
+                "runtime_identity_gates.project_id",
+                "runtime_identity_gates.environment_id",
+                "runtime_identity_gates.id",
+            ],
+            name="fk_runtime_reports_gate_scope",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        ForeignKeyConstraint(
+            [
+                "org_id",
+                "project_id",
+                "environment_id",
+                "identity_id",
+                "credential_generation",
+                "credential_id",
+            ],
+            [
+                "runtime_credential_generations.org_id",
+                "runtime_credential_generations.project_id",
+                "runtime_credential_generations.environment_id",
+                "runtime_credential_generations.identity_id",
+                "runtime_credential_generations.generation",
+                "runtime_credential_generations.id",
+            ],
+            name="fk_runtime_reports_credential_scope_generation_id",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "policy_version_id"],
+            [
+                "policy_versions.org_id",
+                "policy_versions.project_id",
+                "policy_versions.environment_id",
+                "policy_versions.id",
+            ],
+            name="fk_runtime_reports_policy_version",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "receipt_id"],
+            [
+                "managed_decision_receipts.org_id",
+                "managed_decision_receipts.project_id",
+                "managed_decision_receipts.environment_id",
+                "managed_decision_receipts.receipt_id",
+            ],
+            name="fk_runtime_reports_receipt_scope",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "gate_id",
+            "identity_id",
+            "kind",
+            "id",
+            name="uq_runtime_reports_scope_gate_identity_id",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "identity_id",
+            "sequence",
+            name="uq_runtime_reports_identity_sequence",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "identity_id",
+            "sequence",
+            "id",
+            name="uq_runtime_reports_identity_sequence_id",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "identity_id",
+            "kind",
+            "sequence",
+            "id",
+            name="uq_runtime_reports_identity_kind_sequence_id",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "identity_id",
+            "kind",
+            "id",
+            name="uq_runtime_reports_identity_kind_id",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "identity_id",
+            "nonce",
+            name="uq_runtime_reports_identity_nonce",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "receipt_id",
+            name="uq_runtime_reports_scope_receipt",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        CheckConstraint("kind IN ('status', 'wiring')", name="ck_runtime_reports_kind"),
+        CheckConstraint(
+            "sequence >= 1 AND sequence <= 9007199254740991",
+            name="ck_runtime_reports_sequence_positive",
+        ),
+        CheckConstraint("expires_at > observed_at", name="ck_runtime_reports_expiry_order"),
+        CheckConstraint(
+            "policy_issued_at <= policy_revocation_checked_at AND "
+            "policy_revocation_checked_at <= policy_fresh_until AND "
+            "policy_fresh_until <= policy_expires_at",
+            name="ck_runtime_reports_policy_time_order",
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    gate_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor: Mapped[str] = mapped_column(String(240), nullable=False)
+    identity_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    credential_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    credential_generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    workload_key_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    public_key_thumbprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_version_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_head_generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    policy_content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    runtime_build_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    configuration_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_provenance_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    policy_revocation_checked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    policy_fresh_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    policy_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    nonce: Mapped[str] = mapped_column(String(128), nullable=False)
+    report_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    projection_commitment: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_projection: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    request_signature: Mapped[str] = mapped_column(Text, nullable=False)
+    receipt_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RuntimeReportHead(Base):
+    """Locked monotonic anchor for one runtime identity's accepted report chain."""
+
+    __tablename__ = "runtime_report_heads"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id"],
+            ["organizations.id"],
+            name="fk_runtime_report_heads_organization",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "identity_id"],
+            [
+                "runtime_identities.org_id",
+                "runtime_identities.project_id",
+                "runtime_identities.environment_id",
+                "runtime_identities.id",
+            ],
+            name="fk_runtime_report_heads_identity_scope",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        ForeignKeyConstraint(
+            [
+                "org_id",
+                "project_id",
+                "environment_id",
+                "identity_id",
+                "last_sequence",
+                "latest_report_id",
+            ],
+            [
+                "runtime_reports.org_id",
+                "runtime_reports.project_id",
+                "runtime_reports.environment_id",
+                "runtime_reports.identity_id",
+                "runtime_reports.sequence",
+                "runtime_reports.id",
+            ],
+            name="fk_runtime_report_heads_latest_report",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        ForeignKeyConstraint(
+            [
+                "org_id",
+                "project_id",
+                "environment_id",
+                "identity_id",
+                "latest_wiring_kind",
+                "latest_wiring_sequence",
+                "latest_wiring_report_id",
+            ],
+            [
+                "runtime_reports.org_id",
+                "runtime_reports.project_id",
+                "runtime_reports.environment_id",
+                "runtime_reports.identity_id",
+                "runtime_reports.kind",
+                "runtime_reports.sequence",
+                "runtime_reports.id",
+            ],
+            name="fk_runtime_report_heads_latest_wiring_report",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        CheckConstraint(
+            "last_sequence >= 1 AND last_sequence <= 9007199254740991",
+            name="ck_runtime_report_heads_sequence_positive",
+        ),
+        CheckConstraint(
+            "history_count = last_sequence",
+            name="ck_runtime_report_heads_history_count",
+        ),
+        CheckConstraint(
+            "latest_wiring_sequence IS NULL OR "
+            "(latest_wiring_sequence >= 1 AND latest_wiring_sequence <= 9007199254740991)",
+            name="ck_runtime_report_heads_wiring_sequence_bounds",
+        ),
+        CheckConstraint(
+            "latest_wiring_sequence IS NULL OR latest_wiring_sequence <= last_sequence",
+            name="ck_runtime_report_heads_wiring_sequence_order",
+        ),
+        CheckConstraint(
+            "(latest_wiring_report_id IS NULL AND latest_wiring_kind IS NULL "
+            "AND latest_wiring_sequence IS NULL AND latest_wiring_report_hash IS NULL "
+            "AND latest_wiring_projection_commitment IS NULL) OR "
+            "(latest_wiring_report_id IS NOT NULL AND latest_wiring_kind = 'wiring' "
+            "AND latest_wiring_sequence IS NOT NULL AND latest_wiring_report_hash IS NOT NULL "
+            "AND latest_wiring_projection_commitment IS NOT NULL)",
+            name="ck_runtime_report_heads_wiring_tuple",
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    identity_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    last_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    latest_report_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    latest_report_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    latest_projection_commitment: Mapped[str] = mapped_column(String(64), nullable=False)
+    history_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    history_accumulator: Mapped[str] = mapped_column(String(64), nullable=False)
+    latest_wiring_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    latest_wiring_sequence: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    latest_wiring_report_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    latest_wiring_report_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    latest_wiring_projection_commitment: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class RuntimeWiringChallengeConsumption(Base):
+    """Receipt-bound one-time challenge lineage for an accepted wiring report."""
+
+    __tablename__ = "runtime_wiring_challenge_consumptions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            [
+                "org_id",
+                "project_id",
+                "environment_id",
+                "identity_id",
+                "report_kind",
+                "sequence",
+                "report_id",
+            ],
+            [
+                "runtime_reports.org_id",
+                "runtime_reports.project_id",
+                "runtime_reports.environment_id",
+                "runtime_reports.identity_id",
+                "runtime_reports.kind",
+                "runtime_reports.sequence",
+                "runtime_reports.id",
+            ],
+            name="fk_runtime_wiring_challenge_report_scope",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "receipt_id"],
+            [
+                "managed_decision_receipts.org_id",
+                "managed_decision_receipts.project_id",
+                "managed_decision_receipts.environment_id",
+                "managed_decision_receipts.receipt_id",
+            ],
+            name="fk_runtime_wiring_challenge_receipt_scope",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "identity_id",
+            "challenge_nonce",
+            name="uq_runtime_wiring_challenge_identity_nonce",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "report_id",
+            name="uq_runtime_wiring_challenge_report",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        CheckConstraint("report_kind = 'wiring'", name="ck_runtime_wiring_challenge_kind"),
+        CheckConstraint(
+            "sequence >= 1 AND sequence <= 9007199254740991",
+            name="ck_runtime_wiring_challenge_sequence_bounds",
+        ),
+        CheckConstraint(
+            "expected_sequence >= 1 AND expected_sequence <= 9007199254740991",
+            name="ck_runtime_wiring_challenge_expected_sequence_bounds",
+        ),
+        CheckConstraint(
+            "expected_sequence = sequence",
+            name="ck_runtime_wiring_challenge_expected_sequence_binding",
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    identity_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    credential_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    credential_generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    expected_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    report_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="wiring")
+    report_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    receipt_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    challenge_nonce: Mapped[str] = mapped_column(String(128), nullable=False)
+    namespace_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    projection_commitment: Mapped[str] = mapped_column(String(64), nullable=False)
+    consumed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class RuntimeWiringAttestation(Base):
+    """Immutable full wiring artifact retained only for an accepted wiring report."""
+
+    __tablename__ = "runtime_wiring_attestations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            [
+                "org_id",
+                "project_id",
+                "environment_id",
+                "gate_id",
+                "identity_id",
+                "report_kind",
+                "report_id",
+            ],
+            [
+                "runtime_reports.org_id",
+                "runtime_reports.project_id",
+                "runtime_reports.environment_id",
+                "runtime_reports.gate_id",
+                "runtime_reports.identity_id",
+                "runtime_reports.kind",
+                "runtime_reports.id",
+            ],
+            name="fk_runtime_wiring_attestations_report_scope",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "attestation_hash",
+            name="uq_runtime_wiring_attestations_attestation_hash",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "report_id",
+            name="uq_runtime_wiring_attestations_report",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        CheckConstraint(
+            "assurance_class = 'observed'",
+            name="ck_runtime_wiring_attestations_assurance",
+        ),
+        Index(
+            "ix_runtime_wiring_attestations_scope_identity",
+            "org_id",
+            "project_id",
+            "environment_id",
+            "identity_id",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        CheckConstraint(
+            "evidence_kind = 'in_process_public_surface_conformance'",
+            name="ck_runtime_wiring_attestations_evidence_kind",
+        ),
+        CheckConstraint(
+            "report_kind = 'wiring'",
+            name="ck_runtime_wiring_attestations_report_kind",
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    gate_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    identity_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    report_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="wiring")
+    report_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    attestation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    assurance_class: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence_kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    suite_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    suite_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    artifact: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

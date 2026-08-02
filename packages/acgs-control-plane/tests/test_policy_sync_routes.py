@@ -292,6 +292,7 @@ def test_policy_sync_refuses_outer_signer_not_matching_active_sql_trust(
         attestation_issuer=mismatched_issuer,
         policy_registry_issuer=local_policy_registry_issuer(),
         receipt_sealer=local_policy_registry_receipt_sealer(),
+        descriptor_signer=runtime_descriptor_signer,
     )
 
     response = _signed_get(client, seeded)
@@ -403,6 +404,7 @@ def test_policy_sync_refuses_same_physical_publisher_key_under_alias(
         attestation_issuer=alias_issuer,
         policy_registry_issuer=publisher,
         receipt_sealer=local_policy_registry_receipt_sealer(),
+        descriptor_signer=runtime_descriptor_signer,
     )
     before = _read_path_counts(app, org["org_id"])
 
@@ -436,6 +438,7 @@ def test_compromised_publisher_cannot_sign_policy_sync_attestation(
         attestation_issuer=compromised,
         policy_registry_issuer=compromised,
         receipt_sealer=local_policy_registry_receipt_sealer(),
+        descriptor_signer=runtime_descriptor_signer,
     )
     before = _read_path_counts(app, org["org_id"])
 
@@ -478,6 +481,7 @@ def test_policy_sync_attestation_rotation_changes_cursor_and_invalidates_304(
         attestation_issuer=rotated_issuer,
         policy_registry_issuer=local_policy_registry_issuer(),
         receipt_sealer=local_policy_registry_receipt_sealer(),
+        descriptor_signer=runtime_descriptor_signer,
     )
 
     response = _signed_get(client, seeded, query=f"cursor={first_payload['cursor']}")
@@ -506,8 +510,8 @@ def test_policy_sync_refuses_invalid_validity_credential_and_trust_state(
         assert credential is not None
         credential.not_after = utcnow() + timedelta(seconds=30)
     response = _signed_get(client, boundary)
-    assert response.status_code == 503
-    assert response.json()["code"] == "POLICY_SNAPSHOT_STALE"
+    assert response.status_code == 401
+    assert response.json()["code"] == "RUNTIME_AUTHENTICATION_FAILED"
 
     attestation_boundary = _seed_runtime_policy_sync(
         client, org, runtime_descriptor_signer, scope_suffix="attestation-boundary"

@@ -31,6 +31,7 @@ class Permission(enum.StrEnum):
     APPROVAL_RESUME = "approval.resume"
     RUNTIME_ENROLLMENT_MANAGE = "runtime-enrollment.manage"
     RUNTIME_IDENTITY_REVOKE = "runtime-identity.revoke"
+    RUNTIME_FLEET_READ = "runtime-fleet.read"
     POLICY_PUBLISH = "policy.publish"
     POLICY_ACTIVATE = "policy.activate"
     POLICY_READ = "policy.read"
@@ -54,6 +55,7 @@ PERMISSIONS: dict[Permission, frozenset[Role]] = {
     Permission.APPROVAL_RESUME: frozenset({Role.ORG_ADMIN}),
     Permission.RUNTIME_ENROLLMENT_MANAGE: frozenset({Role.ORG_ADMIN, Role.AGENT_OPERATOR}),
     Permission.RUNTIME_IDENTITY_REVOKE: frozenset({Role.ORG_ADMIN}),
+    Permission.RUNTIME_FLEET_READ: frozenset({Role.ORG_ADMIN, Role.AGENT_OPERATOR, Role.AUDITOR}),
     Permission.POLICY_PUBLISH: frozenset({Role.ORG_ADMIN, Role.POLICY_AUTHOR}),
     Permission.POLICY_ACTIVATE: frozenset({Role.ORG_ADMIN}),
     Permission.POLICY_READ: _ALL,

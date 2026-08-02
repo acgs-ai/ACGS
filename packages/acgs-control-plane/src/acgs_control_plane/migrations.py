@@ -34,6 +34,12 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from acgs_control_plane import models as _models  # noqa: F401  # load Base metadata
 from acgs_control_plane.db import make_engine
+from acgs_control_plane.runtime_lineage_schema import (
+    POSTGRES_RUNTIME_LINEAGE_FUNCTIONS,
+    POSTGRES_RUNTIME_LINEAGE_TRIGGER_ENABLED_STATES,
+    POSTGRES_RUNTIME_LINEAGE_TRIGGERS,
+    SQLITE_RUNTIME_LINEAGE_OBJECTS,
+)
 
 LEGACY_V0_REVISION: Final = "0001"
 SCOPED_REVISION: Final = "0002"
@@ -46,7 +52,8 @@ POLICY_REGISTRY_REVISION: Final = "0008"
 APPROVAL_SUBSTRATE_REVISION: Final = "0009"
 APPROVAL_VOTE_BINDING_REVISION: Final = "0010"
 RUNTIME_ENROLLMENT_REVISION: Final = "0011"
-HEAD_REVISION: Final = RUNTIME_ENROLLMENT_REVISION
+RUNTIME_REPORTS_REVISION: Final = "0012"
+HEAD_REVISION: Final = RUNTIME_REPORTS_REVISION
 _VERSION_TABLE = "alembic_version"
 _ALEMBIC_VERSION_TABLE: Final = sa.table(_VERSION_TABLE, sa.column("version_num"))
 _SCOPE_TABLES: Final = MappingProxyType(
@@ -91,6 +98,7 @@ class DatabaseSchemaState(StrEnum):
     VERSION_0009 = "version_0009"
     VERSION_0010 = "version_0010"
     VERSION_0011 = "version_0011"
+    VERSION_0012 = "version_0012"
     UNKNOWN = "unknown"
 
 
@@ -115,7 +123,7 @@ class StartupSchemaPreflightError(RuntimeError):
     def __init__(self, preflight: SchemaPreflight) -> None:
         self.schema_state = preflight.state
         super().__init__(
-            f"{self.code}: expected {DatabaseSchemaState.VERSION_0011.value}; "
+            f"{self.code}: expected {DatabaseSchemaState.VERSION_0012.value}; "
             f"found {preflight.state.value}. Run the acgs-control-plane migration CLI."
         )
 
@@ -815,6 +823,99 @@ _RUNTIME_ENROLLMENT_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("created_at", "datetime", False),
     ),
 }
+_RUNTIME_REPORTS_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_RUNTIME_ENROLLMENT_COLUMNS,
+    "runtime_reports": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("gate_id", "string", False, 64),
+        _ColumnSpec("actor", "string", False, 240),
+        _ColumnSpec("identity_id", "string", False, 64),
+        _ColumnSpec("credential_id", "string", False, 64),
+        _ColumnSpec("credential_generation", "integer", False),
+        _ColumnSpec("workload_key_id", "string", False, 128),
+        _ColumnSpec("public_key_thumbprint", "string", False, 64),
+        _ColumnSpec("policy_version_id", "string", False, 64),
+        _ColumnSpec("policy_head_generation", "integer", False),
+        _ColumnSpec("policy_content_hash", "string", False, 64),
+        _ColumnSpec("runtime_build_digest", "string", False, 64),
+        _ColumnSpec("configuration_digest", "string", False, 64),
+        _ColumnSpec("policy_snapshot_hash", "string", False, 64),
+        _ColumnSpec("policy_provenance_hash", "string", False, 64),
+        _ColumnSpec("policy_issued_at", "datetime", False),
+        _ColumnSpec("policy_revocation_checked_at", "datetime", False),
+        _ColumnSpec("policy_fresh_until", "datetime", False),
+        _ColumnSpec("policy_expires_at", "datetime", False),
+        _ColumnSpec("kind", "string", False, 16),
+        _ColumnSpec("sequence", "big_integer", False),
+        _ColumnSpec("nonce", "string", False, 128),
+        _ColumnSpec("report_hash", "string", False, 64),
+        _ColumnSpec("projection_commitment", "string", False, 64),
+        _ColumnSpec("request_projection", "json", False),
+        _ColumnSpec("request_signature", "text", False),
+        _ColumnSpec("receipt_id", "string", False, 200),
+        _ColumnSpec("observed_at", "datetime", False),
+        _ColumnSpec("expires_at", "datetime", False),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+    "runtime_report_heads": (
+        _ColumnSpec("identity_id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("last_sequence", "big_integer", False),
+        _ColumnSpec("latest_report_id", "string", False, 64),
+        _ColumnSpec("latest_report_hash", "string", False, 64),
+        _ColumnSpec("latest_projection_commitment", "string", False, 64),
+        _ColumnSpec("history_count", "big_integer", False),
+        _ColumnSpec("history_accumulator", "string", False, 64),
+        _ColumnSpec("latest_wiring_kind", "string", True, 16),
+        _ColumnSpec("latest_wiring_sequence", "big_integer", True),
+        _ColumnSpec("latest_wiring_report_id", "string", True, 64),
+        _ColumnSpec("latest_wiring_report_hash", "string", True, 64),
+        _ColumnSpec("latest_wiring_projection_commitment", "string", True, 64),
+        _ColumnSpec("updated_at", "datetime", False),
+    ),
+    "runtime_wiring_challenge_consumptions": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("identity_id", "string", False, 64),
+        _ColumnSpec("credential_id", "string", False, 64),
+        _ColumnSpec("credential_generation", "integer", False),
+        _ColumnSpec("sequence", "big_integer", False),
+        _ColumnSpec("expected_sequence", "big_integer", False),
+        _ColumnSpec("report_kind", "string", False, 16),
+        _ColumnSpec("report_id", "string", False, 64),
+        _ColumnSpec("receipt_id", "string", False, 200),
+        _ColumnSpec("challenge_nonce", "string", False, 128),
+        _ColumnSpec("namespace_digest", "string", False, 64),
+        _ColumnSpec("request_hash", "string", False, 64),
+        _ColumnSpec("idempotency_key_hash", "string", False, 64),
+        _ColumnSpec("projection_commitment", "string", False, 64),
+        _ColumnSpec("consumed_at", "datetime", False),
+    ),
+    "runtime_wiring_attestations": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("gate_id", "string", False, 64),
+        _ColumnSpec("identity_id", "string", False, 64),
+        _ColumnSpec("report_kind", "string", False, 16),
+        _ColumnSpec("report_id", "string", False, 64),
+        _ColumnSpec("attestation_hash", "string", False, 64),
+        _ColumnSpec("assurance_class", "string", False, 64),
+        _ColumnSpec("evidence_kind", "string", False, 64),
+        _ColumnSpec("suite_id", "string", False, 128),
+        _ColumnSpec("suite_hash", "string", False, 64),
+        _ColumnSpec("artifact", "json", False),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+}
 _PROJECTS_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
     **_LEGACY_COLUMNS,
     "projects": _SCOPED_COLUMNS["projects"],
@@ -879,6 +980,13 @@ _RUNTIME_ENROLLMENT_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     "runtime_enrollment_idempotency": ("id",),
     "runtime_request_nonces": ("id",),
     "runtime_operation_idempotency": ("id",),
+}
+_RUNTIME_REPORTS_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
+    **_RUNTIME_ENROLLMENT_PRIMARY_KEYS,
+    "runtime_reports": ("id",),
+    "runtime_wiring_attestations": ("id",),
+    "runtime_report_heads": ("identity_id",),
+    "runtime_wiring_challenge_consumptions": ("id",),
 }
 _PROJECTS_ONLY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     table_name: ("id",) for table_name in _PROJECTS_ONLY_COLUMNS
@@ -984,6 +1092,10 @@ _DEFERRABLE_MANAGED_MUTATION_FK_TABLES: Final = frozenset(
         "runtime_enrollment_idempotency",
         "runtime_request_nonces",
         "runtime_operation_idempotency",
+        "runtime_reports",
+        "runtime_report_heads",
+        "runtime_wiring_challenge_consumptions",
+        "runtime_wiring_attestations",
     }
 )
 _TRUST_SCOPE_FK: Final[_ForeignKeySpec] = (
@@ -1267,6 +1379,154 @@ _RUNTIME_ENROLLMENT_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] =
         {(("org_id",), None, "organizations", ("id",)), _RUNTIME_RECEIPT_SCOPE_FK}
     ),
 }
+_RUNTIME_REPORTS_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
+    **_RUNTIME_ENROLLMENT_FOREIGN_KEYS,
+    "runtime_reports": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            _RUNTIME_GATE_SCOPE_FK,
+            (
+                ("org_id", "project_id", "environment_id", "gate_id", "identity_id"),
+                None,
+                "runtime_identities",
+                ("org_id", "project_id", "environment_id", "gate_id", "id"),
+            ),
+            (
+                (
+                    "org_id",
+                    "project_id",
+                    "environment_id",
+                    "identity_id",
+                    "credential_generation",
+                    "credential_id",
+                ),
+                None,
+                "runtime_credential_generations",
+                (
+                    "org_id",
+                    "project_id",
+                    "environment_id",
+                    "identity_id",
+                    "generation",
+                    "id",
+                ),
+            ),
+            (
+                ("org_id", "project_id", "environment_id", "policy_version_id"),
+                None,
+                "policy_versions",
+                ("org_id", "project_id", "environment_id", "id"),
+            ),
+            _RUNTIME_RECEIPT_SCOPE_FK,
+        }
+    ),
+    "runtime_wiring_attestations": frozenset(
+        {
+            (
+                (
+                    "org_id",
+                    "project_id",
+                    "environment_id",
+                    "gate_id",
+                    "identity_id",
+                    "report_kind",
+                    "report_id",
+                ),
+                None,
+                "runtime_reports",
+                (
+                    "org_id",
+                    "project_id",
+                    "environment_id",
+                    "gate_id",
+                    "identity_id",
+                    "kind",
+                    "id",
+                ),
+            )
+        }
+    ),
+    "runtime_report_heads": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            (
+                ("org_id", "project_id", "environment_id", "identity_id"),
+                None,
+                "runtime_identities",
+                ("org_id", "project_id", "environment_id", "id"),
+            ),
+            (
+                (
+                    "org_id",
+                    "project_id",
+                    "environment_id",
+                    "identity_id",
+                    "last_sequence",
+                    "latest_report_id",
+                ),
+                None,
+                "runtime_reports",
+                (
+                    "org_id",
+                    "project_id",
+                    "environment_id",
+                    "identity_id",
+                    "sequence",
+                    "id",
+                ),
+            ),
+            (
+                (
+                    "org_id",
+                    "project_id",
+                    "environment_id",
+                    "identity_id",
+                    "latest_wiring_kind",
+                    "latest_wiring_sequence",
+                    "latest_wiring_report_id",
+                ),
+                None,
+                "runtime_reports",
+                (
+                    "org_id",
+                    "project_id",
+                    "environment_id",
+                    "identity_id",
+                    "kind",
+                    "sequence",
+                    "id",
+                ),
+            ),
+        }
+    ),
+    "runtime_wiring_challenge_consumptions": frozenset(
+        {
+            (
+                (
+                    "org_id",
+                    "project_id",
+                    "environment_id",
+                    "identity_id",
+                    "report_kind",
+                    "sequence",
+                    "report_id",
+                ),
+                None,
+                "runtime_reports",
+                (
+                    "org_id",
+                    "project_id",
+                    "environment_id",
+                    "identity_id",
+                    "kind",
+                    "sequence",
+                    "id",
+                ),
+            ),
+            _RUNTIME_RECEIPT_SCOPE_FK,
+        }
+    ),
+}
 _PROJECTS_ONLY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     **_LEGACY_FOREIGN_KEYS,
     "projects": _SCOPED_FOREIGN_KEYS["projects"],
@@ -1530,6 +1790,68 @@ _RUNTIME_ENROLLMENT_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
         }
     ),
 }
+_RUNTIME_REPORTS_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_RUNTIME_ENROLLMENT_UNIQUES,
+    "runtime_identities": _RUNTIME_ENROLLMENT_UNIQUES["runtime_identities"]
+    | frozenset({("org_id", "project_id", "environment_id", "gate_id", "id")}),
+    "runtime_credential_generations": _RUNTIME_ENROLLMENT_UNIQUES["runtime_credential_generations"]
+    | frozenset({("org_id", "project_id", "environment_id", "identity_id", "generation", "id")}),
+    "runtime_reports": frozenset(
+        {
+            (
+                "org_id",
+                "project_id",
+                "environment_id",
+                "gate_id",
+                "identity_id",
+                "kind",
+                "id",
+            ),
+            ("org_id", "project_id", "environment_id", "receipt_id"),
+            ("org_id", "project_id", "environment_id", "identity_id", "sequence"),
+            (
+                "org_id",
+                "project_id",
+                "environment_id",
+                "identity_id",
+                "sequence",
+                "id",
+            ),
+            (
+                "org_id",
+                "project_id",
+                "environment_id",
+                "identity_id",
+                "kind",
+                "sequence",
+                "id",
+            ),
+            (
+                "org_id",
+                "project_id",
+                "environment_id",
+                "identity_id",
+                "kind",
+                "id",
+            ),
+            ("org_id", "project_id", "environment_id", "identity_id", "nonce"),
+        }
+    ),
+    "runtime_wiring_attestations": frozenset({("report_id",), ("attestation_hash",)}),
+    "runtime_report_heads": frozenset(),
+    "runtime_wiring_challenge_consumptions": frozenset(
+        {
+            ("report_id",),
+            (
+                "org_id",
+                "project_id",
+                "environment_id",
+                "identity_id",
+                "challenge_nonce",
+            ),
+        }
+    ),
+}
 _TRUST_V2_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
     **{table_name: frozenset() for table_name in _TRUST_V2_COLUMNS},
     "managed_trust_keys": frozenset(
@@ -1613,6 +1935,13 @@ _RUNTIME_ENROLLMENT_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]
     "runtime_request_nonces": frozenset(),
     "runtime_operation_idempotency": frozenset(),
 }
+_RUNTIME_REPORTS_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
+    **_RUNTIME_ENROLLMENT_UNIQUE_INDEXES,
+    "runtime_reports": frozenset(),
+    "runtime_wiring_attestations": frozenset(),
+    "runtime_report_heads": frozenset(),
+    "runtime_wiring_challenge_consumptions": frozenset(),
+}
 _PROJECTS_ONLY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
     "projects": _SCOPED_UNIQUES["projects"],
@@ -1688,6 +2017,15 @@ _RUNTIME_ENROLLMENT_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...
     "runtime_enrollment_idempotency": frozenset({("org_id",)}),
     "runtime_request_nonces": frozenset({("org_id",)}),
     "runtime_operation_idempotency": frozenset({("org_id",)}),
+}
+_RUNTIME_REPORTS_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_RUNTIME_ENROLLMENT_NON_UNIQUE_INDEXES,
+    "runtime_reports": frozenset({("org_id",)}),
+    "runtime_wiring_attestations": frozenset(
+        {("org_id", "project_id", "environment_id", "identity_id")}
+    ),
+    "runtime_report_heads": frozenset({("org_id",)}),
+    "runtime_wiring_challenge_consumptions": frozenset({("org_id",)}),
 }
 _MANAGED_MUTATION_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
     **{table_name: frozenset() for table_name in _SCOPED_COLUMNS},
@@ -1851,6 +2189,83 @@ _RUNTIME_ENROLLMENT_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
     "runtime_enrollment_idempotency": frozenset(),
     "runtime_request_nonces": frozenset(),
     "runtime_operation_idempotency": frozenset(),
+}
+_RUNTIME_REPORTS_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
+    **_RUNTIME_ENROLLMENT_CHECKS,
+    "runtime_reports": frozenset(
+        {
+            ("ck_runtime_reports_kind", "kind IN ('status', 'wiring')"),
+            (
+                "ck_runtime_reports_sequence_positive",
+                "sequence >= 1 AND sequence <= 9007199254740991",
+            ),
+            ("ck_runtime_reports_expiry_order", "expires_at > observed_at"),
+            (
+                "ck_runtime_reports_policy_time_order",
+                "policy_issued_at <= policy_revocation_checked_at AND "
+                "policy_revocation_checked_at <= policy_fresh_until AND "
+                "policy_fresh_until <= policy_expires_at",
+            ),
+        }
+    ),
+    "runtime_wiring_attestations": frozenset(
+        {
+            ("ck_runtime_wiring_attestations_assurance", "assurance_class = 'observed'"),
+            (
+                "ck_runtime_wiring_attestations_evidence_kind",
+                "evidence_kind = 'in_process_public_surface_conformance'",
+            ),
+            ("ck_runtime_wiring_attestations_report_kind", "report_kind = 'wiring'"),
+        }
+    ),
+    "runtime_report_heads": frozenset(
+        {
+            (
+                "ck_runtime_report_heads_sequence_positive",
+                "last_sequence >= 1 AND last_sequence <= 9007199254740991",
+            ),
+            (
+                "ck_runtime_report_heads_history_count",
+                "history_count = last_sequence",
+            ),
+            (
+                "ck_runtime_report_heads_wiring_sequence_bounds",
+                "latest_wiring_sequence IS NULL OR "
+                "(latest_wiring_sequence >= 1 AND "
+                "latest_wiring_sequence <= 9007199254740991)",
+            ),
+            (
+                "ck_runtime_report_heads_wiring_sequence_order",
+                "latest_wiring_sequence IS NULL OR latest_wiring_sequence <= last_sequence",
+            ),
+            (
+                "ck_runtime_report_heads_wiring_tuple",
+                "(latest_wiring_report_id IS NULL AND latest_wiring_kind IS NULL "
+                "AND latest_wiring_sequence IS NULL AND latest_wiring_report_hash IS NULL "
+                "AND latest_wiring_projection_commitment IS NULL) OR "
+                "(latest_wiring_report_id IS NOT NULL AND latest_wiring_kind = 'wiring' "
+                "AND latest_wiring_sequence IS NOT NULL AND latest_wiring_report_hash IS NOT NULL "
+                "AND latest_wiring_projection_commitment IS NOT NULL)",
+            ),
+        }
+    ),
+    "runtime_wiring_challenge_consumptions": frozenset(
+        {
+            ("ck_runtime_wiring_challenge_kind", "report_kind = 'wiring'"),
+            (
+                "ck_runtime_wiring_challenge_sequence_bounds",
+                "sequence >= 1 AND sequence <= 9007199254740991",
+            ),
+            (
+                "ck_runtime_wiring_challenge_expected_sequence_bounds",
+                "expected_sequence >= 1 AND expected_sequence <= 9007199254740991",
+            ),
+            (
+                "ck_runtime_wiring_challenge_expected_sequence_binding",
+                "expected_sequence = sequence",
+            ),
+        }
+    ),
 }
 _PROJECTS_ONLY_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_NON_UNIQUE_INDEXES,
@@ -2140,7 +2555,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0010, "known Alembic revision 0010")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
-    if versions == [HEAD_REVISION]:
+    if versions == [RUNTIME_ENROLLMENT_REVISION]:
         detail = _schema_detail(
             inspector,
             user_tables,
@@ -2154,6 +2569,23 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         )
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0011, "known Alembic revision 0011")
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
+    if versions == [HEAD_REVISION]:
+        detail = _schema_detail(
+            inspector,
+            user_tables,
+            _RUNTIME_REPORTS_COLUMNS,
+            _RUNTIME_REPORTS_PRIMARY_KEYS,
+            _RUNTIME_REPORTS_FOREIGN_KEYS,
+            _RUNTIME_REPORTS_UNIQUES,
+            _RUNTIME_REPORTS_NON_UNIQUE_INDEXES,
+            _RUNTIME_REPORTS_CHECKS,
+            _RUNTIME_REPORTS_UNIQUE_INDEXES,
+        )
+        if detail is None:
+            detail = _runtime_lineage_object_detail(connection)
+        if detail is None:
+            return SchemaPreflight(DatabaseSchemaState.VERSION_0012, "known Alembic revision 0012")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
 
     return SchemaPreflight(
@@ -2169,7 +2601,7 @@ def assert_current_startup_schema(connection: Connection) -> SchemaPreflight:
     stamps, upgrades, creates, repairs, or otherwise mutates schema or data.
     """
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0011:
+    if preflight.state is not DatabaseSchemaState.VERSION_0012:
         raise StartupSchemaPreflightError(preflight)
     return preflight
 
@@ -2272,7 +2704,7 @@ def _upgrade_database_with_independent_connections(database_url: str) -> Migrati
             lambda: command.upgrade(config, "head"),
         )
     after = inspect_schema(database_url)
-    if after.state is not DatabaseSchemaState.VERSION_0011:
+    if after.state is not DatabaseSchemaState.VERSION_0012:
         msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
         raise MigrationPreflightError(msg)
     return MigrationResult(before=before, after=after)
@@ -2334,7 +2766,7 @@ def _upgrade_postgresql_database(
                         )
 
                     after = inspect_connection(connection)
-                    if after.state is not DatabaseSchemaState.VERSION_0011:
+                    if after.state is not DatabaseSchemaState.VERSION_0012:
                         msg = (
                             "Migration ended in unexpected schema state: "
                             f"{after.state} ({after.detail})"
@@ -2769,16 +3201,151 @@ def _non_table_object_detail(connection: Connection) -> str | None:
         ("trigger", "environment_policy_heads_monotonic_update"),
         ("trigger", "policy_versions_immutable_delete"),
         ("trigger", "policy_versions_immutable_update"),
+        ("trigger", "runtime_report_heads_monotonic_delete"),
+        ("trigger", "runtime_report_heads_monotonic_update"),
+        ("trigger", "runtime_reports_immutable_delete"),
+        ("trigger", "runtime_reports_immutable_update"),
+        ("trigger", "runtime_wiring_attestations_immutable_delete"),
+        ("trigger", "runtime_wiring_attestations_immutable_update"),
         ("trigger", "public.environment_policy_heads.environment_policy_heads_monotonic_update"),
         ("trigger", "public.policy_versions.policy_versions_immutable_delete"),
         ("trigger", "public.policy_versions.policy_versions_immutable_update"),
+        (
+            "trigger",
+            "public.runtime_report_heads.runtime_report_heads_monotonic_delete",
+        ),
+        (
+            "trigger",
+            "public.runtime_report_heads.runtime_report_heads_monotonic_update",
+        ),
+        ("trigger", "public.runtime_reports.runtime_reports_immutable_delete"),
+        ("trigger", "public.runtime_reports.runtime_reports_immutable_update"),
+        (
+            "trigger",
+            "public.runtime_wiring_attestations.runtime_wiring_attestations_immutable_delete",
+        ),
+        (
+            "trigger",
+            "public.runtime_wiring_attestations.runtime_wiring_attestations_immutable_update",
+        ),
         ("function", "public.acgs_environment_policy_heads_monotonic()"),
         ("function", "public.acgs_policy_versions_immutable()"),
+        ("function", "public.acgs_runtime_report_heads_monotonic()"),
+        ("function", "public.acgs_runtime_reports_immutable()"),
+        ("function", "public.acgs_runtime_wiring_attestations_immutable()"),
     }
     rows = [row for row in rows if (str(row[0]), str(row[1])) not in owned_objects]
     if rows:
         objects = ", ".join(f"{row[0]}:{row[1]}" for row in rows)
         return f"unexpected non-table schema objects: {objects}"
+    return None
+
+
+def _normalized_runtime_lineage_definition(value: object) -> str:
+    definition = str(value or "").lower().replace('"', "")
+    definition = definition.replace("public.", "")
+    definition = re.sub(r"\$[a-z_][a-z0-9_]*\$", "$$", definition)
+    return "".join(definition.split()).rstrip(";")
+
+
+def _runtime_lineage_object_detail(connection: Connection) -> str | None:
+    """Require the exact append-only lineage objects for revision 0012."""
+
+    dialect_name = connection.dialect.name
+    actual: dict[str, str | tuple[str, str]]
+    expected: dict[str, str | tuple[str, str]]
+    try:
+        if dialect_name == "sqlite":
+            rows = connection.execute(
+                sa.text(
+                    "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND name IN :names"
+                ).bindparams(
+                    sa.bindparam(
+                        "names",
+                        expanding=True,
+                        value=tuple(SQLITE_RUNTIME_LINEAGE_OBJECTS),
+                    )
+                )
+            ).all()
+            actual = {str(name): _normalized_runtime_lineage_definition(sql) for name, sql in rows}
+            expected = {
+                name: _normalized_runtime_lineage_definition(definition)
+                for name, definition in SQLITE_RUNTIME_LINEAGE_OBJECTS.items()
+            }
+        elif dialect_name == "postgresql":
+            trigger_rows = connection.execute(
+                sa.text(
+                    """
+                    SELECT t.tgname, pg_catalog.pg_get_triggerdef(t.oid, false), t.tgenabled
+                    FROM pg_catalog.pg_trigger AS t
+                    JOIN pg_catalog.pg_class AS c ON c.oid = t.tgrelid
+                    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                    WHERE NOT t.tgisinternal AND n.nspname = 'public'
+                      AND t.tgname IN :names
+                    """
+                ).bindparams(
+                    sa.bindparam(
+                        "names",
+                        expanding=True,
+                        value=tuple(POSTGRES_RUNTIME_LINEAGE_TRIGGERS),
+                    )
+                )
+            ).all()
+            function_rows = connection.execute(
+                sa.text(
+                    """
+                    SELECT p.proname, pg_catalog.pg_get_functiondef(p.oid)
+                    FROM pg_catalog.pg_proc AS p
+                    JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+                    WHERE n.nspname = 'public' AND p.pronargs = 0
+                      AND p.proname IN :names
+                    """
+                ).bindparams(
+                    sa.bindparam(
+                        "names",
+                        expanding=True,
+                        value=tuple(POSTGRES_RUNTIME_LINEAGE_FUNCTIONS),
+                    )
+                )
+            ).all()
+            actual = {
+                f"trigger:{name}": (
+                    _normalized_runtime_lineage_definition(definition),
+                    str(enabled_state),
+                )
+                for name, definition, enabled_state in trigger_rows
+            }
+            actual.update(
+                {
+                    f"function:{name}": _normalized_runtime_lineage_definition(definition)
+                    for name, definition in function_rows
+                }
+            )
+            expected = {
+                f"trigger:{name}": (
+                    _normalized_runtime_lineage_definition(definition),
+                    POSTGRES_RUNTIME_LINEAGE_TRIGGER_ENABLED_STATES[name],
+                )
+                for name, definition in POSTGRES_RUNTIME_LINEAGE_TRIGGERS.items()
+            }
+            expected.update(
+                {
+                    f"function:{name}": _normalized_runtime_lineage_definition(definition)
+                    for name, definition in POSTGRES_RUNTIME_LINEAGE_FUNCTIONS.items()
+                }
+            )
+        else:
+            return f"unsupported runtime lineage inspection dialect: {dialect_name}"
+    except SQLAlchemyError as exc:
+        return f"unable to inspect runtime lineage objects: {type(exc).__name__}"
+
+    if actual.keys() != expected.keys():
+        missing = sorted(expected.keys() - actual.keys())
+        unexpected = sorted(actual.keys() - expected.keys())
+        return f"runtime lineage objects missing={missing!r} unexpected={unexpected!r}"
+    drifted = sorted(name for name in expected if actual[name] != expected[name])
+    if drifted:
+        return f"runtime lineage object definitions drifted: {drifted!r}"
     return None
 
 
@@ -2794,10 +3361,12 @@ def _has_only_expected_foreign_key_options(
     table_name: str,
     foreign_key: Mapping[str, Any],
     dialect_name: str,
+    *,
+    require_deferred: bool,
 ) -> bool:
     options = foreign_key.get("options") or {}
     if not options:
-        return True
+        return not require_deferred
     if dialect_name not in {"postgresql", "sqlite"}:
         return False
     if table_name not in _DEFERRABLE_MANAGED_MUTATION_FK_TABLES:
@@ -2858,7 +3427,18 @@ def _schema_detail(
 
         foreign_keys = inspector.get_foreign_keys(table_name, schema=inspection_schema)
         if any(
-            not _has_only_expected_foreign_key_options(table_name, foreign_key, dialect_name)
+            not _has_only_expected_foreign_key_options(
+                table_name,
+                foreign_key,
+                dialect_name,
+                require_deferred=(
+                    table_name.startswith("runtime_")
+                    and (
+                        expected_foreign_keys is _RUNTIME_ENROLLMENT_FOREIGN_KEYS
+                        or expected_foreign_keys is _RUNTIME_REPORTS_FOREIGN_KEYS
+                    )
+                ),
+            )
             for foreign_key in foreign_keys
         ):
             return f"{table_name} has foreign-key options outside the frozen schema"
@@ -2936,7 +3516,7 @@ def _check_constraint_signature(value: object) -> str:
     raw = str(value or "").lower()
     compact = _normalized_constraint_sql(
         re.sub(
-            r"::(?:text|character\s+varying)(?:\[\])?",
+            r"::(?:text|character\s+varying|bigint|integer|numeric)(?:\[\])?",
             "",
             raw,
             flags=re.IGNORECASE,
@@ -2945,8 +3525,32 @@ def _check_constraint_signature(value: object) -> str:
     compact = compact.replace("(assurance_class)", "assurance_class")
     compact = compact.replace("(source_system)", "source_system")
     compact = compact.replace("(status)", "status")
+    compact = re.sub(r"'([0-9]+)'", r"\1", compact)
     compact = re.sub(r"\('([^']+)'\)", r"'\1'", compact)
     compact = _strip_outer_parentheses(compact)
+
+    head_wiring_compact = compact.replace("(", "").replace(")", "")
+    if head_wiring_compact == "sequence>=1andsequence<=9007199254740991":
+        return "sequence:ijson_bounds"
+    if head_wiring_compact == "last_sequence>=1andlast_sequence<=9007199254740991":
+        return "last_sequence:ijson_bounds"
+    if head_wiring_compact == (
+        "latest_wiring_sequenceisnullorlatest_wiring_sequence>=1and"
+        "latest_wiring_sequence<=9007199254740991"
+    ):
+        return "latest_wiring_sequence:null_or_ijson_bounds"
+    if head_wiring_compact == (
+        "latest_wiring_sequenceisnullorlatest_wiring_sequence<=last_sequence"
+    ):
+        return "latest_wiring_sequence:null_or_not_after_last"
+    if head_wiring_compact == (
+        "latest_wiring_report_idisnullandlatest_wiring_kindisnulland"
+        "latest_wiring_sequenceisnullandlatest_wiring_report_hashisnulland"
+        "latest_wiring_projection_commitmentisnullorlatest_wiring_report_idisnotnulland"
+        "latest_wiring_kind='wiring'andlatest_wiring_sequenceisnotnulland"
+        "latest_wiring_report_hashisnotnullandlatest_wiring_projection_commitmentisnotnull"
+    ):
+        return "runtime_report_head:wiring_tuple"
 
     if compact == "assurance_class='native'":
         return "assurance_class:native"
@@ -3013,6 +3617,11 @@ def _check_constraint_signature(value: object) -> str:
         "policy_outcome=any(array['allow','deny','escalate'])",
     }:
         return "policy_outcome:allow,deny,escalate"
+    if compact in {
+        "kindin('status','wiring')",
+        "kind=any(array['status','wiring'])",
+    }:
+        return "kind:status,wiring"
     if compact in {
         "decisionin('deny','escalate')",
         "decision=any(array['deny','escalate'])",
@@ -3541,6 +4150,12 @@ def _matches_type(
         )
     if expected.type_name == "integer":
         return isinstance(actual_type, sa.Integer) and not isinstance(actual_type, sa.Boolean)
+    if expected.type_name == "big_integer":
+        return (
+            dialect_name == "sqlite"
+            and isinstance(actual_type, sa.Integer)
+            and not isinstance(actual_type, sa.Boolean)
+        ) or (dialect_name == "postgresql" and isinstance(actual_type, sa.BigInteger))
     if expected.type_name == "binary":
         return isinstance(actual_type, sa.LargeBinary)
     if expected.type_name == "boolean":
