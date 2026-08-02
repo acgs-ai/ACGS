@@ -2291,6 +2291,28 @@ enumerated entries still passes. The host policy must therefore deny
      or pathological arguments that are ultimately denied and proving
      the governance path itself is bounded and other workloads retain
      dispatcher capacity.
+     Bounding active governance work bounds computation, not durable
+     evidence: every denied request still appends its durable audit
+     event, the active budget is released after each denial, and a
+     sustained stream of small individually denied requests stays
+     within the ingress and per-call budgets while the accumulated
+     audit bytes and filesystem objects grow without bound, eventually
+     exhausting the audit volume so unrelated governed requests can no
+     longer record their required evidence (and, because audit precedes
+     execution, fail closed into a denial of service). Durable audit
+     growth must therefore be governed by its own hierarchical
+     audit-event and audit-byte quotas, per-skill and per-actor totals
+     nesting under tenant-wide and execution-boundary-wide totals,
+     backed by authenticated rotation and checkpointing or a bounded
+     authenticated remote sink, with fail-closed backpressure applied
+     to the submitting scope when its quota is reached (never dropped
+     events and never execution without a recorded event), while events
+     still required by unexpired receipts are retained through their
+     receipts' retention obligations, with a many-small-denials
+     storage-exhaustion negative test driving a sustained stream of
+     small denied requests and proving audit storage stays within its
+     declared quotas while unrelated governed requests still record
+     their required evidence and execute.
      Admission by name is still
    not admission of code: the registry authenticates that a tool or alias is
    admitted, not which implementation the name resolves to, so an admitted MCP
@@ -2522,10 +2544,29 @@ enumerated entries still passes. The host policy must therefore deny
      per-invocation budgets nor isolated service capacity alone satisfies
      this requirement without the aggregate bound, with a concurrent
      many-handler-call exhaustion negative test proving many simultaneous
-     individually-within-budget handler invocations from one skill are
-     collectively bounded and other workloads' capacity is
-     preserved.
-      Containment bounds where a handler's effects land and what it
+      individually-within-budget handler invocations from one skill are
+      collectively bounded and other workloads' capacity is
+      preserved.
+      The enumerated budgets cover host CPU, memory, processes,
+      descriptors, storage, and I/O, not accelerators: on a GPU- or
+      accelerator-equipped execution host, an admitted handler or
+      allowed script can allocate all device memory or saturate
+      accelerator compute while remaining within every listed budget,
+      starving other experiments or production workloads even though
+      every exhaustion test above passes. Admission for shell and
+      handler workloads on accelerator-equipped hosts must therefore
+      also record and enforce accelerator budgets (device-memory
+      allocation and accelerator compute time or utilization), imposed
+      per invocation and as aggregate quotas scoped to the skill,
+      tenant, and execution boundary exactly like the host-resource
+      quotas above, with admission failing closed when the active
+      executor profile cannot enforce or isolate accelerator
+      consumption on that host, and a shared-GPU exhaustion negative
+      test proving an admitted workload that attempts to allocate all
+      device memory or saturate accelerator compute is throttled,
+      denied, or terminated while other workloads' accelerator capacity
+      is preserved.
+       Containment bounds where a handler's effects land and what it
       consumes, not what it remembers: an admitted long-lived MCP server,
       plugin, or pooled handler that serves multiple invocations or tenants
       can retain a secret or request payload from one scope in its process
@@ -2865,7 +2906,24 @@ enumerated entries still passes. The host policy must therefore deny
    discarded, with a delayed-call negative test proving a tool call deferred
    until after invocation end, issued from a context that loaded the skill, is
    still governed by the skill's ceiling rather than the broader non-skill
-   ceiling. Isolation holds only as far as its output boundary: when the
+   ceiling. Retain-and-intersect constrains the skill's later tool calls, not
+   its reading of the context: when a skill is loaded into a model session
+   that already contains another tenant's data, credentials, or confidential
+   instructions, the permitted retain-and-intersect alternative leaves the
+   skill's instructions in that same context, and the skill can direct the
+   model to reproduce an existing secret in its ordinary response without
+   invoking any intercepted capability, so every receipt and delayed-call
+   test passes while the disclosure leaves through the response channel.
+   Untrusted skills must therefore be loaded only into least-data isolated
+   contexts containing no data beyond what their invocation requires, with
+   the isolated context's response passing a governed output boundary before
+   reaching any broader recipient, or the claim must explicitly exclude
+   response-channel confidentiality and the host must refuse to load
+   untrusted skills into model contexts holding data classified above the
+   skill's clearance, with a shared-context disclosure negative test proving
+   a skill loaded alongside sensitive foreign data either cannot cause that
+   data to appear in the response delivered to the skill's requester or is
+   refused loading into that context. Isolation holds only as far as its output boundary: when the
    isolated context returns generated output into the caller's broader model
    context, a malicious skill can encode a delayed tool instruction in that
    output, and the receiving caller (which is not part of the delegation
@@ -2947,6 +3005,29 @@ enumerated entries still passes. The host policy must therefore deny
     updated by an unbounded sequence of distinct origin stacks stays
     within its declared bound while its next reader is still governed
     at (or below) the restricted intersection.
+    Storing the effective intersection compresses identity out of the
+    record: once contributor stacks are replaced by their previously
+    computed intersection, no identity or freshness handle remains from
+    which a reader can detect that a contributing skill version was
+    later revoked or its ceiling narrowed, so an artifact written under
+    a broad skill ceiling keeps granting its stale broader intersection
+    and a delayed instruction it carries can enter a new context and
+    obtain a fresh receipt for an action the current ceiling denies,
+    while every growth and mixed-writer test above passes. The bounded
+    provenance record must therefore remain revalidatable against live
+    authority: alongside the stored intersection, retain a
+    revocation-checkable commitment to the contributing skill
+    identities and their ceiling epochs, checked against the live
+    revocation and ceiling state on consumption with the effective
+    ceiling recomputed, or the artifact quarantined, when any
+    contributor has been revoked or narrowed; or recompute the
+    artifact's effective ceiling from live contributor state on every
+    consumption, with a write-then-narrow negative test writing an
+    artifact under a broad skill ceiling, then revoking or narrowing
+    that skill's ceiling, and proving a later reader is governed at (or
+    below) the narrowed ceiling and a delayed instruction in the
+    artifact cannot obtain a receipt for an action the current ceiling
+    denies.
     Accumulation "at write time" still leaves two stores: when a
     restricted skill updates an artifact whose existing label records a
     broader or non-skill origin, publishing the new content before the
