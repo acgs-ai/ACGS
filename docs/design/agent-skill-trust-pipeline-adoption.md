@@ -539,11 +539,28 @@ enumerated entries still passes. The host policy must therefore deny
           rather than comparing raw readings across it (or the verifier
           must instead require fresh, non-replayable signed absolute
           time), and a restart negative test must let an approval grant,
-          an invocation context, and a receipt expire unused, restart the
-          host so the monotonic clock resets or rebases, and prove none of
-          the pre-restart artifacts regains validity or yields a side
-          effect.
-          Authenticating the approver and binding the grant to the canonical
+           an invocation context, and a receipt expire unused, restart the
+           host so the monotonic clock resets or rebases, and prove none of
+           the pre-restart artifacts regains validity or yields a side
+           effect.
+           An epoch-bound monotonic clock still measures only running
+           time: on hosts where the monotonic reading stops during
+           system suspension or VM pause, the pause produces no epoch
+           discontinuity and no rollback, so an unused grant, invocation
+           context, or receipt does not age while the host is suspended
+           and remains executable long after its intended real-time
+           expiry while both the clock-rollback and restart tests pass.
+           The trusted elapsed-time source must therefore be
+           suspend-aware, counting suspended and paused intervals (a
+           boottime-class clock or equivalent held in the same trust
+           class), or expiry evaluation must require fresh,
+           non-replayable signed absolute time, failing closed when
+           neither is available, with a pause/resume expiry negative
+           test suspending or pausing the host until an unused approval
+           grant, invocation context, and receipt pass their intended
+           real-time expiry and proving each is rejected after resume
+           without a side effect.
+           Authenticating the approver and binding the grant to the canonical
         request fields still does not prove those fields are what the human
         saw: when the requesting agent or a compromised skill supplies the
         label or summary the approval prompt displays, the prompt can
@@ -1283,9 +1300,28 @@ enumerated entries still passes. The host policy must therefore deny
       snapshot). Snapshot admission must therefore reject every entry that
       is not a regular file or directory unless that specific entry is
       separately brokered and content-bound as its own reviewed capability,
-      with a bundled-FIFO negative test proving a skill bundling a FIFO or
-      other special inode fails snapshot construction and yields no
-      authenticated snapshot, no receipt, and no side effect. That
+       with a bundled-FIFO negative test proving a skill bundling a FIFO or
+       other special inode fails snapshot construction and yields no
+       authenticated snapshot, no receipt, and no side effect.
+       The regular-file rule still admits hard links: a writable source
+       tree can contain a hard link to an out-of-root inode, which
+       appears to this admission walk as an ordinary regular file,
+       resides on the pinned filesystem, and traverses no symlink or
+       mount boundary, so a privileged admission process hashes and
+       copies otherwise inaccessible host content into the authenticated
+       snapshot before any receipt gate runs; the hard-link controls
+       later in this design govern runtime directory capabilities, not
+       snapshot construction. Snapshot admission must therefore reject
+       any source entry whose link count exceeds one, or safely vet
+       multiply linked entries before reading them (proving every link
+       to the inode resolves inside the source skill tree, or
+       materializing the entry only from a private single-linked copy
+       whose content the submitting identity could already read), with a
+       hard-linked-secret disclosure negative test bundling a hard link
+       to an out-of-root secret in a candidate skill tree and proving
+       admission fails with no byte of the target disclosed into the
+       snapshot, no authenticated snapshot, no receipt, and no side
+       effect. That
     snapshot bounds the guarantee to bundled skill content, and the claim must
     say so: a snapshotted script still resolves its interpreter, imports
     installed packages, and invokes binaries through `PATH`, and those
@@ -1448,11 +1484,21 @@ enumerated entries still passes. The host policy must therefore deny
     security-relevant by-reference input must therefore be bound by
     content, not by name: hashed or snapshotted at authorization time, with
     that digest or snapshot identity recorded in the receipt, and the
-    handler made to consume exactly those verified bytes or the
-    already-resolved descriptors rather than re-reading the mutable path
-    after authorization, with a negative test that replaces an authorized
-    by-reference input's content between authorization and handler read and
-    proves the handler consumes the authorized bytes or the execution is
+    handler made to consume exactly those verified bytes, either from a
+    sealed or copy-on-write byte snapshot materialized at authorization
+    time, or with writes to the underlying object provably excluded (an
+    immutable seal or exclusive write lease held from authorization
+    through the handler's read). An already-resolved descriptor alone is
+    not such an exclusion: it pins the inode, not the bytes, so another
+    permitted writer can overwrite the object in place after
+    authorization and the same descriptor exposes the newly written
+    content while every pathname-replacement and descriptor-identity
+    check passes. This requires a negative test that replaces an
+    authorized by-reference input's content between authorization and
+    handler read, and an in-place overwrite race test that writes the
+    authorized inode through another permitted descriptor (a `pwrite` on
+    the same object) in that window, proving in both cases the handler
+    consumes the authorized bytes or the execution is
     denied, never the swapped content. Argument-level checks are also
    insufficient for the direct filesystem capabilities: a `file_read` or
    `file_write` ceiling scoped to a directory is not enforced by validating the
@@ -2412,23 +2458,32 @@ enumerated entries still passes. The host policy must therefore deny
       backed by authenticated rotation and checkpointing or a bounded
       authenticated remote sink, with fail-closed backpressure applied
       to the submitting scope when its quota is reached (never dropped
-      events and never execution without a recorded event), and the
-      enclosing tenant-wide and execution-boundary-wide allowances must
-      preserve capacity for unrelated submitters: either fair-share
-      reservation bounds each child scope's usable share strictly below
-      the enclosing total so that no single scope, and no coordinated set
-      of skills submitting under multiple actor scopes, can consume the
-      entire enclosing allowance, or an authenticated rotation policy
-      reclaims space from the exhausting scope's over-quota events before
-      any unrelated scope is backpressured, while events
-      still required by unexpired receipts are retained through their
-      receipts' retention obligations, with a many-small-denials
-      storage-exhaustion negative test driving a sustained stream of
-      small denied requests, including coordinated submissions spread
-      across multiple actor scopes, and proving audit storage stays
-      within its declared quotas, fail-closed backpressure lands only on
-      the exhausting scopes, and unrelated governed requests in the same
-      enclosing scope still record their required evidence and execute.
+       events and never execution without a recorded event), and the
+       enclosing tenant-wide and execution-boundary-wide allowances must
+       preserve capacity for unrelated submitters through a
+       sybil-resistant partition or scheduling rule: bounding each child
+       scope's share individually below the enclosing total is not
+       sufficient, because coordinated skills submitting under several
+       child scopes can keep every scope within quota while their shares
+       sum to the entire enclosing allowance, and rotation then finds no
+       over-quota events to reclaim. The admitted child allocations must
+       therefore collectively leave a protected reserve of the enclosing
+       allowance (the sum of all concurrently admitted child shares
+       bounded strictly below the enclosing total, with the creation of
+       new child scopes itself a governed, allocation-consuming admission
+       rather than a free identity), or scheduling must guarantee each
+       submitter a minimum reserved capacity that no set of other scopes
+       can consume, while events
+       still required by unexpired receipts are retained through their
+       receipts' retention obligations, with a many-small-denials
+       storage-exhaustion negative test driving a sustained stream of
+       small denied requests, including coordinated submissions spread
+       across multiple actor scopes whose combined shares would sum to
+       the enclosing allowance, and proving audit storage stays
+       within its declared quotas, fail-closed backpressure lands only on
+       the exhausting scopes, and unrelated governed requests in the same
+       enclosing scope still record their required evidence and execute
+       out of the protected reserve.
      Admission by name is still
    not admission of code: the registry authenticates that a tool or alias is
    admitted, not which implementation the name resolves to, so an admitted MCP
@@ -3149,21 +3204,35 @@ enumerated entries still passes. The host policy must therefore deny
     a broad skill ceiling keeps granting its stale broader intersection
     and a delayed instruction it carries can enter a new context and
     obtain a fresh receipt for an action the current ceiling denies,
-    while every growth and mixed-writer test above passes. The bounded
-    provenance record must therefore remain revalidatable against live
-    authority: alongside the stored intersection, retain a
-    revocation-checkable commitment to the contributing skill
-    identities and their ceiling epochs, checked against the live
-    revocation and ceiling state on consumption with the effective
-    ceiling recomputed, or the artifact quarantined, when any
-    contributor has been revoked or narrowed; or recompute the
-    artifact's effective ceiling from live contributor state on every
-    consumption, with a write-then-narrow negative test writing an
-    artifact under a broad skill ceiling, then revoking or narrowing
-    that skill's ceiling, and proving a later reader is governed at (or
-    below) the narrowed ceiling and a delayed instruction in the
-    artifact cannot obtain a receipt for an action the current ceiling
-    denies.
+     while every growth and mixed-writer test above passes. The bounded
+     provenance record must therefore remain revalidatable against live
+     authority, and revalidation requires enumeration, not merely a
+     commitment: an opaque running hash or accumulator over compacted
+     contributor identities neither enumerates which skills contributed
+     nor supplies their current ceilings, so a consumer holding only
+     that commitment cannot detect that a contributor was narrowed or
+     recompute the new intersection, and the artifact retains its stale
+     broader effective ceiling. Alongside the stored intersection,
+     retain a bounded authenticated contributor index: the deduplicated
+     contributing skill identities and their ceiling epochs, kept within
+     the same hard distinct-contributor bound above (updates beyond it
+     denied or the artifact quarantined exactly as that bound requires),
+     or an equivalent verifiable index/proof structure whose proofs let
+     the consumer enumerate every contributor and check each against
+     live revocation and ceiling state. Consumption must check that
+     index against the live revocation and ceiling state, recompute the
+     effective ceiling from the enumerated contributors' current
+     ceilings, or quarantine the artifact, when any contributor has been
+     revoked or narrowed, and fail closed when the index cannot be
+     enumerated or verified; or the artifact's effective ceiling must be
+     recomputed from live contributor state on every
+     consumption, with a write-then-narrow negative test writing an
+     artifact under a broad skill ceiling, then revoking or narrowing
+     that skill's ceiling, and proving a later reader is governed at (or
+     below) the narrowed ceiling and a delayed instruction in the
+     artifact cannot obtain a receipt for an action the current ceiling
+     denies, including when the provenance record has already been
+     compacted to its bounded representation before the narrowing.
     Accumulation "at write time" still leaves two stores: when a
     restricted skill updates an artifact whose existing label records a
     broader or non-skill origin, publishing the new content before the
@@ -3435,11 +3504,33 @@ enumerated entries still passes. The host policy must therefore deny
    ceiling exactly as a direct read does, or such extraction must be
    prevented outright (registered skill artifacts refused as the source
    of ordinary non-loader copy and transform operations), with a
-   copy-then-read negative test proving a tool call issued by a context
-   that read a copied or transformed registered `SKILL.md` is governed by
-   the originating skill's ceiling rather than the reader's broader
-   non-skill ceiling, or that the copy itself is refused. The
-   interception layer is itself inside the threat model: the current hook is
+    copy-then-read negative test proving a tool call issued by a context
+    that read a copied or transformed registered `SKILL.md` is governed by
+    the originating skill's ceiling rather than the reader's broader
+    non-skill ceiling, or that the copy itself is refused.
+    Copy and transform tracking covers operations whose source is the
+    registered artifact path: a non-skill context can instead extract the
+    same instructions from version-control storage (`git show
+    HEAD:.claude/skills/x/SKILL.md`, `git archive`, or an equivalent
+    history or object read), which reads `.git/objects` rather than any
+    registered path and can stream the content directly into the model
+    context without ever creating the copied artifact the rule above
+    labels, so the direct-read and copy-then-read tests pass while
+    subsequent calls remain authenticated under the broader non-skill
+    origin. Registered-skill origin must therefore also propagate through
+    VCS, history, and archive extraction: content extracted from
+    repository objects that corresponds to a registered skill's
+    instruction files carries that skill's origin (host- or
+    broker-assigned at the extracting operation, matched against the
+    registered artifacts' content identities), whether the output lands
+    in a file or streams directly into a model context, or such
+    extraction paths must be refused as instruction sources for ordinary
+    non-loader contexts, with a VCS-extraction negative test proving a
+    tool call issued by a context that obtained a registered `SKILL.md`
+    through a history or archive read is governed by the originating
+    skill's ceiling rather than the reader's broader non-skill ceiling,
+    or that the extraction itself is refused. The
+    interception layer is itself inside the threat model: the current hook is
    executed directly from its working-tree path (`.claude/hooks/acgs-emit-receipt.py`,
    selected by `.claude/settings.json`) on each intercepted call, so a skill whose
    `file_write` ceiling covers the checkout can edit the hook or its
