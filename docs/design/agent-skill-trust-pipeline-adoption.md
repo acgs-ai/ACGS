@@ -685,6 +685,26 @@ enumerated entries still passes. The host policy must therefore deny
         only its digest to the approver, and proves an approval collected
         without the content, summary, or diff rendered yields no
         consumable grant and no side effect.
+        A reviewable diff authenticates the rendering process, not the
+        comparison base: when the referenced artifact is new or its
+        prior version is attacker-controlled, the trusted channel can
+        satisfy the diff alternative by computing an empty or benign
+        diff against an identical or attacker-staged unreviewed
+        baseline, so the bound digest names destructive content the
+        approver never sees while every destructive-referenced-content
+        test above passes. A diff rendering must therefore be computed
+        only against an independently approved baseline, with that
+        baseline's digest and approval provenance bound into the
+        payload being signed and displayed alongside the diff, and when
+        no such approved baseline exists (a first approval, or a
+        baseline whose approval provenance cannot be authenticated) the
+        trusted channel must fall back to rendering the full content or
+        a trusted semantic summary rather than any diff, with a
+        first-approval/substituted-baseline negative test proving a
+        diff computed against a new, unreviewed, or attacker-substituted
+        baseline is refused as approval evidence and only a
+        full-content rendering, trusted summary, or approved-baseline
+        diff yields a consumable grant.
         Rendering the verified bytes faithfully re-opens for content the
         display-spoofing gap the bound-field escaping rule above closes
         for fields: a referenced manifest or configuration can carry
@@ -2337,6 +2357,26 @@ enumerated entries still passes. The host policy must therefore deny
     allowed script that issues many brokered calls to a permitted origin
     under one receipt and proving the aggregate count and value of its
     brokered external effects stay within the reserved budget.
+    Count and value debits charge an effect at creation, not over its
+    lifetime: when an allowed action creates a persistent billable
+    resource without an enforced end time, the count budget is debited
+    once and the value-budget clause is inapplicable because the
+    resource's total lifetime cost is not yet quantifiable, so after
+    creation commits the resource accrues unbounded spend while every
+    admission, receipt, and aggregate-count check above passes.
+    Persistent external effects must therefore carry an enforceable
+    bound on lifetime cost at admission: either the creation reserves
+    the resource's maximum total lifetime value against the scoped
+    value budget (an enforced end time or hard spend cap the target
+    honors), or the resource is held under a revocable budget lease
+    whose renewal debits the scoped budget on a trusted-time schedule
+    and whose expiry or revocation triggers enforced teardown of the
+    resource, with creations whose maximum lifetime or total value
+    cannot be established refused admission fail-closed, and a
+    persistent-resource negative test driving an admitted creation of
+    a resource that continues charging after its creation receipt
+    completes and proving the accrued spend stays within the reserved
+    value or the lease's exhaustion tears the resource down.
     Whether such a mechanism exists is
    a property of the execution host, not of the checkout, so the static step-2
    gate cannot decide enforceability: it could reject a declaration a production
@@ -3668,9 +3708,33 @@ enumerated entries still passes. The host policy must therefore deny
     non-loader contexts, with a VCS-extraction negative test proving a
     tool call issued by a context that obtained a registered `SKILL.md`
     through a history or archive read is governed by the originating
-    skill's ceiling rather than the reader's broader non-skill ceiling,
-    or that the extraction itself is refused. The
-    interception layer is itself inside the threat model: the current hook is
+     skill's ceiling rather than the reader's broader non-skill ceiling,
+     or that the extraction itself is refused.
+     Matching extracted content against the registered artifacts'
+     content identities covers only the currently registered bytes:
+     `git show <old-commit>:.claude/skills/x/SKILL.md` extracts a
+     former version whose bytes no longer match any active registered
+     artifact's content identity, so the matching rule attaches no
+     skill origin and the superseded instructions stream into the model
+     as non-skill content governed under the broader non-skill ceiling,
+     obtaining a fresh receipt while the VCS-extraction test above
+     passes for current versions. Origin attachment for history and
+     object reads must therefore be keyed by registered path and
+     version lineage, not current content alone: an extraction whose
+     historical repository path corresponds to a registered skill's
+     instruction files propagates that skill's identity and ceiling
+     regardless of whether the extracted bytes match the currently
+     registered version, backed by an authenticated index of the
+     skill's registered historical versions and superseded blob
+     identities where per-version identity is required, or historical
+     extractions matching no registered artifact identity must be
+     refused as instruction sources for ordinary non-loader contexts,
+     with a historical-version extraction negative test proving a tool
+     call issued by a context that obtained a superseded `SKILL.md`
+     version through a history or object read is governed by the
+     originating skill's ceiling rather than the reader's broader
+     non-skill ceiling, or that the historical extraction is refused. The
+     interception layer is itself inside the threat model: the current hook is
    executed directly from its working-tree path (`.claude/hooks/acgs-emit-receipt.py`,
    selected by `.claude/settings.json`) on each intercepted call, so a skill whose
    `file_write` ceiling covers the checkout can edit the hook or its
