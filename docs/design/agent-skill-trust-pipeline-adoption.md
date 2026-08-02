@@ -702,12 +702,37 @@ enumerated entries still passes. The host policy must therefore deny
           authenticated state snapshot whose identity is bound into the
           freshness record and the receipt and validated at issuance,
           consumption, and execution, failing closed on mismatch, with a
-          state-mutation negative test that mutates a policy instance's
-          in-memory state between evaluations while retaining its code,
-          configuration, dependencies, and version and proves an action
-          the approved state denied yields no executable receipt and no
-          side effect.
-          Validating policy freshness at issuance, consumption, and execution
+           state-mutation negative test that mutates a policy instance's
+           in-memory state between evaluations while retaining its code,
+           configuration, dependencies, and version and proves an action
+           the approved state denied yields no executable receipt and no
+           side effect.
+           Statelessness isolates the heap, not the environment: a
+           policy's `evaluate` can read an environment variable, file,
+           database row, clock, or network service, and a freshly
+           constructed instance built only from the verified bytes and
+           bound configuration still consults that external input, so the
+           input can change between approval and evaluation without
+           changing the content digest, the constructor configuration, or
+           any authenticated heap-state snapshot, and the altered policy
+           mints an executable `ALLOW` receipt while every digest,
+           freshness, and state check above passes. Policy evaluation
+           must therefore run in a capability-isolated environment where
+           every input is explicit and authenticated (no ambient
+           environment, filesystem, database, clock, or network reads
+           reachable from `evaluate`), or every external input the policy
+           consults must be captured in an authenticated snapshot whose
+           identity is bound into the policy freshness record and the
+           receipt and validated at issuance, consumption, and execution,
+           failing closed on mismatch or on any external read outside the
+           snapshotted set, with an external-state substitution negative
+           test that alters an environment variable, file, or other
+           external input the policy reads between approval and
+           evaluation while retaining its code, configuration,
+           dependencies, and version and proves an action the approved
+           external state denied yields no executable receipt and no side
+           effect.
+           Validating policy freshness at issuance, consumption, and execution
         still leaves a check-to-launch race the rollback test does not
         cover: the gate validates a receipt against the then-active policy
         version, a policy transition then installs a version that denies
@@ -1179,7 +1204,26 @@ enumerated entries still passes. The host policy must therefore deny
       or read, with a negative test bundling a symlink to an out-of-root
       secret and proving admission fails with no byte of the target
       disclosed into the snapshot, no authenticated snapshot, no receipt,
-      and no side effect. The
+      and no side effect.
+      Descriptor-relative resolution constrains lexical paths, not mount
+      topology: another mount-capable workload can bind-mount an
+      out-of-root directory beneath the source skill tree, so the
+      manifest and materialization walk stays descriptor-relative and
+      lexically inside the tree while the ordinary directories and files
+      it sees are out-of-root content, and a materializing admission
+      process copies secrets readable only by its privileged identity
+      into the authenticated snapshot without following any symlink. The
+      walk must therefore pin the source root's filesystem identity and
+      refuse to cross any mount boundary encountered beneath it for the
+      entire manifest and materialization traversal (failing admission
+      closed when a walked entry resides on a different mount than the
+      pinned root), or run the whole traversal inside an immutable
+      private mount namespace constructed before authentication that no
+      outside workload can alter, with a mounted-subtree disclosure
+      negative test bind-mounting an out-of-root directory containing a
+      secret beneath a candidate skill tree and proving admission fails
+      with no byte of that content disclosed into the snapshot, no
+      authenticated snapshot, no receipt, and no side effect. The
       symlink rule does not cover special inodes: a bundled FIFO, Unix
       socket, or device node is neither a symlink nor a reference whose
       target can be materialized into content, so the unchanged entry can
@@ -1567,7 +1611,24 @@ enumerated entries still passes. The host policy must therefore deny
      itself reviewed and intended, with a shared-address virtual-host
      negative test proving a connection to an allowed origin's address that
      presents a denied origin's SNI or Host value fails to reach the denied
-     virtual host. Even then, argument-level checks
+     virtual host.
+     Matching the presented identity authenticates nothing about the peer:
+     when an allowed HTTPS authority resolves to an attacker-controlled
+     peer or the traffic is intercepted on path, the scheme, authority,
+     SNI, and application-level host can all name the allowed origin even
+     though the peer presents an invalid or mismatched certificate, and a
+     contained caller that disables or mishandles certificate verification
+     then discloses data or performs the effect against an unauthenticated
+     service while every broker check above passes. For TLS and equivalent
+     authenticated-channel origins the broker itself must therefore
+     validate the peer's certificate chain and hostname against a trusted
+     anchor set or a pinned identity for the allowed origin, independently
+     of caller-controlled verification settings, refusing the connection
+     when peer authentication fails, with an invalid-certificate/MITM
+     negative test proving a connection to an allowed origin whose peer
+     presents an invalid or mismatched certificate is refused by the
+     broker even when the caller disables verification, and no request
+     data reaches the unauthenticated peer. Even then, argument-level checks
    govern only the launch, not the launched process: an allowed
    `shell.allowed_scripts` entry spawns a process that inherits the host's ambient
    file and network capabilities, so a declaration that permits that script while
@@ -1951,7 +2012,25 @@ enumerated entries still passes. The host policy must therefore deny
      cross-skill/cross-actor negative test proving simultaneous
      individually-within-budget requests from distinct skills and actors
      sharing one tenant or target account are collectively bounded by the
-     enclosing total. Atomic admission presumes the budget
+     enclosing total.
+     Hierarchical totals keyed by action still leave the effect itself
+     aliased: when the same external effect is reachable through multiple
+     admitted actions (both `create_resource` and `apply_manifest` can
+     create billable cloud resources), each action's target-account total
+     is a separate allowance, so the combined spend or resource count
+     across those actions exceeds the promised enclosing budget while
+     every action-specific counter stays within bounds. Admission must
+     therefore also debit a canonical target/effect-class budget shared
+     across every admitted action and alias that can produce the same
+     class of external effect against the same target, with the mapping
+     from admitted actions to canonical effect classes declared and
+     reviewed at admission and unmapped externally effectful actions
+     failing admission closed, in addition to the action-specific
+     counters, with a concurrent cross-action negative test proving
+     simultaneous individually-within-budget requests through distinct
+     actions producing the same effect class against one account are
+     collectively bounded by the shared effect-class total.
+     Atomic admission presumes the budget
      state's own integrity: when a governed skill or descendant process can
      write or restore the backing state for these count, rate, and value
      budgets, it can reset its recorded usage after each admitted request
