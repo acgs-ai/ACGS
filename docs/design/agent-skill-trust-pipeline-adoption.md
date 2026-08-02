@@ -1024,7 +1024,22 @@ enumerated entries still passes. The host policy must therefore deny
     materialization limits, and a maximum decompression ratio), failing
     admission closed when any limit is exceeded, with an archive-bomb
     negative test proving a high-ratio or many-entry archive is rejected
-    during admission without exhausting the admitting host. Paths, entry types,
+     during admission without exhausting the admitting host. Those extraction
+     limits bound what admission materializes, not what admission itself
+     spends deciding: an attacker can supply an enormous container holding
+     few small entries, trailing padding, or parser-pathological metadata,
+     so the entry-count, uncompressed-size, sparse-file, and
+     decompression-ratio limits all remain satisfied while merely reading
+     and parsing the archive exhausts the admitting host's CPU, memory,
+     disk, or wall-clock time, making rejection itself the exhaustion
+     vector. Admission must therefore also impose a maximum
+     compressed/container input size and run snapshot parsing and
+     extraction under enforceable CPU, memory, temporary-storage, and
+     deadline budgets, failing admission closed when any budget is
+     exhausted, with a parser-resource negative test proving an oversized
+     container or one carrying parser-pathological metadata is rejected
+     within those budgets and the admitting host's CPU, memory, storage,
+     and responsiveness are preserved. Paths, entry types,
    mode bits, lengths, and content hashes still leave security-relevant
    filesystem metadata unbound: a skill installed from a privileged archive can
    carry ownership, POSIX ACLs, security labels, or extended attributes such as
@@ -1110,6 +1125,22 @@ enumerated entries still passes. The host policy must therefore deny
      executed snapshot digest is bound into the receipt, with tests mutating skill
      bytes both between load and launch and after launch (a bundled resource read
      mid-execution) proving the mutated content is never executed or read.
+     A read-only snapshot authenticates the bytes behind a name, not the
+     binding of the name itself: when the content-addressed snapshot is
+     stored beneath a directory the agent or another workload can rename,
+     replace, or mount over, the snapshot's directory entry can be swapped
+     after authentication, and a later loader or launcher that reopens the
+     same snapshot path consumes attacker-controlled instructions or
+     scripts while the receipt still carries the approved digest. The
+     snapshot and every ancestor directory used to resolve it must
+     therefore be outside attacker namespace-mutation authority (rename,
+     replace, bind-mount, and mount-over included), or loaders and
+     launchers must retain protected descriptors to the verified tree
+     acquired at authentication time and load exclusively through those
+     descriptors rather than re-resolving paths, with a snapshot-root
+     substitution race negative test swapping the snapshot's directory
+     entry or an ancestor mount between authentication and a later load
+     and proving no unverified byte is executed or read.
      Immutability of the snapshot is not containment of what it references: a
      read-only content-addressed directory can still preserve a symlink such as
      `scripts/run.py -> /tmp/run.py`, whose digest and link entry are unchanged
@@ -1852,7 +1883,24 @@ enumerated entries still passes. The host policy must therefore deny
     driving a low-host-resource but externally effectful handler and
      proving the aggregate count, rate, or value of its external effects
      is bounded even though every individual request is allowed and every
-     host-resource quota is respected. Atomic admission presumes the budget
+     host-resource quota is respected. A budget keyed by the combined
+     skill/actor/tenant/action scope gives each combination its own
+     allowance: when several skills or actors operate in the same tenant
+     or downstream account, every individual counter can pass while their
+     aggregate cloud spend, messages, or resource creations exceed the
+     tenant-wide bound, the same gap the hierarchical host-resource quotas
+     above close for local consumption. External-effect budgets must
+     therefore be hierarchical as well: per-skill and per-actor counters
+     nest under tenant-wide, target-account-wide, and
+     execution-boundary-wide action totals, each enforced at admission
+     across every concurrent and queued request attributed to that
+     enclosing scope regardless of originating skill or actor (a request
+     whose admission would exceed any enclosing total is denied, queued,
+     or escalated rather than run), with a concurrent
+     cross-skill/cross-actor negative test proving simultaneous
+     individually-within-budget requests from distinct skills and actors
+     sharing one tenant or target account are collectively bounded by the
+     enclosing total. Atomic admission presumes the budget
      state's own integrity: when a governed skill or descendant process can
      write or restore the backing state for these count, rate, and value
      budgets, it can reset its recorded usage after each admitted request
@@ -1916,6 +1964,22 @@ enumerated entries still passes. The host policy must therefore deny
     downstream timeout and proving the aggregate count, rate, and value
     of its actual external effects stay within the reserved budget even
     though admission observed a single request.
+    That per-transitive-effect rule must not be scoped to admitted
+    handlers alone: an allowed script whose launch is admitted once can
+    batch outbound calls to a permitted network origin through the
+    direct-network broker (creating many cloud resources or charges), so
+    the outer launch debits one admission while the broker permits every
+    downstream call under the same receipt and the aggregate count and
+    value budget is exceeded on the shell path. Brokered shell effects
+    must therefore be governed identically: each externally effectful
+    brokered operation debits the scoped external-effect budget
+    individually before it is issued, or the script invocation reserves
+    at admission a verified maximum downstream effect count and value
+    that the broker enforces, refusing invocations whose maximum cannot
+    be established, with a batching-script negative test driving an
+    allowed script that issues many brokered calls to a permitted origin
+    under one receipt and proving the aggregate count and value of its
+    brokered external effects stay within the reserved budget.
     Whether such a mechanism exists is
    a property of the execution host, not of the checkout, so the static step-2
    gate cannot decide enforceability: it could reject a declaration a production
@@ -2579,7 +2643,23 @@ enumerated entries still passes. The host policy must therefore deny
       termination, with a concurrent end-versus-launch negative test
       proving that racing invocation termination against receipt
       consumption never launches the side effect after the invocation has
-      ended, regardless of interleaving. Context freshness bounds the credential,
+      ended, regardless of interleaving. A lease closed by termination
+      bounds when work launches, not when it takes effect: a receipt can
+      launch an allowed script or handler while its invocation is live,
+      that work can defer its side effect until after the invocation
+      ends, and closing a bookkeeping lease at termination removes
+      nothing from an already-launched process unless its work and
+      brokered resources are themselves tied to the lease. The invocation
+      lease must therefore be effect-held, the same discipline the
+      ceiling, signer, approver, and executor-profile leases above
+      already follow: the launched work's brokered capabilities and any
+      not-yet-committed effects remain bound to the lease through effect
+      completion, and invocation termination revokes them or forces
+      revalidation before the effect commits, with a deferred-effect
+      negative test terminating the invocation after launch but before a
+      deferred side effect and proving the effect is revoked or
+      revalidated rather than produced under the ended invocation's
+      authority. Context freshness bounds the credential,
    not the influence: rejecting a stale context does not remove the skill's
    instructions from the conversation, so a skill can direct the model to defer
    a tool call until after its invocation is marked ended, and the later call is
