@@ -1421,7 +1421,25 @@ enumerated entries still passes. The host policy must therefore deny
     validates and binds the logical tunnel destination against the ceiling
     before establishing it, with a proxy-tunnel negative test proving an
     attempt to tunnel through an allowed proxy to a denied origin fails to
-    reach that origin. Even then, argument-level checks
+    reach that origin.
+     Pinning the resolved address still binds only the transport peer, not
+     the logical authority: when an allowed origin shares an IP address,
+     load balancer, or reverse proxy with a denied origin, a contained
+     process can connect to the pinned approved address while presenting a
+     TLS SNI value or an application-level HTTP Host header naming the
+     denied virtual host, and the redirect, DNS-rebinding, and proxy-tunnel
+     tests all pass because no redirect is followed, no resolution changes,
+     and no tunnel is requested, yet the logical network effect lands on an
+     origin the ceiling never named. The direct-network broker must
+     therefore bind and enforce the logical network authority at connection
+     use (the scheme, authority, TLS SNI, and application-level host
+     presented on the wire must match the allowed origin), or permission to
+     reach a shared endpoint must be treated as authority over every virtual
+     host that endpoint serves, granted only when that transitive reach is
+     itself reviewed and intended, with a shared-address virtual-host
+     negative test proving a connection to an allowed origin's address that
+     presents a denied origin's SNI or Host value fails to reach the denied
+     virtual host. Even then, argument-level checks
    govern only the launch, not the launched process: an allowed
    `shell.allowed_scripts` entry spawns a process that inherits the host's ambient
    file and network capabilities, so a declaration that permits that script while
@@ -2522,7 +2540,28 @@ enumerated entries still passes. The host policy must therefore deny
    authority beyond the producing skill's ceiling, and that a declaration
    whose control-artifact write capability no reachable consumer can
    enforce is denied admission rather than admitted with a recorded
-   residual boundary. A single
+   residual boundary.
+    That admission decision is evaluated against the consumer topology in
+    force when the ceiling is approved, not the topology in force when the
+    write's consequences land: when a new CI runner, host hook, or other
+    machine consumer later begins executing a path an already-admitted
+    ceiling leaves skill-writable, the earlier reachable-consumer check
+    remains valid only for the old topology, so the skill can populate that
+    path and the new consumer executes it with its broader authority without
+    ever participating in origin gating, and artifacts written before the
+    change carry the same exposure. Control-artifact admissions must
+    therefore be bound to a freshness-protected registry of consumer-to-path
+    mappings (or the executor profile that encodes them), of the same trust
+    class as the other freshness records in this design, with any change to
+    consumer mappings revoking or forcing revalidation of every admission
+    whose writable ceiling intersects the new consumer's executed paths,
+    including re-vetting or quarantining artifacts already written to those
+    paths before the new consumer first executes them, or skill writes must
+    be confined to storage that can never later become executable by a
+    machine consumer, with a consumer-addition negative test proving a path
+    written under an admitted ceiling and later mapped into a new consumer's
+    executed set is not executed with the new consumer's authority until the
+    admission and the existing artifacts are revalidated. A single
    origin identity is not enough once skills compose: when one skill invokes
    another, or several are active concurrently, attributing the request to any
    single skill would let a restricted outer skill route an action through a
