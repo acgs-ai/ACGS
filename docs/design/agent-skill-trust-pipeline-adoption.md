@@ -592,6 +592,26 @@ enumerated entries still passes. The host policy must therefore deny
         collection or is displayed with the destructive value unambiguously
         visible, and that a signature collected over a spoofed rendering
         yields no consumable grant and no side effect.
+        Rendering the canonical final arguments faithfully also discloses
+        what they contain: when an argument field carries an inline
+        credential (an `Authorization` header, a password field, a
+        `--token` value), the trusted channel renders the secret to the
+        approver's display and the receipt and audit argument bindings
+        serialize it into longer-lived evidence, while the secret
+        classifications elsewhere in this design cover only by-reference
+        and ambient inputs. Secret-bearing argument fields must therefore
+        be classified exactly as secret-classified ambient inputs are and
+        bound through a secret-store reference or a keyed commitment
+        verified inside the trusted gate, with the approval channel
+        rendering only a non-disclosing designator of the secret (its
+        store identity and version, never its value) and receipts,
+        ceiling records, and audit events carrying the same non-disclosing
+        binding, with non-disclosing rendering and serialization negative
+        tests proving an approval collected over an inline-credential
+        argument, its receipt, its ceiling record, and its audit events
+        emit neither the secret value nor an offline-guessable digest of
+        it, while a substituted or mismatched secret reference still
+        yields no consumable grant and no side effect.
         Binding the final arguments and the originating audit hash pins the
         references the human saw, not the bytes they designate: when the
         approved request names a mutable manifest or configuration file, an
@@ -2322,10 +2342,25 @@ enumerated entries still passes. The host policy must therefore deny
     execution boundary), with the exemption refused and the operation
     falling back to registry admission when those budgets cannot be
     imposed, and a pathological-input exhaustion negative test proving a
-     pure-exempt operation driven with pathological input, alone or
-     concurrently, is throttled, denied, or terminated and other
-     workloads retain CPU, memory, and dispatcher capacity.
-     Per-call budgets attach to the dispatched operation, but the
+      pure-exempt operation driven with pathological input, alone or
+      concurrently, is throttled, denied, or terminated and other
+      workloads retain CPU, memory, and dispatcher capacity.
+      Those budgets bound what a pure operation consumes, not what it
+      emits: a decompressor, expander, or generator over a small
+      caller-supplied input can stay within its CPU, memory, and
+      wall-clock budgets while streaming a hugely expanded result that
+      exhausts response buffers, transport bandwidth, downstream model
+      context, or durable result logging. Pure exemptions must therefore
+      also carry per-call and aggregate output-byte limits (and
+      output-token limits where results enter a model context) with
+      declared expansion bounds relative to input size, enforced through
+      streaming backpressure or termination of the operation at the
+      bound rather than unbounded buffering of an over-limit result, and
+      the pathological-input exhaustion test must also drive a
+      high-expansion input and prove the emitted output is bounded and
+      other workloads retain response-channel, transport, model-context,
+      and result-logging capacity.
+      Per-call budgets attach to the dispatched operation, but the
      governance path computes first: canonicalization, permission
      matching, policy evaluation, and audit serialization all run over
      caller-supplied arguments before the pure operation or any handler
@@ -3175,10 +3210,33 @@ enumerated entries still passes. The host policy must therefore deny
     paths before the new consumer first executes them, or skill writes must
     be confined to storage that can never later become executable by a
     machine consumer, with a consumer-addition negative test proving a path
-    written under an admitted ceiling and later mapped into a new consumer's
-    executed set is not executed with the new consumer's authority until the
-    admission and the existing artifacts are revalidated.
-    Direct returns and persistent artifacts are not the only paths into
+     written under an admitted ceiling and later mapped into a new consumer's
+     executed set is not executed with the new consumer's authority until the
+     admission and the existing artifacts are revalidated.
+     That registry and its admission invalidation are defined through
+     consumer-to-path mappings and writable-path intersections, which
+     cover only consumers that execute filesystem artifacts: a write the
+     ceiling permits can produce a durable non-file artifact (a queue
+     message, topic event, database row, or other durable object) whose
+     later interpreter is a privileged worker rather than a
+     path-executing consumer, and because such an artifact has no path to
+     intersect, the worker executes its embedded instructions with its
+     own broader authority and no receipt while every path-based
+     admission and consumer-addition test above passes. The consumer
+     topology must therefore name every durable namespace a machine
+     consumer interprets, durable object namespaces, topics, queues,
+     subscriptions, and tables alongside filesystem paths, with
+     skill-writable ceilings intersected against those namespaces under
+     the same admission, mapping-change revalidation, and consumer-side
+     origin-gating or confinement rules (and the same fail-closed
+     narrowing where none is enforceable), and a non-file consumer
+     negative test proving a message, row, or object written under an
+     admitted ceiling into a namespace a privileged worker consumes is
+     not interpreted with that worker's broader authority, and that a
+     newly subscribed worker triggers the same revalidation of the
+     admission and of artifacts already written to that namespace before
+     it first consumes them.
+     Direct returns and persistent artifacts are not the only paths into
     another model context: a restricted skill can send delayed
     instructions over an allowed live channel (a brokered network
     connection, an IPC or inherited-handle channel, a streaming
