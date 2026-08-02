@@ -1516,6 +1516,13 @@ tmp_root, tmp_parent, recovery_root = sys.argv[1:4]
 uid = os.getuid()
 INTENT_STABLE_ABSENCE_SECONDS = 65.0
 INTENT_POLL_SECONDS = 1.0
+# This helper uses descriptor binding plus repeated identity/content checks.  Those
+# checks fail closed on observed substitution, but they are finite checks rather
+# than an atomic filesystem snapshot; the authenticated roots must not be
+# concurrently writable by an unconstrained same-UID process.
+MAX_RECOVERY_DEPTH = 16
+MAX_RECOVERY_DIRECTORIES = 256
+MAX_RECOVERY_ENTRIES = 4096
 try:
     root_fd = os.open(tmp_root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
     parent_fd = os.open(tmp_parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
@@ -1523,6 +1530,21 @@ except OSError as exc:
     fail(f"cleanup refused recovery contract root: {exc}")
 contracts: list[str] = []
 recovery_fd = -1
+recovery_identity: tuple[int, int, int, int] | None = None
+recovery_mount_id: str | None = None
+captured_recovery_files: dict[str, tuple[bytes, tuple[int, int, int, int, int, int]]] = {}
+recovery_directory_inventory: dict[
+    str, tuple[tuple[int, int, int, int, int, str], tuple[str, ...]]
+] = {}
+security_file_bindings: dict[
+    str, tuple[bytes, tuple[int, int, int, int, int, int, int, str]]
+] = {}
+retired_intent_bindings: dict[
+    str, tuple[bytes, tuple[int, int, int, int, int, int, int, str]]
+] = {}
+reconciliation_authority_bindings: dict[
+    str, tuple[bytes, tuple[int, int, int, int, int, int, int, str]]
+] = {}
 intent_identity_by_name: dict[str, tuple[int, int, int, int, int, int, str]] = {}
 intent_payload_by_name: dict[str, bytes] = {}
 try:
@@ -1530,7 +1552,98 @@ try:
     parent_stat = os.fstat(parent_fd)
     if root_stat.st_uid != uid or parent_stat.st_uid != uid:
         fail("cleanup refused recovery contract root identity")
-    search_roots = [tmp_root]
+
+    def strict_fd_mount_id(fd: int) -> str:
+        try:
+            with open(f"/proc/self/fdinfo/{fd}", encoding="utf-8") as fdinfo:
+                for line in fdinfo:
+                    if line.startswith("mnt_id:"):
+                        value = line.split(":", 1)[1].strip()
+                        if value.isdigit():
+                            return value
+        except OSError as exc:
+            fail(f"cleanup refused PostgreSQL recovery mount identity: {exc}")
+        fail("cleanup refused PostgreSQL recovery mount identity")
+
+    tmp_name = os.path.basename(tmp_root)
+    if (
+        not os.path.isabs(tmp_root)
+        or not os.path.isabs(tmp_parent)
+        or os.path.normpath(tmp_root) != tmp_root
+        or os.path.normpath(tmp_parent) != tmp_parent
+        or os.path.dirname(tmp_root) != tmp_parent
+    ):
+        fail("descriptor-safe cleanup refused: root is outside authenticated parent")
+    if tmp_name in {"", ".", ".."} or "/" in tmp_name:
+        fail("cleanup refused recovery root binding")
+    try:
+        tmp_child_stat = os.stat(tmp_name, dir_fd=parent_fd, follow_symlinks=False)
+        tmp_path_stat = os.stat(tmp_root, follow_symlinks=False)
+    except OSError as exc:
+        fail(f"cleanup refused recovery root binding: {exc}")
+    if not stat.S_ISDIR(tmp_child_stat.st_mode) or not stat.S_ISDIR(tmp_path_stat.st_mode):
+        fail("cleanup refused recovery root binding")
+    tmp_identity = (
+        root_stat.st_dev,
+        root_stat.st_ino,
+        root_stat.st_uid,
+        stat.S_IMODE(root_stat.st_mode),
+    )
+    parent_identity = (
+        parent_stat.st_dev,
+        parent_stat.st_ino,
+        parent_stat.st_uid,
+        stat.S_IMODE(parent_stat.st_mode),
+    )
+    tmp_mount_id = strict_fd_mount_id(root_fd)
+    parent_mount_id = strict_fd_mount_id(parent_fd)
+    for current in (tmp_child_stat, tmp_path_stat):
+        if (
+            current.st_dev,
+            current.st_ino,
+            current.st_uid,
+            stat.S_IMODE(current.st_mode),
+        ) != tmp_identity:
+            fail("cleanup refused recovery root binding")
+
+    def revalidate_tmp_parent_binding() -> None:
+        parent_path_fd = -1
+        tmp_child_fd = -1
+        tmp_path_fd = -1
+        try:
+            parent_path_fd = os.open(
+                tmp_parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+            )
+            tmp_child_fd = os.open(
+                tmp_name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                dir_fd=parent_fd,
+            )
+            tmp_path_fd = os.open(
+                tmp_root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+            )
+            for current_fd, expected_identity, expected_mount in (
+                (parent_fd, parent_identity, parent_mount_id),
+                (parent_path_fd, parent_identity, parent_mount_id),
+                (root_fd, tmp_identity, tmp_mount_id),
+                (tmp_child_fd, tmp_identity, tmp_mount_id),
+                (tmp_path_fd, tmp_identity, tmp_mount_id),
+            ):
+                current = os.fstat(current_fd)
+                if (
+                    current.st_dev,
+                    current.st_ino,
+                    current.st_uid,
+                    stat.S_IMODE(current.st_mode),
+                ) != expected_identity or strict_fd_mount_id(current_fd) != expected_mount:
+                    fail("cleanup refused recovery root identity")
+        except OSError as exc:
+            fail(f"cleanup refused recovery root revalidation: {exc}")
+        finally:
+            for current_fd in (tmp_path_fd, tmp_child_fd, parent_path_fd):
+                if current_fd >= 0:
+                    os.close(current_fd)
+
     if recovery_root:
         recovery_name = os.path.basename(recovery_root)
         if (
@@ -1563,37 +1676,522 @@ try:
             fail(f"cleanup refused PostgreSQL recovery root open: {exc}")
         opened_recovery = os.fstat(recovery_fd)
         recovery_path_stat = os.stat(recovery_root, follow_symlinks=False)
-        if (
+        recovery_identity = (
             opened_recovery.st_dev,
             opened_recovery.st_ino,
             opened_recovery.st_uid,
             stat.S_IMODE(opened_recovery.st_mode),
-        ) != (
+        )
+        recovery_mount_id = strict_fd_mount_id(recovery_fd)
+        if recovery_identity != (
             recovery_stat.st_dev,
             recovery_stat.st_ino,
             recovery_stat.st_uid,
             stat.S_IMODE(recovery_stat.st_mode),
-        ) or (
-            opened_recovery.st_dev,
-            opened_recovery.st_ino,
-            opened_recovery.st_uid,
-            stat.S_IMODE(opened_recovery.st_mode),
-        ) != (
+        ) or recovery_identity != (
             recovery_path_stat.st_dev,
             recovery_path_stat.st_ino,
             recovery_path_stat.st_uid,
             stat.S_IMODE(recovery_path_stat.st_mode),
         ):
             fail("cleanup refused PostgreSQL recovery root identity")
-        search_roots = [recovery_root]
+
+    def revalidate_recovery_root_binding() -> None:
+        if recovery_fd < 0 or recovery_identity is None or recovery_mount_id is None:
+            return
+        parent_name_fd = -1
+        path_fd = -1
+        try:
+            opened = os.fstat(recovery_fd)
+            parent_name_fd = os.open(
+                recovery_name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                dir_fd=parent_fd,
+            )
+            path_fd = os.open(
+                recovery_root,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+            )
+            by_parent = os.fstat(parent_name_fd)
+            by_path = os.fstat(path_fd)
+        except OSError as exc:
+            fail(f"cleanup refused PostgreSQL recovery root revalidation: {exc}")
+        try:
+            for current, current_fd in (
+                (opened, recovery_fd),
+                (by_parent, parent_name_fd),
+                (by_path, path_fd),
+            ):
+                if (
+                    current.st_dev,
+                    current.st_ino,
+                    current.st_uid,
+                    stat.S_IMODE(current.st_mode),
+                ) != recovery_identity or strict_fd_mount_id(current_fd) != recovery_mount_id:
+                    fail("cleanup refused PostgreSQL recovery root identity")
+        finally:
+            if path_fd >= 0:
+                os.close(path_fd)
+            if parent_name_fd >= 0:
+                os.close(parent_name_fd)
+
+    def open_recovery_directory(relative: str) -> int:
+        authenticated_root_fd = recovery_fd if recovery_fd >= 0 else root_fd
+        if relative.startswith("/"):
+            fail("cleanup refused PostgreSQL recovery relative path")
+        components = [] if relative in {"", "."} else relative.split("/")
+        if any(
+            component in {"", ".", ".."}
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in component)
+            for component in components
+        ):
+            fail("cleanup refused PostgreSQL recovery relative path")
+        if len(components) > MAX_RECOVERY_DEPTH:
+            fail("cleanup refused PostgreSQL recovery traversal depth")
+        current_fd = os.dup(authenticated_root_fd)
+        try:
+            for component in components:
+                next_fd = os.open(
+                    component,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                    dir_fd=current_fd,
+                )
+                os.close(current_fd)
+                current_fd = next_fd
+            return current_fd
+        except FileNotFoundError:
+            os.close(current_fd)
+            raise
+        except OSError as exc:
+            os.close(current_fd)
+            fail(f"cleanup refused PostgreSQL recovery traversal: {exc}")
+
+    def open_recovery_file(relative: str) -> tuple[int, int, str]:
+        parent_relative, name = os.path.split(relative)
+        if name in {"", ".", ".."} or "/" in name:
+            fail("cleanup refused PostgreSQL recovery relative path")
+        parent_relative = parent_relative or "."
+        directory_fd = open_recovery_directory(parent_relative)
+        try:
+            file_fd = os.open(
+                name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                dir_fd=directory_fd,
+            )
+        except BaseException:
+            os.close(directory_fd)
+            raise
+        return directory_fd, file_fd, name
+
+    def open_bound_recovery_file(path: str) -> tuple[int, int, str]:
+        return open_recovery_file(path)
+
+    def stat_bound_recovery_file(path: str) -> os.stat_result:
+        directory_fd = -1
+        try:
+            parent_relative, name = os.path.split(path)
+            directory_fd = open_recovery_directory(parent_relative or ".")
+            return os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        finally:
+            if directory_fd >= 0:
+                os.close(directory_fd)
+
+    def bound_file_identity(st: os.stat_result, digest: str) -> tuple[int, int, int, int, int, int, int, str]:
+        return (
+            st.st_dev,
+            st.st_ino,
+            st.st_uid,
+            stat.S_IFMT(st.st_mode),
+            stat.S_IMODE(st.st_mode),
+            st.st_nlink,
+            st.st_size,
+            digest,
+        )
+
+    def capture_security_file(
+        relative: str,
+        label: str,
+        *,
+        required: bool,
+        max_size: int,
+        allow_empty: bool = True,
+    ) -> bytes:
+        existing = security_file_bindings.get(relative)
+        if existing is not None:
+            revalidate_security_file(relative, existing)
+            return existing[0]
+        directory_fd = -1
+        file_fd = -1
+        try:
+            directory_fd, file_fd, name = open_recovery_file(relative)
+        except FileNotFoundError:
+            if required:
+                fail(f"cleanup refused missing recovery {label}")
+            return b""
+        except OSError as exc:
+            fail(f"cleanup refused recovery {label} open: {exc}")
+        try:
+            before = os.fstat(file_fd)
+            before_path = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_uid != uid
+                or stat.S_IMODE(before.st_mode) != 0o600
+                or before.st_nlink != 1
+                or before.st_size > max_size
+                or (not allow_empty and before.st_size <= 0)
+            ):
+                fail(f"cleanup refused recovery {label} identity")
+            payload = os.read(file_fd, before.st_size + 1)
+            if len(payload) != before.st_size or os.read(file_fd, 1):
+                fail(f"cleanup refused recovery {label} size")
+            digest = hashlib.sha256(payload).hexdigest()
+            identity = bound_file_identity(before, digest)
+            after = os.fstat(file_fd)
+            after_path = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            if (
+                bound_file_identity(before_path, digest) != identity
+                or bound_file_identity(after, digest) != identity
+                or bound_file_identity(after_path, digest) != identity
+            ):
+                fail(f"cleanup refused recovery {label} changed during read")
+            security_file_bindings[relative] = (payload, identity)
+            return payload
+        except OSError as exc:
+            fail(f"cleanup refused recovery {label} read: {exc}")
+        finally:
+            if file_fd >= 0:
+                os.close(file_fd)
+            if directory_fd >= 0:
+                os.close(directory_fd)
+
+    def revalidate_security_file(
+        relative: str,
+        expected: tuple[bytes, tuple[int, int, int, int, int, int, int, str]],
+    ) -> None:
+        expected_payload, expected_identity = expected
+        directory_fd = -1
+        file_fd = -1
+        try:
+            directory_fd, file_fd, name = open_recovery_file(relative)
+            current = os.fstat(file_fd)
+            current_path = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            payload = os.read(file_fd, current.st_size + 1)
+            digest = hashlib.sha256(payload).hexdigest()
+            if (
+                len(payload) != current.st_size
+                or os.read(file_fd, 1)
+                or payload != expected_payload
+                or bound_file_identity(current, digest) != expected_identity
+                or bound_file_identity(current_path, digest) != expected_identity
+            ):
+                fail("cleanup refused recovery security input changed")
+        except OSError as exc:
+            fail(f"cleanup refused recovery security input revalidation: {exc}")
+        finally:
+            if file_fd >= 0:
+                os.close(file_fd)
+            if directory_fd >= 0:
+                os.close(directory_fd)
+
+    def revalidate_security_inputs() -> None:
+        for relative in sorted(security_file_bindings, key=os.fsencode):
+            revalidate_security_file(relative, security_file_bindings[relative])
+
+    def revalidate_retired_intents() -> None:
+        for relative in sorted(retired_intent_bindings, key=os.fsencode):
+            parent_relative, name = os.path.split(relative)
+            directory_fd = -1
+            try:
+                directory_fd = open_recovery_directory(parent_relative or ".")
+                os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                fail(f"cleanup refused retired recovery intent state: {exc}")
+            finally:
+                if directory_fd >= 0:
+                    os.close(directory_fd)
+            revalidate_security_file(relative, retired_intent_bindings[relative])
+
+    def capture_reconciliation_authority(
+        relative: str, label: str, *, required: bool, max_size: int
+    ) -> bytes:
+        payload = capture_security_file(
+            relative,
+            label,
+            required=required,
+            max_size=max_size,
+            allow_empty=False,
+        )
+        if payload:
+            reconciliation_authority_bindings[relative] = security_file_bindings[relative]
+        return payload
+
+    def guard_reconciliation_authority() -> None:
+        revalidate_tmp_parent_binding()
+        revalidate_recovery_root_binding()
+        for relative in sorted(reconciliation_authority_bindings, key=os.fsencode):
+            revalidate_security_file(relative, reconciliation_authority_bindings[relative])
+
+    def walk_authenticated_recovery() -> tuple[list[str], list[str]]:
+        found_contracts: list[str] = []
+        found_nonces: list[str] = []
+        directory_count = [0]
+        entry_count = [0]
+
+        def walk(directory_fd: int, relative: str) -> None:
+            depth = 0 if relative == "." else relative.count("/") + 1
+            if depth > MAX_RECOVERY_DEPTH:
+                fail("cleanup refused PostgreSQL recovery traversal depth")
+            directory_count[0] += 1
+            if directory_count[0] > MAX_RECOVERY_DIRECTORIES:
+                fail("cleanup refused PostgreSQL recovery directory limit")
+            try:
+                before = os.fstat(directory_fd)
+                names = sorted(os.listdir(directory_fd), key=os.fsencode)
+            except OSError as exc:
+                fail(f"cleanup refused PostgreSQL recovery traversal: {exc}")
+            if not stat.S_ISDIR(before.st_mode) or before.st_uid != uid:
+                fail("cleanup refused PostgreSQL recovery directory identity")
+            entry_count[0] += len(names)
+            if entry_count[0] > MAX_RECOVERY_ENTRIES:
+                fail("cleanup refused PostgreSQL recovery entry limit")
+            directory_identity = (
+                before.st_dev,
+                before.st_ino,
+                before.st_uid,
+                stat.S_IFMT(before.st_mode),
+                stat.S_IMODE(before.st_mode),
+                strict_fd_mount_id(directory_fd),
+            )
+            recovery_directory_inventory[relative] = (directory_identity, tuple(names))
+            for name in names:
+                if (
+                    name in {"", ".", ".."}
+                    or "/" in name
+                    or any(ord(ch) < 32 or ord(ch) == 127 for ch in name)
+                ):
+                    fail("cleanup refused PostgreSQL recovery entry grammar")
+                child_relative = name if relative == "." else f"{relative}/{name}"
+                try:
+                    entry = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                except OSError as exc:
+                    fail(f"cleanup refused PostgreSQL recovery traversal: {exc}")
+                if stat.S_ISLNK(entry.st_mode):
+                    fail("cleanup refused PostgreSQL recovery symlink")
+                is_reserved = name in {"recovery-contract.env", "proof-nonce.hex"}
+                if is_reserved and not stat.S_ISREG(entry.st_mode):
+                    fail("cleanup refused PostgreSQL recovery reserved entry type")
+                if stat.S_ISDIR(entry.st_mode):
+                    try:
+                        child_fd = os.open(
+                            name,
+                            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                            dir_fd=directory_fd,
+                        )
+                    except OSError as exc:
+                        fail(f"cleanup refused PostgreSQL recovery traversal: {exc}")
+                    try:
+                        opened = os.fstat(child_fd)
+                        if (
+                            opened.st_dev,
+                            opened.st_ino,
+                            opened.st_uid,
+                            stat.S_IMODE(opened.st_mode),
+                        ) != (
+                            entry.st_dev,
+                            entry.st_ino,
+                            entry.st_uid,
+                            stat.S_IMODE(entry.st_mode),
+                        ):
+                            fail("cleanup refused PostgreSQL recovery directory binding")
+                        walk(child_fd, child_relative)
+                        after = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                        if (
+                            after.st_dev,
+                            after.st_ino,
+                            after.st_uid,
+                            stat.S_IMODE(after.st_mode),
+                        ) != (
+                            entry.st_dev,
+                            entry.st_ino,
+                            entry.st_uid,
+                            stat.S_IMODE(entry.st_mode),
+                        ):
+                            fail("cleanup refused PostgreSQL recovery directory binding")
+                    finally:
+                        os.close(child_fd)
+                elif stat.S_ISREG(entry.st_mode):
+                    if is_reserved:
+                        file_fd = -1
+                        try:
+                            file_fd = os.open(
+                                name,
+                                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                                dir_fd=directory_fd,
+                            )
+                            opened_file = os.fstat(file_fd)
+                            file_identity = (
+                                opened_file.st_dev,
+                                opened_file.st_ino,
+                                opened_file.st_uid,
+                                stat.S_IMODE(opened_file.st_mode),
+                                opened_file.st_nlink,
+                                opened_file.st_size,
+                            )
+                            entry_identity = (
+                                entry.st_dev,
+                                entry.st_ino,
+                                entry.st_uid,
+                                stat.S_IMODE(entry.st_mode),
+                                entry.st_nlink,
+                                entry.st_size,
+                            )
+                            if (
+                                file_identity != entry_identity
+                                or not stat.S_ISREG(opened_file.st_mode)
+                                or opened_file.st_uid != uid
+                                or stat.S_IMODE(opened_file.st_mode) != 0o600
+                                or opened_file.st_nlink != 1
+                                or opened_file.st_size > 1024
+                            ):
+                                fail("cleanup refused PostgreSQL recovery reserved entry identity")
+                            payload = os.read(file_fd, opened_file.st_size + 1)
+                            if len(payload) != opened_file.st_size or os.read(file_fd, 1):
+                                fail("cleanup refused PostgreSQL recovery reserved entry size")
+                            after_file = os.fstat(file_fd)
+                            after_path = os.stat(
+                                name, dir_fd=directory_fd, follow_symlinks=False
+                            )
+                            if file_identity != (
+                                after_file.st_dev,
+                                after_file.st_ino,
+                                after_file.st_uid,
+                                stat.S_IMODE(after_file.st_mode),
+                                after_file.st_nlink,
+                                after_file.st_size,
+                            ) or file_identity != (
+                                after_path.st_dev,
+                                after_path.st_ino,
+                                after_path.st_uid,
+                                stat.S_IMODE(after_path.st_mode),
+                                after_path.st_nlink,
+                                after_path.st_size,
+                            ):
+                                fail("cleanup refused PostgreSQL recovery reserved entry changed")
+                            captured_recovery_files[child_relative] = (payload, file_identity)
+                        except OSError as exc:
+                            fail(f"cleanup refused PostgreSQL recovery reserved entry read: {exc}")
+                        finally:
+                            if file_fd >= 0:
+                                os.close(file_fd)
+                        if name == "recovery-contract.env":
+                            found_contracts.append(child_relative)
+                        else:
+                            found_nonces.append(child_relative)
+                elif not stat.S_ISSOCK(entry.st_mode):
+                    fail("cleanup refused PostgreSQL recovery entry type")
+            try:
+                after = os.fstat(directory_fd)
+                after_names = tuple(sorted(os.listdir(directory_fd), key=os.fsencode))
+            except OSError as exc:
+                fail(f"cleanup refused PostgreSQL recovery traversal: {exc}")
+            if (
+                after.st_dev,
+                after.st_ino,
+                after.st_uid,
+                stat.S_IMODE(after.st_mode),
+            ) != (
+                before.st_dev,
+                before.st_ino,
+                before.st_uid,
+                stat.S_IMODE(before.st_mode),
+            ) or after_names != tuple(names):
+                fail("cleanup refused PostgreSQL recovery directory changed")
+
+        authenticated_root_fd = recovery_fd if recovery_fd >= 0 else root_fd
+        walk(authenticated_root_fd, ".")
+        return found_contracts, found_nonces
+
+    def revalidate_authenticated_recovery_state() -> None:
+        revalidate_recovery_root_binding()
+        for relative in sorted(
+            recovery_directory_inventory,
+            key=lambda value: (value.count("/"), os.fsencode(value)),
+        ):
+            expected_identity, expected_names = recovery_directory_inventory[relative]
+            directory_fd = open_recovery_directory(relative)
+            try:
+                current = os.fstat(directory_fd)
+                current_mount_id = strict_fd_mount_id(directory_fd)
+                current_names = tuple(sorted(os.listdir(directory_fd), key=os.fsencode))
+            except OSError as exc:
+                fail(f"cleanup refused PostgreSQL recovery inventory: {exc}")
+            finally:
+                os.close(directory_fd)
+            if (
+                current.st_dev,
+                current.st_ino,
+                current.st_uid,
+                stat.S_IFMT(current.st_mode),
+                stat.S_IMODE(current.st_mode),
+                current_mount_id,
+            ) != expected_identity or current_names != expected_names:
+                fail("cleanup refused PostgreSQL recovery inventory changed")
+        for relative, (expected_payload, expected_identity) in captured_recovery_files.items():
+            directory_fd = -1
+            file_fd = -1
+            try:
+                directory_fd, file_fd, name = open_recovery_file(relative)
+                current = os.fstat(file_fd)
+                current_path = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                current_identity = (
+                    current.st_dev,
+                    current.st_ino,
+                    current.st_uid,
+                    stat.S_IMODE(current.st_mode),
+                    current.st_nlink,
+                    current.st_size,
+                )
+                path_identity = (
+                    current_path.st_dev,
+                    current_path.st_ino,
+                    current_path.st_uid,
+                    stat.S_IMODE(current_path.st_mode),
+                    current_path.st_nlink,
+                    current_path.st_size,
+                )
+                payload = os.read(file_fd, current.st_size + 1)
+                if (
+                    current_identity != expected_identity
+                    or path_identity != expected_identity
+                    or payload != expected_payload
+                    or os.read(file_fd, 1)
+                ):
+                    fail("cleanup refused PostgreSQL recovery reserved entry changed")
+            except OSError as exc:
+                fail(f"cleanup refused PostgreSQL recovery inventory: {exc}")
+            finally:
+                if file_fd >= 0:
+                    os.close(file_fd)
+                if directory_fd >= 0:
+                    os.close(directory_fd)
+
+    recovery_mutation_started = [False]
+
+    def guard_recovery_boundary(*, begin_mutation: bool = False) -> None:
+        revalidate_tmp_parent_binding()
+        if recovery_mutation_started[0]:
+            revalidate_recovery_root_binding()
+        else:
+            revalidate_authenticated_recovery_state()
+        if begin_mutation:
+            recovery_mutation_started[0] = True
+
     nonce_files: list[str] = []
-    for search_root in search_roots:
-        for current_root, dirs, files in os.walk(search_root, topdown=True, followlinks=False):
-            dirs[:] = sorted(name for name in dirs if "\0" not in name)
-            if "recovery-contract.env" in files:
-                contracts.append(os.path.join(current_root, "recovery-contract.env"))
-            if "proof-nonce.hex" in files:
-                nonce_files.append(os.path.join(current_root, "proof-nonce.hex"))
+    contracts, nonce_files = walk_authenticated_recovery()
+    revalidate_authenticated_recovery_state()
     if len(contracts) > 1:
         fail("cleanup refused duplicate recovery contracts")
     intent_server_records: list[tuple[str, str, str]] = []
@@ -1621,76 +2219,24 @@ try:
             fail("cleanup refused PostgreSQL recovery intent without recovery root")
         if not re.fullmatch(r"[a-z0-9_.-]{1,160}\.intent", name):
             fail("cleanup refused PostgreSQL recovery intent filename")
-        try:
-            before_path = os.stat(name, dir_fd=recovery_fd, follow_symlinks=False)
-            fd = os.open(
-                name,
-                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
-                dir_fd=recovery_fd,
-            )
-        except OSError as exc:
-            fail(f"cleanup refused PostgreSQL recovery intent open: {exc}")
-        try:
-            before = os.fstat(fd)
-            if (
-                not stat.S_ISREG(before.st_mode)
-                or before.st_uid != uid
-                or stat.S_IMODE(before.st_mode) != 0o600
-                or before.st_nlink != 1
-                or before.st_size <= 0
-                or before.st_size > 2048
-            ):
-                fail("cleanup refused PostgreSQL recovery intent identity")
-            if (
-                before.st_dev,
-                before.st_ino,
-                before.st_uid,
-                stat.S_IMODE(before.st_mode),
-                before.st_nlink,
-                before.st_size,
-            ) != (
-                before_path.st_dev,
-                before_path.st_ino,
-                before_path.st_uid,
-                stat.S_IMODE(before_path.st_mode),
-                before_path.st_nlink,
-                before_path.st_size,
-            ):
-                fail("cleanup refused PostgreSQL recovery intent path binding")
-            payload = os.read(fd, before.st_size + 1)
-            if len(payload) != before.st_size or os.read(fd, 1):
-                fail("cleanup refused PostgreSQL recovery intent size")
-            digest = hashlib.sha256(payload).hexdigest()
-            after = os.fstat(fd)
-            after_path = os.stat(name, dir_fd=recovery_fd, follow_symlinks=False)
-            identity = (
-                before.st_dev,
-                before.st_ino,
-                before.st_uid,
-                stat.S_IMODE(before.st_mode),
-                before.st_nlink,
-                before.st_size,
-            )
-            if identity != (
-                after.st_dev,
-                after.st_ino,
-                after.st_uid,
-                stat.S_IMODE(after.st_mode),
-                after.st_nlink,
-                after.st_size,
-            ) or identity != (
-                after_path.st_dev,
-                after_path.st_ino,
-                after_path.st_uid,
-                stat.S_IMODE(after_path.st_mode),
-                after_path.st_nlink,
-                after_path.st_size,
-            ):
-                fail("cleanup refused PostgreSQL recovery intent changed during read")
-            intent_identity_by_name[name] = (*identity, digest)
-            intent_payload_by_name[name] = payload
-        finally:
-            os.close(fd)
+        payload = capture_security_file(
+            name,
+            "PostgreSQL recovery intent",
+            required=True,
+            max_size=2048,
+            allow_empty=False,
+        )
+        security_identity = security_file_bindings[name][1]
+        intent_identity_by_name[name] = (
+            security_identity[0],
+            security_identity[1],
+            security_identity[2],
+            security_identity[4],
+            security_identity[5],
+            security_identity[6],
+            security_identity[7],
+        )
+        intent_payload_by_name[name] = payload
         try:
             text_value = payload.decode("ascii")
         except UnicodeDecodeError:
@@ -2492,49 +3038,24 @@ try:
     def read_committed_ledger(proof_label_value: str) -> dict[str, str] | None:
         if recovery_fd < 0:
             return None
-        ledger_fd = -1
-        record_fd = -1
+        relative = os.path.join(
+            "acgs-clean-sibling-recovery-ledger",
+            f"{proof_label_value}.committed",
+        )
         try:
-            ledger_fd = os.open(
-                "acgs-clean-sibling-recovery-ledger",
-                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
-                dir_fd=recovery_fd,
+            record = capture_reconciliation_authority(
+                relative,
+                "recovery ledger file",
+                required=False,
+                max_size=262144,
             )
-            ledger_st = os.fstat(ledger_fd)
-            if (
-                ledger_st.st_uid != uid
-                or stat.S_IMODE(ledger_st.st_mode) != 0o700
-                or ledger_st.st_nlink < 1
-            ):
-                fail("cleanup refused recovery ledger directory identity")
-            record_fd = os.open(
-                f"{proof_label_value}.committed",
-                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
-                dir_fd=ledger_fd,
-            )
-            record_st = os.fstat(record_fd)
-            if (
-                not stat.S_ISREG(record_st.st_mode)
-                or record_st.st_uid != uid
-                or stat.S_IMODE(record_st.st_mode) != 0o600
-                or record_st.st_nlink != 1
-                or record_st.st_size <= 0
-                or record_st.st_size > 262144
-            ):
-                fail("cleanup refused recovery ledger file identity")
-            record = os.read(record_fd, record_st.st_size + 1)
-            if len(record) != record_st.st_size or os.read(record_fd, 1):
-                fail("cleanup refused recovery ledger size")
+            if not record:
+                return None
             return parse_committed_ledger_record(record, proof_label_value)
         except FileNotFoundError:
             return None
         except OSError:
             fail("cleanup refused recovery ledger open")
-        finally:
-            if record_fd >= 0:
-                os.close(record_fd)
-            if ledger_fd >= 0:
-                os.close(ledger_fd)
 
     def completed_ledger_record_exists(proof_label_value: str) -> bool:
         if recovery_fd < 0:
@@ -2627,7 +3148,10 @@ try:
     def restore_committed_intents_before_parse() -> None:
         if recovery_fd < 0:
             return
+        revalidate_authenticated_recovery_state()
+        guard_reconciliation_authority()
         reconcile_atomic_temps(recovery_fd, fail)
+        guard_reconciliation_authority()
         existing_names = [name for name in list_recovery_names() if name.endswith(".intent")]
         ledger_names: list[str] = []
         ledger_fd = -1
@@ -2637,7 +3161,9 @@ try:
                 os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
                 dir_fd=recovery_fd,
             )
+            guard_reconciliation_authority()
             reconcile_atomic_temps(ledger_fd, fail)
+            guard_reconciliation_authority()
             ledger_names = sorted(os.listdir(ledger_fd), key=os.fsencode)
         except FileNotFoundError:
             ledger_names = []
@@ -2685,6 +3211,7 @@ try:
                     pass
                 else:
                     fail("cleanup refused recovery ledger intent content")
+                guard_reconciliation_authority()
                 quarantine_owned_regular_file(
                     recovery_fd,
                     existing_name,
@@ -2709,6 +3236,7 @@ try:
                     fail("cleanup refused recovery ledger intent stat")
                 else:
                     fail("cleanup refused recovery ledger intent content")
+                guard_reconciliation_authority()
                 atomic_publish_no_replace(
                     recovery_fd,
                     name,
@@ -2718,6 +3246,7 @@ try:
                     fail,
                 )
             try:
+                guard_reconciliation_authority()
                 os.fsync(recovery_fd)
             except OSError:
                 fail("cleanup refused recovery ledger intent fsync")
@@ -2743,7 +3272,9 @@ try:
                     os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
                     dir_fd=recovery_fd,
                 )
+                guard_reconciliation_authority()
                 reconcile_atomic_temps(ledger_fd, fail)
+                guard_reconciliation_authority()
                 ledger_names = sorted(os.listdir(ledger_fd), key=os.fsencode)
             except FileNotFoundError:
                 return
@@ -2804,6 +3335,7 @@ try:
             try:
                 current = os.stat(name, dir_fd=recovery_fd, follow_symlinks=False)
             except FileNotFoundError:
+                guard_reconciliation_authority()
                 atomic_publish_no_replace(
                     recovery_fd,
                     name,
@@ -2838,6 +3370,7 @@ try:
                 except OSError:
                     fail("cleanup refused recovery ledger intent open")
         try:
+            guard_reconciliation_authority()
             os.fsync(recovery_fd)
         except OSError:
             fail("cleanup refused recovery ledger intent fsync")
@@ -2845,6 +3378,20 @@ try:
         intent_payload_by_name.clear()
 
     restore_committed_intents_before_parse()
+    guard_reconciliation_authority()
+
+    # Reconciliation is the only controlled transition between snapshots.  Its
+    # authenticated ledger may replace/quarantine intent files, so no identity
+    # or payload captured before that transition may authorize Docker work.
+    captured_recovery_files.clear()
+    recovery_directory_inventory.clear()
+    security_file_bindings.clear()
+    intent_identity_by_name.clear()
+    intent_payload_by_name.clear()
+    contracts, nonce_files = walk_authenticated_recovery()
+    revalidate_authenticated_recovery_state()
+    if len(contracts) > 1:
+        fail("cleanup refused duplicate recovery contracts")
 
     def parse_recovery_intents() -> tuple[dict[str, str] | None, list[tuple[str, str, str]], list[tuple[str, str, str]], list[str]]:
         if recovery_fd < 0:
@@ -3066,7 +3613,11 @@ try:
                     f"server_name={server_name}",
                 ]
             payload = ("\n".join(payload_lines) + "\n").encode("ascii")
-            contract = os.path.join(recovery_root, intent_names[0])
+            contract = (
+                intent_names[0]
+                if recovery_fd >= 0
+                else os.path.join(recovery_root, intent_names[0])
+            )
             text = payload.decode("ascii")
             lines = text.splitlines()
             # Fall through into the common retained-packet writer below. Intent
@@ -3080,64 +3631,12 @@ try:
             state_dir = os.path.dirname(nonce_path)
 
             def read_state_file(path: str, label: str, required: bool) -> bytes:
-                try:
-                    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-                except FileNotFoundError:
-                    if not required:
-                        return b""
-                    fail(f"cleanup refused missing recovery {label}")
-                except OSError as exc:
-                    fail(f"cleanup refused recovery {label} open: {exc}")
-                try:
-                    before = os.fstat(fd)
-                    if (
-                        not stat.S_ISREG(before.st_mode)
-                        or before.st_uid != uid
-                        or stat.S_IMODE(before.st_mode) != 0o600
-                        or before.st_nlink != 1
-                        or before.st_size > 1024
-                    ):
-                        fail(f"cleanup refused recovery {label} identity")
-                    path_stat = os.stat(path, follow_symlinks=False)
-                    if (
-                        before.st_dev,
-                        before.st_ino,
-                        before.st_uid,
-                        stat.S_IMODE(before.st_mode),
-                        before.st_nlink,
-                        before.st_size,
-                    ) != (
-                        path_stat.st_dev,
-                        path_stat.st_ino,
-                        path_stat.st_uid,
-                        stat.S_IMODE(path_stat.st_mode),
-                        path_stat.st_nlink,
-                        path_stat.st_size,
-                    ):
-                        fail(f"cleanup refused recovery {label} path binding")
-                    data = os.read(fd, before.st_size + 1)
-                    if len(data) != before.st_size or os.read(fd, 1):
-                        fail(f"cleanup refused recovery {label} size")
-                    after = os.fstat(fd)
-                    if (
-                        after.st_dev,
-                        after.st_ino,
-                        after.st_uid,
-                        stat.S_IMODE(after.st_mode),
-                        after.st_nlink,
-                        after.st_size,
-                    ) != (
-                        before.st_dev,
-                        before.st_ino,
-                        before.st_uid,
-                        stat.S_IMODE(before.st_mode),
-                        before.st_nlink,
-                        before.st_size,
-                    ):
-                        fail(f"cleanup refused recovery {label} changed during read")
-                    return data
-                finally:
-                    os.close(fd)
+                return capture_security_file(
+                    path,
+                    label,
+                    required=required,
+                    max_size=1024,
+                )
 
             nonce_raw = read_state_file(nonce_path, "proof nonce", True)
             try:
@@ -3189,59 +3688,12 @@ try:
         contract = contracts[0]
         if any(ord(ch) < 32 or ord(ch) == 127 for ch in contract):
             fail("cleanup refused recovery contract path")
-        try:
-            contract_fd = os.open(contract, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-        except OSError as exc:
-            fail(f"cleanup refused recovery contract open: {exc}")
-        try:
-            before = os.fstat(contract_fd)
-            if (
-                not stat.S_ISREG(before.st_mode)
-                or before.st_uid != uid
-                or stat.S_IMODE(before.st_mode) != 0o600
-                or before.st_nlink != 1
-                or before.st_size > 1024
-            ):
-                fail("cleanup refused recovery contract identity")
-            path_stat = os.stat(contract, follow_symlinks=False)
-            if (
-                before.st_dev,
-                before.st_ino,
-                before.st_uid,
-                stat.S_IMODE(before.st_mode),
-                before.st_nlink,
-                before.st_size,
-            ) != (
-                path_stat.st_dev,
-                path_stat.st_ino,
-                path_stat.st_uid,
-                stat.S_IMODE(path_stat.st_mode),
-                path_stat.st_nlink,
-                path_stat.st_size,
-            ):
-                fail("cleanup refused recovery contract path binding")
-            payload = os.read(contract_fd, before.st_size + 1)
-            if len(payload) != before.st_size or os.read(contract_fd, 1):
-                fail("cleanup refused recovery contract size")
-            after = os.fstat(contract_fd)
-            if (
-                after.st_dev,
-                after.st_ino,
-                after.st_uid,
-                stat.S_IMODE(after.st_mode),
-                after.st_nlink,
-                after.st_size,
-            ) != (
-                before.st_dev,
-                before.st_ino,
-                before.st_uid,
-                stat.S_IMODE(before.st_mode),
-                before.st_nlink,
-                before.st_size,
-            ):
-                fail("cleanup refused recovery contract changed during read")
-        finally:
-            os.close(contract_fd)
+        payload = capture_security_file(
+            contract,
+            "recovery contract",
+            required=True,
+            max_size=1024,
+        )
         try:
             text = payload.decode("ascii")
         except UnicodeDecodeError:
@@ -3377,63 +3829,14 @@ try:
     packet = payload
 
     def read_state_file(path: str, label: str, required: bool) -> str:
-        try:
-            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-        except FileNotFoundError:
-            if not required:
-                return ""
-            fail(f"cleanup refused missing recovery {label}")
-        except OSError as exc:
-            fail(f"cleanup refused recovery {label} open: {exc}")
-        try:
-            before = os.fstat(fd)
-            if (
-                not stat.S_ISREG(before.st_mode)
-                or before.st_uid != uid
-                or stat.S_IMODE(before.st_mode) != 0o600
-                or before.st_nlink != 1
-                or before.st_size > 1024
-            ):
-                fail(f"cleanup refused recovery {label} identity")
-            path_stat = os.stat(path, follow_symlinks=False)
-            if (
-                before.st_dev,
-                before.st_ino,
-                before.st_uid,
-                stat.S_IMODE(before.st_mode),
-                before.st_nlink,
-                before.st_size,
-            ) != (
-                path_stat.st_dev,
-                path_stat.st_ino,
-                path_stat.st_uid,
-                stat.S_IMODE(path_stat.st_mode),
-                path_stat.st_nlink,
-                path_stat.st_size,
-            ):
-                fail(f"cleanup refused recovery {label} path binding")
-            raw = os.read(fd, before.st_size + 1)
-            if len(raw) != before.st_size or os.read(fd, 1):
-                fail(f"cleanup refused recovery {label} size")
-            after = os.fstat(fd)
-            if (
-                after.st_dev,
-                after.st_ino,
-                after.st_uid,
-                stat.S_IMODE(after.st_mode),
-                after.st_nlink,
-                after.st_size,
-            ) != (
-                before.st_dev,
-                before.st_ino,
-                before.st_uid,
-                stat.S_IMODE(before.st_mode),
-                before.st_nlink,
-                before.st_size,
-            ):
-                fail(f"cleanup refused recovery {label} changed during read")
-        finally:
-            os.close(fd)
+        raw = capture_security_file(
+            path,
+            label,
+            required=required,
+            max_size=1024,
+        )
+        if not raw and not required:
+            return ""
         try:
             text_value = raw.decode("ascii")
         except UnicodeDecodeError:
@@ -3465,8 +3868,18 @@ try:
     client_records: list[tuple[str, str, str]] = []
     client_records.extend(intent_client_records)
     client_dir = os.path.join(state_dir, "client")
-    if os.path.isdir(client_dir) and not os.path.islink(client_dir):
-        for name in sorted(os.listdir(client_dir)):
+    client_dir_fd = -1
+    try:
+        try:
+            client_dir_fd = open_recovery_directory(client_dir)
+        except FileNotFoundError:
+            client_names: list[str] = []
+        else:
+            try:
+                client_names = sorted(os.listdir(client_dir_fd), key=os.fsencode)
+            except OSError as exc:
+                fail(f"cleanup refused recovery client directory traversal: {exc}")
+        for name in client_names:
             if any(ord(ch) < 32 or ord(ch) == 127 for ch in name):
                 fail("cleanup refused recovery client record grammar")
             path = os.path.join(client_dir, name)
@@ -3492,11 +3905,27 @@ try:
                 if value != expected_name:
                     fail("cleanup refused recovery client name binding")
                 client_records.append((value, expected_name, "trusted-broker"))
+            else:
+                fail("cleanup refused recovery client record type")
+    finally:
+        if client_dir_fd >= 0:
+            os.close(client_dir_fd)
+
+    captured_packet_sha256 = hashlib.sha256(packet).hexdigest()
 
     def retain_packet(reason: str) -> None:
         retained_dir_name = f"acgs-clean-sibling-retained-recovery-{nonce}"
         retained_file_name = "recovery-contract.env"
         packet_sha = hashlib.sha256(packet).hexdigest()
+        # Retention is an out-of-root forensic write used precisely when the
+        # recovery inventory may have drifted.  Keep its trust boundary strict
+        # without requiring the unsafe inventory to remain unchanged.
+        revalidate_tmp_parent_binding()
+        revalidate_recovery_root_binding()
+        revalidate_security_inputs()
+        revalidate_retired_intents()
+        if packet_sha != captured_packet_sha256:
+            fail("cleanup refused recovery packet integrity")
         try:
             os.mkdir(retained_dir_name, 0o700, dir_fd=parent_fd)
         except FileExistsError:
@@ -3574,6 +4003,7 @@ try:
         elif is_v2_contract:
             retain_packet("contract-only-v2")
 
+    guard_recovery_boundary()
     enforce_intent_contract_version_class_before_mutation()
 
     def fd_mnt_id(fd: int) -> str:
@@ -3587,6 +4017,7 @@ try:
         retain_packet("socket-bridge-mntid")
 
     def cleanup_socket_bridge_if_authorized() -> None:
+        guard_recovery_boundary()
         if not is_v2_contract:
             return
         bridge_values = [
@@ -3724,6 +4155,7 @@ try:
                     )
                 )
             try:
+                guard_recovery_boundary(begin_mutation=True)
                 os.fchmod(dir_fd, 0o700)
             except OSError:
                 retain_packet("socket-bridge-harden")
@@ -3735,6 +4167,7 @@ try:
             ):
                 retain_packet("socket-bridge-harden-identity")
             for name, expected_identity in validated:
+                guard_recovery_boundary(begin_mutation=True)
                 try:
                     current = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
                 except OSError:
@@ -3771,6 +4204,7 @@ try:
                         retain_packet("socket-bridge-rebound")
                 finally:
                     os.close(rebound_fd)
+                guard_recovery_boundary(begin_mutation=True)
                 os.rmdir(bridge_basename, dir_fd=recovery_fd)
                 removed = os.fstat(dir_fd)
                 if removed.st_nlink != 0:
@@ -3797,14 +4231,25 @@ try:
             if dir_fd >= 0:
                 os.close(dir_fd)
 
+    guard_recovery_boundary()
     docker_bin = shutil.which("docker")
     if not docker_bin or not os.path.isabs(docker_bin):
         retain_packet("docker-unavailable")
 
+    def guarded_docker_argv(args: list[str]) -> list[str]:
+        revalidate_security_inputs()
+        try:
+            guard_recovery_boundary(begin_mutation=args[:2] == ["rm", "-f"])
+        except SystemExit as exc:
+            if exc.code != 2:
+                raise
+            retain_packet("docker-recovery-boundary")
+        return [docker_bin, *args]
+
     def docker(args: list[str], timeout_seconds: float = 10.0) -> subprocess.CompletedProcess[str]:
         try:
             return subprocess.run(
-                [docker_bin, *args],
+                guarded_docker_argv(args),
                 stdin=subprocess.DEVNULL,
                 text=True,
                 capture_output=True,
@@ -3964,6 +4409,7 @@ try:
         cleanup_socket_bridge_if_authorized()
 
         def restore_validated_intents() -> None:
+            guard_recovery_boundary(begin_mutation=True)
             if recovery_fd < 0:
                 retain_packet("intent-restore-recovery-fd-missing")
             for restored_name in intent_names:
@@ -3985,11 +4431,26 @@ try:
                     "intent-restore",
                     retain_packet,
                 )
+            for restored_name in intent_names:
+                expected_payload = intent_payload_by_name.get(restored_name)
+                if expected_payload is None:
+                    retain_packet("intent-restore-payload")
+                restored_payload = capture_security_file(
+                    restored_name,
+                    "restored PostgreSQL recovery intent",
+                    required=True,
+                    max_size=2048,
+                    allow_empty=False,
+                )
+                if restored_payload != expected_payload:
+                    retain_packet("intent-restore-content")
+                retired_intent_bindings[restored_name] = security_file_bindings.pop(restored_name)
             try:
                 os.fsync(recovery_fd)
             except OSError:
                 retain_packet("intent-restore-fsync")
         def commit_recovery_ledger() -> None:
+            guard_recovery_boundary(begin_mutation=True)
             ledger_dir = "acgs-clean-sibling-recovery-ledger"
             ledger_file = f"{proof_label}.committed"
             ledger_fd = -1
@@ -4003,6 +4464,7 @@ try:
             ).hexdigest()
             intent_payload_manifest_b64 = canonical_intent_payload_manifest_b64(intent_names)
             try:
+                guard_recovery_boundary(begin_mutation=True)
                 try:
                     os.mkdir(ledger_dir, 0o700, dir_fd=recovery_fd)
                 except FileExistsError:
@@ -4120,6 +4582,7 @@ try:
                     os.close(ledger_fd)
 
         def mark_recovery_ledger_complete() -> None:
+            guard_recovery_boundary(begin_mutation=True)
             ledger_dir = "acgs-clean-sibling-recovery-ledger"
             complete_file = f"{proof_label}.complete"
             ledger_fd = -1
@@ -4129,6 +4592,7 @@ try:
                 + f"proof_label={proof_label}\n".encode("ascii")
             )
             try:
+                guard_recovery_boundary(begin_mutation=True)
                 ledger_fd = os.open(
                     ledger_dir,
                     os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
@@ -4180,6 +4644,7 @@ try:
                     os.close(ledger_fd)
         commit_recovery_ledger()
         for name in intent_names:
+            guard_recovery_boundary(begin_mutation=True)
             expected_identity = intent_identity_by_name.get(name)
             if expected_identity is None:
                 retain_packet("intent-unlink-unvalidated")
@@ -4232,12 +4697,18 @@ try:
                     or after_path_identity != expected_identity
                 ):
                     retain_packet("intent-unlink-identity")
+                bound_intent = security_file_bindings.get(name)
+                if bound_intent is None or bound_intent[0] != payload:
+                    retain_packet("intent-unlink-retirement")
             finally:
                 os.close(fd)
             try:
+                guard_recovery_boundary(begin_mutation=True)
                 os.unlink(name, dir_fd=recovery_fd)
             except OSError:
                 retain_packet("intent-unlink")
+            retired_intent_bindings[name] = bound_intent
+            del security_file_bindings[name]
         try:
             os.fsync(recovery_fd)
         except OSError:

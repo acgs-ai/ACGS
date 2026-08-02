@@ -20556,7 +20556,9 @@ def test_clean_sibling_quota_detach_failure_flag_is_wired_to_cleanup_helper() ->
     assert "os.fsync(marker_fd)" in source
     assert "os.fsync(root_fd)" in source
     assert 'ACGS_POSTGRES_RECOVERY_ROOT:-}"' in cleanup_source
-    assert "search_roots = [recovery_root]" in cleanup_source
+    assert "contracts, nonce_files = walk_authenticated_recovery()" in cleanup_source
+    assert "open_recovery_directory" in cleanup_source
+    assert "revalidate_recovery_root_binding()" in cleanup_source
     assert "cleanup refused PostgreSQL recovery root binding" in cleanup_source
     assert 'exec {TRUSTED_LEDGER_FD}<"$TRUSTED_LEDGER_ROOT"' in source
     assert '"$TMP_PARENT_FD" "$TRUSTED_LEDGER_FD"' in source
@@ -25373,11 +25375,15 @@ def test_postgres_gate_stale_valid_client_cid_still_uses_expected_name_record(
 
 
 def _external_intent_cleanup_helper(
-    *, inject_post_unlink_intent: bool = False, atomic_fault: str = ""
+    *,
+    inject_post_unlink_intent: bool = False,
+    atomic_fault: str = "",
+    post_discovery_fault: str = "",
+    pre_docker_fault: bool | str = False,
 ) -> str:
     source = (ROOT / "scripts/evidence/clean_sibling_cleanup.sh").read_text(encoding="utf-8")
     assert hashlib.sha256(source.encode("utf-8")).hexdigest() == (
-        "0b3d8c9d74cd1ce348df21e5033ccfe24efc584a39742c814552343ebf7579aa"
+        "c629e3c5c7cbcd184821dd84ac54b7cccc8eaa0297ad1eb919857d34acca0a07"
     )
     helper = _shell_function(source, "clean_sibling_retain_recovery_contracts")
     helper = (
@@ -25389,7 +25395,7 @@ def _external_intent_cleanup_helper(
     )
     if atomic_fault:
         assert re.fullmatch(
-            r"(intent|ledger):(after-temp-create|partial-write|after-file-fsync|after-atomic-publish|after-dir-fsync)",
+            r"(intent|ledger|complete):(after-temp-create|partial-write|after-file-fsync|after-atomic-publish|after-dir-fsync)",
             atomic_fault,
         )
         marker = 'fault = ""  # TEST_ATOMIC_FAULT_MARKER'
@@ -25401,6 +25407,98 @@ def _external_intent_cleanup_helper(
             1,
         )
         assert helper.count(replacement) == 1
+    if post_discovery_fault:
+        assert post_discovery_fault in {
+            "replace-recovery-root",
+            "replace-contract-inode",
+            "replace-nested-directory",
+        }
+        marker = (
+            "    nonce_files: list[str] = []\n"
+            "    contracts, nonce_files = walk_authenticated_recovery()\n"
+            "    revalidate_authenticated_recovery_state()\n"
+            "    if len(contracts) > 1:\n"
+        )
+        if post_discovery_fault == "replace-recovery-root":
+            injected = (
+                "    displaced_recovery_root = recovery_root + '.opened'\n"
+                "    os.rename(recovery_root, displaced_recovery_root)\n"
+                "    os.mkdir(recovery_root, 0o700)\n"
+            )
+        elif post_discovery_fault == "replace-contract-inode":
+            injected = (
+                "    contract_path = os.path.join(recovery_root, 'recovery-contract.env')\n"
+                "    replacement_path = contract_path + '.replacement'\n"
+                "    with open(contract_path, 'rb') as source_file:\n"
+                "        replacement_payload = source_file.read()\n"
+                "    replacement_fd = os.open(\n"
+                "        replacement_path,\n"
+                "        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,\n"
+                "        0o600,\n"
+                "    )\n"
+                "    try:\n"
+                "        os.write(replacement_fd, replacement_payload)\n"
+                "        os.fsync(replacement_fd)\n"
+                "    finally:\n"
+                "        os.close(replacement_fd)\n"
+                "    os.replace(replacement_path, contract_path)\n"
+            )
+        else:
+            injected = (
+                "    nested_path = os.path.join(recovery_root, 'stable-nested')\n"
+                "    displaced_nested = nested_path + '.opened'\n"
+                "    os.rename(nested_path, displaced_nested)\n"
+                "    os.mkdir(nested_path, 0o700)\n"
+                "    with open(os.path.join(nested_path, 'marker.txt'), 'wb') as marker_file:\n"
+                "        marker_file.write(b'stable-marker\\n')\n"
+                "    os.chmod(os.path.join(nested_path, 'marker.txt'), 0o600)\n"
+            )
+        replacement = marker.removesuffix("    if len(contracts) > 1:\n") + injected + (
+            "    if len(contracts) > 1:\n"
+        )
+        assert helper.count(marker) == 1
+        helper = helper.replace(marker, replacement, 1)
+    if pre_docker_fault:
+        assert pre_docker_fault in {
+            True,
+            "replace-intent-inode",
+            "replace-server-name-inode",
+            "replace-server-cid-inode",
+        }
+        marker = "            return subprocess.run(\n                guarded_docker_argv(args),\n"
+        if pre_docker_fault is True:
+            injected = (
+                "            displaced_recovery_root = recovery_root + '.pre-docker-opened'\n"
+                "            os.rename(recovery_root, displaced_recovery_root)\n"
+                "            os.mkdir(recovery_root, 0o700)\n"
+            )
+        else:
+            if pre_docker_fault == "replace-intent-inode":
+                target_expression = "os.path.join(recovery_root, sorted(intent_names)[0])"
+            elif pre_docker_fault == "replace-server-name-inode":
+                target_expression = "os.path.join(recovery_root, 'server.name')"
+            else:
+                target_expression = "os.path.join(recovery_root, 'server.cid')"
+            injected = (
+                f"            substituted_path = {target_expression}\n"
+                "            substituted_temp = substituted_path + '.substitute'\n"
+                "            with open(substituted_path, 'rb') as substituted_source:\n"
+                "                substituted_payload = substituted_source.read()\n"
+                "            substituted_fd = os.open(\n"
+                "                substituted_temp,\n"
+                "                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,\n"
+                "                0o600,\n"
+                "            )\n"
+                "            try:\n"
+                "                os.write(substituted_fd, substituted_payload)\n"
+                "                os.fsync(substituted_fd)\n"
+                "            finally:\n"
+                "                os.close(substituted_fd)\n"
+                "            os.replace(substituted_temp, substituted_path)\n"
+            )
+        replacement = injected + marker
+        assert helper.count(marker) == 1
+        helper = helper.replace(marker, replacement, 1)
     if inject_post_unlink_intent:
         helper = helper.replace(
             "                os.unlink(name, dir_fd=recovery_fd)\n",
@@ -25648,6 +25746,8 @@ def _run_external_intent_cleanup(
     mutate: Any | None = None,
     post_unlink_intruder: bool = False,
     atomic_fault: str = "",
+    post_discovery_fault: str = "",
+    pre_docker_fault: bool | str = False,
     extra_env: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, Path | dict[str, str]]]:
     tmp_parent = tmp_path / "parent"
@@ -25675,6 +25775,8 @@ def _run_external_intent_cleanup(
     cleanup_helper = _external_intent_cleanup_helper(
         inject_post_unlink_intent=post_unlink_intruder,
         atomic_fault=atomic_fault,
+        post_discovery_fault=post_discovery_fault,
+        pre_docker_fault=pre_docker_fault,
     )
     harness.write_text(
         "#!/usr/bin/env bash\n"
@@ -25843,6 +25945,223 @@ def test_clean_sibling_tampered_external_root_never_falls_back_to_tmp_decoys(
     assert _recovery_state_snapshot(tmp_root) == before["tmp"]
     assert _recovery_state_snapshot(recovery_root) == before["recovery"]
     assert not log.exists() or log.read_text(encoding="utf-8") == ""
+
+
+def test_clean_sibling_recovery_root_replacement_after_discovery_fails_before_docker(
+    tmp_path: Path,
+) -> None:
+    before: dict[str, tuple[int, str]] = {}
+
+    def snapshot_original(
+        _tmp_root: Path, recovery_root: Path, _names: dict[str, str], _nonce: str
+    ) -> None:
+        before.update(_recovery_state_snapshot(recovery_root))
+
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=snapshot_original,
+        post_discovery_fault="replace-recovery-root",
+    )
+    recovery_root = context["recovery_root"]
+    log = context["log"]
+    assert isinstance(recovery_root, Path)
+    assert isinstance(log, Path)
+    displaced = recovery_root.with_name(recovery_root.name + ".opened")
+    assert completed.returncode == 2, (completed.stdout, completed.stderr)
+    assert "cleanup refused PostgreSQL recovery root identity" in completed.stderr
+    assert _recovery_state_snapshot(displaced) == before
+    assert recovery_root.is_dir()
+    assert list(recovery_root.iterdir()) == []
+    assert not log.exists() or log.read_text(encoding="utf-8") == ""
+
+
+def test_clean_sibling_contract_inode_substitution_fails_before_docker(
+    tmp_path: Path,
+) -> None:
+    before: dict[str, tuple[int, str]] = {}
+
+    def add_contract(
+        _tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+    ) -> None:
+        _write_matching_external_contract(recovery_root, names, nonce)
+        before.update(_recovery_state_snapshot(recovery_root))
+
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=add_contract,
+        post_discovery_fault="replace-contract-inode",
+    )
+    recovery_root = context["recovery_root"]
+    log = context["log"]
+    assert isinstance(recovery_root, Path)
+    assert isinstance(log, Path)
+    assert completed.returncode == 2, (completed.stdout, completed.stderr)
+    assert "cleanup refused PostgreSQL recovery reserved entry changed" in completed.stderr
+    assert _recovery_state_snapshot(recovery_root) == before
+    assert not log.exists() or log.read_text(encoding="utf-8") == ""
+
+
+def test_clean_sibling_nested_directory_substitution_fails_before_docker(
+    tmp_path: Path,
+) -> None:
+    before: dict[str, tuple[int, str]] = {}
+
+    def add_nested_marker(
+        _tmp_root: Path, recovery_root: Path, _names: dict[str, str], _nonce: str
+    ) -> None:
+        nested = recovery_root / "stable-nested"
+        nested.mkdir(mode=0o700)
+        marker = nested / "marker.txt"
+        marker.write_text("stable-marker\n", encoding="ascii")
+        marker.chmod(0o600)
+        before.update(_recovery_state_snapshot(recovery_root))
+
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=add_nested_marker,
+        post_discovery_fault="replace-nested-directory",
+    )
+    recovery_root = context["recovery_root"]
+    log = context["log"]
+    assert isinstance(recovery_root, Path)
+    assert isinstance(log, Path)
+    displaced = recovery_root / "stable-nested.opened"
+    replacement = recovery_root / "stable-nested"
+    assert completed.returncode == 2, (completed.stdout, completed.stderr)
+    assert "cleanup refused PostgreSQL recovery inventory changed" in completed.stderr
+    assert _recovery_state_snapshot(displaced) == {
+        "marker.txt": before["stable-nested/marker.txt"]
+    }
+    assert _recovery_state_snapshot(replacement) == {
+        "marker.txt": before["stable-nested/marker.txt"]
+    }
+    assert not log.exists() or log.read_text(encoding="utf-8") == ""
+
+
+def test_clean_sibling_replacement_immediately_before_docker_fails_without_call(
+    tmp_path: Path,
+) -> None:
+    before: dict[str, tuple[int, str]] = {}
+
+    def snapshot_original(
+        _tmp_root: Path, recovery_root: Path, _names: dict[str, str], _nonce: str
+    ) -> None:
+        before.update(_recovery_state_snapshot(recovery_root))
+
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=snapshot_original,
+        pre_docker_fault=True,
+    )
+    recovery_root = context["recovery_root"]
+    log = context["log"]
+    assert isinstance(recovery_root, Path)
+    assert isinstance(log, Path)
+    displaced = recovery_root.with_name(recovery_root.name + ".pre-docker-opened")
+    assert completed.returncode == 2, (completed.stdout, completed.stderr)
+    assert "cleanup refused PostgreSQL recovery root identity" in completed.stderr
+    assert _recovery_state_snapshot(displaced) == before
+    assert recovery_root.is_dir()
+    assert list(recovery_root.iterdir()) == []
+    assert not log.exists() or log.read_text(encoding="utf-8") == ""
+
+
+def test_clean_sibling_intent_inode_substitution_before_docker_fails_without_call(
+    tmp_path: Path,
+) -> None:
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        pre_docker_fault="replace-intent-inode",
+    )
+    log = context["log"]
+    assert isinstance(log, Path)
+    assert completed.returncode == 2, (completed.stdout, completed.stderr)
+    assert "cleanup refused recovery security input changed" in completed.stderr
+    assert not log.exists() or log.read_text(encoding="utf-8") == ""
+
+
+@pytest.mark.parametrize(
+    ("record_name", "fault"),
+    [
+        ("server.name", "replace-server-name-inode"),
+        ("server.cid", "replace-server-cid-inode"),
+    ],
+)
+def test_clean_sibling_name_or_cid_inode_substitution_before_docker_fails_without_call(
+    tmp_path: Path,
+    record_name: str,
+    fault: str,
+) -> None:
+    def add_server_records(
+        _tmp_root: Path, recovery_root: Path, names: dict[str, str], _nonce: str
+    ) -> None:
+        values = {
+            "server.name": names["server_name"] + "\n",
+            "server.cid": "a" * 64 + "\n",
+        }
+        for name, value in values.items():
+            record = recovery_root / name
+            record.write_text(value, encoding="ascii")
+            record.chmod(0o600)
+
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=add_server_records,
+        pre_docker_fault=fault,
+    )
+    recovery_root = context["recovery_root"]
+    log = context["log"]
+    assert isinstance(recovery_root, Path)
+    assert isinstance(log, Path)
+    assert (recovery_root / record_name).is_file()
+    assert completed.returncode == 2, (completed.stdout, completed.stderr)
+    assert "cleanup refused recovery security input changed" in completed.stderr
+    assert not log.exists() or log.read_text(encoding="utf-8") == ""
+
+
+def test_clean_sibling_unreadable_descendant_with_duplicate_fails_before_docker(
+    tmp_path: Path,
+) -> None:
+    before: dict[str, tuple[int, str]] = {}
+    hidden_holder: dict[str, Path] = {}
+
+    def add_unreadable_duplicate(
+        _tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+    ) -> None:
+        contract = _write_matching_external_contract(recovery_root, names, nonce)
+        hidden = recovery_root / "unreadable-duplicate"
+        hidden.mkdir(mode=0o700)
+        duplicate = hidden / "recovery-contract.env"
+        duplicate.write_bytes(contract.read_bytes())
+        duplicate.chmod(0o600)
+        before.update(_recovery_state_snapshot(recovery_root))
+        hidden.chmod(0o000)
+        hidden_holder["path"] = hidden
+
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=add_unreadable_duplicate,
+    )
+    recovery_root = context["recovery_root"]
+    log = context["log"]
+    hidden = hidden_holder["path"]
+    assert isinstance(recovery_root, Path)
+    assert isinstance(log, Path)
+    try:
+        assert completed.returncode == 2, (completed.stdout, completed.stderr)
+        assert "cleanup refused PostgreSQL recovery traversal" in completed.stderr
+        assert stat.S_IMODE(hidden.stat(follow_symlinks=False).st_mode) == 0o000
+        assert not log.exists() or log.read_text(encoding="utf-8") == ""
+    finally:
+        hidden.chmod(0o700)
+    assert _recovery_state_snapshot(recovery_root) == before
 
 
 @pytest.mark.parametrize("docker_mode", ["empty", "exact"])
@@ -26052,6 +26371,51 @@ def test_clean_sibling_external_intents_ledger_atomic_faults_converge(
     assert not list(ledger.glob(".acgs-clean-sibling.atomic.*"))
 
 
+@pytest.mark.parametrize(
+    "fault_stage",
+    [
+        "after-temp-create",
+        "partial-write",
+        "after-file-fsync",
+        "after-atomic-publish",
+        "after-dir-fsync",
+    ],
+)
+def test_clean_sibling_complete_atomic_fault_retains_forensics_after_intent_unlink(
+    tmp_path: Path,
+    fault_stage: str,
+) -> None:
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        atomic_fault=f"complete:{fault_stage}",
+    )
+    tmp_parent = context["tmp_parent"]
+    recovery_root = context["recovery_root"]
+    log = context["log"]
+    harness = context["harness"]
+    assert isinstance(tmp_parent, Path)
+    assert isinstance(recovery_root, Path)
+    assert isinstance(log, Path)
+    assert isinstance(harness, Path)
+    marker = f"fault = 'complete:{fault_stage}'  # TEST_ATOMIC_FAULT_MARKER"
+    assert harness.read_text(encoding="utf-8").count(marker) == 1
+    assert completed.returncode == 2, (fault_stage, completed.stdout, completed.stderr)
+    assert "intent-ledger-complete" in completed.stderr
+    assert not list(recovery_root.glob("*.intent"))
+    retained_dirs = sorted(tmp_parent.glob("acgs-clean-sibling-retained-recovery-*"))
+    assert len(retained_dirs) == 1
+    retained_packet = retained_dirs[0] / "recovery-contract.env"
+    assert stat.S_IMODE(retained_dirs[0].stat().st_mode) == 0o700
+    assert stat.S_IMODE(retained_packet.stat().st_mode) == 0o600
+    assert "cleanup retained external recovery packet" in completed.stderr
+    docker_log = log.read_text(encoding="utf-8")
+    assert docker_log.splitlines()
+    assert all(line.startswith("ps -aq --filter label=") for line in docker_log.splitlines())
+    assert "rm -f" not in docker_log
+    assert "RAW_SECRET" not in completed.stdout + completed.stderr
+
+
 def test_clean_sibling_external_intents_repairs_partial_final_intent_from_committed_ledger(
     tmp_path: Path,
 ) -> None:
@@ -26065,6 +26429,25 @@ def test_clean_sibling_external_intents_repairs_partial_final_intent_from_commit
     assert completed.returncode == 0, (completed.stdout, completed.stderr)
     assert not list(recovery_root.glob("*.intent"))
     assert list(recovery_root.glob(".acgs-clean-sibling.preserved.*.bad"))
+
+
+def test_clean_sibling_reconciled_intent_substitution_still_fails_before_docker(
+    tmp_path: Path,
+) -> None:
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=_write_matching_recovery_ledger_and_replace_server_with_partial_final,
+        pre_docker_fault="replace-intent-inode",
+    )
+    recovery_root = context["recovery_root"]
+    log = context["log"]
+    assert isinstance(recovery_root, Path)
+    assert isinstance(log, Path)
+    assert completed.returncode == 2, (completed.stdout, completed.stderr)
+    assert list(recovery_root.glob(".acgs-clean-sibling.preserved.*.bad"))
+    assert "cleanup refused recovery security input changed" in completed.stderr
+    assert not log.exists() or log.read_text(encoding="utf-8") == ""
 
 
 def test_clean_sibling_external_intents_repairs_partial_final_intent_hardlink_crash(
