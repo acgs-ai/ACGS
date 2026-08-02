@@ -705,6 +705,29 @@ enumerated entries still passes. The host policy must therefore deny
         baseline is refused as approval evidence and only a
         full-content rendering, trusted summary, or approved-baseline
         diff yields a consumable grant.
+        Deriving the summary inside the trusted channel authenticates
+        its source, not its semantic completeness: when the referenced
+        input uses a schema or version the summarizer does not fully
+        support, or carries behavior the summarizer's rendering omits, a
+        lossy trusted semantic summary hides a destructive field while
+        the channel still signs the exact content digest, so the
+        approver approves bytes whose destructive behavior the rendering
+        never showed and every destructive-referenced-content test above
+        passes. A trusted semantic summary is therefore admissible as
+        approval evidence only when the trusted channel schema-validates
+        the referenced content against a schema whose behavior-relevant
+        fields and sections the summarizer provably renders completely
+        (every element that can cause or parameterize an operation is
+        rendered, or its unrendered presence is explicitly and visibly
+        surfaced), and the channel must refuse summary rendering and
+        fall back to the safely escaped full content whenever the
+        content fails schema validation, uses an unsupported schema or
+        version, or contains sections the summarizer cannot account
+        for, with an omitted-section negative test supplying a manifest
+        whose destructive operation lives in a section the summarizer
+        omits and proving the lossy summary is refused as approval
+        evidence and only the safely escaped full-content rendering or
+        a behavior-complete rendering yields a consumable grant.
         Rendering the verified bytes faithfully re-opens for content the
         display-spoofing gap the bound-field escaping rule above closes
         for fields: a referenced manifest or configuration can carry
@@ -1721,16 +1744,24 @@ enumerated entries still passes. The host policy must therefore deny
        pre-materialization vetting but before the governed write commits, so
        the open descriptor and its in-ceiling parent remain valid, the
        rename-after-open and destination revalidation checks pass, and the
-       committed write becomes visible through the newly created denied
-       path. The writable target must therefore live where outsiders cannot
-       create links to it (a private namespace or filesystem whose entries
-       only the broker can link), or the brokered commit step must
-       atomically recheck the target's inode identity and link count at
-       every write or commit and fail closed when a new cross-boundary link
-       exists, with a link-after-open negative test proving a hard link
-       added to a validated writable target after open but before commit
-       never makes the written content visible through the out-of-ceiling
-       path. All
+        committed write becomes visible through the newly created denied
+        path. A recheck performed at write or commit closes only the
+        pre-commit window: once the governed write commits, the
+        capability's participation ends and no further recheck ever
+        runs, so a hard link created afterward by a same-filesystem
+        workload immediately exposes the committed bytes through the
+        denied path. The writable target must therefore reside, for its
+        entire lifetime, in storage where outsiders cannot create links
+        to it (a private mount namespace, a filesystem whose entries
+        only the broker can link, or an equivalent broker-private
+        store), or the governed write must land in such broker-private
+        storage and be published only through a broker-controlled copy
+        whose destination also has that no-outside-link property for the
+        published object's lifetime, with the link-after-open negative
+        test extended to race hard-link creation both before commit and
+        after commit and proving a link added to the target at any
+        point in its lifetime never makes the governed content
+        readable through the out-of-ceiling path. All
      of these path-escape defenses share an assumption the filesystem does not
     guarantee: that an inode genuinely beneath the ceiling only carries
     in-ceiling effects. A FIFO or device node inside an allowed directory
@@ -2316,11 +2347,32 @@ enumerated entries still passes. The host policy must therefore deny
       outcome whose effect status is ambiguous (a downstream operation
       already issued with no authoritative evidence it failed before
       taking effect) conservatively retains the charge, with an
-      abandoned-receipt exhaustion negative test proving a requester
-      that repeatedly reserves budget and abandons, expires, or
-      invalidates its receipts before execution cannot durably exhaust
-      the shared tenant or target-account budget.
-      Admission charges the outer request, not its transitive effects: an
+       abandoned-receipt exhaustion negative test proving a requester
+       that repeatedly reserves budget and abandons, expires, or
+       invalidates its receipts before execution cannot durably exhaust
+       the shared tenant or target-account budget.
+       Release restores capacity, not fairness: one actor, or
+       coordinated skills submitting under several child scopes, can
+       continuously reserve the tenant- or target-account-wide
+       allowance and abandon each receipt, and because every release
+       returns the capacity to an open pool the same submitters reclaim
+       it immediately, indefinitely starving unrelated valid effects
+       while every two-phase lifecycle and abandonment test above
+       passes. Enclosing external-effect budgets must therefore
+       preserve capacity for unrelated submitters through the same
+       sybil-resistant protected-share or fair-scheduling rule required
+       below for queue and audit capacity: the concurrently admitted
+       child-scope reservations must collectively leave a protected
+       reserve of the enclosing allowance (with child-scope creation
+       itself a governed, allocation-consuming admission rather than a
+       free identity), or scheduling must guarantee each submitter a
+       minimum reserved share that no set of other scopes can consume,
+       with the abandoned-receipt exhaustion test extended to sustained
+       reserve-and-abandon submissions coordinated across multiple
+       actor scopes and proving unrelated requesters in the same
+       enclosing scope still obtain reservations and execute their
+       effects out of the protected reserve.
+       Admission charges the outer request, not its transitive effects: an
     admitted handler that batches operations, fans one request out to
     many downstream calls, or retries after an ambiguous downstream
     timeout consumes one admission and one single-use receipt while
@@ -2532,6 +2584,25 @@ enumerated entries still passes. The host policy must therefore deny
       high-expansion input and prove the emitted output is bounded and
       other workloads retain response-channel, transport, model-context,
       and result-logging capacity.
+      A purity classification is a decision about code, and code moves:
+      the exempted operation sits outside the admitted-tool registry,
+      so when the alias or implementation behind a proven-pure parser,
+      solver, or evaluator is upgraded or rebound to code that reads
+      host state or performs an effect, the implementation-digest and
+      admission-freshness checks below never apply to it and the
+      operation retains its bypass while executing effectful code.
+      Every purity decision must therefore be bound to the immutable
+      implementation and runtime identities it was proven against (the
+      resolved handler or server identity, its implementation digest,
+      and the relevant runtime version), with the execution path
+      rechecking that binding on every call and failing closed into
+      ordinary registry admission whenever the resolved implementation,
+      digest, or runtime differs from the one the purity decision
+      names, and a pure-to-effectful substitution negative test proving
+      that rebinding a pure-exempt alias or upgrading its
+      implementation to code that reads host state or performs an
+      effect loses the exemption and is routed through registry
+      admission rather than executed under the stale purity decision.
       Per-call budgets attach to the dispatched operation, but the
      governance path computes first: canonicalization, permission
      matching, policy evaluation, and audit serialization all run over
@@ -2546,11 +2617,26 @@ enumerated entries still passes. The host policy must therefore deny
      and the entire pre-dispatch governance path must run under
      cancellable per-call and aggregate resource budgets whose
      exhaustion terminates the work rather than abandoning the thread,
-     with a denied-request exhaustion negative test driving oversized
-     or pathological arguments that are ultimately denied and proving
-     the governance path itself is bounded and other workloads retain
-     dispatcher capacity.
-     Bounding active governance work bounds computation, not durable
+      with a denied-request exhaustion negative test driving oversized
+      or pathological arguments that are ultimately denied and proving
+      the governance path itself is bounded and other workloads retain
+      dispatcher capacity.
+      Ingress limits enforced by the dispatcher arrive after the host
+      has already parsed: when the host or framework fully deserializes
+      a tool payload before invoking the dispatcher, a deeply nested or
+      parser-pathological request exhausts parser CPU or memory before
+      any ingress check or cancellable governance budget begins. The
+      execution boundary must therefore cap raw transport bytes before
+      any parsing occurs, and request deserialization itself must run
+      under the same structural-depth, CPU, memory, and deadline limits
+      as the governance path, terminated at the bound rather than
+      completed and then measured, with the denied-request exhaustion
+      negative test delivering its oversized and parser-pathological
+      payloads through the real transport endpoint rather than passing
+      an already-materialized request object to the dispatcher, proving
+      the pre-dispatch parse itself is bounded and other workloads
+      retain parser and dispatcher capacity.
+      Bounding active governance work bounds computation, not durable
      evidence: every denied request still appends its durable audit
      event, the active budget is released after each denial, and a
      sustained stream of small individually denied requests stays
