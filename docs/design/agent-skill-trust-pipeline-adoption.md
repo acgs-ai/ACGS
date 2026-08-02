@@ -1896,6 +1896,25 @@ enumerated entries still passes. The host policy must therefore deny
     launches from distinct skills sharing one execution boundary are
     collectively bounded by the boundary-wide limit and other workloads
     retain capacity.
+    A permitted `queued` outcome moves the exhaustion rather than
+    removing it: every quota above bounds admitted execution, and the
+    ingress and per-call budgets below bound each request and active
+    governance work, so a skill (or several) can submit arbitrarily
+    many individually valid launches that each land in the queue,
+    exhausting dispatcher memory or durable queue storage while no
+    queued launch ever consumes its execution budget. Queue admission
+    must therefore be governed by its own hierarchical queue-length
+    and queued-byte budgets, per-skill totals nesting under
+    tenant-wide and execution-boundary-wide totals of the same shape
+    as the aggregate quotas they guard, enforced before a launch is
+    enqueued, with a submission whose enqueueing would exceed any
+    enclosing queue budget rejected fail-closed or held behind
+    backpressure that blocks the submitter rather than buffering the
+    submission, with a sustained over-quota submission negative test
+    driving continuous individually valid launches from multiple
+    skills against one shared boundary and proving dispatcher memory
+    and durable queue storage stay within the declared queue budgets
+    while other workloads' submissions still make progress.
     Host-resource quotas bound what a launch consumes locally, not what
     it effects remotely: an admitted action that is cheap on the host but
     high-impact externally (sending a message, creating a cloud
@@ -1972,10 +1991,33 @@ enumerated entries still passes. The host policy must therefore deny
      transformed action and arguments, recomputed after any policy
      transformation, with that reservation bound into the receipt the
      executor validates, and a transform-that-increases-value negative
-     test proving a transform that raises a request's count or value
-     beyond the remaining aggregate budget is denied, queued, or escalated
-     rather than run.
-     Admission charges the outer request, not its transitive effects: an
+      test proving a transform that raises a request's count or value
+      beyond the remaining aggregate budget is denied, queued, or escalated
+      rather than run.
+      Reservation without release converts denial of effect into denial
+      of budget: a count or value debit reserved at admission against a
+      tenant- or target-account-wide total stays charged when its
+      receipt is abandoned, expires unconsumed, or is rejected by a
+      later freshness, liveness, or consumption check before any
+      external effect occurs, so a low-privileged requester can exhaust
+      the shared budget by minting reservations it never executes while
+      every admission and accounting test above passes. Reservations
+      must therefore follow a two-phase lifecycle recorded in the same
+      authenticated rollback-refusing state as the counters: a
+      reservation is committed only when its effect becomes irrevocable
+      (the per-effect debit points defined below), and it is released
+      atomically, by explicit abort or by an expiry bounded to the
+      mapped receipt's own lifetime, on every provable pre-effect
+      failure (receipt expiry without consumption, denial at the
+      execution gate, revocation of the underlying lease), while any
+      outcome whose effect status is ambiguous (a downstream operation
+      already issued with no authoritative evidence it failed before
+      taking effect) conservatively retains the charge, with an
+      abandoned-receipt exhaustion negative test proving a requester
+      that repeatedly reserves budget and abandons, expires, or
+      invalidates its receipts before execution cannot durably exhaust
+      the shared tenant or target-account budget.
+      Admission charges the outer request, not its transitive effects: an
     admitted handler that batches operations, fans one request out to
     many downstream calls, or retries after an ambiguous downstream
     timeout consumes one admission and one single-use receipt while
@@ -2649,10 +2691,32 @@ enumerated entries still passes. The host policy must therefore deny
        refused, with the tombstone or delivery watermark held in the
        same authenticated, rollback-refusing trust class as the
        consumption ledger, and a delayed-duplicate negative test
-       presenting the same per-operation identity after the mapped
-       receipt has expired and its retry lifetime has elapsed and
-       proving no new executable receipt is minted and no side effect
-       runs. Atomic
+        presenting the same per-operation identity after the mapped
+        receipt has expired and its retry lifetime has elapsed and
+        proving no new executable receipt is minted and no side effect
+        runs. A per-operation tombstone retained beyond expiry is sound
+        only if it is bounded: when the transport supplies unordered
+        identities, permanently refusing every already-seen identity
+        means retaining one non-reusable record per intentional
+        operation indefinitely, so ordinary distinct traffic grows the
+        authenticated store without bound, while evicting tombstones to
+        cap it recreates the delayed-duplicate mint. The replay
+        protection must therefore be representable in bounded
+        authenticated state: per-operation identities drawn from a
+        monotonic delivery sequence whose consumed positions collapse
+        into a bounded watermark (plus at most a bounded reordering
+        window of individual records), or a transport-enforced maximum
+        redelivery horizon after which the transport verifiably never
+        redelivers an identity so tombstones older than that horizon
+        can be safely discarded, or another authenticated replay
+        structure whose size is bounded independently of operation
+        count, with transports that can supply neither ordering nor a
+        verified redelivery horizon rejected at admission, and a
+        replay-store growth negative test proving the authenticated
+        replay state stays within its declared bound under sustained
+        distinct-operation traffic while a duplicate identity at or
+        before the watermark or horizon is still refused without
+        minting a receipt. Atomic
      consumption presumes the ledger's own integrity: if a governed skill can
      write the consumption store, it can delete a consumed receipt's key or
      restore an earlier ledger snapshot, making a still-valid signed receipt
@@ -2784,6 +2848,26 @@ enumerated entries still passes. The host policy must therefore deny
     provenance record for an artifact updated arbitrarily many times by
     the same origin stacks stays within its declared bound while its next
     reader is still governed at the restricted intersection.
+    Deduplication bounds repeat contributors, not distinct ones: an
+    artifact updated by many distinct skill versions or composed
+    delegation stacks retains one entry per new stack, so the
+    deduplicated set itself grows without bound under exactly the
+    distinct-stack traffic identified above. The governing record must
+    therefore be bounded independently of contributor count: store the
+    running effective intersection itself, which only narrows
+    monotonically and is bounded by the ceiling representation while
+    governing consumers identically because intersection is
+    order-insensitive, alongside the compact history commitment, in
+    place of any enumerated stack set; or, where enumerated stacks
+    must be retained for audit, impose and enforce a hard bound on
+    distinct retained contributors beyond which further updates are
+    denied or the artifact's effective ceiling collapses to the most
+    restrictive contributor and the artifact is quarantined from
+    consumption pending review, with a distinct-stack growth negative
+    test proving the protected provenance record for an artifact
+    updated by an unbounded sequence of distinct origin stacks stays
+    within its declared bound while its next reader is still governed
+    at (or below) the restricted intersection.
     Accumulation "at write time" still leaves two stores: when a
     restricted skill updates an artifact whose existing label records a
     broader or non-skill origin, publishing the new content before the
@@ -2857,7 +2941,30 @@ enumerated entries still passes. The host policy must therefore deny
     machine consumer, with a consumer-addition negative test proving a path
     written under an admitted ceiling and later mapped into a new consumer's
     executed set is not executed with the new consumer's authority until the
-    admission and the existing artifacts are revalidated. A single
+    admission and the existing artifacts are revalidated.
+    Direct returns and persistent artifacts are not the only paths into
+    another model context: a restricted skill can send delayed
+    instructions over an allowed live channel (a brokered network
+    connection, an IPC or inherited-handle channel, a streaming
+    handler's output) to a receiver whose broader model context
+    consumes the payload, and because that payload is neither an
+    isolated-context return nor a persistent artifact, neither
+    propagation rule above fires while the receiver executes the
+    instruction under its broader non-skill ceiling. Every brokered
+    communication payload that can enter another model context must
+    therefore be treated as origin-carrying output: the broker or host
+    labels the payload at transmission with the sending context's full
+    skill stack (host-assigned, held outside the sender's write
+    authority, exactly as artifact provenance is), and every model
+    context that consumes it inherits the intersected ceiling as for
+    isolated-context returns, retained until that context is
+    discarded, or the channel must be constrained so its payloads can
+    never become model-consumable instructions (delivered only to
+    non-model sinks), with a live-channel laundering negative test
+    proving a tool call issued by a broader context after consuming a
+    restricted skill's live-channel payload is still governed by the
+    sending skill's ceiling rather than the receiver's broader
+    ceiling. A single
    origin identity is not enough once skills compose: when one skill invokes
    another, or several are active concurrently, attributing the request to any
    single skill would let a restricted outer skill route an action through a
