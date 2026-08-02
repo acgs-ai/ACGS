@@ -1274,14 +1274,24 @@ enumerated entries still passes. The host policy must therefore deny
    is installed in multiple tenants or execution boundaries, a ceiling
    approved for tenant A can be selected as the active pair while issuing a
    tenant-B receipt, and binding tenant B into that receipt does not prove
-   the ceiling was ever approved there. Every ceiling record and active-pair
-   entry must therefore also be bound to the tenant, execution boundary, and
-   applicable host or executor profile it was approved for, with those
-   fields rechecked against the requesting deployment context at both
-   issuance and execution, and cross-tenant and cross-boundary substitution
-   negative tests proving a ceiling approved in one tenant or execution
-   boundary cannot authorize a receipt issued or executed in
-   another. Freshness checks at issuance
+    the ceiling was ever approved there. Tenant, execution boundary, and
+    executor profile are also not the finest applicability scope: project
+    and environment are distinct trust dimensions in this repository's v2
+    receipt model, and staging and production can share a tenant,
+    execution boundary, and executor profile, so a ceiling-and-skill pair
+    approved for one project or environment could otherwise be selected
+    as the active pair while authorizing a receipt in the
+    other. Every ceiling record and active-pair
+    entry must therefore also be bound to the tenant, `project_id`,
+    `environment_id`, execution boundary, and
+    applicable host or executor profile it was approved for, with those
+    fields rechecked against the requesting deployment context at both
+    issuance and execution, and cross-tenant, cross-project,
+    cross-environment, and cross-boundary substitution
+    negative tests proving a ceiling approved in one tenant, project,
+    environment, or execution
+    boundary cannot authorize a receipt issued or executed in
+    another. Freshness checks at issuance
    and execution bound only work that has not yet launched: a long-running or
    detached process started under a then-active pair has already passed both
    checks, so revoking or narrowing the pair afterward leaves that process's
@@ -2054,20 +2064,40 @@ enumerated entries still passes. The host policy must therefore deny
          ambient-configuration rule later in this design covers only
          admitted handlers, not spawned scripts. Each allowed script's
          security-relevant ambient inputs must therefore be enumerated at
-         admission (the environment values, configuration files and
-         defaults, and feature flags its operation depends on), bound by
-         resolved value or content digest into the shell grant, its
-         approvals, and its receipts at authorization, and resolved
-         atomically with launch into the same pinned immutable snapshot the
-         spawned process consumes (the allowlisted environment and
-         configuration materialized from the bound values, never re-read
-         from mutable host state), failing closed on mismatch, with a shell
-         ambient-configuration substitution negative test proving an
-         allowed script authorized while `DEPLOY_MODE` (or an equivalent
-         flag or default) held its reviewed value is refused launch,
-         without a side effect, or cannot have its executed operation
-         altered by the change, after that value is modified between
-         authorization and launch.
+          admission (the environment values, configuration files and
+          defaults, and feature flags its operation depends on), bound by
+          resolved value or content digest into the shell grant, its
+          approvals, and its receipts at authorization, and resolved
+          atomically with launch into the same pinned immutable snapshot the
+          spawned process consumes (the allowlisted environment and
+          configuration materialized from the bound values, never re-read
+          from mutable host state), failing closed on mismatch. Binding by
+          resolved value or ordinary content digest is safe only for
+          non-secret ambient inputs: when an allowed script consumes an
+          unnamed secret-bearing configuration file, a private feature
+          value, or another non-credential ambient secret, serializing its
+          resolved value into the grant, approval, or receipt discloses the
+          secret, and an unkeyed content digest of a low-entropy secret is
+          an offline-guessable commitment, while the secret-ambient-input
+          rule later in this design is explicitly scoped to admitted
+          handlers. Secret-classified shell ambient inputs must therefore
+          be represented in shell grants, approvals, and receipts by the
+          same secret-store identity-and-version or keyed-commitment
+          representation that rule requires for admitted handlers (the
+          commitment verifiable only inside the trusted resolver that holds
+          the key, never offline from the evidence alone), with the raw
+          value still resolved atomically with launch into the pinned
+          immutable snapshot and mismatches failing closed, with a shell
+          ambient-configuration substitution negative test proving an
+          allowed script authorized while `DEPLOY_MODE` (or an equivalent
+          flag or default) held its reviewed value is refused launch,
+          without a side effect, or cannot have its executed operation
+          altered by the change, after that value is modified between
+          authorization and launch, and a shell secret-ambient-input
+          serialization negative test proving the shell grant, approvals,
+          and receipts for a script consuming a secret-bearing ambient
+          input never contain the secret's value or an unkeyed digest of
+          it while substitution of that input is still refused.
         Files, sockets, environment, and credentials still do
      not exhaust ambient authority: a launch that shares the host's PID or
      IPC namespace lets the spawned process signal or trace same-UID
@@ -2174,22 +2204,33 @@ enumerated entries still passes. The host policy must therefore deny
     test proving that many simultaneous individually-within-budget
     launches from one skill are collectively bounded and other workloads
     retain CPU, memory, PID, storage, descriptor, and bandwidth capacity.
-    Per-skill aggregates bound each skill's sum, not the boundary's:
-    when several admitted skills share one execution boundary, each can
-    remain within its own aggregate quota while their combined CPU,
-    memory, PID, storage, descriptor, or bandwidth use exhausts the
-    shared host, and a many-launch test driven from a single skill never
-    exercises that combination. The aggregate quotas must therefore be
-    hierarchical: per-skill totals nest under tenant-wide and
-    execution-boundary-wide totals, each enforced at admission across
-    every concurrent and queued launch attributed to that tenant or
-    boundary regardless of originating skill (a launch whose admission
-    would exceed any enclosing total is denied, queued, or throttled
-    rather than run), with a cross-skill shared-boundary exhaustion
-    negative test proving simultaneous individually-within-quota
-    launches from distinct skills sharing one execution boundary are
-    collectively bounded by the boundary-wide limit and other workloads
-    retain capacity.
+     Per-skill aggregates bound each skill's sum, not the boundary's:
+     when several admitted skills share one execution boundary, each can
+     remain within its own aggregate quota while their combined CPU,
+     memory, PID, storage, descriptor, bandwidth, or filesystem-object
+     use exhausts the
+     shared host (several skills each within their own aggregate inode
+     and directory-entry quota can still jointly exhaust a shared
+     filesystem's object pool with zero-length files), and a many-launch
+     test driven from a single skill never
+     exercises that combination. The aggregate quotas, the
+     filesystem-object (inode and directory-entry) quotas above
+     included, must therefore be
+     hierarchical: per-skill totals nest under tenant-wide and
+     execution-boundary-wide totals for every budgeted resource (CPU,
+     memory, PID, storage bytes, descriptors, bandwidth, and
+     filesystem objects alike), each enforced at admission across
+     every concurrent and queued launch attributed to that tenant or
+     boundary regardless of originating skill (a launch whose admission
+     would exceed any enclosing total is denied, queued, or throttled
+     rather than run), with a cross-skill shared-boundary exhaustion
+     negative test proving simultaneous individually-within-quota
+     launches from distinct skills sharing one execution boundary are
+     collectively bounded by the boundary-wide limit and other workloads
+     retain capacity, including a cross-skill empty-file exhaustion
+     variant proving distinct skills each within their own
+     filesystem-object quota cannot jointly exhaust the shared
+     filesystem's inode or directory-entry capacity.
     A permitted `queued` outcome moves the exhaustion rather than
     removing it: every quota above bounds admitted execution, and the
     ingress and per-call budgets below bound each request and active
@@ -3458,21 +3499,38 @@ enumerated entries still passes. The host policy must therefore deny
      the same hard distinct-contributor bound above (updates beyond it
      denied or the artifact quarantined exactly as that bound requires),
      or an equivalent verifiable index/proof structure whose proofs let
-     the consumer enumerate every contributor and check each against
-     live revocation and ceiling state. Consumption must check that
-     index against the live revocation and ceiling state, recompute the
-     effective ceiling from the enumerated contributors' current
-     ceilings, or quarantine the artifact, when any contributor has been
-     revoked or narrowed, and fail closed when the index cannot be
-     enumerated or verified; or the artifact's effective ceiling must be
-     recomputed from live contributor state on every
-     consumption, with a write-then-narrow negative test writing an
-     artifact under a broad skill ceiling, then revoking or narrowing
-     that skill's ceiling, and proving a later reader is governed at (or
-     below) the narrowed ceiling and a delayed instruction in the
-     artifact cannot obtain a receipt for an action the current ceiling
-     denies, including when the provenance record has already been
-     compacted to its bounded representation before the narrowing.
+      the consumer enumerate every contributor and check each against
+      live revocation and ceiling state. Revalidation must only ever
+      retain or narrow artifact authority, never restore or broaden it:
+      recomputing solely from contributors' current ceilings would let a
+      later broadening of a contributing skill's ceiling grant an
+      existing artifact authority none of its writers had when producing
+      it, so a delayed instruction in that artifact could obtain a fresh
+      receipt for an action outside the original write-time
+      intersection. The stored write-time effective intersection is
+      therefore preserved as an immutable upper bound, and consumption
+      must check the contributor
+      index against the live revocation and ceiling state, recompute the
+      effective ceiling as the intersection of that immutable write-time
+      bound with the enumerated contributors' current
+      ceilings, or quarantine the artifact, when any contributor has been
+      revoked or narrowed, and fail closed when the index cannot be
+      enumerated or verified; or the artifact's effective ceiling must be
+      recomputed on every consumption as the intersection of the stored
+      write-time bound with live contributor
+      state, with a write-then-narrow negative test writing an
+      artifact under a broad skill ceiling, then revoking or narrowing
+      that skill's ceiling, and proving a later reader is governed at (or
+      below) the narrowed ceiling and a delayed instruction in the
+      artifact cannot obtain a receipt for an action the current ceiling
+      denies, including when the provenance record has already been
+      compacted to its bounded representation before the narrowing, and
+      a write-then-broaden negative test writing an artifact under a
+      narrow skill ceiling, then broadening that contributor's ceiling,
+      and proving a later reader remains governed at (or below) the
+      write-time effective intersection and a delayed instruction in the
+      artifact cannot obtain a receipt for an action outside that
+      write-time intersection.
     Accumulation "at write time" still leaves two stores: when a
     restricted skill updates an artifact whose existing label records a
     broader or non-skill origin, publishing the new content before the
