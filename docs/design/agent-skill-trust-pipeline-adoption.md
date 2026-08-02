@@ -378,11 +378,26 @@ enumerated entries still passes. The host policy must therefore deny
    checked separately on the normalized instruction body and the permission
    semantics, never on digest equality. The parity check therefore compares a
    canonical instruction body and the security values after normalizing each
-   copy's host-specific encoding, and allows host adapter files to exist only
-   on their host's side; either generate both copies from one canonical source
-   or fail on divergence of the normalized body, the permission semantics, or
-   the shared canonical-source identity the per-host digests are tied to.
-   Cheap, deterministic, catches the entire class.
+    copy's host-specific encoding, and allows host adapter files to exist only
+    on their host's side; either generate both copies from one canonical source
+    or fail on divergence of the normalized body, the permission semantics, or
+    the shared canonical-source identity the per-host digests are tied to.
+    Body, permissions, and release identity are still not the whole
+    enforcement surface: step 4 makes `deny_behavior` an enforcement input
+    that decides per skill whether a denied action stops, escalates, or
+    enters a human-approval flow, and the invocation flags decide whether the
+    model may select the skill at all, so two mirrors that agree on the
+    normalized body, permissions, and canonical-source identity but encode
+    different `deny_behavior` values or invocation semantics would pass the
+    parity check above while the two hosts enforce different outcomes for
+    the same denial. The parity comparison must therefore cover every
+    canonical enforcement field, `deny_behavior` and the normalized
+    invocation semantics (model-invocation and implicit-invocation flags)
+    included, each compared after normalizing its host-specific encoding,
+    with a mismatched-mirror negative test proving copies identical in body,
+    permissions, and release identity but divergent in `deny_behavior` or
+    invocation semantics fail parity rather than both being enabled.
+    Cheap, deterministic, catches the entire class.
    One repo-hygiene prerequisite: the root `.gitignore` ignores `.agents` wholesale, so
    only the two already-tracked `govern-zone` files survive; any new skill or sidecar
    under `.agents/skills/**` is invisible to a CI checkout (`git check-ignore` confirms
@@ -1354,8 +1369,25 @@ enumerated entries still passes. The host policy must therefore deny
    enforced at filesystem resolution — descriptor-relative opens with no-follow
    semantics (`openat2`-style `RESOLVE_BENEATH`) or an equivalent filesystem
     sandbox that confines the resolved target — with negative tests proving both a
-    symlink escape inside an allowed path and a check-to-open path race fail to
-    touch the outside location. Resolution-time checks validate where a name
+     symlink escape inside an allowed path and a check-to-open path race fail to
+     touch the outside location. Confinement beneath the approved root still
+     leaves name matching host-naive: on a case-insensitive or
+     Unicode-normalizing target filesystem, a request naming
+     `.GITHub/workflows/x.yml` resolves to the same file as
+     `.github/workflows/x.yml`, so a permission pattern or a consumer-registry
+     carve-out expressed as `.github/workflows/**` fails to match the alias
+     while descriptor-relative resolution stays beneath the approved root and
+     opens the denied control artifact anyway; the host-specific
+     canonicalization and collision rule above applies only to snapshot
+     manifest validation, never to runtime matching. Runtime permission
+     matching and every consumer-path exclusion must therefore evaluate
+     patterns against the target filesystem's canonical path identity (case
+     folding and Unicode normalization form included), canonicalizing the
+     requested name under the target host's rules before matching, or
+     matching against the resolved filesystem object's canonical identity,
+     with a path-alias negative test proving a case-folded or
+     Unicode-normalization-equivalent alias of an excluded path is denied on
+     an aliasing host rather than admitted beneath the root. Resolution-time checks validate where a name
     pointed at open, not where the open file lives when it is written: when
     another workload can rename an already-open in-ceiling file (or one of
     its ancestor directories) into a denied directory, the skill retains the
@@ -2450,10 +2482,28 @@ enumerated entries still passes. The host policy must therefore deny
       them atomically with launch into a pinned configuration snapshot
       that is the only configuration the handler consumes rather than a
       re-read of mutable state, failing closed on mismatch, with an
-      ambient-configuration substitution negative test proving that
-      changing an unnamed default (a repointed service-discovery record
-      or flipped feature flag) after authorization is denied or cannot
-      alter the executed operation, never silently changes it.
+       ambient-configuration substitution negative test proving that
+       changing an unnamed default (a repointed service-discovery record
+       or flipped feature flag) after authorization is denied or cannot
+       alter the executed operation, never silently changes it. Binding
+       resolved values or plain content digests is safe only for
+       non-secret configuration: when an enumerated ambient input is a
+       credential, token, or other sensitive value, serializing its
+       resolved value into the ceiling record and receipt discloses it
+       through evidence artifacts that travel beyond the trusted
+       configuration boundary, and even an ordinary content digest
+       discloses a low-entropy secret to offline enumeration. Secret
+       ambient inputs must therefore be bound by reference through a
+       secret-store version identifier or a keyed commitment (a MAC or
+       salted commitment whose key never leaves the trusted gate) that
+       the execution gate verifies against the pinned resolved value
+       inside the trust boundary, with the value itself redacted from
+       receipts, ceiling records, and approval rendering, and a
+       secret-serialization negative test proving that for a
+       secret-classified ambient input neither the resolved value nor
+       any offline-guessable digest of it is emitted in any receipt,
+       ceiling record, or approval-rendering artifact while substitution
+       of the secret is still detected and denied.
       Interception alone is still
    not sufficient, because an agent issues ordinary tool calls outside any skill
    invocation and the current hook cannot tell the difference:
@@ -2715,7 +2765,26 @@ enumerated entries still passes. The host policy must therefore deny
     first by a broader (or non-skill) context and then modified by a
     restricted skill governs its next reader at the restricted
     intersection; the provenance-stripping test below does not cover this
-    case. Accumulation "at write time" still leaves two stores: when a
+    case. Accumulation must not mean unbounded append: a skill that
+    repeatedly updates one permitted artifact (especially across distinct
+    skill versions or composed origin stacks) would grow a
+    record-every-contributor history without bound even though the file
+    stays tiny and no new filesystem object is created, sidestepping the
+    byte and inode exhaustion bounds elsewhere and eventually exhausting
+    the out-of-band provenance store or making provenance reads and the
+    atomic update commit below impractical. The accumulated provenance
+    must therefore be a bounded authenticated representation: the set of
+    deduplicated effective origin stacks, whose intersection governs
+    consumers exactly as above so a repeat contributor never grows the
+    record and the intersection stays non-amplifying, plus a compact
+    authenticated history commitment (a running hash or accumulator over
+    the full write history) in place of an enumerated per-write history,
+    under a declared retention policy for any auditable history detail,
+    with a repeated-update growth negative test proving the protected
+    provenance record for an artifact updated arbitrarily many times by
+    the same origin stacks stays within its declared bound while its next
+    reader is still governed at the restricted intersection.
+    Accumulation "at write time" still leaves two stores: when a
     restricted skill updates an artifact whose existing label records a
     broader or non-skill origin, publishing the new content before the
     host label or out-of-band provenance record commits lets a concurrent
