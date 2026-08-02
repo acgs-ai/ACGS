@@ -562,6 +562,21 @@ enumerated entries still passes. The host policy must therefore deny
         into an approval payload whose rendered request fields all match
         and proves an approval collected without that field rendered
         yields no consumable grant and no side effect.
+        Rendering every bound field faithfully still lets the bound bytes
+        lie to the eye: a bound argument, resolved target, or skill name can
+        carry terminal control sequences, newlines, or Unicode
+        bidirectional-control code points that, rendered verbatim from the
+        canonical payload, hide or visually reorder the destructive value
+        while the signed bytes and every caller-prose mismatch check above
+        remain exact. The trusted approval channel must therefore reject
+        bound fields carrying such display-control code points, or render
+        every unsafe code point as an unambiguous visible escape without
+        changing the bound value the signature covers, with an approval-
+        spoofing negative test proving a bound field carrying ANSI terminal-
+        control and Unicode bidirectional-control payloads either fails
+        collection or is displayed with the destructive value unambiguously
+        visible, and that a signature collected over a spoofed rendering
+        yields no consumable grant and no side effect.
         Binding the final arguments and the originating audit hash pins the
         references the human saw, not the bytes they designate: when the
         approved request names a mutable manifest or configuration file, an
@@ -1469,7 +1484,23 @@ enumerated entries still passes. The host policy must therefore deny
    (and the grant rejected when it cannot), and a negative test proving that
    a process launched under an outbound-only grant cannot create a reachable
    listener: another workload's attempt to connect to a socket the sandboxed
-   process binds and listens on fails. Ambient capability is not only
+   process binds and listens on fails.
+     Declaring inbound listener authority admits the listener, not its
+     traffic: the grant still authorizes only the launch, so once an allowed
+     listener is reachable, external peers can drive arbitrarily many
+     operations through the process under that one launch receipt, and the
+     per-transitive-effect reservation requirement below applies only to
+     admitted handlers, leaving a declared shell listener outside it. Each
+     request an allowed listener accepts, or each externally visible effect
+     that service performs, must therefore pass through the dispatcher and
+     the same scoped external-effect and rate budgets as directly issued
+     requests, or the listener grant must reserve a verified maximum
+     accepted-operation count with the executor profile terminating the
+     listener when that bound is reached, with a declared-listener
+     amplification negative test driving many externally initiated requests
+     at an allowed listener and proving the operations it performs are
+     bounded and accounted rather than unlimited under the single launch
+     receipt. Ambient capability is not only
    files and sockets: the spawned process also inherits the host environment and
    open handles (cloud tokens, API keys, credential-agent sockets), and file and
    network ceilings alone do not stop an allowed script from using or
@@ -1722,6 +1753,20 @@ enumerated entries still passes. The host policy must therefore deny
      ledgers, with a counter-reset/rollback negative test proving that
      deleting or rolling back budget state between admitted requests does
      not allow the aggregate count, rate, or value bound to be exceeded.
+      Rollback-refusing counters authenticate the accounting state, not the
+      clock that windows it: when rate budgets are evaluated against the
+      mutable host clock, advancing the clock opens a fresh fixed window or
+      refills a token bucket repeatedly, admitting additional valid receipts
+      and external effects while the authenticated counter state is
+      untouched, the same host-clock manipulation the grant, invocation-
+      context, and receipt expiry requirements above already treat as a
+      threat. Rate reservations must therefore be evaluated against the same
+      trusted, epoch-bound, rollback-resistant time source those expiry
+      checks require, failing closed across any clock or epoch discontinuity
+      rather than opening a fresh window, with a host-clock manipulation
+      negative test proving that advancing or rolling the host clock between
+      admitted requests does not admit requests beyond the aggregate rate
+      bound.
      Admission must also charge the request that actually executes: policy
      can return `TRANSFORM`, and the permission intersection is
      re-evaluated against the final executable arguments, but a budget
@@ -2115,7 +2160,24 @@ enumerated entries still passes. The host policy must therefore deny
      many-handler-call exhaustion negative test proving many simultaneous
      individually-within-budget handler invocations from one skill are
      collectively bounded and other workloads' capacity is
-     preserved. Recording that a handler's footprint includes credentials
+     preserved.
+      Containment bounds where a handler's effects land and what it
+      consumes, not what it remembers: an admitted long-lived MCP server,
+      plugin, or pooled handler that serves multiple invocations or tenants
+      can retain a secret or request payload from one scope in its process
+      state and return it to another without performing any new filesystem,
+      network, credential, or process effect, its implementation digest
+      unchanged and both calls holding valid receipts within the recorded
+      footprint, so every containment test above passes despite a cross-
+      scope disclosure. Handler execution must therefore partition state by
+      invocation and tenant scope with verified teardown between scopes (a
+      fresh process or isolate per scope, or a verified reset of all
+      retained state), or persistent handler state and response disclosure
+      must themselves be treated as brokered capabilities recorded in the
+      ceiling record and mediated by the dispatcher, with a cross-tenant
+      state-retention negative test proving a secret submitted in one
+      invocation or tenant scope is never observable in a later invocation
+      from a different scope served by the same admitted handler. Recording that a handler's footprint includes credentials
     identifies the channel, not the principal: an admitted handler that
     resolves a mutable ambient credential or default context (a Kubernetes
     context, a cloud role, a default account) executes as whatever that
