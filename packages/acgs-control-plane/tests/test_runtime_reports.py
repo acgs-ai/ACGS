@@ -777,6 +777,52 @@ def test_wiring_attestations_reject_update_and_delete_in_database(
             )
 
 
+def test_wiring_challenge_consumptions_reject_update_and_delete_in_database(
+    client: TestClient,
+    org: dict[str, Any],
+    runtime_descriptor_signer: Any,
+    tmp_path: Path,
+) -> None:
+    seeded = _seed_report_scope(client, org, runtime_descriptor_signer)
+    app = cast(Any, client.app)
+    accepted, _request = _submit_wiring_report(
+        client, app=app, seeded=seeded, tmp_path=tmp_path, sequence=1
+    )
+    report_id = accepted.json()["report_id"]
+    with app.state.session_factory() as session:
+        accepted_lineage = session.scalars(
+            sa.select(RuntimeWiringChallengeConsumption).where(
+                RuntimeWiringChallengeConsumption.report_id == report_id
+            )
+        ).one()
+        accepted_id = accepted_lineage.id
+        accepted_namespace_digest = accepted_lineage.namespace_digest
+
+    with pytest.raises(IntegrityError, match="runtime_wiring_challenge_consumptions are immutable"):
+        with app.state.session_factory.begin() as session:
+            session.execute(
+                sa.update(RuntimeWiringChallengeConsumption)
+                .where(RuntimeWiringChallengeConsumption.report_id == report_id)
+                .values(namespace_digest="0" * 64)
+            )
+    with pytest.raises(IntegrityError, match="runtime_wiring_challenge_consumptions are immutable"):
+        with app.state.session_factory.begin() as session:
+            session.execute(
+                sa.delete(RuntimeWiringChallengeConsumption).where(
+                    RuntimeWiringChallengeConsumption.report_id == report_id
+                )
+            )
+
+    with app.state.session_factory() as session:
+        intact_lineage = session.scalars(
+            sa.select(RuntimeWiringChallengeConsumption).where(
+                RuntimeWiringChallengeConsumption.report_id == report_id
+            )
+        ).one()
+        assert intact_lineage.id == accepted_id
+        assert intact_lineage.namespace_digest == accepted_namespace_digest
+
+
 @pytest.mark.parametrize("out_of_bounds", [0, 9_007_199_254_740_992])
 def test_runtime_lineage_sequences_reject_non_ijson_direct_sql_writes(
     client: TestClient,
@@ -2331,13 +2377,22 @@ def test_genuine_public_gateway_wiring_artifact_is_accepted_and_drives_fleet(
     assert changed_runtime["proven_wired"]["available"] is False
     assert changed_runtime["proven_wired"]["reason"] == "wiring_attestation_not_current"
 
-    with app.state.session_factory.begin() as session:
-        challenge_row = session.scalars(
-            sa.select(RuntimeWiringChallengeConsumption).where(
-                RuntimeWiringChallengeConsumption.report_id == accepted.json()["report_id"]
+    with app.state.engine.begin() as connection:
+        connection.execute(
+            sa.text('DROP TRIGGER "runtime_wiring_challenge_consumptions_immutable_update"')
+        )
+        connection.execute(
+            sa.update(RuntimeWiringChallengeConsumption)
+            .where(RuntimeWiringChallengeConsumption.report_id == accepted.json()["report_id"])
+            .values(namespace_digest="0" * 64)
+        )
+        connection.execute(
+            sa.text(
+                SQLITE_RUNTIME_LINEAGE_OBJECTS[
+                    "runtime_wiring_challenge_consumptions_immutable_update"
+                ]
             )
-        ).one()
-        challenge_row.namespace_digest = "0" * 64
+        )
     replay = client.post(path, content=body, headers=headers)
     assert replay.status_code == 503, replay.text
     assert replay.json()["code"] == "TERMINAL_RESPONSE_TAMPERED"

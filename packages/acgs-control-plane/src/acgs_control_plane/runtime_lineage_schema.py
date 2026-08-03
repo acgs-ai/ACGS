@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import Final
 
-SQLITE_RUNTIME_LINEAGE_OBJECTS: Final = MappingProxyType(
+SQLITE_RUNTIME_LINEAGE_OBJECTS_0012: Final = MappingProxyType(
     {
         "runtime_reports_immutable_update": """
             CREATE TRIGGER runtime_reports_immutable_update
@@ -76,7 +76,30 @@ SQLITE_RUNTIME_LINEAGE_OBJECTS: Final = MappingProxyType(
     }
 )
 
-POSTGRES_RUNTIME_LINEAGE_FUNCTIONS: Final = MappingProxyType(
+SQLITE_RUNTIME_LINEAGE_OBJECTS_0013_DELTA: Final = MappingProxyType(
+    {
+        "runtime_wiring_challenge_consumptions_immutable_update": """
+            CREATE TRIGGER runtime_wiring_challenge_consumptions_immutable_update
+            BEFORE UPDATE ON runtime_wiring_challenge_consumptions
+            BEGIN
+                SELECT RAISE(ABORT, 'runtime_wiring_challenge_consumptions are immutable');
+            END;
+        """,
+        "runtime_wiring_challenge_consumptions_immutable_delete": """
+            CREATE TRIGGER runtime_wiring_challenge_consumptions_immutable_delete
+            BEFORE DELETE ON runtime_wiring_challenge_consumptions
+            BEGIN
+                SELECT RAISE(ABORT, 'runtime_wiring_challenge_consumptions are immutable');
+            END;
+        """,
+    }
+)
+
+SQLITE_RUNTIME_LINEAGE_OBJECTS: Final = MappingProxyType(
+    {**SQLITE_RUNTIME_LINEAGE_OBJECTS_0012, **SQLITE_RUNTIME_LINEAGE_OBJECTS_0013_DELTA}
+)
+
+POSTGRES_RUNTIME_LINEAGE_FUNCTIONS_0012: Final = MappingProxyType(
     {
         "acgs_runtime_reports_immutable": """
             CREATE OR REPLACE FUNCTION acgs_runtime_reports_immutable()
@@ -142,7 +165,29 @@ POSTGRES_RUNTIME_LINEAGE_FUNCTIONS: Final = MappingProxyType(
     }
 )
 
-POSTGRES_RUNTIME_LINEAGE_TRIGGERS: Final = MappingProxyType(
+POSTGRES_RUNTIME_LINEAGE_FUNCTIONS_0013_DELTA: Final = MappingProxyType(
+    {
+        "acgs_runtime_wiring_challenge_consumptions_immutable": """
+            CREATE OR REPLACE FUNCTION acgs_runtime_wiring_challenge_consumptions_immutable()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                RAISE EXCEPTION 'runtime_wiring_challenge_consumptions are immutable';
+            END;
+            $$;
+        """,
+    }
+)
+
+POSTGRES_RUNTIME_LINEAGE_FUNCTIONS: Final = MappingProxyType(
+    {
+        **POSTGRES_RUNTIME_LINEAGE_FUNCTIONS_0012,
+        **POSTGRES_RUNTIME_LINEAGE_FUNCTIONS_0013_DELTA,
+    }
+)
+
+POSTGRES_RUNTIME_LINEAGE_TRIGGERS_0012: Final = MappingProxyType(
     {
         "runtime_reports_immutable_update": """
             CREATE TRIGGER runtime_reports_immutable_update
@@ -177,6 +222,37 @@ POSTGRES_RUNTIME_LINEAGE_TRIGGERS: Final = MappingProxyType(
     }
 )
 
+POSTGRES_RUNTIME_LINEAGE_TRIGGERS_0013_DELTA: Final = MappingProxyType(
+    {
+        "runtime_wiring_challenge_consumptions_immutable_update": """
+            CREATE TRIGGER runtime_wiring_challenge_consumptions_immutable_update
+            BEFORE UPDATE ON runtime_wiring_challenge_consumptions
+            FOR EACH ROW EXECUTE FUNCTION acgs_runtime_wiring_challenge_consumptions_immutable();
+        """,
+        "runtime_wiring_challenge_consumptions_immutable_delete": """
+            CREATE TRIGGER runtime_wiring_challenge_consumptions_immutable_delete
+            BEFORE DELETE ON runtime_wiring_challenge_consumptions
+            FOR EACH ROW EXECUTE FUNCTION acgs_runtime_wiring_challenge_consumptions_immutable();
+        """,
+        "runtime_wiring_challenge_consumptions_immutable_truncate": """
+            CREATE TRIGGER runtime_wiring_challenge_consumptions_immutable_truncate
+            BEFORE TRUNCATE ON runtime_wiring_challenge_consumptions
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION acgs_runtime_wiring_challenge_consumptions_immutable();
+        """,
+    }
+)
+
+POSTGRES_RUNTIME_LINEAGE_TRIGGERS: Final = MappingProxyType(
+    {**POSTGRES_RUNTIME_LINEAGE_TRIGGERS_0012, **POSTGRES_RUNTIME_LINEAGE_TRIGGERS_0013_DELTA}
+)
+
+POSTGRES_RUNTIME_LINEAGE_TRIGGER_ENABLED_STATES_0012: Final = MappingProxyType(
+    {name: "O" for name in POSTGRES_RUNTIME_LINEAGE_TRIGGERS_0012}
+)
+POSTGRES_RUNTIME_LINEAGE_TRIGGER_ENABLED_STATES_0013_DELTA: Final = MappingProxyType(
+    {name: "O" for name in POSTGRES_RUNTIME_LINEAGE_TRIGGERS_0013_DELTA}
+)
 POSTGRES_RUNTIME_LINEAGE_TRIGGER_ENABLED_STATES: Final = MappingProxyType(
     {name: "O" for name in POSTGRES_RUNTIME_LINEAGE_TRIGGERS}
 )

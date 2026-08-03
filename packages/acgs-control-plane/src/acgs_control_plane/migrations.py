@@ -36,9 +36,13 @@ from acgs_control_plane import models as _models  # noqa: F401  # load Base meta
 from acgs_control_plane.db import make_engine
 from acgs_control_plane.runtime_lineage_schema import (
     POSTGRES_RUNTIME_LINEAGE_FUNCTIONS,
+    POSTGRES_RUNTIME_LINEAGE_FUNCTIONS_0012,
     POSTGRES_RUNTIME_LINEAGE_TRIGGER_ENABLED_STATES,
+    POSTGRES_RUNTIME_LINEAGE_TRIGGER_ENABLED_STATES_0012,
     POSTGRES_RUNTIME_LINEAGE_TRIGGERS,
+    POSTGRES_RUNTIME_LINEAGE_TRIGGERS_0012,
     SQLITE_RUNTIME_LINEAGE_OBJECTS,
+    SQLITE_RUNTIME_LINEAGE_OBJECTS_0012,
 )
 
 LEGACY_V0_REVISION: Final = "0001"
@@ -53,7 +57,8 @@ APPROVAL_SUBSTRATE_REVISION: Final = "0009"
 APPROVAL_VOTE_BINDING_REVISION: Final = "0010"
 RUNTIME_ENROLLMENT_REVISION: Final = "0011"
 RUNTIME_REPORTS_REVISION: Final = "0012"
-HEAD_REVISION: Final = RUNTIME_REPORTS_REVISION
+RUNTIME_CHALLENGE_CONSUMPTION_IMMUTABILITY_REVISION: Final = "0013"
+HEAD_REVISION: Final = RUNTIME_CHALLENGE_CONSUMPTION_IMMUTABILITY_REVISION
 _VERSION_TABLE = "alembic_version"
 _ALEMBIC_VERSION_TABLE: Final = sa.table(_VERSION_TABLE, sa.column("version_num"))
 _SCOPE_TABLES: Final = MappingProxyType(
@@ -99,6 +104,7 @@ class DatabaseSchemaState(StrEnum):
     VERSION_0010 = "version_0010"
     VERSION_0011 = "version_0011"
     VERSION_0012 = "version_0012"
+    VERSION_0013 = "version_0013"
     UNKNOWN = "unknown"
 
 
@@ -123,7 +129,7 @@ class StartupSchemaPreflightError(RuntimeError):
     def __init__(self, preflight: SchemaPreflight) -> None:
         self.schema_state = preflight.state
         super().__init__(
-            f"{self.code}: expected {DatabaseSchemaState.VERSION_0012.value}; "
+            f"{self.code}: expected {DatabaseSchemaState.VERSION_0013.value}; "
             f"found {preflight.state.value}. Run the acgs-control-plane migration CLI."
         )
 
@@ -2570,7 +2576,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0011, "known Alembic revision 0011")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
-    if versions == [HEAD_REVISION]:
+    if versions in ([RUNTIME_REPORTS_REVISION], [HEAD_REVISION]):
         detail = _schema_detail(
             inspector,
             user_tables,
@@ -2583,9 +2589,32 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
             _RUNTIME_REPORTS_UNIQUE_INDEXES,
         )
         if detail is None:
-            detail = _runtime_lineage_object_detail(connection)
+            if versions == [RUNTIME_REPORTS_REVISION]:
+                detail = _runtime_lineage_object_detail(
+                    connection,
+                    expected_sqlite_objects=SQLITE_RUNTIME_LINEAGE_OBJECTS_0012,
+                    expected_postgres_functions=POSTGRES_RUNTIME_LINEAGE_FUNCTIONS_0012,
+                    expected_postgres_triggers=POSTGRES_RUNTIME_LINEAGE_TRIGGERS_0012,
+                    expected_postgres_enabled_states=(
+                        POSTGRES_RUNTIME_LINEAGE_TRIGGER_ENABLED_STATES_0012
+                    ),
+                )
+            else:
+                detail = _runtime_lineage_object_detail(
+                    connection,
+                    expected_sqlite_objects=SQLITE_RUNTIME_LINEAGE_OBJECTS,
+                    expected_postgres_functions=POSTGRES_RUNTIME_LINEAGE_FUNCTIONS,
+                    expected_postgres_triggers=POSTGRES_RUNTIME_LINEAGE_TRIGGERS,
+                    expected_postgres_enabled_states=(
+                        POSTGRES_RUNTIME_LINEAGE_TRIGGER_ENABLED_STATES
+                    ),
+                )
         if detail is None:
-            return SchemaPreflight(DatabaseSchemaState.VERSION_0012, "known Alembic revision 0012")
+            if versions == [RUNTIME_REPORTS_REVISION]:
+                return SchemaPreflight(
+                    DatabaseSchemaState.VERSION_0012, "known Alembic revision 0012"
+                )
+            return SchemaPreflight(DatabaseSchemaState.VERSION_0013, "known Alembic revision 0013")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
 
     return SchemaPreflight(
@@ -2601,7 +2630,7 @@ def assert_current_startup_schema(connection: Connection) -> SchemaPreflight:
     stamps, upgrades, creates, repairs, or otherwise mutates schema or data.
     """
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0012:
+    if preflight.state is not DatabaseSchemaState.VERSION_0013:
         raise StartupSchemaPreflightError(preflight)
     return preflight
 
@@ -2704,7 +2733,7 @@ def _upgrade_database_with_independent_connections(database_url: str) -> Migrati
             lambda: command.upgrade(config, "head"),
         )
     after = inspect_schema(database_url)
-    if after.state is not DatabaseSchemaState.VERSION_0012:
+    if after.state is not DatabaseSchemaState.VERSION_0013:
         msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
         raise MigrationPreflightError(msg)
     return MigrationResult(before=before, after=after)
@@ -2766,7 +2795,7 @@ def _upgrade_postgresql_database(
                         )
 
                     after = inspect_connection(connection)
-                    if after.state is not DatabaseSchemaState.VERSION_0012:
+                    if after.state is not DatabaseSchemaState.VERSION_0013:
                         msg = (
                             "Migration ended in unexpected schema state: "
                             f"{after.state} ({after.detail})"
@@ -3207,6 +3236,8 @@ def _non_table_object_detail(connection: Connection) -> str | None:
         ("trigger", "runtime_reports_immutable_update"),
         ("trigger", "runtime_wiring_attestations_immutable_delete"),
         ("trigger", "runtime_wiring_attestations_immutable_update"),
+        ("trigger", "runtime_wiring_challenge_consumptions_immutable_delete"),
+        ("trigger", "runtime_wiring_challenge_consumptions_immutable_update"),
         ("trigger", "public.environment_policy_heads.environment_policy_heads_monotonic_update"),
         ("trigger", "public.policy_versions.policy_versions_immutable_delete"),
         ("trigger", "public.policy_versions.policy_versions_immutable_update"),
@@ -3228,11 +3259,27 @@ def _non_table_object_detail(connection: Connection) -> str | None:
             "trigger",
             "public.runtime_wiring_attestations.runtime_wiring_attestations_immutable_update",
         ),
+        (
+            "trigger",
+            "public.runtime_wiring_challenge_consumptions."
+            "runtime_wiring_challenge_consumptions_immutable_delete",
+        ),
+        (
+            "trigger",
+            "public.runtime_wiring_challenge_consumptions."
+            "runtime_wiring_challenge_consumptions_immutable_update",
+        ),
+        (
+            "trigger",
+            "public.runtime_wiring_challenge_consumptions."
+            "runtime_wiring_challenge_consumptions_immutable_truncate",
+        ),
         ("function", "public.acgs_environment_policy_heads_monotonic()"),
         ("function", "public.acgs_policy_versions_immutable()"),
         ("function", "public.acgs_runtime_report_heads_monotonic()"),
         ("function", "public.acgs_runtime_reports_immutable()"),
         ("function", "public.acgs_runtime_wiring_attestations_immutable()"),
+        ("function", "public.acgs_runtime_wiring_challenge_consumptions_immutable()"),
     }
     rows = [row for row in rows if (str(row[0]), str(row[1])) not in owned_objects]
     if rows:
@@ -3248,8 +3295,15 @@ def _normalized_runtime_lineage_definition(value: object) -> str:
     return "".join(definition.split()).rstrip(";")
 
 
-def _runtime_lineage_object_detail(connection: Connection) -> str | None:
-    """Require the exact append-only lineage objects for revision 0012."""
+def _runtime_lineage_object_detail(
+    connection: Connection,
+    *,
+    expected_sqlite_objects: Mapping[str, str],
+    expected_postgres_functions: Mapping[str, str],
+    expected_postgres_triggers: Mapping[str, str],
+    expected_postgres_enabled_states: Mapping[str, str],
+) -> str | None:
+    """Require exact version-owned lineage objects while querying the known union."""
 
     dialect_name = connection.dialect.name
     actual: dict[str, str | tuple[str, str]]
@@ -3270,7 +3324,7 @@ def _runtime_lineage_object_detail(connection: Connection) -> str | None:
             actual = {str(name): _normalized_runtime_lineage_definition(sql) for name, sql in rows}
             expected = {
                 name: _normalized_runtime_lineage_definition(definition)
-                for name, definition in SQLITE_RUNTIME_LINEAGE_OBJECTS.items()
+                for name, definition in expected_sqlite_objects.items()
             }
         elif dialect_name == "postgresql":
             trigger_rows = connection.execute(
@@ -3324,14 +3378,14 @@ def _runtime_lineage_object_detail(connection: Connection) -> str | None:
             expected = {
                 f"trigger:{name}": (
                     _normalized_runtime_lineage_definition(definition),
-                    POSTGRES_RUNTIME_LINEAGE_TRIGGER_ENABLED_STATES[name],
+                    expected_postgres_enabled_states[name],
                 )
-                for name, definition in POSTGRES_RUNTIME_LINEAGE_TRIGGERS.items()
+                for name, definition in expected_postgres_triggers.items()
             }
             expected.update(
                 {
                     f"function:{name}": _normalized_runtime_lineage_definition(definition)
-                    for name, definition in POSTGRES_RUNTIME_LINEAGE_FUNCTIONS.items()
+                    for name, definition in expected_postgres_functions.items()
                 }
             )
         else:

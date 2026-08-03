@@ -7,9 +7,9 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 from acgs_control_plane.runtime_lineage_schema import (
-    POSTGRES_RUNTIME_LINEAGE_FUNCTIONS,
-    POSTGRES_RUNTIME_LINEAGE_TRIGGERS,
-    SQLITE_RUNTIME_LINEAGE_OBJECTS,
+    POSTGRES_RUNTIME_LINEAGE_FUNCTIONS_0012,
+    POSTGRES_RUNTIME_LINEAGE_TRIGGERS_0012,
+    SQLITE_RUNTIME_LINEAGE_OBJECTS_0012,
 )
 
 JSONVariant = sa.JSON().with_variant(postgresql.JSONB(), "postgresql")
@@ -491,10 +491,10 @@ def downgrade() -> None:
 def _create_runtime_report_lineage_triggers() -> None:
     dialect = op.get_bind().dialect.name
     if dialect == "postgresql":
-        for statement in POSTGRES_RUNTIME_LINEAGE_FUNCTIONS.values():
+        for statement in POSTGRES_RUNTIME_LINEAGE_FUNCTIONS_0012.values():
             op.execute(statement)
-        for statement in POSTGRES_RUNTIME_LINEAGE_TRIGGERS.values():
+        for statement in POSTGRES_RUNTIME_LINEAGE_TRIGGERS_0012.values():
             op.execute(statement)
     elif dialect == "sqlite":
-        for statement in SQLITE_RUNTIME_LINEAGE_OBJECTS.values():
+        for statement in SQLITE_RUNTIME_LINEAGE_OBJECTS_0012.values():
             op.execute(statement)
