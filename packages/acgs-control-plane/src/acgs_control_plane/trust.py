@@ -101,14 +101,12 @@ class SqlReceiptTrustRegistry:
         session: Session,
         *,
         lock_rows: bool = False,
-        historical_trust_verification: bool = False,
         preloaded_rows: Iterable[ManagedTrustKey] | None = None,
         preloaded_index: Mapping[tuple[str, str, str, str], tuple[ManagedTrustKey, ...]]
         | None = None,
     ) -> None:
         self._session = session
         self._lock_rows = lock_rows
-        self._historical_trust_verification = historical_trust_verification
         self._preloaded_rows = tuple(preloaded_rows) if preloaded_rows is not None else None
         self._preloaded_index = preloaded_index
 
@@ -124,8 +122,6 @@ class SqlReceiptTrustRegistry:
     ) -> TrustedReceiptKey:
         if mode not in ("execution", "historical"):
             raise TrustConfigurationError("unknown trust resolution mode")
-        if self._historical_trust_verification:
-            mode = "historical"
         if type(trust_epoch) is not int or trust_epoch <= 0:
             raise TrustConfigurationError("trust_epoch must be a positive integer")
         now = _parse_aware_utc(now_iso, field_name="now_iso")
@@ -188,20 +184,6 @@ class SqlReceiptTrustRegistry:
                     raise TrustConfigurationError("execution trust key must be active")
                 if _to_aware_utc(row.not_after) < now:
                     raise TrustConfigurationError("active trust root expired")
-            if self._historical_trust_verification and key.status == "retired":
-                # Some validators predate the explicit historical-verification
-                # argument and re-check the returned descriptor in execution
-                # mode. The registry has already enforced the historical epoch
-                # and rejected revoked keys, so expose an active compatibility
-                # view only to those explicitly historical callers.
-                return TrustedReceiptKey(
-                    scope=key.scope,
-                    key_id=key.key_id,
-                    algorithm=key.algorithm,
-                    public_key_spki_der=key.public_key_spki_der,
-                    activated_epoch=key.activated_epoch,
-                    not_after=key.not_after,
-                )
             return key
         raise TrustConfigurationError(
             "no trusted receipt key for scope/purpose/epoch/algorithm/key"

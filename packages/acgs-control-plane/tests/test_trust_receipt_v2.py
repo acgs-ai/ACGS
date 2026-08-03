@@ -165,6 +165,35 @@ def test_active_retired_and_revoked_trust_rotation_preserves_history_and_blocks_
         trust_epoch=1,
     )
     with session_factory() as session:
+        registry = SqlReceiptTrustRegistry(session)
+        verification_time = datetime(2030, 1, 1, tzinfo=UTC).isoformat()
+        retired_key = registry.resolve(
+            scope=_scope(),
+            trust_epoch=1,
+            algorithm=signer.algorithm,
+            key_id=signer.key_id,
+            now_iso=verification_time,
+            mode="historical",
+        )
+        assert retired_key.status == "retired"
+        assert retired_key.retired_epoch == 2
+        with pytest.raises(TrustConfigurationError):
+            registry.resolve(
+                scope=_scope(),
+                trust_epoch=retired_key.retired_epoch,
+                algorithm=signer.algorithm,
+                key_id=signer.key_id,
+                now_iso=verification_time,
+                mode="historical",
+            )
+        with pytest.raises(TrustConfigurationError):
+            registry.resolve(
+                scope=_scope(),
+                trust_epoch=1,
+                algorithm=signer.algorithm,
+                key_id=signer.key_id,
+                now_iso=verification_time,
+            )
         retired_receipt.verify(
             expected_tenant_id=ORG_ID,
             expected_execution_boundary=_boundary(),
@@ -179,7 +208,7 @@ def test_active_retired_and_revoked_trust_rotation_preserves_history_and_blocks_
             expected_authority=AUTHORITY,
             require_signature=True,
             require_expiry=True,
-            trust_registry=SqlReceiptTrustRegistry(session),
+            trust_registry=registry,
             historical_trust_verification=True,
         )
 

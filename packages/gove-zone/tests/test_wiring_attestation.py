@@ -210,6 +210,8 @@ def _snapshot(
 def _managed_gateway(
     tmp_path: Path,
     workload: InMemoryEd25519WorkloadKeyProvider,
+    *,
+    receipt_trust_epoch: int = 1,
 ) -> tuple[UniversalGateway, RuntimeIdentityDescriptor, ReceiptConsumptionLedger]:
     policy_signer = Ed25519Signer.generate(key_id="policy-key")
     receipt_signer = Ed25519Signer.generate(key_id="receipt-key")
@@ -229,7 +231,7 @@ def _managed_gateway(
         authority="wiring-test",
         receipt_ttl_seconds=60,
         scoped_receipt_config=ScopedDecisionReceiptConfig(
-            "project-1", "production", "gate-1", 1, registry
+            "project-1", "production", "gate-1", receipt_trust_epoch, registry
         ),
         audit_path=tmp_path / "audit.jsonl",
         ledger=ledger,
@@ -497,6 +499,144 @@ def _context(
         now=NOW,
         replay_guard=guard or _ReplayGuard(),
     )
+
+
+def _managed_wiring_artifact(
+    tmp_path: Path, *, receipt_trust_epoch: int = 1
+) -> tuple[WiringAttestation, ExpectedWiringContext, TrustedReceiptKey]:
+    workload = InMemoryEd25519WorkloadKeyProvider(key_id="workload-key")
+    gateway, descriptor, ledger = _managed_gateway(
+        tmp_path,
+        workload,
+        receipt_trust_epoch=receipt_trust_epoch,
+    )
+    artifact = produce_wiring_attestation(
+        gateway=gateway,
+        runtime_identity_descriptor=descriptor,
+        runtime_identity_issuer_public_key=IDENTITY_ISSUER.public_key_bytes(),
+        runtime_identity_audience="control-plane",
+        workload_key_provider=workload,
+        receipt_consumption_ledger=ledger,
+        authenticated_actor="runtime-1",
+        nonce="verifier-nonce-0123456789abcdef",
+        sequence=11,
+        runtime_build_digest="c" * 64,
+        configuration_digest="d" * 64,
+        issued_at=ISSUED,
+        expires_at=ATTESTATION_EXPIRES,
+        now=NOW,
+    )
+    signer = gateway.profile.signer
+    assert isinstance(signer, Ed25519Signer)
+    expected = ExpectedWiringContext(
+        scope=SCOPE,
+        runtime_identity_descriptor=descriptor,
+        runtime_identity_issuer_public_key=IDENTITY_ISSUER.public_key_bytes(),
+        runtime_identity_audience="control-plane",
+        receipt_trust_registry=gateway.scoped_receipt_config.trust_registry,
+        receipt_trust_purpose=DECISION_RECEIPT_PURPOSE,
+        workload_key_id=workload.key_id,
+        execution_boundary="gate-1",
+        runtime_build_digest="c" * 64,
+        configuration_digest="d" * 64,
+        policy_head=artifact.policy_head.to_dict(),
+        policy_provenance_hash=artifact.policy_provenance_hash,
+        policy_issued_at=artifact.policy_issued_at,
+        policy_fresh_until=artifact.policy_fresh_until,
+        policy_expires_at=artifact.policy_expires_at,
+        policy_mode=artifact.policy_mode,
+        expected_nonce=artifact.nonce,
+        minimum_sequence=10,
+        now=NOW,
+        replay_guard=_ReplayGuard(),
+    )
+    return artifact, expected, _trusted_key(signer, DECISION_RECEIPT_PURPOSE)
+
+
+@pytest.fixture
+def managed_wiring_artifact(
+    tmp_path: Path,
+) -> tuple[WiringAttestation, ExpectedWiringContext, TrustedReceiptKey]:
+    return _managed_wiring_artifact(tmp_path)
+
+
+def test_default_execution_verification_rejects_retired_receipt_key(
+    managed_wiring_artifact: tuple[WiringAttestation, ExpectedWiringContext, TrustedReceiptKey],
+) -> None:
+    artifact, expected, active_key = managed_wiring_artifact
+    retired_key = dataclasses.replace(active_key, status="retired", retired_epoch=2)
+
+    with pytest.raises(WiringAttestationError) as caught:
+        verify_wiring_attestation(
+            artifact,
+            expected=dataclasses.replace(
+                expected,
+                receipt_trust_registry=StaticReceiptTrustRegistry([retired_key]),
+            ),
+        )
+
+    assert caught.value.reason_code == "receipt_invalid"
+
+
+def test_explicit_historical_verification_accepts_correctly_retired_receipt_key(
+    managed_wiring_artifact: tuple[WiringAttestation, ExpectedWiringContext, TrustedReceiptKey],
+) -> None:
+    artifact, expected, active_key = managed_wiring_artifact
+    retired_key = dataclasses.replace(active_key, status="retired", retired_epoch=2)
+
+    verified = verify_wiring_attestation(
+        artifact,
+        expected=dataclasses.replace(
+            expected,
+            receipt_trust_registry=StaticReceiptTrustRegistry([retired_key]),
+            historical_trust_verification=True,
+        ),
+    )
+
+    assert verified == artifact
+
+
+def test_explicit_historical_verification_rejects_receipt_at_retirement_epoch(
+    tmp_path: Path,
+) -> None:
+    artifact, expected, active_key = _managed_wiring_artifact(tmp_path, receipt_trust_epoch=2)
+    receipt_trust_epoch = artifact.results[0].receipt["trust_epoch"]
+    retired_key = dataclasses.replace(
+        active_key,
+        status="retired",
+        retired_epoch=receipt_trust_epoch,
+    )
+
+    with pytest.raises(WiringAttestationError) as caught:
+        verify_wiring_attestation(
+            artifact,
+            expected=dataclasses.replace(
+                expected,
+                receipt_trust_registry=StaticReceiptTrustRegistry([retired_key]),
+                historical_trust_verification=True,
+            ),
+        )
+
+    assert caught.value.reason_code == "receipt_invalid"
+
+
+def test_explicit_historical_verification_still_rejects_revoked_receipt_key(
+    managed_wiring_artifact: tuple[WiringAttestation, ExpectedWiringContext, TrustedReceiptKey],
+) -> None:
+    artifact, expected, active_key = managed_wiring_artifact
+    revoked_key = dataclasses.replace(active_key, status="revoked")
+
+    with pytest.raises(WiringAttestationError) as caught:
+        verify_wiring_attestation(
+            artifact,
+            expected=dataclasses.replace(
+                expected,
+                receipt_trust_registry=StaticReceiptTrustRegistry([revoked_key]),
+                historical_trust_verification=True,
+            ),
+        )
+
+    assert caught.value.reason_code == "receipt_invalid"
 
 
 def test_strict_parser_preserves_every_outer_binding() -> None:

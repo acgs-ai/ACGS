@@ -2445,9 +2445,6 @@ def _validate_anchored_report_lineage(
             receipt_trust_registry=SqlReceiptTrustRegistry(
                 session,
                 lock_rows=preload is None,
-                historical_trust_verification=(
-                    historical_trust_verification and current_trust_at is None
-                ),
                 preloaded_rows=preload.managed.trust_keys if preload is not None else None,
                 preloaded_index=(
                     preload.managed.trust_keys_by_scope_purpose if preload is not None else None
@@ -2471,6 +2468,9 @@ def _validate_anchored_report_lineage(
                 expected_nonce=challenge.challenge_nonce,
                 expected_sequence=challenge.expected_sequence,
                 namespace_digest=challenge.namespace_digest,
+            ),
+            historical_trust_verification=(
+                historical_trust_verification and current_trust_at is None
             ),
         ),
     )

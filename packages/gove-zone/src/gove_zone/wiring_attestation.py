@@ -429,6 +429,7 @@ class ExpectedWiringContext:
     minimum_sequence: int
     now: datetime
     replay_guard: AttestationReplayGuard
+    historical_trust_verification: bool = False
 
     def __post_init__(self) -> None:
         if self.minimum_sequence < 0:
@@ -791,6 +792,7 @@ def _verify_native_allow_evidence(
             expected_policy_bundle_id=artifact.policy_head.policy_version_id,
             expected_constraints=constraints,
             trust_registry=expected.receipt_trust_registry,
+            historical_trust_verification=expected.historical_trust_verification,
             trust_purpose=expected.receipt_trust_purpose,
             require_signature=True,
             require_expiry=True,
