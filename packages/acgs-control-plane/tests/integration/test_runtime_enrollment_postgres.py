@@ -66,7 +66,11 @@ from acgs_control_plane.models import (
 from acgs_control_plane.runtime_enrollment import RuntimeEnrollmentProviderUnavailable
 from acgs_control_plane.runtime_lineage_schema import (
     POSTGRES_RUNTIME_LINEAGE_FUNCTIONS,
+    POSTGRES_RUNTIME_LINEAGE_FUNCTIONS_0012,
+    POSTGRES_RUNTIME_LINEAGE_FUNCTIONS_0013_DELTA,
     POSTGRES_RUNTIME_LINEAGE_TRIGGERS,
+    POSTGRES_RUNTIME_LINEAGE_TRIGGERS_0012,
+    POSTGRES_RUNTIME_LINEAGE_TRIGGERS_0013_DELTA,
 )
 from tests.integration.test_agent_registration_postgres import (
     EXPECTED_DATABASE,
@@ -105,22 +109,39 @@ _AUDIENCE = "control-plane.runtime-enrollment:v1"
 _SELECTOR = "p4-runtime-enrollment"
 
 _POSTGRES_RUNTIME_LINEAGE_TRIGGER_TARGETS = {
-    "runtime_reports_immutable_update": ("UPDATE", "runtime_reports"),
-    "runtime_reports_immutable_delete": ("DELETE", "runtime_reports"),
+    "runtime_reports_immutable_update": ("UPDATE", "runtime_reports", "ROW"),
+    "runtime_reports_immutable_delete": ("DELETE", "runtime_reports", "ROW"),
     "runtime_wiring_attestations_immutable_update": (
         "UPDATE",
         "runtime_wiring_attestations",
+        "ROW",
     ),
     "runtime_wiring_attestations_immutable_delete": (
         "DELETE",
         "runtime_wiring_attestations",
+        "ROW",
     ),
-    "runtime_report_heads_monotonic_update": ("UPDATE", "runtime_report_heads"),
-    "runtime_report_heads_monotonic_delete": ("DELETE", "runtime_report_heads"),
+    "runtime_wiring_challenge_consumptions_immutable_update": (
+        "UPDATE",
+        "runtime_wiring_challenge_consumptions",
+        "ROW",
+    ),
+    "runtime_wiring_challenge_consumptions_immutable_delete": (
+        "DELETE",
+        "runtime_wiring_challenge_consumptions",
+        "ROW",
+    ),
+    "runtime_wiring_challenge_consumptions_immutable_truncate": (
+        "TRUNCATE",
+        "runtime_wiring_challenge_consumptions",
+        "STATEMENT",
+    ),
+    "runtime_report_heads_monotonic_update": ("UPDATE", "runtime_report_heads", "ROW"),
+    "runtime_report_heads_monotonic_delete": ("DELETE", "runtime_report_heads", "ROW"),
 }
 
 
-def test_populated_runtime_enrollment_0011_upgrades_to_0012_postgresql() -> None:
+def test_populated_runtime_enrollment_0011_through_0012_upgrades_to_0013_postgresql() -> None:
     if (
         os.environ.get("ACP_TEST_POSTGRES_GATE_ACTIVE") != "1"
         or os.environ.get("ACP_TEST_POSTGRES_SELECTOR_MODE") != _SELECTOR
@@ -210,9 +231,51 @@ def test_populated_runtime_enrollment_0011_upgrades_to_0012_postgresql() -> None
         finally:
             engine.dispose()
 
+        _controlled_upgrade_to_revision(database_url, "0012")
+        engine = make_engine(database_url)
+        try:
+            with engine.connect() as connection:
+                assert inspect_connection(connection).state is DatabaseSchemaState.VERSION_0012
+                trigger_names = set(
+                    connection.scalars(
+                        sa.text(
+                            "SELECT tgname FROM pg_catalog.pg_trigger "
+                            "WHERE NOT tgisinternal AND tgname IN :names"
+                        ).bindparams(
+                            sa.bindparam(
+                                "names",
+                                expanding=True,
+                                value=tuple(POSTGRES_RUNTIME_LINEAGE_TRIGGERS),
+                            )
+                        )
+                    ).all()
+                )
+                function_names = set(
+                    connection.scalars(
+                        sa.text(
+                            "SELECT proname FROM pg_catalog.pg_proc AS p "
+                            "JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace "
+                            "WHERE n.nspname = 'public' AND p.pronargs = 0 "
+                            "AND p.proname IN :names"
+                        ).bindparams(
+                            sa.bindparam(
+                                "names",
+                                expanding=True,
+                                value=tuple(POSTGRES_RUNTIME_LINEAGE_FUNCTIONS),
+                            )
+                        )
+                    ).all()
+                )
+                assert trigger_names == set(POSTGRES_RUNTIME_LINEAGE_TRIGGERS_0012)
+                assert function_names == set(POSTGRES_RUNTIME_LINEAGE_FUNCTIONS_0012)
+                assert set(POSTGRES_RUNTIME_LINEAGE_TRIGGERS_0013_DELTA).isdisjoint(trigger_names)
+                assert set(POSTGRES_RUNTIME_LINEAGE_FUNCTIONS_0013_DELTA).isdisjoint(function_names)
+        finally:
+            engine.dispose()
+
         result = upgrade_database(database_url, expected_database=EXPECTED_DATABASE)
-        assert result.before.state is DatabaseSchemaState.VERSION_0011
-        assert result.after.state is DatabaseSchemaState.VERSION_0012
+        assert result.before.state is DatabaseSchemaState.VERSION_0012
+        assert result.after.state is DatabaseSchemaState.VERSION_0013
         engine = make_engine(database_url)
         try:
             with engine.connect() as connection:
@@ -301,7 +364,7 @@ def test_runtime_lineage_schema_objects_are_required_postgresql(tmp_path: Path) 
     app, _client, _org, _project_id, _environment_id, database_url = _postgres_runtime_app(tmp_path)
     try:
         with app.state.engine.connect() as connection:
-            assert inspect_connection(connection).state is DatabaseSchemaState.VERSION_0012
+            assert inspect_connection(connection).state is DatabaseSchemaState.VERSION_0013
             enabled_states = dict(
                 connection.execute(
                     sa.text(
@@ -333,10 +396,10 @@ def test_runtime_lineage_schema_objects_are_required_postgresql(tmp_path: Path) 
             finally:
                 transaction.rollback()
         with app.state.engine.connect() as connection:
-            assert inspect_connection(connection).state is DatabaseSchemaState.VERSION_0012
+            assert inspect_connection(connection).state is DatabaseSchemaState.VERSION_0013
 
         for object_name in POSTGRES_RUNTIME_LINEAGE_TRIGGERS:
-            event, table_name = _POSTGRES_RUNTIME_LINEAGE_TRIGGER_TARGETS[object_name]
+            event, table_name, granularity = _POSTGRES_RUNTIME_LINEAGE_TRIGGER_TARGETS[object_name]
             for mutation in ("drop", "replace"):
                 with app.state.engine.connect() as connection:
                     transaction = connection.begin()
@@ -353,7 +416,7 @@ def test_runtime_lineage_schema_objects_are_required_postgresql(tmp_path: Path) 
                             connection.execute(
                                 sa.text(
                                     f'CREATE TRIGGER "{object_name}" BEFORE {event} '
-                                    f'ON "{table_name}" FOR EACH ROW EXECUTE FUNCTION '
+                                    f'ON "{table_name}" FOR EACH {granularity} EXECUTE FUNCTION '
                                     f'"{replacement_function}"()'
                                 )
                             )
@@ -1054,6 +1117,62 @@ def test_runtime_wiring_attestations_are_immutable_postgresql(tmp_path: Path) ->
         _reset_postgres_schema(database_url)
 
 
+def test_runtime_wiring_challenge_consumptions_are_immutable_postgresql(
+    tmp_path: Path,
+) -> None:
+    app, client, org, _project_id, _environment_id, database_url = _postgres_runtime_app(tmp_path)
+    try:
+        seeded = _seed_report_scope(client, org, _runtime_descriptor_signer())
+        accepted, _request = _submit_wiring_report(
+            client, app=app, seeded=seeded, tmp_path=tmp_path, sequence=1
+        )
+        report_id = accepted.json()["report_id"]
+        with app.state.session_factory() as session:
+            accepted_lineage = session.scalars(
+                sa.select(RuntimeWiringChallengeConsumption).where(
+                    RuntimeWiringChallengeConsumption.report_id == report_id
+                )
+            ).one()
+            accepted_id = accepted_lineage.id
+            accepted_namespace_digest = accepted_lineage.namespace_digest
+
+        with pytest.raises(
+            SQLAlchemyError, match="runtime_wiring_challenge_consumptions are immutable"
+        ):
+            with app.state.session_factory.begin() as session:
+                session.execute(
+                    sa.update(RuntimeWiringChallengeConsumption)
+                    .where(RuntimeWiringChallengeConsumption.report_id == report_id)
+                    .values(namespace_digest="0" * 64)
+                )
+        with pytest.raises(
+            SQLAlchemyError, match="runtime_wiring_challenge_consumptions are immutable"
+        ):
+            with app.state.session_factory.begin() as session:
+                session.execute(
+                    sa.delete(RuntimeWiringChallengeConsumption).where(
+                        RuntimeWiringChallengeConsumption.report_id == report_id
+                    )
+                )
+        with pytest.raises(
+            SQLAlchemyError, match="runtime_wiring_challenge_consumptions are immutable"
+        ):
+            with app.state.session_factory.begin() as session:
+                session.execute(sa.text("TRUNCATE TABLE runtime_wiring_challenge_consumptions"))
+
+        with app.state.session_factory() as session:
+            intact_lineage = session.scalars(
+                sa.select(RuntimeWiringChallengeConsumption).where(
+                    RuntimeWiringChallengeConsumption.report_id == report_id
+                )
+            ).one()
+            assert intact_lineage.id == accepted_id
+            assert intact_lineage.namespace_digest == accepted_namespace_digest
+    finally:
+        app.state.engine.dispose()
+        _reset_postgres_schema(database_url)
+
+
 def test_runtime_report_bigint_schema_and_current_binding_postgresql(tmp_path: Path) -> None:
     app, client, org, _project_id, _environment_id, database_url = _postgres_runtime_app(tmp_path)
     try:
@@ -1708,7 +1827,7 @@ def _postgres_runtime_app(
 
     _reset_postgres_schema(database_url)
     result = upgrade_database(database_url, expected_database=EXPECTED_DATABASE)
-    assert result.after.state is DatabaseSchemaState.VERSION_0012
+    assert result.after.state is DatabaseSchemaState.VERSION_0013
     app = create_app(
         Settings(
             database_url=database_url,
