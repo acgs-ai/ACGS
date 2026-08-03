@@ -75,7 +75,7 @@ Fast kernel proof commands:
 
 ```bash
 tmp=$(mktemp -d) && uv run --package gove-zone gove-zone smoke --audit "$tmp/smoke-audit.jsonl"
-uv run --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py
+uv run --extra crypto --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py
 uv run --package gove-zone python examples/tamper_demo/demo.py
 ```
 
