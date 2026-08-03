@@ -172,11 +172,87 @@ P3_APPROVAL_POSTGRES_REVIEWED_RUNNER_SHA256 = (
 )
 P4_RUNTIME_ENROLLMENT_SELECTORS = (
     "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_populated_runtime_enrollment_0011_through_0012_upgrades_to_0013_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_lineage_schema_objects_are_required_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_report_provider_outages_are_redacted_and_atomic_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_identical_runtime_reports_converge_on_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_identical_concurrent_wiring_reports_replay_without_debris_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_concurrent_different_runtime_report_body_conflicts_without_debris",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_wiring_challenge_is_invalidated_by_intervening_report_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_report_post_persistence_failure_rolls_back_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_report_head_composite_anchor_is_enforced_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_wiring_historical_replay_and_projection_binding_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_wiring_attestations_are_immutable_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_wiring_challenge_consumptions_are_immutable_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_report_bigint_schema_and_current_binding_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
     "test_100_identical_runtime_enrollments_converge_to_one_identity",
     "tests/integration/test_runtime_enrollment_postgres.py::"
     "test_runtime_enrollment_conflict_and_cross_scope_idempotency_are_isolated",
     "tests/integration/test_runtime_enrollment_postgres.py::"
     "test_runtime_renew_replay_revoke_and_expired_paths_are_nonduplicating",
+)
+LITERAL_PROVER_REVIEWED_CORPUS = frozenset(
+    {
+        Path("packages/acgs-control-plane/pyproject.toml"),
+        Path("packages/gove-zone/pyproject.toml"),
+        Path("requirements/saas-beta/bootstrap-by-scope.json"),
+        Path("requirements/saas-beta/cp-test.in"),
+        Path("requirements/saas-beta/cp-test.lock"),
+        Path("requirements/saas-beta/evidence-test.in"),
+        Path("requirements/saas-beta/evidence-test.lock"),
+        Path("requirements/saas-beta/gz-test.in"),
+        Path("requirements/saas-beta/gz-test.lock"),
+        Path("requirements/saas-beta/locks.toml"),
+        Path("schemas/evidence/acgs-attestation-trust-v1.schema.json"),
+        Path("schemas/evidence/acgs-attestation-v1.schema.json"),
+        Path("schemas/evidence/acgs-private-root-descriptor-v1.schema.json"),
+        Path("schemas/evidence/acgs-run-evidence-v1.schema.json"),
+        Path("scripts/evidence/_common.py"),
+        Path("scripts/evidence/attest.py"),
+        Path("scripts/evidence/capture_environment.py"),
+        Path("scripts/evidence/clean_sibling_cleanup.sh"),
+        Path("scripts/evidence/generate_run.py"),
+        Path("scripts/evidence/hash_run_jcs.py"),
+        Path("scripts/evidence/prove_clean_sibling"),
+        Path("scripts/evidence/prove_clean_sibling.sh"),
+        Path("scripts/evidence/recovery_namespace_guardian.py"),
+        Path("scripts/evidence/render_lock_inputs.py"),
+        Path("scripts/evidence/start_authority_guard.py"),
+        Path("scripts/evidence/validate_attestations.py"),
+        Path("scripts/evidence/validate_environment_identities.py"),
+        Path("scripts/evidence/validate_run.py"),
+        Path("scripts/evidence/verify_environment.py"),
+        Path("tests/saas_beta/test_ci_gate_contract.py"),
+        Path("tests/saas_beta/test_cross_plane_contracts.py"),
+        Path("tests/saas_beta/test_evidence_bootstrap.py"),
+        Path("tests/saas_beta/test_evidence_workflow_contract.py"),
+        Path("tests/saas_beta/test_policy_sync_integration.py"),
+        Path("tests/saas_beta/test_recovery_namespace_guardian.py"),
+        Path("tests/saas_beta/test_start_authority_guard.py"),
+    }
+)
+LITERAL_PROVER_CANDIDATE_ROOTS = (
+    Path("requirements/saas-beta"),
+    Path("schemas/evidence"),
+    Path("scripts/evidence"),
+    Path("tests/saas_beta"),
+)
+LITERAL_PROVER_CANDIDATE_EXTRA_FILES = (
+    Path("packages/acgs-control-plane/pyproject.toml"),
+    Path("packages/gove-zone/pyproject.toml"),
 )
 TRUSTED_STATIC_BUSYBOX = Path("/usr/bin/busybox")
 TRUSTED_STATIC_BUSYBOX_SHA256 = "98d9040015eb17931e17b45e00b5f49f2451326372d5107a3a280f1cb3aaf3fc"
@@ -186,6 +262,169 @@ REAL_QUOTA_FUSE_TOOLS = (
     Path("/usr/bin/fusermount3"),
     Path("/usr/bin/mountpoint"),
 )
+
+
+def _is_real_directory_under_root(path: Path, *, root: Path) -> bool:
+    try:
+        relative = path.relative_to(root)
+        ancestor = root
+        if not stat.S_ISDIR(ancestor.lstat().st_mode):
+            return False
+        for part in relative.parts:
+            ancestor /= part
+            if not stat.S_ISDIR(ancestor.lstat().st_mode):
+                return False
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _is_real_regular_file_under_root(path: Path, *, root: Path) -> bool:
+    try:
+        if not stat.S_ISREG(path.lstat().st_mode):
+            return False
+    except OSError:
+        return False
+    return _is_real_directory_under_root(path.parent, root=root)
+
+
+def _literal_prover_candidate_files(root: Path = ROOT) -> tuple[Path, ...]:
+    return tuple(
+        sorted(
+            [
+                relative
+                for candidate_root in LITERAL_PROVER_CANDIDATE_ROOTS
+                if _is_real_directory_under_root(root / candidate_root, root=root)
+                for path in (root / candidate_root).rglob("*")
+                if _is_real_regular_file_under_root(path, root=root)
+                and "__pycache__" not in path.parts
+                and path.suffix != ".pyc"
+                for relative in (path.relative_to(root),)
+            ]
+            + [
+                relative
+                for relative in LITERAL_PROVER_CANDIDATE_EXTRA_FILES
+                if _is_real_regular_file_under_root(root / relative, root=root)
+            ]
+        )
+    )
+
+
+def test_literal_prover_reviewed_corpus_is_exact() -> None:
+    candidate_files = _literal_prover_candidate_files()
+    candidate_set = frozenset(candidate_files)
+    missing = sorted(LITERAL_PROVER_REVIEWED_CORPUS - candidate_set)
+    extra = sorted(candidate_set - LITERAL_PROVER_REVIEWED_CORPUS)
+    assert len(candidate_files) == 36 and not missing and not extra, (
+        f"literal prover corpus drift: count={len(candidate_files)} "
+        f"missing={[path.as_posix() for path in missing]} "
+        f"extra={[path.as_posix() for path in extra]}"
+    )
+
+
+def _write_literal_prover_reviewed_corpus(root: Path) -> None:
+    for relative in LITERAL_PROVER_REVIEWED_CORPUS:
+        candidate = root / relative
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        candidate.write_text(f"reviewed:{relative.as_posix()}\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("manifest", "mutation"),
+    [
+        (manifest, mutation)
+        for manifest in LITERAL_PROVER_CANDIDATE_EXTRA_FILES
+        for mutation in ("omission", "rename")
+    ],
+)
+def test_literal_prover_ignores_missing_or_renamed_extra_manifest(
+    tmp_path: Path,
+    manifest: Path,
+    mutation: str,
+) -> None:
+    _write_literal_prover_reviewed_corpus(tmp_path)
+
+    assert len(_literal_prover_candidate_files(tmp_path)) == 36
+    candidate = tmp_path / manifest
+    renamed_manifest = manifest.with_name(f"{manifest.name}.renamed")
+    if mutation == "omission":
+        candidate.unlink()
+    else:
+        assert mutation == "rename"
+        candidate.rename(tmp_path / renamed_manifest)
+
+    candidate_files = _literal_prover_candidate_files(tmp_path)
+    assert len(candidate_files) == 35
+    assert manifest not in candidate_files
+    assert renamed_manifest not in candidate_files
+
+
+def test_literal_prover_excludes_reviewed_file_symlink_substitution(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    _write_literal_prover_reviewed_corpus(root)
+    relative = Path("scripts/evidence/attest.py")
+    candidate = root / relative
+    target = tmp_path / "reviewed-file-symlink-target"
+    target.write_bytes(candidate.read_bytes())
+    candidate.unlink()
+    candidate.symlink_to(target)
+
+    candidate_files = _literal_prover_candidate_files(root)
+
+    assert len(candidate_files) == 35
+    assert relative not in candidate_files
+
+
+def test_literal_prover_excludes_candidate_root_directory_symlink_substitution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    _write_literal_prover_reviewed_corpus(root)
+    relative_root = Path("schemas/evidence")
+    candidate_root = root / relative_root
+    target = tmp_path / "candidate-root-symlink-target"
+    candidate_root.rename(target)
+    candidate_root.symlink_to(target, target_is_directory=True)
+    substituted = {
+        relative
+        for relative in LITERAL_PROVER_REVIEWED_CORPUS
+        if relative.is_relative_to(relative_root)
+    }
+    traversed_roots: list[Path] = []
+    real_rglob = Path.rglob
+
+    def tracked_rglob(path: Path, pattern: str) -> Any:
+        traversed_roots.append(path)
+        return real_rglob(path, pattern)
+
+    monkeypatch.setattr(Path, "rglob", tracked_rglob)
+
+    candidate_files = frozenset(_literal_prover_candidate_files(root))
+
+    assert substituted
+    assert candidate_root not in traversed_roots
+    assert candidate_files.isdisjoint(substituted)
+
+
+@pytest.mark.parametrize("manifest", LITERAL_PROVER_CANDIDATE_EXTRA_FILES)
+def test_literal_prover_excludes_extra_manifest_symlink_substitution(
+    tmp_path: Path,
+    manifest: Path,
+) -> None:
+    _write_literal_prover_reviewed_corpus(tmp_path)
+    candidate = tmp_path / manifest
+    target = tmp_path / f"{manifest.parent.name}-manifest-symlink-target"
+    target.write_bytes(candidate.read_bytes())
+    candidate.unlink()
+    candidate.symlink_to(target)
+
+    candidate_files = _literal_prover_candidate_files(tmp_path)
+
+    assert len(candidate_files) == 35
+    assert manifest not in candidate_files
+
+
 P2_IDEMPOTENCY_RETIRED_SELECTOR_PATTERNS = (
     "tests/integration/test_production_posture.py",
     "tests/test_agent_registration_managed_route.py",
@@ -1149,7 +1388,149 @@ def test_renderer_accepts_registry_requirements_and_reviewed_workspace_sources(
     assert "fastapi>=0.110" in payload
     assert "pydantic[email]>=2.8" in payload
     assert "gove-zone[crypto]" not in payload
+    assert "gove-zone[langchain]" not in payload
+    assert payload.count("langchain-core>=0.1") == 1
+    assert payload.count("cryptography>=42") == 1
+    assert "packages/gove-zone/pyproject.toml:extra:crypto" in payload
+    assert "packages/gove-zone/pyproject.toml:extra:langchain" in payload
     assert "editables==0.6" in payload
+    for relative in (
+        "requirements/saas-beta/evidence-test.in",
+        "requirements/saas-beta/gz-test.in",
+        "requirements/saas-beta/bootstrap-by-scope.json",
+    ):
+        assert (output / relative).read_bytes() == (ROOT / relative).read_bytes()
+
+
+def test_renderer_workspace_extra_closure_is_manifest_driven(tmp_path: Path) -> None:
+    config = _copy_config_repo(tmp_path)
+    manifest = tmp_path / "packages/acgs-control-plane/pyproject.toml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8").replace('    "gove-zone[langchain]",\n', "", 1),
+        encoding="utf-8",
+    )
+    output = (tmp_path / "out").resolve()
+    render_lock_inputs.render(config, output)
+    payload = (output / "requirements/saas-beta/cp-test.in").read_text(encoding="utf-8")
+    assert "langchain-core" not in payload
+    assert "extra:langchain" not in payload
+
+
+@pytest.mark.parametrize(
+    ("target", "token", "replacement", "error"),
+    (
+        (
+            "packages/acgs-control-plane/pyproject.toml",
+            "gove-zone[langchain]",
+            "gove-zone[missing]",
+            "selected extra",
+        ),
+        (
+            "packages/gove-zone/pyproject.toml",
+            'langchain = ["langchain-core>=0.1"]',
+            "langchain_missing = []",
+            "selected extra",
+        ),
+        (
+            "packages/acgs-control-plane/pyproject.toml",
+            "gove-zone[langchain]",
+            "gove-zone[langchain]>=1",
+            "bare name",
+        ),
+        (
+            "packages/acgs-control-plane/pyproject.toml",
+            "gove-zone[langchain]",
+            "gove-zone[langchain,langchain]",
+            "extras contain duplicates",
+        ),
+        (
+            "packages/acgs-control-plane/pyproject.toml",
+            "gove-zone[langchain]",
+            "gove-zone[langchain,LANGCHAIN]",
+            "requested extras contain canonical duplicates",
+        ),
+        (
+            "packages/acgs-control-plane/pyproject.toml",
+            "gove-zone[langchain]",
+            "gove-zone[foo-bar,foo_bar]",
+            "requested extras contain canonical duplicates",
+        ),
+        (
+            "packages/gove-zone/pyproject.toml",
+            'langchain = ["langchain-core>=0.1"]',
+            'langchain = ["langchain-core>=0.1"]\nLANGCHAIN = ["langchain-core>=0.1"]',
+            "optional-dependencies keys collide",
+        ),
+        (
+            "packages/gove-zone/pyproject.toml",
+            'langchain = ["langchain-core>=0.1"]',
+            'langchain = ["langchain-core>=0.1"]\n'
+            'foo-bar = ["langchain-core>=0.1"]\n'
+            'foo_bar = ["langchain-core>=0.1"]',
+            "optional-dependencies keys collide",
+        ),
+        (
+            "packages/acgs-control-plane/pyproject.toml",
+            "gove-zone[langchain]",
+            "gove-zone[langchain]; python_version >= '3.11'",
+            "bare name",
+        ),
+        (
+            "packages/gove-zone/pyproject.toml",
+            "langchain-core>=0.1",
+            "nested @ https://example.invalid/nested.whl",
+            "direct URL/path",
+        ),
+        (
+            "packages/gove-zone/pyproject.toml",
+            "langchain-core>=0.1",
+            "../nested-workspace",
+            "direct URL/path",
+        ),
+        (
+            "packages/gove-zone/pyproject.toml",
+            "langchain-core>=0.1",
+            "acgs-control-plane",
+            "cycle",
+        ),
+        (
+            "packages/gove-zone/pyproject.toml",
+            "langchain-core>=0.1",
+            "cryptography>=43",
+            "conflicting direct requirements",
+        ),
+    ),
+)
+def test_renderer_rejects_unsafe_workspace_expansion_without_publication(
+    tmp_path: Path,
+    target: str,
+    token: str,
+    replacement: str,
+    error: str,
+) -> None:
+    config = _copy_config_repo(tmp_path / "config")
+    manifest = tmp_path / "config" / target
+    original_manifest = manifest.read_text(encoding="utf-8")
+    assert token in original_manifest
+    manifest.write_text(original_manifest.replace(token, replacement, 1), encoding="utf-8")
+
+    output = (tmp_path / "out").resolve()
+    originals: dict[Path, bytes] = {}
+    for relative in render_lock_inputs.EXPECTED_OUTPUTS.values():
+        destination = output / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(f"sentinel:{relative}\n".encode())
+        originals[destination] = destination.read_bytes()
+    downstream = tmp_path / "downstream-reached"
+
+    def render_then_continue() -> None:
+        render_lock_inputs.render(config, output)
+        downstream.write_text("unsafe continuation\n", encoding="utf-8")
+
+    with pytest.raises(render_lock_inputs.ConfigError, match=error):
+        render_then_continue()
+    assert {path: path.read_bytes() for path in originals} == originals
+    assert not downstream.exists()
 
 
 @pytest.mark.parametrize(
@@ -4767,8 +5148,48 @@ def test_p3_approval_run_validation_rejects_forged_corpus_metadata_before_output
 def test_p4_runtime_enrollment_command_corpus_is_node_cwd_bound_and_exact_ordered(
     tmp_path: Path,
 ) -> None:
+    authoritative_selector = P4_RUNTIME_ENROLLMENT_SELECTORS[0]
+    retired_selector = (
+        "tests/integration/test_runtime_enrollment_postgres.py::"
+        "test_populated_runtime_enrollment_0011_"
+        "upgrades_to_0012_postgresql"
+    )
+    authoritative_test = authoritative_selector.rsplit("::", 1)[1]
+    retired_test = retired_selector.rsplit("::", 1)[1]
+    full_selector_surfaces = {
+        "launcher": (EVIDENCE_SCRIPTS / "prove_clean_sibling").read_text(encoding="utf-8"),
+        "internal": (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8"),
+        "package_gate": (
+            ROOT / "packages/acgs-control-plane/scripts/run_postgres_gate.sh"
+        ).read_text(encoding="utf-8"),
+    }
+    python_literal_surfaces = {
+        "common": (EVIDENCE_SCRIPTS / "_common.py").read_text(encoding="utf-8"),
+        "test_corpus": Path(__file__).read_text(encoding="utf-8"),
+    }
+    integration_source = (
+        ROOT / "packages/acgs-control-plane/tests/integration/test_runtime_enrollment_postgres.py"
+    ).read_text(encoding="utf-8")
+
+    for surface, source in full_selector_surfaces.items():
+        assert authoritative_selector in source, surface
+        assert retired_selector not in source, surface
+    for surface, source in python_literal_surfaces.items():
+        assert authoritative_test in source, surface
+        assert retired_test not in source, surface
+    assert f"def {authoritative_test}()" in integration_source
+    assert retired_test not in integration_source
+
     records = _reviewed_p4_runtime_enrollment_records()
     assert len(records) == 10
+    assert records[0]["argv"] == [
+        ".venv-evidence/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        *_common.EVID_GATE_PYTEST_NODE_IDS,
+    ]
+    assert records[0]["selectors"] == ["root:EVID-gate"]
     assert [record["cwd_scope"] for record in records] == [
         "REPO_ROOT",
         "CP",
@@ -14748,8 +15169,12 @@ emit_exact_clean_sibling_pass
         assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout + completed.stderr
 
 
-def test_clean_sibling_guardian_revalidates_retained_run_json_semantics(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("evid_drift", ("omission", "extra", "rename", "substitution"))
+def test_clean_sibling_launcher_rejects_evid_gate_corpus_drift_before_publication(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    evid_drift: str,
 ) -> None:
     launcher = (EVIDENCE_SCRIPTS / "prove_clean_sibling").read_text(encoding="utf-8")
     guardian_source = launcher.split("/usr/bin/python3 -I -S -c '\n", 1)[1].split("\nlibc = ", 1)[0]
@@ -15002,6 +15427,58 @@ def test_clean_sibling_guardian_revalidates_retained_run_json_semantics(
         )
     finally:
         os.close(status_fd)
+
+    reviewed_evid_argv = list(_common.REVIEWED_P0_TRANSCRIPT[0][1])
+    corpus_node_id = _common.EVID_GATE_PYTEST_NODE_IDS[0]
+    corpus_index = reviewed_evid_argv.index(corpus_node_id)
+    if evid_drift == "omission":
+        drifted_evid_argv = [
+            *reviewed_evid_argv[:corpus_index],
+            *reviewed_evid_argv[corpus_index + 1 :],
+        ]
+    elif evid_drift == "extra":
+        drifted_evid_argv = [
+            *reviewed_evid_argv,
+            "tests/saas_beta/test_evidence_bootstrap.py::test_unreviewed_evid_gate_extra",
+        ]
+    elif evid_drift == "rename":
+        drifted_evid_argv = [
+            *reviewed_evid_argv[:corpus_index],
+            f"{corpus_node_id}_renamed",
+            *reviewed_evid_argv[corpus_index + 1 :],
+        ]
+    else:
+        assert evid_drift == "substitution"
+        drifted_evid_argv = [
+            *reviewed_evid_argv[:corpus_index],
+            "tests/saas_beta/test_cross_plane_contracts.py::"
+            "test_approval_contract_locks_vote_and_resume_assurance",
+            *reviewed_evid_argv[corpus_index + 1 :],
+        ]
+
+    p4_records = _reviewed_p4_runtime_enrollment_records()
+    p4_records[0] = {**p4_records[0], "argv": drifted_evid_argv}
+    with pytest.raises(_common.EvidenceError):
+        _common.validate_transcript_sequence(p4_records, expected_node="P4-ENROLLMENT-001")
+
+    forged_evid_gate: dict[str, Any] = copy.deepcopy(run)
+    forged_evid_gate["commands"][0]["argv"] = drifted_evid_argv
+    publication = tmp_path / f"published-{evid_drift}"
+
+    def verify_then_publish() -> None:
+        status_payload, status_fd = status_for(forged_evid_gate)
+        try:
+            namespace["verified_status"](status_payload, status_fd)
+        finally:
+            os.close(status_fd)
+        publication.write_text("unsafe publication\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="trusted success status command argv mismatch"):
+        verify_then_publish()
+    assert not publication.exists()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
 
     for _name, mutate in {
         "empty-command-records": lambda value: value.update(
@@ -16060,29 +16537,7 @@ exit $?
         capture_output=True,
         check=True,
     ).stdout
-    candidate_roots = (
-        Path("requirements/saas-beta"),
-        Path("schemas/evidence"),
-        Path("scripts/evidence"),
-        Path("tests/saas_beta"),
-    )
-    candidate_extra_files = (
-        Path("packages/acgs-control-plane/pyproject.toml"),
-        Path("packages/gove-zone/pyproject.toml"),
-    )
-    candidate_files = sorted(
-        [
-            relative
-            for root in candidate_roots
-            for path in (ROOT / root).rglob("*")
-            if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
-            for relative in (path.relative_to(ROOT),)
-        ]
-        + list(candidate_extra_files)
-    )
-    # Deliberate literal-prover corpus plus renderer-authority package manifests.
-    assert Path("tests/saas_beta/test_cross_plane_contracts.py") in candidate_files
-    assert len(candidate_files) == 35
+    candidate_files = _literal_prover_candidate_files()
     candidate = tmp_path / "literal-prover-candidate"
     caller_parents: list[Path] = []
     added = False

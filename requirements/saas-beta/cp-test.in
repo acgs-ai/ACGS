@@ -2,6 +2,9 @@
 # Target: CP
 # Sources:
 #   - packages/acgs-control-plane/pyproject.toml
+#   - packages/gove-zone/pyproject.toml:[project].dependencies
+#   - packages/gove-zone/pyproject.toml:extra:crypto
+#   - packages/gove-zone/pyproject.toml:extra:langchain
 #   - packages/acgs-control-plane/pyproject.toml:[build-system].requires
 #   - requirements/saas-beta/locks.toml:CP.pep660_editable_build
 
@@ -14,6 +17,7 @@ pytest>=8.0
 httpx>=0.27
 ruff>=0.8
 mypy>=1.13
+langchain-core>=0.1
 uvicorn>=0.30
 psycopg[binary]>=3.1
 hatchling

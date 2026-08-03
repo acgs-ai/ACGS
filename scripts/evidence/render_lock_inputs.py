@@ -76,6 +76,7 @@ EXPECTED_OUTPUTS = {
     "MAP": Path("requirements/saas-beta/bootstrap-by-scope.json"),
 }
 REQ_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
+EXTRA_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 REGISTRY_REQUIREMENT_RE = re.compile(
     r"""
     ^
@@ -92,6 +93,11 @@ REGISTRY_REQUIREMENT_RE = re.compile(
     $
     """,
     re.VERBOSE,
+)
+WORKSPACE_REQUIREMENT_RE = re.compile(
+    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)"
+    r"(?:\[(?P<extras>[A-Za-z0-9][A-Za-z0-9._-]*"
+    r"(?:\s*,\s*[A-Za-z0-9][A-Za-z0-9._-]*)*)\])?$"
 )
 UNSAFE_REQUIREMENT_TOKENS = re.compile(
     r"(?i)(?:^|[^\w.+-])(?:https?|file|ssh|git)://|(?:^|[^\w.+-])(?:git|ssh|file)\+"
@@ -134,6 +140,10 @@ def _canonical_name(requirement: str) -> str:
     if match is None:
         raise ConfigError(f"unsupported or dynamic requirement: {requirement!r}")
     return re.sub(r"[-_.]+", "-", match.group(0)).lower()
+
+
+def _canonical_extra(extra: str) -> str:
+    return re.sub(r"[-_.]+", "-", extra).lower()
 
 
 def _validate_requirement_source(
@@ -181,20 +191,128 @@ def _selected_group(manifest: Mapping[str, Any], group: str, path: Path) -> list
     return _string_list(candidates[0], f"{path}:{group}")
 
 
-def _selected_extra(manifest: Mapping[str, Any], extra: str, path: Path) -> list[str]:
+def _resolve_selected_extra(
+    manifest: Mapping[str, Any], extra: str, path: Path
+) -> tuple[str, list[str]]:
     optional = manifest.get("project", {}).get("optional-dependencies", {})
-    if not isinstance(optional, dict) or extra not in optional:
+    if not isinstance(optional, dict):
         raise ConfigError(f"{path}: selected extra {extra!r} is not declared")
-    return _string_list(optional[extra], f"{path}:extra:{extra}")
+
+    canonical_keys: dict[str, str] = {}
+    for key in optional:
+        if not isinstance(key, str) or EXTRA_NAME_RE.fullmatch(key) is None:
+            raise ConfigError(f"{path}: optional-dependencies contains an invalid key: {key!r}")
+        canonical = _canonical_extra(key)
+        if canonical in canonical_keys:
+            raise ConfigError(
+                f"{path}: optional-dependencies keys collide after normalization: "
+                f"{canonical_keys[canonical]!r} and {key!r}"
+            )
+        canonical_keys[canonical] = key
+
+    selected_key = canonical_keys.get(_canonical_extra(extra))
+    if selected_key is None:
+        raise ConfigError(f"{path}: selected extra {extra!r} is not declared")
+    return selected_key, _string_list(optional[selected_key], f"{path}:extra:{selected_key}")
 
 
-def _unique_requirements(requirements: Iterable[str], excluded_names: set[str]) -> list[str]:
+def _selected_extra(manifest: Mapping[str, Any], extra: str, path: Path) -> list[str]:
+    return _resolve_selected_extra(manifest, extra, path)[1]
+
+
+def _workspace_requirement_extras(
+    requirement: str,
+    expected_name: str,
+    where: str,
+) -> tuple[str, ...]:
+    match = WORKSPACE_REQUIREMENT_RE.fullmatch(requirement.strip())
+    if match is None or _canonical_name(match.group("name")) != expected_name:
+        raise ConfigError(
+            f"{where}: workspace dependency must be a bare name with optional extras: "
+            f"{requirement!r}"
+        )
+    raw_extras = match.group("extras")
+    if raw_extras is None:
+        return ()
+    extras = tuple(item.strip() for item in raw_extras.split(","))
+    if len(extras) != len(set(extras)):
+        raise ConfigError(
+            f"{where}: workspace dependency extras contain duplicates: {requirement!r}"
+        )
+    canonical_extras = tuple(_canonical_extra(extra) for extra in extras)
+    if len(canonical_extras) != len(set(canonical_extras)):
+        raise ConfigError(
+            f"{where}: requested extras contain canonical duplicates: {requirement!r}"
+        )
+    return extras
+
+
+def _expand_workspace_requirements(
+    requirements: Iterable[str],
+    *,
+    where: str,
+    workspace_manifests: Mapping[str, tuple[Path, Path, Mapping[str, Any]]],
+    stack: tuple[str, ...],
+) -> tuple[list[str], list[str]]:
+    expanded: list[str] = []
+    sources: list[str] = []
+
+    def add_source(source: str) -> None:
+        if source not in sources:
+            sources.append(source)
+
+    workspace_names = set(workspace_manifests)
+    for requirement in requirements:
+        _validate_requirement_source(
+            requirement,
+            where,
+            allowed_workspace_names=workspace_names,
+        )
+        name = _canonical_name(requirement)
+        if name not in workspace_manifests:
+            expanded.append(requirement)
+            continue
+
+        extras = _workspace_requirement_extras(requirement, name, where)
+        if name in stack:
+            cycle = " -> ".join((*stack, name))
+            raise ConfigError(f"{where}: workspace dependency expansion cycle: {cycle}")
+
+        manifest_rel, manifest_path, manifest = workspace_manifests[name]
+        project = manifest.get("project")
+        if not isinstance(project, dict):
+            raise ConfigError(f"{manifest_rel}: [project] is required")
+        nested = _string_list(
+            project.get("dependencies", []),
+            f"{manifest_rel}:dependencies",
+            nonempty=False,
+        )
+        add_source(f"{manifest_rel}:[project].dependencies")
+        for extra in extras:
+            selected_extra, extra_requirements = _resolve_selected_extra(
+                manifest, extra, manifest_path
+            )
+            nested.extend(extra_requirements)
+            add_source(f"{manifest_rel}:extra:{selected_extra}")
+
+        nested_requirements, nested_sources = _expand_workspace_requirements(
+            nested,
+            where=f"{manifest_rel}:workspace-expansion",
+            workspace_manifests=workspace_manifests,
+            stack=(*stack, name),
+        )
+        expanded.extend(nested_requirements)
+        for source in nested_sources:
+            add_source(source)
+
+    return expanded, sources
+
+
+def _unique_requirements(requirements: Iterable[str]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
     for requirement in requirements:
         name = _canonical_name(requirement)
-        if name in excluded_names:
-            continue
         if name in seen:
             # The manifests may expose the same direct input through a dev group
             # and a selected extra.  Identical text is harmless; conflicting
@@ -441,7 +559,7 @@ def render(config_path: Path, output_root: Path) -> list[Path]:
         manifest = _load_toml(manifest_path)
 
         editable_paths = _string_list(section["editable_no_deps"], f"{code}.editable_no_deps")
-        editable_names: set[str] = set()
+        workspace_manifests: dict[str, tuple[Path, Path, Mapping[str, Any]]] = {}
         for editable in editable_paths:
             editable_path = Path(editable)
             if editable_path.is_absolute() or ".." in editable_path.parts:
@@ -451,8 +569,14 @@ def render(config_path: Path, output_root: Path) -> list[Path]:
             )
             if not editable_manifest_path.is_relative_to(repo_root):
                 raise ConfigError(f"{code} editable path escaped the repository: {editable!r}")
-            editable_names.add(
-                _project_name(_load_toml(editable_manifest_path), editable_manifest_path)
+            editable_manifest = _load_toml(editable_manifest_path)
+            editable_name = _project_name(editable_manifest, editable_manifest_path)
+            if editable_name in workspace_manifests:
+                raise ConfigError(f"{code}: duplicate editable workspace name: {editable_name}")
+            workspace_manifests[editable_name] = (
+                editable_path / "pyproject.toml",
+                editable_manifest_path,
+                editable_manifest,
             )
 
         project = manifest.get("project")
@@ -468,6 +592,14 @@ def render(config_path: Path, output_root: Path) -> list[Path]:
             selected.extend(_selected_group(manifest, group, manifest_path))
         for extra in extras:
             selected.extend(_selected_extra(manifest, extra, manifest_path))
+
+        project_name = _project_name(manifest, manifest_path)
+        selected, expanded_sources = _expand_workspace_requirements(
+            selected,
+            where=f"{manifest_rel}:selected",
+            workspace_manifests=workspace_manifests,
+            stack=(project_name,),
+        )
 
         build_system = manifest.get("build-system")
         if not isinstance(build_system, dict):
@@ -485,25 +617,24 @@ def render(config_path: Path, output_root: Path) -> list[Path]:
         if pep660 != ["editables==0.6"]:
             raise ConfigError(f"{code}: pep660_editable_build must be exactly editables==0.6")
 
-        for requirement in selected:
-            _validate_requirement_source(
-                requirement, f"{manifest_rel}:selected", allowed_workspace_names=editable_names
-            )
         for requirement in build_requires:
             _validate_requirement_source(requirement, f"{manifest_rel}:[build-system].requires")
+            if _canonical_name(requirement) in workspace_manifests:
+                raise ConfigError(f"{code}: build-system workspace dependencies are not allowed")
         for requirement in pep660:
             _validate_requirement_source(
                 requirement, f"requirements/saas-beta/locks.toml:{code}.pep660_editable_build"
             )
+            if _canonical_name(requirement) in workspace_manifests:
+                raise ConfigError(f"{code}: PEP 660 workspace dependencies are not allowed")
 
-        requirements = _unique_requirements(
-            [*selected, *build_requires, *pep660], excluded_names=editable_names
-        )
+        requirements = _unique_requirements([*selected, *build_requires, *pep660])
         if "editables==0.6" not in requirements:
             raise ConfigError(f"{code}: explicit PEP 660 helper was not rendered")
         output = output_root / _exact_output(section["output"], code)
         sources = [
             str(manifest_rel),
+            *expanded_sources,
             f"{manifest_rel}:[build-system].requires",
             f"requirements/saas-beta/locks.toml:{code}.pep660_editable_build",
         ]
