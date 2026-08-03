@@ -28,6 +28,7 @@ from acgs_control_plane.migration_recovery import (
 from acgs_control_plane.migrations import (
     _POSTGRES_MIGRATION_LOCK_CLASS_ID,
     _POSTGRES_MIGRATION_LOCK_OBJECT_ID,
+    HEAD_REVISION,
     DatabaseSchemaState,
     inspect_schema,
     upgrade_database,
@@ -460,7 +461,7 @@ def test_postgresql_bundle_restore_round_trip_equivalence(tmp_path: Path) -> Non
     )
 
     assert created == verified == restored
-    assert inspect_schema(TARGET_URL).state is DatabaseSchemaState.VERSION_0010
+    assert inspect_schema(TARGET_URL).state is DatabaseSchemaState(f"version_{HEAD_REVISION}")
     engine = make_engine(TARGET_URL)
     try:
         with engine.connect() as connection:
@@ -502,7 +503,7 @@ def test_postgresql_nonempty_target_invokes_no_mutating_restore(tmp_path: Path) 
         )
 
     assert calls == []
-    assert inspect_schema(TARGET_URL).state is DatabaseSchemaState.VERSION_0010
+    assert inspect_schema(TARGET_URL).state is DatabaseSchemaState(f"version_{HEAD_REVISION}")
 
 
 def test_postgresql_restore_lock_contention_refuses_before_mutating_restore(
