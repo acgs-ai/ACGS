@@ -65,14 +65,16 @@ projection and remain invisible to the explorer and export bundle. Native
 receipt-v2 explorer/export support remains future work.
 
 Agent registration idempotency is part of Alembic revision `0007`. The current
-schema head is `0012`: revision `0008` adds the managed policy registry,
+schema head is `0013`: revision `0008` adds the managed policy registry,
 revision `0009` adds the approval request/vote/outcome/resume substrate,
 revision `0010` binds approval votes to the approved resume action, and revision
 `0011` adds the runtime enrollment identity tables. Forward-only revision `0012`
 adds authenticated append-only runtime reports, monotonic per-identity report-head
 anchors, receipt-bound immutable report projections, and report-bound wiring
-attestation/challenge-consumption records. These are local database and cryptographic
-lineage controls; they are not a hosted-runtime or production-readiness claim.
+attestation/challenge-consumption records. Forward-only revision `0013` adds
+database-enforced immutability for challenge-consumption lineage. These are local
+database and cryptographic lineage controls; they are not a hosted-runtime or
+production-readiness claim.
 `POST /orgs/{org}/agents` requires an `Idempotency-Key` header before
 receipt issuance or persistence. Reusing the same key with the same canonical
 request replays the original terminal outcome after validating the stored row
@@ -245,7 +247,7 @@ uv run --package acgs-control-plane uvicorn --factory acgs_control_plane.app:cre
 
 This posture is deliberately non-production: its legacy bootstrap may create only the frozen
 pre-Alembic v0 tables, and `/readyz` always returns 503. For a migration-managed database, run the
-secret-safe operator CLI to the current head (`0012` at this writing), then set
+secret-safe operator CLI to the current head (`0013` at this writing), then set
 `ACP_CREATE_TABLES=0`. Schema currency is reported separately from production readiness.
 `ACP_RUNTIME_POSTURE=production` currently refuses before constructing a database engine because
 legacy mutation routes still exist; an exact current schema does not weaken that blocker.
@@ -319,7 +321,7 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
   managed receipt-v2 evidence and a SQL single-use ledger, but the remaining legacy routes still
   differ from gove-zone's secure `require_signature=True` profile. Production posture refuses while
   those legacy mutation routes remain.
-- **Schema mutation is operator-only**: Alembic revisions `0001` through `0012` are advanced
+- **Schema mutation is operator-only**: Alembic revisions `0001` through `0013` are advanced
   through `python -m acgs_control_plane.migration_cli`; schema-managed startup performs an exact,
   read-only revision preflight and never migrates. The legacy `create_all` bootstrap remains
   available only under the explicit local-development posture above.
