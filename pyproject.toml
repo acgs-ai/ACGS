@@ -53,7 +53,7 @@ gove-zone = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "ruff>=0.8",
+    "ruff==0.15.12",
     "mypy>=1.13",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
