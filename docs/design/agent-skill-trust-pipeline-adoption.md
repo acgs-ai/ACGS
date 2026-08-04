@@ -2123,10 +2123,28 @@ enumerated entries still passes. The host policy must therefore deny
       origin grant must be explicitly treated as authority over every
       operation the entire service exposes, granted only when that
       full-service reach is itself reviewed and intended, with a
-       same-origin disallowed-operation negative test proving a request to
-       an allowed origin whose method or resource falls outside the
-       recorded operation constraints is refused by the broker rather than
-       sent. Method and resource/path constraints still under-specify APIs
+        same-origin disallowed-operation negative test proving a request to
+        an allowed origin whose method or resource falls outside the
+        recorded operation constraints is refused by the broker rather than
+        sent. Matching the raw request path enforces the constraint the
+        broker sees, not the route the origin serves: HTTP servers and
+        intermediaries normalize dot segments, duplicate slashes,
+        percent-encoding, and path parameters before routing, so a request
+        whose raw path satisfies an allowed resource constraint
+        (`/docs/../admin`, `//admin`, `/%61dmin`) can be routed by the
+        origin to a denied resource while the same-origin,
+        payload-encoded-operation, and header-selected-operation tests all
+        pass on the raw form. The broker must therefore define a canonical
+        resource-path normalization for each brokered protocol and origin
+        (dot-segment resolution, duplicate-slash collapse, percent-decoding
+        to the origin's routing form, and path-parameter handling matched
+        to the origin's routing semantics), match the recorded resource
+        constraints against that normalized route identity, and refuse
+        requests whose paths cannot be canonicalized unambiguously, with a
+        path-canonicalization negative test proving a request whose raw
+        path appears allowed but whose encoded, dot-segment, or
+        duplicate-slash form the origin routes to a denied endpoint is
+        refused by the broker rather than sent. Method and resource/path constraints still under-specify APIs
        that select the logical operation elsewhere: a `POST /graphql` body
        carrying a mutation or a `POST /api` payload with `action=delete`
        stays within an allowed method and path while performing a
@@ -4219,10 +4237,32 @@ enumerated entries still passes. The host policy must therefore deny
    the policy-version lease: held until the governed effect commits or
    completes, or the launched work kept revocable or brokered so an actor
    revocation halts or re-vets in-flight work before its effect, with a
-    delayed-effect actor-revocation negative test revoking the requesting
-    actor after launch but before a deferred side effect and proving the
-    effect either committed before the revocation took effect or does not
-    occur. Revalidating the issuing actor's standing still never asks who
+     delayed-effect actor-revocation negative test revoking the requesting
+     actor after launch but before a deferred side effect and proving the
+     effect either committed before the revocation took effect or does not
+     occur. Rechecking revocation validates that the actor still exists,
+     not that the actor may still do this: an actor whose credential,
+     role, and session all remain active can have their authority
+     narrowed after issuance (a production deploy role reduced to
+     staging-only or read-only), so an unused receipt bound to the older
+     authorization epoch executes an action outside the actor's current
+     mandate while every actor-revocation test above passes because
+     nothing was revoked. The execution gate's actor recheck must
+     therefore revalidate the actor's current authorization against the
+     exact scope the receipt binds (the bound action or effect class,
+     target, and deployment scope), treating any narrowing under which
+     the current authority no longer covers the bound request as failure
+     exactly like revocation, with the actor-authorization epoch advanced
+     on scope and mandate changes as well as revocations and the recheck
+     held through the same effect-held lease discipline as the
+     revocation requirements above, with a scope-narrowing negative test
+     proving an unused receipt whose requesting actor's still-active
+     role is narrowed below the receipt's bound action after issuance is
+     refused at presentation without a side effect, and a delayed-effect
+     narrowing variant proving a mandate narrowing after launch but
+     before a deferred side effect either follows the
+     committed-before-narrowing rule or prevents the effect.
+     Revalidating the issuing actor's standing still never asks who
     is presenting: a leaked or copied unused receipt can be presented once
     by a different authenticated principal while the bound actor's
     credential and session remain active, so one principal executes
@@ -4354,10 +4394,37 @@ enumerated entries still passes. The host policy must therefore deny
       network-fetch laundering negative test proving a tool call
       issued by a context that obtained a registered or superseded
       `SKILL.md` through a raw URL, mirror, or artifact-service fetch
-      is governed by the originating skill's ceiling (or by the
-      conservative network-content taint) rather than the reader's
-      broader non-skill ceiling, or that the fetch itself is refused. The
-      interception layer is itself inside the threat model: the current hook is
+       is governed by the originating skill's ceiling (or by the
+       conservative network-content taint) rather than the reader's
+       broader non-skill ceiling, or that the fetch itself is refused.
+       Every activation and propagation rule above keys on the registered
+       skill's instruction files: a skill's registered identity also
+       covers reference files, prompts, templates, sidecars, and other
+       companion artifacts under the skill root, and when such a
+       companion carries model-consumable instructions, a non-loader
+       context can read, copy, transform, extract from history, or fetch
+       it without ever touching `SKILL.md`, so the instructions enter the
+       model and later calls execute under the broader non-skill ceiling
+       while the direct-read, copy-then-read, VCS-extraction,
+       historical-version, and network-fetch tests all pass because none
+       of them names companions. Activation-on-ingestion and origin
+       propagation must therefore cover every host-ingested or
+       model-consumable artifact included in the skill's registered
+       identity (the tree manifest already binds each entry, so
+       admission must either classify entries as model-consumable or
+       treat every entry as origin-carrying), with reads, copies,
+       transformations, VCS/history/archive extractions, and network
+       fetches of any such artifact (current or superseded versions,
+       through the same authenticated historical-version index)
+       propagating the originating skill's identity and ceiling exactly
+       as its instruction files do, or refused as instruction sources
+       for ordinary non-loader contexts, with a companion-artifact
+       laundering negative test proving a tool call issued by a context
+       that obtained a registered skill's companion artifact through any
+       of those channels is governed by the originating skill's ceiling
+       rather than the reader's broader non-skill ceiling, or that the
+       ingestion is refused. The
+       interception layer is itself inside the threat model: the current hook is
    executed directly from its working-tree path (`.claude/hooks/acgs-emit-receipt.py`,
    selected by `.claude/settings.json`) on each intercepted call, so a skill whose
    `file_write` ceiling covers the checkout can edit the hook or its
