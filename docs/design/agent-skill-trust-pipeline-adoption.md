@@ -425,10 +425,23 @@ enumerated entries still passes. The host policy must therefore deny
      artifact the host ingests, and maximum instruction tokens where skill
      content enters a model context), refusing admission or load of an
      over-limit skill before any of its bytes reach the model, with an
-     oversized-skill negative test proving a schema-valid skill exceeding
-     its instruction byte or token ceiling is refused by the host at
-     admission/load time rather than ingested into the model context.
-     Cheap, deterministic, catches the entire class.
+      oversized-skill negative test proving a schema-valid skill exceeding
+      its instruction byte or token ceiling is refused by the host at
+      admission/load time rather than ingested into the model context.
+      Per-skill ceilings bound each skill, not their sum: a session that
+      explicitly or compositionally loads many individually under-limit
+      skills can still exhaust host memory or the model context with
+      cumulative instruction and metadata bytes and tokens while every
+      oversized-skill negative test passes. Admission/load must therefore
+      also enforce aggregate per-context and per-host ceilings on the
+      number of concurrently loaded skills and on the total loaded skill
+      instruction and artifact bytes and instruction tokens, refusing (or
+      tainting the consuming context of) a load whose admission would
+      exceed any aggregate ceiling, with a many-small-skills negative test
+      proving a session that loads many individually within-ceiling skills
+      is refused or tainted at the aggregate ceiling before their
+      cumulative content can exhaust host memory or the model context.
+      Cheap, deterministic, catches the entire class.
    One repo-hygiene prerequisite: the root `.gitignore` ignores `.agents` wholesale, so
    only the two already-tracked `govern-zone` files survive; any new skill or sidecar
    under `.agents/skills/**` is invisible to a CI checkout (`git check-ignore` confirms
@@ -2618,17 +2631,29 @@ enumerated entries still passes. The host policy must therefore deny
     exhausting dispatcher memory or durable queue storage while no
     queued launch ever consumes its execution budget. Queue admission
     must therefore be governed by its own hierarchical queue-length
-    and queued-byte budgets, per-skill totals nesting under
-    tenant-wide and execution-boundary-wide totals of the same shape
-    as the aggregate quotas they guard, enforced before a launch is
-    enqueued, with a submission whose enqueueing would exceed any
-    enclosing queue budget rejected fail-closed or held behind
-    backpressure that blocks the submitter rather than buffering the
-    submission, with a sustained over-quota submission negative test
-    driving continuous individually valid launches from multiple
-    skills against one shared boundary and proving dispatcher memory
-     and durable queue storage stay within the declared queue budgets
-     while other workloads' submissions still make progress.
+     and queued-byte budgets, per-skill totals nesting under
+     tenant-wide and execution-boundary-wide totals of the same shape
+     as the aggregate quotas they guard, and, because queued work has
+     not yet reached the deployment-scoped launch admission above, the
+     queue admission and allocation keys must likewise bind
+     `project_id` and `environment_id` under the retained tenant-wide
+     and boundary-wide totals, each enqueue debiting exactly the
+     deployment scope its submission binds and failing closed on
+     missing or mismatched scope, enforced before a launch is
+     enqueued, with a submission whose enqueueing would exceed any
+     enclosing queue budget rejected fail-closed or held behind
+     backpressure that blocks the submitter rather than buffering the
+     submission, with a sustained over-quota submission negative test
+     driving continuous individually valid launches from multiple
+     skills against one shared boundary and proving dispatcher memory
+      and durable queue storage stay within the declared queue budgets
+      while other workloads' submissions still make progress, and a
+      cross-deployment queue-exhaustion negative test proving sustained
+      submissions attributed to one project or environment (staging
+      traffic included) cannot fill another deployment's queue
+      allowance, exhaust dispatcher memory or durable queue storage
+      against it, or backpressure its submissions while the enclosing
+      totals still bound the whole.
      Hierarchical queue budgets cap what the queue stores, not who can
      use it: one skill, or coordinated skills submitting under several
      child scopes, can fill the tenant-wide or execution-boundary-wide
@@ -3400,17 +3425,27 @@ enumerated entries still passes. The host policy must therefore deny
      recorded per-invocation limits while their aggregate memory,
      threads, descriptors, or I/O exhausts the host, so, exactly as the
      shell containment contract requires for launches, handler execution
-     must also run under shared admission control with aggregate resource
-     quotas scoped to the skill, tenant, and execution boundary, enforced
-     across all concurrent and queued handler invocations attributed to
-     that scope (an invocation whose admission would exceed the aggregate
-     quota is denied, queued, or throttled rather than run), and neither
-     per-invocation budgets nor isolated service capacity alone satisfies
-     this requirement without the aggregate bound, with a concurrent
-      many-handler-call exhaustion negative test proving many simultaneous
-       individually-within-budget handler invocations from one skill are
-       collectively bounded and other workloads' capacity is
-       preserved.
+      must also run under shared admission control with aggregate resource
+      quotas scoped to the skill, tenant, and execution boundary and,
+      exactly like the launch quota hierarchy above, keyed also by
+      `project_id` and `environment_id` under the retained tenant-wide,
+      boundary-wide, and host-wide caps (each handler admission debiting
+      exactly the deployment scope its receipt binds and failing closed on
+      missing or mismatched scope), enforced
+      across all concurrent and queued handler invocations attributed to
+      that scope (an invocation whose admission would exceed the aggregate
+      quota is denied, queued, or throttled rather than run), and neither
+      per-invocation budgets nor isolated service capacity alone satisfies
+      this requirement without the aggregate bound, with a concurrent
+       many-handler-call exhaustion negative test proving many simultaneous
+        individually-within-budget handler invocations from one skill are
+        collectively bounded and other workloads' capacity is
+        preserved, and a cross-deployment handler-exhaustion negative test
+        proving concurrent invocations of a shared admitted handler
+        attributed to one project or environment cannot consume another
+        deployment's aggregate memory, thread, descriptor, or I/O
+        allowance or throttle its handler calls while the enclosing caps
+        still bound the total.
        Consumption budgets bound what execution takes from the host, not
        what it emits: an admitted handler that returns or streams a huge
        result, or an allowed script that continuously writes stdout and
@@ -3421,16 +3456,30 @@ enumerated entries still passes. The host policy must therefore deny
        and the output-byte and output-token bounds above are scoped to
        pure-operation exemptions, so neither this handler budget list nor
        the shell budget contract bounds result output. Shell and handler
-       execution must therefore also carry per-invocation and aggregate
-       output-byte limits (and output-token limits where results enter a
-       model context), enforced through streaming backpressure or
-       termination of the workload at the bound rather than unbounded
-       buffering of an over-limit result, with a result-output exhaustion
-       negative test proving an admitted handler or allowed script that
-       streams an oversized result is throttled or terminated at its
-       recorded output bound while other workloads retain
-       response-channel, transport, model-context, and result-logging
-       capacity.
+        execution must therefore also carry per-invocation and aggregate
+        output-byte limits (and output-token limits where results enter a
+        model context), the aggregates hierarchical and deployment-scoped
+        exactly like the host-resource quotas above rather than per
+        invocation or global alone: per-skill output totals nest under
+        tenant-wide, execution-boundary-wide, and
+        `project_id`/`environment_id`-scoped totals, enforced across all
+        concurrent and queued shell and handler workloads attributed to
+        each scope, with concurrently admitted child allocations leaving a
+        protected reserve of each enclosing allowance, enforced through
+        streaming backpressure or
+        termination of the workload at the bound rather than unbounded
+        buffering of an over-limit result, with a result-output exhaustion
+        negative test proving an admitted handler or allowed script that
+        streams an oversized result is throttled or terminated at its
+        recorded output bound while other workloads retain
+        response-channel, transport, model-context, and result-logging
+        capacity, an aggregate-output exhaustion negative test proving
+        many individually within-bound handler and script outputs
+        attributed to one scope are collectively bounded at that scope's
+        output total, and a cross-deployment output-exhaustion negative
+        test proving output attributed to one project or environment
+        cannot consume another deployment's output allowance or starve
+        its result logging, response transport, or model context.
        The enumerated budgets cover host CPU, memory, processes,
       descriptors, storage, and I/O, not accelerators: on a GPU- or
       accelerator-equipped execution host, an admitted handler or
@@ -3673,7 +3722,23 @@ enumerated entries still passes. The host policy must therefore deny
       and arguments are identical), and the issuance path atomically maps
       that identity to at most one issuance (compare-and-swap on that
       identity against shared durable state of the same trust class as
-      the consumption ledger) before minting; a request whose transport
+      the consumption ledger) before minting. Because a transport's
+      delivery or sequence identity may be unique only within one
+      producer, connection, actor, or tenant, a bare durable mapping on
+      that identity alone would conflate two legitimate first attempts
+      that use the same key in different authenticated scopes, replaying
+      the first issuance's receipt to the second requester or blocking
+      its operation; the compare-and-swap key and the identity bound into
+      the receipt must therefore be namespaced by the authenticated
+      transport/source identity together with the bound actor, tenant,
+      `project_id`, `environment_id`, and action scope, so first attempts
+      carrying the same transport-supplied identity in distinct
+      authenticated scopes map to distinct issuances, with cross-actor
+      and cross-tenant key-collision negative tests proving first
+      attempts from distinct authenticated scopes sharing one
+      per-operation identity each obtain their own executable receipt and
+      neither is answered with, or blocked by, the other's issuance. A
+      request whose transport
       supplies no per-operation identity is rejected at admission rather
       than deduplicated by content digest. The identity-to-issuance
       mapping must carry a defined retry lifetime, retained at least as
