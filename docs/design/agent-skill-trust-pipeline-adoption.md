@@ -319,15 +319,31 @@ enumerated entries still passes. The host policy must therefore deny
      context's unrestricted non-skill authority, while the
      activation-on-read rule that would catch this is exactly the step-6
      machinery the interval lacks (this design defers direct-read handling
-     to step 6). The hold must therefore also deny ordinary ingestion and
-     extraction of unadmitted skill artifacts during the interval (reads,
-     copies, and transformations of their instruction files by non-loader
-     contexts are refused), or taint the consuming context so that its
-     subsequent tool requests are denied while the hold is in force, with a
-     read-then-call negative test that reads a held `SKILL.md` through an
-     ordinary file read before any invocation and proves either the read
-     itself is refused or the reading context's subsequent tool call is
-     denied while the hold is in force. The step-2 loadability gate and
+      to step 6). Working-tree file reads are also not the only channel that
+      yields the held bytes: the same instructions live in version-control
+      history and on remote hosting, so a non-skill context can ingest an
+      unadmitted `SKILL.md` via `git show HEAD:.claude/skills/.../SKILL.md`,
+      `git log -p`, or `git archive`, or fetch it from a raw repository URL,
+      none of which touches the working-tree path a read denial names, while
+      the VCS/history-extraction and network-fetch skill-laundering rules
+      that would catch those channels are again exactly the step-6 machinery
+      the interval lacks. The hold must therefore also deny ordinary
+      ingestion and extraction of unadmitted skill artifacts during the
+      interval through every channel that yields their instruction bytes:
+      reads, copies, and transformations of their instruction files by
+      non-loader contexts, VCS/history/archive extraction of those files
+      (`git show`, `git log -p`, `git archive`, and equivalents), and network
+      fetches of the same repository content (raw repository URLs and remote
+      archive downloads) are refused, or the consuming context is tainted so
+      that its subsequent tool requests are denied while the hold is in
+      force, with a read-then-call negative test that reads a held `SKILL.md`
+      through an ordinary file read before any invocation and proves either
+      the read itself is refused or the reading context's subsequent tool
+      call is denied while the hold is in force, and matching VCS-extraction
+      and network-fetch negative tests that obtain the same held bytes via
+      `git show` or `git archive` and via a raw repository URL fetch and
+      prove the same refusal or taint-then-deny outcome for each channel.
+      The step-2 loadability gate and
    a step-3 card are prerequisites but not sufficient, because neither prevents an
    automatically selected skill from directing actions beyond its intended
    authority; a schema-valid, well-described skill can still instruct anything.
