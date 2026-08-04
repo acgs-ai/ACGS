@@ -887,6 +887,28 @@ enumerated entries still passes. The host policy must therefore deny
         while substitution of the referenced secret between review and
         consumption is still detected and refused without a side
         effect.
+        Classifying referenced inputs for secrecy protects only inputs
+        the classification actually covers: when the secrecy
+        classification is absent, or is asserted by the requesting
+        skill or any other party inside requester write authority, a
+        malicious skill can label a credential file or private
+        allowlist as non-secret and drive the ordinary digest and
+        full-rendering path, disclosing the value or publishing an
+        offline-guessable commitment while the secret-reference
+        serialization test above still passes for correctly classified
+        inputs. The secrecy classification must therefore come from
+        trusted metadata or policy held outside requester and skill
+        write authority (the secret store's own classification,
+        admission-reviewed declarations, or tenant policy rules
+        evaluated inside the trust boundary), and the trusted gate must
+        fail closed to the non-disclosing secret binding or refuse the
+        reference entirely whenever the classification is unavailable,
+        unverifiable, or disputed, with a misclassification negative
+        test proving a referenced input that trusted policy classifies
+        as secret but the requester labels non-secret is still bound
+        and rendered only through the non-disclosing path, and no
+        approval prompt, grant evidence, receipt, or ceiling record
+        emits its value or an offline-guessable digest of it.
         Binding the policy bundle id/version detects substitution, not
        rollback: when an older, more permissive policy bundle and its
        active tenant binding are restored together, receipt issuance,
@@ -1967,7 +1989,25 @@ enumerated entries still passes. The host policy must therefore deny
     device-node negative tests proving the external effect itself does not
     occur: a write to an in-ceiling FIFO is denied and no command reaches the
     privileged reader, and an open of an in-ceiling device node is denied
-    rather than reaching the device. Direct network capabilities have the same
+    rather than reaching the device. Restricting effects to regular files and
+    directories still trusts the filesystem to make regular files behave like
+    storage: when a ceiling root, or any subtree beneath it, lives on a
+    procfs, sysfs, cgroupfs, FUSE, or similar pseudo- or userspace-served
+    filesystem, entries present as ordinary regular files and directories
+    while reads and writes trigger kernel, process-control, or
+    userspace-server effects outside the path ceiling, so the FIFO and
+    device-node tests above pass while writing an in-ceiling "regular file"
+    changes external state. Ceiling roots and broker-private stores must
+    therefore reside on approved ordinary storage filesystems, validated at
+    capability admission and re-validated at use against the filesystem type
+    of the actually resolved mount (failing closed on pseudo-, control-, and
+    userspace-served filesystems and on unrecognized types), or a specific
+    pseudo-filesystem control file must be explicitly brokered as its own
+    reviewed capability naming the external effect it reaches, with a
+    pseudo-filesystem negative test proving a directory capability whose
+    root or subtree resolves onto a procfs/cgroupfs/FUSE-backed mount is
+    refused, and no write to a pseudo-filesystem file ever proceeds under an
+    ordinary directory ceiling. Direct network capabilities have the same
    resolution gap: a network ceiling scoped to allowed origins is not enforced
    by validating the requested endpoint or the post-policy arguments, because
    an allowed URL can redirect to a forbidden origin, and a hostname can
@@ -2082,9 +2122,31 @@ enumerated entries still passes. The host policy must therefore deny
        authority over every operation the endpoint accepts, granted only
        when that full reach is itself reviewed and intended, with a
        payload-encoded operation negative test proving a request to an
-       allowed endpoint whose method and path match but whose query or
-       body encodes an operation outside the recorded constraints is
-       refused by the broker rather than sent. Even then, argument-level checks
+        allowed endpoint whose method and path match but whose query or
+        body encodes an operation outside the recorded constraints is
+        refused by the broker rather than sent. Canonical
+        query/body/schema constraints still leave the header channel
+        ungoverned: APIs that select the logical operation from a
+        request header (an AWS-style JSON-RPC `X-Amz-Target`, an
+        `X-HTTP-Method-Override`, or an equivalent operation-selecting
+        header) let the method, path, query, and body all match an
+        allowed request while the header asks the service to perform a
+        destructive out-of-ceiling operation, so the payload-encoded
+        operation test above passes while the header-selected operation
+        is still sent. The recorded operation constraints and the
+        broker's parsing must therefore extend to behavior-relevant
+        headers, enforcing the allowed values of every
+        operation-selecting header on each request and refusing
+        requests that carry operation-selecting headers the constraints
+        do not name, or permission to such an endpoint must be
+        explicitly treated as authority over every operation any
+        accepted header can select, granted only when that full reach
+        is itself reviewed and intended, with a header-selected
+        operation negative test proving a request to an allowed
+        endpoint whose method, path, query, and body all match the
+        recorded constraints but whose header selects an operation
+        outside them is refused by the broker rather than
+        sent. Even then, argument-level checks
    govern only the launch, not the launched process: an allowed
    `shell.allowed_scripts` entry spawns a process that inherits the host's ambient
    file and network capabilities, so a declaration that permits that script while
@@ -2128,9 +2190,26 @@ enumerated entries still passes. The host policy must therefore deny
     allowed script that legitimately consumes standard input must have
     that input bound and validated as exact bytes under its per-script
     input schema, content-bound the same way as by-reference inputs, with
-    a stdin-code negative test proving code delivered on standard input to
-    an allowed script is never evaluated: the launch is denied or the
-    input never reaches the process. This step
+     a stdin-code negative test proving code delivered on standard input to
+     an allowed script is never evaluated: the launch is denied or the
+     input never reaches the process. Binding the executable, arguments,
+     and standard input still leaves invocation metadata caller-controlled:
+     when the launcher fixes only the executable path and passes the
+     caller's `argv[0]` and current working directory through, a
+     BusyBox-style multi-call binary dispatches a different applet on the
+     `argv[0]` name, an interpreter resolves modules and imports from the
+     caller-chosen working directory, and relative configuration or source
+     paths load unadmitted code, all while the executable, declared
+     arguments, stdin, and environment checks above pass. The launcher must
+     therefore set and bind `argv[0]` and the working directory to reviewed
+     values fixed at admission, or declare them in the per-script argument
+     schema and bind them into the receipt, resolving the working directory
+     through the same protected-descriptor discipline as other path
+     capabilities, with a cwd/argv0 substitution negative test proving a
+     launch of an allowed script with a substituted `argv[0]` or a
+     caller-chosen working directory is denied rather than launched, and
+     the substitution cannot change which code the reviewed invocation
+     executes. This step
    therefore defines shell containment semantics explicitly: a shell grant is
    treated as granting the process's ambient file and network capabilities unless
    the launch runs under an OS-level sandbox or capability-brokered executor that
