@@ -681,6 +681,26 @@ enumerated entries still passes. The host policy must therefore deny
         collection or is displayed with the destructive value unambiguously
         visible, and that a signature collected over a spoofed rendering
         yields no consumable grant and no side effect.
+        Every rendering discipline above assumes the channel's own code is
+        honest: when the approval UI, renderer, templates, field schemas,
+        semantic summarizers, or signing client are loaded from a mutable
+        checkout, an updateable asset bundle, or any store a skill or
+        governed workload can influence, a tampered renderer can display
+        benign fields while signing the exact destructive payload, and the
+        direct-from-payload, hidden-field, omitted-nested-value, and
+        spoofing tests above all pass because they exercise the honest
+        renderer. The approval channel implementation, its rendering
+        templates and schemas, and its signing client must therefore be
+        authenticated, pinned code of the same trust class as the trusted
+        gate, held and updated outside agent, skill, and child-process
+        write authority, with the renderer's identity and version bound
+        into the grant evidence so grant consumption and execution can
+        refuse approvals collected through an unpinned, unrecognized, or
+        superseded renderer, and a renderer-tampering negative test
+        proving an approval collected through a modified renderer,
+        template, or signing client, or through a renderer whose bound
+        identity does not match the pinned trusted version, yields no
+        consumable grant and no side effect.
         Rendering the canonical final arguments faithfully also discloses
         what they contain: when an argument field carries an inline
         credential (an `Authorization` header, a password field, a
@@ -2617,6 +2637,23 @@ enumerated entries still passes. The host policy must therefore deny
      individually-within-budget requests from distinct skills and actors
      sharing one tenant or target account are collectively bounded by the
      enclosing total.
+     Hierarchical totals scoped to tenant, target account, and execution
+     boundary still merge deployments those dimensions do not separate:
+     when staging and production, or two projects, share the same tenant,
+     target account, and execution boundary but hold separate
+     external-effect allowances, no budget key carries `project_id` or
+     `environment_id`, so traffic from one deployment can consume or
+     starve another's allowance while every per-skill, per-actor,
+     tenant-wide, target-account-wide, and boundary-wide counter still
+     validates. External-effect budget keys and their enclosing totals
+     (the action-specific counters and the canonical effect-class budgets
+     below alike) must therefore also bind `project_id` and
+     `environment_id`, with each admission debiting the budgets for
+     exactly the deployment scope the receipt binds and failing closed on
+     missing or mismatched scope, and cross-project and cross-environment
+     exhaustion and substitution negative tests proving traffic attributed
+     to one project or environment can neither consume another
+     deployment's allowance nor be admitted against it.
      Hierarchical totals keyed by action still leave the effect itself
      aliased: when the same external effect is reachable through multiple
      admitted actions (both `create_resource` and `apply_manifest` can
