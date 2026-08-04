@@ -396,8 +396,23 @@ enumerated entries still passes. The host policy must therefore deny
     included, each compared after normalizing its host-specific encoding,
     with a mismatched-mirror negative test proving copies identical in body,
     permissions, and release identity but divergent in `deny_behavior` or
-    invocation semantics fail parity rather than both being enabled.
-    Cheap, deterministic, catches the entire class.
+     invocation semantics fail parity rather than both being enabled.
+     Parseability and schema bound a skill's shape, not its size: an
+     otherwise schema-valid `SKILL.md` or companion file can be arbitrarily
+     large, and implicit or model selection loads those bytes into the host
+     and the model context before the dispatcher-ingress, pure-operation, or
+     execution budgets elsewhere in this design ever apply, so a single
+     oversized skill can exhaust host memory or the model's context window
+     without a single tool call. The gate and host admission/load must
+     therefore also enforce per-skill instruction and artifact ceilings
+     (maximum instruction-file bytes, maximum bytes for each companion
+     artifact the host ingests, and maximum instruction tokens where skill
+     content enters a model context), refusing admission or load of an
+     over-limit skill before any of its bytes reach the model, with an
+     oversized-skill negative test proving a schema-valid skill exceeding
+     its instruction byte or token ceiling is refused by the host at
+     admission/load time rather than ingested into the model context.
+     Cheap, deterministic, catches the entire class.
    One repo-hygiene prerequisite: the root `.gitignore` ignores `.agents` wholesale, so
    only the two already-tracked `govern-zone` files survive; any new skill or sidecar
    under `.agents/skills/**` is invisible to a CI checkout (`git check-ignore` confirms
@@ -746,8 +761,28 @@ enumerated entries still passes. The host policy must therefore deny
         whose destructive operation lives in a section the summarizer
         omits and proving the lossy summary is refused as approval
         evidence and only the safely escaped full-content rendering or
-        a behavior-complete rendering yields a consumable grant.
-        Rendering the verified bytes faithfully re-opens for content the
+         a behavior-complete rendering yields a consumable grant.
+         Schema-validating the summary and deriving renderings from the
+         verified bytes still presume the rendering reaches the approver
+         whole: when a referenced manifest exceeds the trusted channel's
+         display, transport, or model-token limits, the channel can sign
+         the exact bound digest while delivering a truncated full-content
+         or diff rendering, so a destructive tail beyond the truncation
+         point is never reviewed and every destructive-referenced-content,
+         baseline, and omitted-section test above passes. Full-content and
+         diff renderings must therefore carry a maximum reviewable size
+         and a complete-delivery check verifying the rendering presented
+         to the approver covers the entire verified bytes the bound digest
+         names, and when the content exceeds what the channel can
+         completely render and the approver can review, the channel must
+         fall back only to a behavior-complete trusted summary admissible
+         under the schema-validation rule above or refuse to collect the
+         approval, never a truncated rendering, with a
+         large-referenced-content negative test supplying a manifest whose
+         destructive operation lies beyond the channel's rendering limit
+         and proving an approval collected over a truncated rendering
+         yields no consumable grant and no side effect.
+         Rendering the verified bytes faithfully re-opens for content the
         display-spoofing gap the bound-field escaping rule above closes
         for fields: a referenced manifest or configuration can carry
         ANSI terminal-control sequences, label-overwriting newlines, or
@@ -816,8 +851,24 @@ enumerated entries still passes. The host policy must therefore deny
         unavailable, and a matched bundle-and-binding rollback negative
          test that restores an older permissive bundle together with its
          active tenant binding and proves a request the current policy
-         denies yields no executable receipt and no side effect.
-         Identity and version name the bundle, not its bytes: a policy
+          denies yields no executable receipt and no side effect.
+          Rollback-refusing freshness names the newest bundle, not where it
+          applies: when one tenant hosts staging and production with
+          different active policy bundles, freshness state keyed only to the
+          tenant lets a staging bundle and its active binding be selected
+          while issuing or executing a production receipt whose `project_id`
+          and `environment_id` fields still verify, because nothing scopes
+          the active-bundle record to the deployment dimensions the receipt
+          binds. Active policy freshness and its validation must therefore
+          be keyed by tenant, `project_id`, `environment_id`, and execution
+          boundary, with receipt issuance, grant consumption, and execution
+          each validating the policy bundle in force against the freshness
+          record for exactly the deployment context the receipt binds and
+          failing closed on mismatch or missing scope, and cross-project and
+          cross-environment policy-substitution negative tests proving a
+          bundle active for one project or environment cannot validate
+          issuance or execution of a receipt bound to another.
+          Identity and version name the bundle, not its bytes: a policy
          bundle or custom policy implementation mutated in place while
          retaining its id and version satisfies every freshness and
          lease check above, so the changed policy can mint a valid
@@ -1540,7 +1591,22 @@ enumerated entries still passes. The host policy must therefore deny
      receipt minted after its signing key was retired is rejected without a
      side effect, including by an executor whose local signer-trust state is
      stale or rolled back (the rollback-refusing store, not the executor's
-     memory, is what the gate must consult). Consulting fresh signer-trust
+      memory, is what the gate must consult). Key identity and purpose scope
+      what a key may sign, not where its signatures are trusted: when
+      staging and production share a tenant but use different
+      receipt-signing roots, a signer-trust record keyed only by key
+      identity and issuance purpose lets a staging signing key authorize a
+      production receipt whose `project_id` and `environment_id` fields
+      otherwise verify. The v2 receipt trust model already carries a full
+      tenant/project/environment trust scope (`ReceiptTrustScope`), so the
+      signer active/revocation state and the execution-time lookup must be
+      scoped the same way: each active-key record binds the tenant,
+      `project_id`, `environment_id`, and execution boundary the key is
+      trusted for, and the gate rejects any receipt whose signing key is not
+      active for exactly the deployment context the receipt binds, with
+      cross-project and cross-environment signing-key substitution negative
+      tests proving a key trusted for one project or environment cannot
+      authorize a receipt bound to another. Consulting fresh signer-trust
      state is still a point-in-time read, and key retirement can race an
      in-flight request: the gate can observe a compromised key as active,
      the retirement can then commit, and the already-validated forged
@@ -1880,8 +1946,24 @@ enumerated entries still passes. The host policy must therefore deny
      negative test proving a connection to an allowed origin whose peer
       presents an invalid or mismatched certificate is refused by the
       broker even when the caller disables verification, and no request
-      data reaches the unauthenticated peer.
-      Authenticating the peer still grants the whole service: one allowed
+       data reaches the unauthenticated peer.
+       Chain validation is only as trustworthy as the clock it consults:
+       when the broker evaluates certificate validity periods and
+       revocation status against the mutable host clock, rolling that clock
+       backward makes an expired or revoked certificate chain appear valid
+       while the request still satisfies every scheme, authority, SNI, and
+       Host check above, so data reaches a peer whose credentials are no
+       longer trustworthy. The broker must therefore evaluate certificate
+       validity and revocation freshness against the same trusted,
+       rollback-refusing time source the receipt-expiry and freshness
+       checks elsewhere in this design consult (never a host clock writable
+       by governed workloads), or bind the allowed origin to a non-expiring
+       pinned peer identity whose verification does not depend on
+       wall-clock validity, with a clock-rollback certificate negative test
+       proving a connection validated under a rolled-back clock against an
+       expired or revoked certificate is refused and no request data
+       reaches the stale peer.
+       Authenticating the peer still grants the whole service: one allowed
       origin can expose both benign and privileged operations (a readable
       `GET /docs` and an authenticated destructive `DELETE /admin/...` on
       the same API), and the broker admits both because their scheme,
@@ -2861,10 +2943,25 @@ enumerated entries still passes. The host policy must therefore deny
       execution gate, so a superseded or retired admission fails closed
       even when its registry entry and deployment snapshot are
       byte-identical to a formerly valid state, with a matched
-       registry-and-deployment rollback negative test restoring a retired
-       registry entry together with its old handler snapshot and proving
-       execution is refused rather than run under the stale admission.
-       Rollback-refusing admission state still leaves the gate's recheck
+        registry-and-deployment rollback negative test restoring a retired
+        registry entry together with its old handler snapshot and proving
+        execution is refused rather than run under the stale admission.
+        Tenant and boundary scoping still span deployments: when staging
+        and production share the same tenant and execution boundary, a
+        handler admission reviewed for one project or environment can be
+        selected while issuing or executing a receipt bound to the other,
+        the receipt's `project_id` and `environment_id` fields verify, and
+        nothing proves the admitted registry entry and deployment digest
+        were approved for that deployment context. The active
+        handler-admission freshness state must therefore also bind the
+        `project_id` and `environment_id` the admission was approved for,
+        with receipt issuance and the execution-gate recheck validating the
+        admission against exactly the deployment context the receipt binds
+        and failing closed on mismatch, and cross-project and
+        cross-environment admission-substitution negative tests proving a
+        handler admission approved for one project or environment cannot
+        validate issuance or execution of a receipt bound to another.
+        Rollback-refusing admission state still leaves the gate's recheck
        a point-in-time read: a retirement can commit after the gate
        observes the admission as active and validates the immutable
        handler snapshot, and the already-validated invocation then
@@ -3045,14 +3142,21 @@ enumerated entries still passes. The host policy must therefore deny
       network, credential, or process effect, its implementation digest
       unchanged and both calls holding valid receipts within the recorded
       footprint, so every containment test above passes despite a cross-
-      scope disclosure. Handler execution must therefore partition state by
-      invocation and tenant scope with verified teardown between scopes (a
+      scope disclosure. Tenant partitioning alone is also too coarse:
+      staging data returned in production, or one project's payload
+      returned in another, crosses a trust boundary the receipt model
+      treats as first-class (`project_id` and `environment_id` are receipt
+      trust dimensions) even when both scopes share a tenant. Handler
+      execution must therefore partition state by invocation and full
+      deployment scope (at least tenant, `project_id`, `environment_id`,
+      and execution boundary) with verified teardown between scopes (a
       fresh process or isolate per scope, or a verified reset of all
       retained state), or persistent handler state and response disclosure
       must themselves be treated as brokered capabilities recorded in the
-      ceiling record and mediated by the dispatcher, with a cross-tenant
-      state-retention negative test proving a secret submitted in one
-      invocation or tenant scope is never observable in a later invocation
+      ceiling record and mediated by the dispatcher, with cross-tenant,
+      cross-project, and cross-environment state-retention negative tests
+      proving a secret submitted in one invocation, tenant, project, or
+      environment scope is never observable in a later invocation
       from a different scope served by the same admitted handler. Recording that a handler's footprint includes credentials
     identifies the channel, not the principal: an admitted handler that
     resolves a mutable ambient credential or default context (a Kubernetes
@@ -3399,8 +3503,24 @@ enumerated entries still passes. The host policy must therefore deny
    and intersect every loaded skill's ceiling until that model context is
    discarded, with a delayed-call negative test proving a tool call deferred
    until after invocation end, issued from a context that loaded the skill, is
-   still governed by the skill's ceiling rather than the broader non-skill
-   ceiling. Retain-and-intersect constrains the skill's later tool calls, not
+    still governed by the skill's ceiling rather than the broader non-skill
+    ceiling. Retention ends when the context is discarded, and compaction is
+    not discard: when the host summarizes, compacts, or migrates a live model
+    session, the original context is deleted while skill-derived instructions
+    survive in the successor context, which never itself loaded the skill, so
+    a tool call deferred into the summarized context is governed under the
+    broader non-skill ceiling despite being influenced by the restricted
+    skill, and the delayed-call test above passes because the originating
+    context no longer exists. The retained skill stack and its intersected
+    ceiling must therefore propagate through every context-summarization,
+    compaction, and migration output into each successor context, intersected
+    and retained until that successor is itself discarded (and propagated
+    onward through any further summary or migration), or the host must refuse
+    to summarize, compact, or migrate a context that has loaded a skill, with
+    a compaction-laundering negative test proving a tool call issued from a
+    summarized, compacted, or migrated successor of a skill-loaded context is
+    still governed by the originating skill's ceiling rather than the broader
+    non-skill ceiling. Retain-and-intersect constrains the skill's later tool calls, not
    its reading of the context: when a skill is loaded into a model session
    that already contains another tenant's data, credentials, or confidential
    instructions, the permitted retain-and-intersect alternative leaves the
