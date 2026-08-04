@@ -2209,11 +2209,36 @@ enumerated entries still passes. The host policy must therefore deny
         explicitly treated as authority over every operation any
         accepted header can select, granted only when that full reach
         is itself reviewed and intended, with a header-selected
-        operation negative test proving a request to an allowed
-        endpoint whose method, path, query, and body all match the
-        recorded constraints but whose header selects an operation
-        outside them is refused by the broker rather than
-        sent. Even then, argument-level checks
+         operation negative test proving a request to an allowed
+         endpoint whose method, path, query, and body all match the
+         recorded constraints but whose header selects an operation
+         outside them is refused by the broker rather than
+         sent. Every check above validates the request the caller
+         composed, not the credentials the broker's transport stack
+         attaches: when the direct-network broker or its HTTP client can
+         attach ambient credentials that are not part of the bound final
+         arguments (cookies from a shared jar, `netrc` entries, mTLS
+         client certificates, credential-helper tokens, or a default
+         cloud auth context), an allowed-origin request that was
+         authorized and rendered as anonymous or low-privilege executes
+         as an authenticated operation under host or user authority the
+         receipt never bound or rendered, while every redirect, DNS,
+         TLS-peer, method, path, body, and header check passes. The
+         network grant and its receipt must therefore enumerate and bind
+         the effective credential principal each brokered request
+         presents (the anonymous case bound explicitly), revalidated at
+         use under the same principal, scope, and trust-epoch discipline
+         as the shell and admitted-handler credential bindings in this
+         design, or the broker must execute requests from an empty
+         credential store (no cookie jar, no netrc, no client
+         certificates, no credential helpers, no default cloud auth
+         context) unless a specific credential is explicitly approved
+         and bound, with an ambient-credential attachment negative test
+         proving a request authorized as anonymous or low-privilege to
+         an allowed origin cannot be turned into an authenticated effect
+         by cookies, netrc entries, client certificates, or a default
+         credential context available in the broker's host
+         environment. Even then, argument-level checks
    govern only the launch, not the launched process: an allowed
    `shell.allowed_scripts` entry spawns a process that inherits the host's ambient
    file and network capabilities, so a declaration that permits that script while
@@ -2470,10 +2495,29 @@ enumerated entries still passes. The host policy must therefore deny
           altered by the change, after that value is modified between
           authorization and launch, and a shell secret-ambient-input
           serialization negative test proving the shell grant, approvals,
-          and receipts for a script consuming a secret-bearing ambient
-          input never contain the secret's value or an unkeyed digest of
-          it while substitution of that input is still refused.
-        Files, sockets, environment, and credentials still do
+           and receipts for a script consuming a secret-bearing ambient
+           input never contain the secret's value or an unkeyed digest of
+           it while substitution of that input is still refused.
+           An allowlisted environment still treats variable values as
+           data when some of them are executable input: loader and
+           interpreter controls such as `LD_PRELOAD`,
+           `LD_LIBRARY_PATH`, `PYTHONPATH`, `NODE_OPTIONS`, or `RUBYOPT`
+           cause the reviewed executable to load and run different code,
+           so binding the resolved value only proves which unadmitted
+           code path or inline option was used while the executable,
+           argv, stdin, cwd, and every ambient-input check above passes.
+           Code-loading and interpreter-control environment variables
+           must therefore be denied by default, stripped from the
+           allowlisted environment regardless of declaration, and any
+           allowed script that legitimately requires one must have every
+           code path, module, or runtime option the value references
+           recursively admitted and content-bound the same way as
+           code-bearing arguments before the receipt is issued, with a
+           loader-environment negative test proving a permitted
+           environment value cannot inject unapproved code into an
+           allowed script: the launch is denied or the injected code
+           never executes.
+         Files, sockets, environment, and credentials still do
      not exhaust ambient authority: a launch that shares the host's PID or
      IPC namespace lets the spawned process signal or trace same-UID
      processes, connect over abstract Unix-domain sockets, and read or write
@@ -3021,16 +3065,23 @@ enumerated entries still passes. The host policy must therefore deny
     requirements below apply only to admitted handlers, so a skill can
     exhaust CPU, memory, or dispatcher time through one pathological
     call or many concurrent calls without touching host state or
-    violating the purity definition. Pure exemptions must therefore
-    retain enforceable per-call and aggregate resource budgets (CPU,
-    memory, and wall-clock or dispatcher time, enforced across all
-    concurrent calls attributed to the skill, actor, tenant, and
-    execution boundary), with the exemption refused and the operation
-    falling back to registry admission when those budgets cannot be
-    imposed, and a pathological-input exhaustion negative test proving a
-      pure-exempt operation driven with pathological input, alone or
-      concurrently, is throttled, denied, or terminated and other
-      workloads retain CPU, memory, and dispatcher capacity.
+     violating the purity definition. Pure exemptions must therefore
+     retain enforceable per-call and aggregate resource budgets (CPU,
+     memory, and wall-clock or dispatcher time, enforced across all
+     concurrent calls attributed to the skill, actor, tenant,
+     `project_id`, `environment_id`, and execution boundary, the
+     deployment-scoped aggregates nesting under the retained tenant-wide
+     and boundary-wide caps so staging and production sharing a tenant
+     and boundary draw on separate allowances), with the exemption
+     refused and the operation
+     falling back to registry admission when those budgets cannot be
+     imposed, and a pathological-input exhaustion negative test proving a
+       pure-exempt operation driven with pathological input, alone or
+       concurrently, is throttled, denied, or terminated and other
+       workloads retain CPU, memory, and dispatcher capacity, including
+       a cross-deployment case proving pathological pure calls from one
+       deployment cannot exhaust another deployment's pure-operation
+       budget under the shared tenant and boundary.
       Those budgets bound what a pure operation consumes, not what it
       emits: a decompressor, expander, or generator over a small
       caller-supplied input can stay within its CPU, memory, and
@@ -3061,11 +3112,26 @@ enumerated entries still passes. The host policy must therefore deny
       ordinary registry admission whenever the resolved implementation,
       digest, or runtime differs from the one the purity decision
       names, and a pure-to-effectful substitution negative test proving
-      that rebinding a pure-exempt alias or upgrading its
-      implementation to code that reads host state or performs an
-      effect loses the exemption and is routed through registry
-      admission rather than executed under the stale purity decision.
-      Per-call budgets attach to the dispatched operation, but the
+       that rebinding a pure-exempt alias or upgrading its
+       implementation to code that reads host state or performs an
+       effect loses the exemption and is routed through registry
+       admission rather than executed under the stale purity decision.
+       Binding the decision to immutable identities still leaves the
+       decision itself irrevocable: rechecking that the current bytes
+       match the old decision cannot express that the decision was
+       retired (the implementation found effectful for an untested
+       input, or judged no longer safe to run outside the admitted-tool
+       registry), so a still-matching exemption keeps bypassing registry
+       admission after revocation. Purity decisions must therefore carry
+       rollback-refusing active/revoked freshness state under the same
+       monotonic watermark/epoch discipline as the other freshness
+       stores in this design, scoped to the same tenant, `project_id`,
+       `environment_id`, and execution boundary as the call that
+       consumes them, rechecked on every call, with a retired-exemption
+       negative test proving a call against a revoked but byte-identical
+       purity decision fails closed into ordinary registry admission
+       rather than executing under the stale bypass.
+       Per-call budgets attach to the dispatched operation, but the
      governance path computes first: canonicalization, permission
      matching, policy evaluation, and audit serialization all run over
      caller-supplied arguments before the pure operation or any handler
@@ -3074,15 +3140,23 @@ enumerated entries still passes. The host policy must therefore deny
      every budget above is never reached; the current kernel defaults
      `policy_timeout` to `None`, and even the optional watchdog leaves
      a timed-out evaluation thread running rather than cancelling it.
-     The dispatcher must therefore enforce ingress size and
-     structural-depth limits on requests before governance work begins,
-     and the entire pre-dispatch governance path must run under
-     cancellable per-call and aggregate resource budgets whose
-     exhaustion terminates the work rather than abandoning the thread,
-      with a denied-request exhaustion negative test driving oversized
-      or pathological arguments that are ultimately denied and proving
-      the governance path itself is bounded and other workloads retain
-      dispatcher capacity.
+      The dispatcher must therefore enforce ingress size and
+      structural-depth limits on requests before governance work begins,
+      and the entire pre-dispatch governance path must run under
+      cancellable per-call and aggregate resource budgets whose
+      exhaustion terminates the work rather than abandoning the thread,
+      the aggregate budgets keyed by skill, actor, tenant, `project_id`,
+      `environment_id`, and execution boundary and nesting under the
+      enclosing tenant-wide, boundary-wide, and host-wide caps so
+      deployments sharing a dispatcher draw on separate pre-dispatch
+      allowances,
+       with a denied-request exhaustion negative test driving oversized
+       or pathological arguments that are ultimately denied and proving
+       the governance path itself is bounded and other workloads retain
+       dispatcher capacity, including a cross-deployment case proving a
+       stream of small pathological denied requests from one deployment
+       cannot exhaust another deployment's pre-dispatch governance
+       budget under the shared tenant and boundary.
       Ingress limits enforced by the dispatcher arrive after the host
       has already parsed: when the host or framework fully deserializes
       a tool payload before invoking the dispatcher, a deeply nested or
