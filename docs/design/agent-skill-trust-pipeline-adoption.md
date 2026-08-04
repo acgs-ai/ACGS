@@ -2591,9 +2591,26 @@ enumerated entries still passes. The host policy must therefore deny
      collectively bounded by the boundary-wide limit and other workloads
      retain capacity, including a cross-skill empty-file exhaustion
      variant proving distinct skills each within their own
-     filesystem-object quota cannot jointly exhaust the shared
-     filesystem's inode or directory-entry capacity.
-    A permitted `queued` outcome moves the exhaustion rather than
+      filesystem-object quota cannot jointly exhaust the shared
+      filesystem's inode or directory-entry capacity.
+     Tenant- and boundary-keyed hierarchies still merge deployments those
+     dimensions do not separate: when two projects, or staging and
+     production, share the same tenant and execution boundary, launches
+     attributed to one deployment can consume the per-skill, tenant-wide,
+     or boundary-wide CPU, memory, PID, storage, descriptor, bandwidth,
+     or filesystem-object allowance and throttle or starve another
+     deployment's launches even though their receipt scopes are distinct.
+     The child quota and allocation keys (per-skill aggregates and
+     admitted child shares alike) must therefore also bind `project_id`
+     and `environment_id`, nesting under the retained tenant-wide,
+     boundary-wide, and host-wide caps, with each launch admission
+     debiting exactly the deployment scope its receipt binds and failing
+     closed on missing or mismatched scope, and cross-project and
+     cross-environment exhaustion negative tests proving launches
+     attributed to one project or environment (staging traffic included)
+     cannot consume another deployment's allowance or starve its
+     launches while the enclosing host-wide caps still bound the total.
+     A permitted `queued` outcome moves the exhaustion rather than
     removing it: every quota above bounds admitted execution, and the
     ingress and per-call budgets below bound each request and active
     governance work, so a skill (or several) can submit arbitrarily
@@ -3126,9 +3143,26 @@ enumerated entries still passes. The host policy must therefore deny
         the exhausting scopes, the post-exhaustion attempts add no
         per-request audit growth while remaining visible in the bounded
         aggregate record, and unrelated governed requests in the same
-        enclosing scope still record their required evidence and execute
-        out of the protected reserve.
-     Admission by name is still
+         enclosing scope still record their required evidence and execute
+         out of the protected reserve.
+      Tenant- and boundary-keyed audit quotas still merge deployments
+      those dimensions do not separate: when staging and production
+      share a tenant and execution boundary and use the same actor or
+      skill, a denial stream in staging consumes the per-skill or
+      per-actor audit allowance and forces fail-closed backpressure on
+      production requests even though their receipt scopes are distinct,
+      and the protected reserve only separates other child scopes.
+      Because `project_id` and `environment_id` are receipt trust
+      dimensions throughout this design, the audit-event and audit-byte
+      quota keys (per-skill and per-actor child totals and their
+      enclosing allowances alike) must therefore also bind `project_id`
+      and `environment_id`, with each submission debiting exactly the
+      deployment scope its receipt binds and failing closed on missing
+      or mismatched scope, and cross-project and cross-environment
+      exhaustion negative tests proving a denial stream attributed to
+      one deployment cannot consume another deployment's audit
+      allowance or force backpressure onto its required evidence.
+      Admission by name is still
    not admission of code: the registry authenticates that a tool or alias is
    admitted, not which implementation the name resolves to, so an admitted MCP
    alias rebound to a different server, or a plugin or host handler upgraded
@@ -4094,9 +4128,28 @@ enumerated entries still passes. The host policy must therefore deny
       proving that upgrading a mapped consumer's implementation or
       broadening its credentials, with its path and namespace mappings
       unchanged, blocks interpretation of previously written skill
-      artifacts under the new authority until the admission and the
-      existing artifacts are revalidated.
-     That registry and its admission invalidation are defined through
+       artifacts under the new authority until the admission and the
+       existing artifacts are revalidated.
+      Mapping- and epoch-keyed invalidation still merges deployments:
+      when two projects, or staging and production, share the same
+      tenant and execution boundary and use the same path patterns but
+      only one deployment's CI or hook consumer enforces origin gating,
+      a registry that does not separate deployments lets the ungated
+      deployment's skill-writable ceiling be approved against the other
+      deployment's consumer evidence, and that later consumer executes
+      the artifact with its broader authority and no receipt. The
+      consumer-topology registry, its consumer-to-path and
+      durable-namespace mappings, and the reachable-consumer and
+      revalidation checks that consume it must therefore be bound to
+      the tenant, `project_id`, `environment_id`, and execution
+      boundary of the deployment whose admission they support, with
+      evidence recorded for one deployment scope unusable to satisfy
+      another and lookups failing closed on missing or mismatched
+      scope, with a cross-deployment substitution negative test proving
+      a ceiling approved against one deployment's consumer evidence is
+      not admitted for another project or environment whose own
+      consumers do not enforce the gating.
+      That registry and its admission invalidation are defined through
      consumer-to-path mappings and writable-path intersections, which
      cover only consumers that execute filesystem artifacts: a write the
      ceiling permits can produce a durable non-file artifact (a queue
