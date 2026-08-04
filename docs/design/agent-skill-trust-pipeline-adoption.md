@@ -542,9 +542,28 @@ enumerated entries still passes. The host policy must therefore deny
           human alongside the other bound fields, and cross-project and
           cross-environment grant-substitution negative tests must prove
           a grant collected in one project or one environment, presented
-          against an otherwise identical decision in a different project
-          or a different environment, is rejected without a side effect.
-          Single-use and expiry bound a grant only as reliably as the clock
+           against an otherwise identical decision in a different project
+           or a different environment, is rejected without a side effect.
+           Single-use and expiry are also the only lifecycle terminations
+           stated so far: when the approving human discovers a grant was
+           mistaken, coerced, or compromised before it is consumed, nothing
+           above lets them withdraw that one grant short of revoking their
+           whole credential or role, so the known-bad unconsumed grant
+           remains consumable until its expiry and can still mint a fresh
+           executable receipt. The rollback-protected grant ledger must
+           therefore track a per-grant revoked/cancelled state that the
+           granting human or an authorized administrator can set for an
+           unconsumed grant, with grant consumption and the execution gate
+           both rechecking that state under the same fresh, monotonic,
+           rollback-refusing discipline as the other freshness domains,
+           failing closed when the grant is revoked or the state is
+           unavailable, and a revoked-grant negative test proving an
+           unconsumed, unexpired grant revoked after issuance is rejected
+           at consumption without a side effect, and that a receipt already
+           minted from a grant revoked before that receipt's first
+           presentation is refused at the execution gate without a side
+           effect.
+           Single-use and expiry bound a grant only as reliably as the clock
          that evaluates them: `docs/SECURITY_MODEL.md` and ADV14 record that
          expiry today is host-clock-bound with no built-in trusted time
          source, so a verifier whose host clock is set backward or frozen
@@ -628,6 +647,25 @@ enumerated entries still passes. The host policy must therefore deny
         into an approval payload whose rendered request fields all match
         and proves an approval collected without that field rendered
         yields no consumable grant and no side effect.
+        The trusted-semantic-representation alternative is itself a
+        rendering escape hatch unless it is complete: for a structured
+        bound field, inline final arguments carrying a manifest, a GraphQL
+        operation, or deployment options, a renderer can show a benign
+        summary that omits a destructive nested value, collect a valid
+        signature over the exact hidden payload, and still satisfy the
+        hidden-field test because the field was rendered in some form.
+        Every bound field must therefore be rendered either as full
+        escaped content or through a schema-validated, behavior-complete
+        semantic rendering held to the same completeness guarantees
+        required of referenced-content summaries below (validated against
+        the field's schema, proven to represent every behavior-affecting
+        value, refused and falling back to escaped full content
+        otherwise), with an omitted-nested-value negative test binding a
+        destructive nested value inside a structured field whose semantic
+        rendering omits it and proving collection is refused or falls back
+        to full escaped rendering with the destructive value unambiguously
+        visible, and that a signature collected over the incomplete
+        rendering yields no consumable grant and no side effect.
         Rendering every bound field faithfully still lets the bound bytes
         lie to the eye: a bound argument, resolved target, or skill name can
         carry terminal control sequences, newlines, or Unicode
@@ -663,6 +701,23 @@ enumerated entries still passes. The host policy must therefore deny
         emit neither the secret value nor an offline-guessable digest of
         it, while a substituted or mismatched secret reference still
         yields no consumable grant and no side effect.
+        A non-disclosing binding also authorizes nothing: it proves which
+        secret version was used, not that this actor or skill may use it,
+        so a malicious skill that can name a production token or signing
+        credential by store identity gets the trusted gate to resolve and
+        pass that secret while every serialization and substitution test
+        above passes. Every caller-supplied or caller-selected
+        secret-store reference must therefore pass an ACL or capability
+        check before resolution, scoped to the requesting actor, the full
+        skill stack, the deployment (tenant, `project_id`,
+        `environment_id`, and execution boundary), and the requested
+        action/operation, evaluated against the same fresh, monotonic,
+        rollback-protected authorization state as the other freshness
+        domains and failing closed when that state is unavailable, with an
+        unauthorized-secret-reference negative test proving a request
+        naming a secret the actor and skill are not entitled to use for
+        that operation is refused before the secret is resolved, with no
+        disclosure and no side effect.
         Binding the final arguments and the originating audit hash pins the
         references the human saw, not the bytes they designate: when the
         approved request names a mutable manifest or configuration file, an
@@ -1133,9 +1188,22 @@ enumerated entries still passes. The host policy must therefore deny
      and credential-revocation state (the same trust class as the grant
      ledger below), failing closed when the credential is revoked, the role
      is withdrawn, or that state is unavailable, with a post-revocation
-      negative test proving a grant signed by a since-revoked approver
-      credential, or issued under a since-withdrawn approver role, is rejected
-      at consumption without a side effect. Revalidation alone still leaves a
+       negative test proving a grant signed by a since-revoked approver
+       credential, or issued under a since-withdrawn approver role, is rejected
+       at consumption without a side effect. An active credential and a held
+       role still say nothing about scope: a role authorized only for another
+       project, environment, tenant, or action class remains active, so a
+       staging-only or read-only approver can sign a production or destructive
+       approval payload while the credential and role identifier checks above
+       pass. Approver revalidation at consumption and at the execution gate
+       must therefore check the approver's authorization state against the
+       exact bound request scope, the tenant, `project_id`, `environment_id`,
+       execution boundary, and the action/effect class rendered to that
+       human, failing closed when the approver's authority does not cover
+       that scope, with an out-of-mandate approver negative test proving a
+       grant signed by an approver whose active role is authorized only for a
+       different project, environment, tenant, or action class is rejected at
+       consumption without a side effect. Revalidation alone still leaves a
       validate-then-consume race: the consumer can validate the old active
       authorization state, the revocation can then commit, and the
       already-validated grant can still be consumed to mint a fresh executable
@@ -1680,9 +1748,26 @@ enumerated entries still passes. The host policy must therefore deny
     authorized by-reference input's content between authorization and
     handler read, and an in-place overwrite race test that writes the
     authorized inode through another permitted descriptor (a `pwrite` on
-    the same object) in that window, proving in both cases the handler
-    consumes the authorized bytes or the execution is
-    denied, never the swapped content. Argument-level checks are also
+     the same object) in that window, proving in both cases the handler
+     consumes the authorized bytes or the execution is
+     denied, never the swapped content. Bytes are not the whole behavior:
+     when a handler's behavior depends on metadata of a by-reference
+     input, its executable mode bits, extended attributes, ACLs, symlink
+     status, behavior-relevant timestamps, or archive entry metadata,
+     hashing only the file content lets that metadata change after
+     authorization while the content digest and path still match, so the
+     handler executes behavior the receipt never bound. The
+     authorization-time binding must therefore capture security- and
+     behavior-relevant metadata together with the bytes (snapshotted or
+     digested into the same receipt binding and consumed from the same
+     sealed snapshot or write-exclusion window as the content), or
+     admitted handlers must be required, and verified at admission, to
+     ignore any metadata the receipt does not capture, with a
+     metadata-substitution negative test flipping an authorized input's
+     executable mode, xattr/ACL, or symlink status between authorization
+     and handler read while its content digest still matches, proving the
+     handler consumes the authorized metadata or the execution is denied,
+     never behavior derived from the swapped metadata. Argument-level checks are also
    insufficient for the direct filesystem capabilities: a `file_read` or
    `file_write` ceiling scoped to a directory is not enforced by validating the
    final path argument, because an allowed path can traverse a symlink to a
@@ -1978,10 +2063,28 @@ enumerated entries still passes. The host policy must therefore deny
       origin grant must be explicitly treated as authority over every
       operation the entire service exposes, granted only when that
       full-service reach is itself reviewed and intended, with a
-      same-origin disallowed-operation negative test proving a request to
-      an allowed origin whose method or resource falls outside the
-      recorded operation constraints is refused by the broker rather than
-      sent. Even then, argument-level checks
+       same-origin disallowed-operation negative test proving a request to
+       an allowed origin whose method or resource falls outside the
+       recorded operation constraints is refused by the broker rather than
+       sent. Method and resource/path constraints still under-specify APIs
+       that select the logical operation elsewhere: a `POST /graphql` body
+       carrying a mutation or a `POST /api` payload with `action=delete`
+       stays within an allowed method and path while performing a
+       destructive out-of-ceiling operation encoded entirely in query
+       parameters or the request body, so the broker passes the
+       same-origin negative test while sending it. For endpoints whose
+       operation semantics are carried in the query or body, the recorded
+       operation constraints must therefore extend to canonical
+       query/body/schema/operation constraints the broker parses and
+       enforces on every request (the allowed GraphQL operations, the
+       allowed action values, the schema of permitted payloads), or
+       permission to such an endpoint must be explicitly treated as
+       authority over every operation the endpoint accepts, granted only
+       when that full reach is itself reviewed and intended, with a
+       payload-encoded operation negative test proving a request to an
+       allowed endpoint whose method and path match but whose query or
+       body encodes an operation outside the recorded constraints is
+       refused by the broker rather than sent. Even then, argument-level checks
    govern only the launch, not the launched process: an allowed
    `shell.allowed_scripts` entry spawns a process that inherits the host's ambient
    file and network capabilities, so a declaration that permits that script while
@@ -2071,10 +2174,26 @@ enumerated entries still passes. The host policy must therefore deny
       budgets per downstream effect it triggers, or carry a verified
       maximum downstream effect count and value enforced by terminating
       the work when that bound is reached, with a single-request fan-out
-      negative test driving one accepted listener request that attempts
-      many downstream external effects and proving those effects are
-      bounded and accounted rather than unlimited under the single
-      launch receipt. Ambient capability is not only
+       negative test driving one accepted listener request that attempts
+       many downstream external effects and proving those effects are
+       bounded and accounted rather than unlimited under the single
+       launch receipt. Count bounds also authorize contents they never
+       inspect: when an allowed listener is reachable by arbitrary peers,
+       those peers choose which operations the service performs under the
+       launch receipt, so a client can drive an unauthorized or
+       destructive request that stays comfortably inside the
+       accepted-operation and fan-out counts. Each request an allowed
+       listener accepts must therefore be individually authenticated and
+       policy-checked before the service acts on it (the accepted
+       operation validated against the ceiling exactly as a directly
+       issued request would be), or the listener grant must be explicitly
+       treated as authority over every operation any peer can trigger
+       through that listener, granted only when that reach is itself
+       reviewed and intended, with an out-of-intent listener-request
+       negative test proving a single well-formed request asking an
+       allowed listener for an operation outside the reviewed intent is
+       refused or has no effect even though it stays within every
+       accepted-operation and fan-out bound. Ambient capability is not only
    files and sockets: the spawned process also inherits the host environment and
    open handles (cloud tokens, API keys, credential-agent sockets), and file and
    network ceilings alone do not stop an allowed script from using or
@@ -2813,10 +2932,23 @@ enumerated entries still passes. The host policy must therefore deny
         per-request audit obligation (nothing is admitted, so no
         per-request event is owed and no execution can occur), with the
         rejected attempts kept auditable through bounded authenticated
-        aggregation: a fixed-size, tamper-evident per-scope record of
-        over-quota attempt counts, byte totals, and first/last
-        timestamps, updated in place rather than appended per attempt.
-        The
+         aggregation: a fixed-size, tamper-evident per-scope record of
+         over-quota attempt counts, byte totals, and first/last
+         timestamps, updated in place rather than appended per attempt.
+         An in-place record that is only tamper-evident is still
+         rewindable: restoring an older authenticated copy of the
+         aggregate hides later over-quota attempts without appending
+         anything or exceeding the quota, erasing sustained abuse while
+         the bounded-growth test passes. The over-quota aggregate must
+         therefore be held behind the same monotonic, rollback-refusing
+         watermark/epoch discipline as the other freshness stores in
+         this design, each update advancing an authenticated watermark
+         and reads and updates failing closed when the record regresses
+         below it or the state is unavailable, with an aggregate-rollback
+         negative test restoring an earlier authentic copy of a scope's
+         over-quota record and proving the rollback is refused or
+         detected rather than the later attempts silently vanishing.
+         The
         enclosing tenant-wide and execution-boundary-wide allowances must
        preserve capacity for unrelated submitters through a
        sybil-resistant partition or scheduling rule: bounding each child
@@ -3790,11 +3922,30 @@ enumerated entries still passes. The host policy must therefore deny
     whose writable ceiling intersects the new consumer's executed paths,
     including re-vetting or quarantining artifacts already written to those
     paths before the new consumer first executes them, or skill writes must
-    be confined to storage that can never later become executable by a
-    machine consumer, with a consumer-addition negative test proving a path
-     written under an admitted ceiling and later mapped into a new consumer's
-     executed set is not executed with the new consumer's authority until the
-     admission and the existing artifacts are revalidated.
+     be confined to storage that can never later become executable by a
+     machine consumer, with a consumer-addition negative test proving a path
+      written under an admitted ceiling and later mapped into a new consumer's
+      executed set is not executed with the new consumer's authority until the
+      admission and the existing artifacts are revalidated.
+      Mapping changes are not the only authority changes: an existing CI
+      runner, hook, worker, or live endpoint can keep the same path or
+      namespace mapping while its implementation, credentials, or
+      interpretation rules are upgraded to trigger broader operations, so
+      the mapping-keyed invalidation above never fires while previously
+      admitted skill-writable artifacts are interpreted by the same named
+      consumer with new authority. The consumer-topology registry must
+      therefore also bind each consumer's implementation identity and
+      effective authority (its implementation digest or version epoch and
+      its principal/credential epoch), with any change to those bound
+      epochs forcing the same revocation or revalidation of every
+      intersecting admission and the same re-vetting or quarantine of
+      artifacts already written, before the changed consumer first
+      executes or interprets them, with a consumer-upgrade negative test
+      proving that upgrading a mapped consumer's implementation or
+      broadening its credentials, with its path and namespace mappings
+      unchanged, blocks interpretation of previously written skill
+      artifacts under the new authority until the admission and the
+      existing artifacts are revalidated.
      That registry and its admission invalidation are defined through
      consumer-to-path mappings and writable-path intersections, which
      cover only consumers that execute filesystem artifacts: a write the
@@ -3952,11 +4103,27 @@ enumerated entries still passes. The host policy must therefore deny
    the policy-version lease: held until the governed effect commits or
    completes, or the launched work kept revocable or brokered so an actor
    revocation halts or re-vets in-flight work before its effect, with a
-   delayed-effect actor-revocation negative test revoking the requesting
-   actor after launch but before a deferred side effect and proving the
-   effect either committed before the revocation took effect or does not
-   occur. The
-   non-skill origin rule authenticates how a request was issued, not what
+    delayed-effect actor-revocation negative test revoking the requesting
+    actor after launch but before a deferred side effect and proving the
+    effect either committed before the revocation took effect or does not
+    occur. Revalidating the issuing actor's standing still never asks who
+    is presenting: a leaked or copied unused receipt can be presented once
+    by a different authenticated principal while the bound actor's
+    credential and session remain active, so one principal executes
+    another's still-valid receipt before any revocation and every
+    actor-revocation test above passes. The execution gate must therefore
+    authenticate the presenting principal and session outside the
+    receipt's own contents and require them to match the receipt's bound
+    actor (`expected_actor`) and session identifiers, the executor-gate
+    `expected_actor` comparison this repository already mandates, or
+    receipts must be issued as non-exportable handles bound to the
+    issuing principal's authenticated channel so possession cannot be
+    transferred, failing closed when presenter authentication is
+    unavailable, with a wrong-presenter negative test proving a valid
+    unused receipt presented by a different authenticated principal,
+    while the bound actor's credential and session remain active, is
+    refused at the execution gate without a side effect. The
+    non-skill origin rule authenticates how a request was issued, not what
    influenced it: a user or the model can load a registered `SKILL.md`
    through an ordinary `Read` call or `cat` rather than the host's skill
    loader, and every later tool call that follows those instructions is
