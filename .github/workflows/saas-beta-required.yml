@@ -158,6 +158,11 @@ jobs:
         # can only prove containment if bwrap can actually unshare, and Ubuntu 24.04
         # restricts unprivileged user namespaces through AppArmor. Without this the
         # test fails "containment runner unavailable" — untestable, not satisfied.
+        # The AppArmor profile load is gated on the AppArmor securityfs interface
+        # being present: Blacksmith runner VMs boot without the AppArmor LSM active,
+        # so its userns restriction cannot apply there and apparmor_parser has no
+        # kernel interface to load into. The bwrap unshare smoke test below is the
+        # authoritative check either way and still hard-fails if userns is blocked.
         # Scoped to /usr/bin/bwrap alone on the ephemeral runner. Adds no credential
         # surface and no outbound mutation, so it stays inside the side-effect contract
         # asserted by test_saas_beta_required_gate_has_no_privileged_or_external_side_effect_surface.
@@ -166,12 +171,13 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install --yes bubblewrap
-          if ! command -v apparmor_parser >/dev/null 2>&1; then
-            sudo apt-get install --yes apparmor
-          fi
           test "$(command -v bwrap)" = /usr/bin/bwrap
           bwrap --version
-          sudo tee /etc/apparmor.d/acgs-ci-bwrap >/dev/null <<'APPARMOR'
+          if [ -d /sys/kernel/security/apparmor ]; then
+            if ! command -v apparmor_parser >/dev/null 2>&1; then
+              sudo apt-get install --yes apparmor
+            fi
+            sudo tee /etc/apparmor.d/acgs-ci-bwrap >/dev/null <<'APPARMOR'
           abi <abi/4.0>,
           include <tunables/global>
 
@@ -179,7 +185,10 @@ jobs:
             userns,
           }
           APPARMOR
-          sudo apparmor_parser -r /etc/apparmor.d/acgs-ci-bwrap
+            sudo apparmor_parser -r /etc/apparmor.d/acgs-ci-bwrap
+          else
+            echo "AppArmor securityfs absent; skipping profile load (userns restriction cannot apply)"
+          fi
           bwrap \
             --unshare-all --unshare-user --die-with-parent --new-session --disable-userns \
             --proc /proc --dev /dev --tmpfs /tmp --tmpfs /run \

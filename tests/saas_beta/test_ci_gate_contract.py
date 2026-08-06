@@ -57,7 +57,9 @@ def test_saas_beta_required_gate_covers_every_master_pr_without_path_filters() -
 
     job = _job_block(text)
     assert "    name: SaaS beta required gate" in job
-    assert "    runs-on: ubuntu-24.04" in job
+    # Required checks run on Blacksmith Ubuntu 24.04 runners: GitHub-hosted
+    # ubuntu-24.04 queues stalled for hours, blocking branch protection.
+    assert "    runs-on: blacksmith-4vcpu-ubuntu-2404" in job
     assert "    timeout-minutes: 60" in job
     assert re.search(
         r"^concurrency:\n"
