@@ -69,6 +69,14 @@ from pathlib import Path
 from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
+from gove_zone.capture import (
+    CaptureConfig,
+    CaptureError,
+    CaptureMode,
+    CaptureRecord,
+    capture_observation,
+    capture_record_for_decision,
+)
 from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.decision import Decision, DecisionRecord
 from gove_zone.errors import (
@@ -86,6 +94,7 @@ from gove_zone.profile import GovernanceProfile
 from gove_zone.receipt import DecisionReceipt, Validator
 from gove_zone.rejection import HUMAN_APPROVAL, REVISE_AND_RETRY, rejection_dict
 from gove_zone.tool import ToolCall, normalize_path_context
+from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustRegistry
 
 __all__ = [
     "BypassAttemptError",
@@ -229,6 +238,9 @@ class GatewayResult:
             "audit_hash": self.audit_hash,
             "policy_hash": self.receipt.policy_hash,
             "signature_algorithm": self.receipt.signature_algorithm,
+            # Schema version, so a transport surface can tell a scoped (v2)
+            # authorization from an unscoped (v1) one without the receipt body.
+            "receipt_schema_version": self.receipt.receipt_schema_version,
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -265,6 +277,20 @@ class UniversalGateway:
     The single-use consumption ledger is always on: every executed receipt is
     burned, so one decision authorizes at most one side effect through this
     gateway even when the profile is not strict.
+
+    **Scoped trust (receipt-v2).** Supplying ``project_id`` + ``environment_id``
+    + ``trust_epoch`` + ``trust_registry`` puts every surface of this gateway on
+    the scoped receipt-v2 contract: receipts are minted with
+    :meth:`~gove_zone.receipt.DecisionReceipt.from_record_v2` and the gate
+    resolves the signing key through the registry for the full
+    tenant/project/environment/purpose scope before any side effect (see
+    :mod:`gove_zone.trust`). Scoped mode is all-or-nothing and fail-closed at
+    construction: a partial scope, a missing ``trust_registry``, a profile with
+    no ``signer``, or no ``receipt_ttl_seconds`` raises ``ValueError`` rather
+    than silently downgrading to unscoped v1 receipts. There is no bypass flag —
+    ``trust_registry`` is threaded into the gate unconditionally, so a v2
+    receipt presented to an unscoped gateway is refused by
+    :func:`~gove_zone.executor.execute_with_receipt`.
     """
 
     def __init__(
@@ -282,6 +308,12 @@ class UniversalGateway:
         ledger_path: str | Path | None = None,
         receipt_ttl_seconds: float | None = None,
         allowed_actors: frozenset[str] | set[str] | None = None,
+        capture_config: CaptureConfig | None = None,
+        project_id: str = "",
+        environment_id: str = "",
+        trust_epoch: int | None = None,
+        trust_registry: ReceiptTrustRegistry | None = None,
+        trust_purpose: str = DECISION_RECEIPT_PURPOSE,
     ) -> None:
         self.tenant_id = tenant_id
         self.execution_boundary = execution_boundary
@@ -292,6 +324,13 @@ class UniversalGateway:
         self.policy_bundle_id = policy_bundle_id or policy.version
         self.receipt_ttl_seconds = receipt_ttl_seconds
         self.allowed_actors = frozenset(allowed_actors) if allowed_actors is not None else None
+        self.capture_config = capture_config
+        self.project_id = project_id
+        self.environment_id = environment_id
+        self.trust_epoch = trust_epoch
+        self.trust_registry = trust_registry
+        self.trust_purpose = trust_purpose
+        self.scoped_trust = self._resolve_scoped_trust()
 
         if profile.require_expiry and receipt_ttl_seconds is None:
             # Fail loud at construction instead of rejecting 100% of calls at
@@ -302,6 +341,15 @@ class UniversalGateway:
                 "(require_expiry=True) but receipt_ttl_seconds is None; every "
                 "minted receipt would be rejected at the gate — supply "
                 "receipt_ttl_seconds"
+            )
+        if (
+            profile.is_production
+            and capture_config is not None
+            and capture_config.mode in (CaptureMode.BEST_EFFORT, CaptureMode.DISABLED)
+        ):
+            raise ValueError(
+                "production profile rejects BEST_EFFORT and DISABLED runtime capture modes; "
+                "use REQUIRED capture or omit capture_config for legacy compatibility"
             )
 
         resolved_audit = Path(audit_path or Path(".gove-zone") / "gateway-audit.jsonl")
@@ -330,6 +378,46 @@ class UniversalGateway:
         self._openai_specs: dict[str, dict[str, Any]] = {}
         self._kernels: dict[str, Kernel] = {}
         self._bypass_attempts: list[dict[str, Any]] = []
+
+    def _resolve_scoped_trust(self) -> bool:
+        """Decide (and validate) whether this gateway runs the v2 scoped contract.
+
+        Fail loud at construction rather than at every call, matching the
+        ``require_expiry`` precedent above: a gateway configured for a scope it
+        cannot satisfy would mint receipts that are refused 100% of the time —
+        or, worse, quietly fall back to unscoped v1. Scoped trust is
+        all-or-nothing: naming any part of the scope commits to all of it.
+        """
+        requested = (
+            bool(self.project_id)
+            or bool(self.environment_id)
+            or self.trust_epoch is not None
+            or self.trust_registry is not None
+        )
+        if not requested:
+            return False
+
+        missing: list[str] = []
+        if not self.project_id or not self.project_id.strip():
+            missing.append("project_id")
+        if not self.environment_id or not self.environment_id.strip():
+            missing.append("environment_id")
+        if type(self.trust_epoch) is not int or self.trust_epoch <= 0:
+            missing.append("trust_epoch (a positive integer)")
+        if self.trust_registry is None:
+            missing.append("trust_registry")
+        if self.profile.signer is None:
+            missing.append("a profile signer (receipt v2 must carry a trusted signature)")
+        if self.receipt_ttl_seconds is None:
+            missing.append("receipt_ttl_seconds (receipt v2 requires expires_at)")
+        if not isinstance(self.trust_purpose, str) or not self.trust_purpose.strip():
+            missing.append("trust_purpose")
+        if missing:
+            raise ValueError(
+                "scoped receipt-v2 trust is all-or-nothing and fail-closed; this "
+                "gateway names a scoped-trust setting but is missing: " + ", ".join(missing)
+            )
+        return True
 
     # -- registry ----------------------------------------------------------- #
 
@@ -463,20 +551,18 @@ class UniversalGateway:
             else dict(call.args)
         )
 
-        receipt = DecisionReceipt.from_record(
-            record,
-            audit_hash=audit_hash,
-            previous_audit_hash=previous_audit_hash,
-            tenant_id=self.tenant_id,
-            execution_boundary=self.execution_boundary,
-            policy_bundle_id=self.policy_bundle_id,
-            policy_hash=self.policy.version,
-            request_id=record.decision_request_hash or record.event_id,
-            validator=self.validator,
-            authority=self.authority,
-            expires_at=self._receipt_expires_at(),
-            signer=self.profile.signer,
-        )
+        try:
+            self._capture_before_receipt(record, audit_hash)
+        except CaptureError as exc:
+            return GatewayResult(
+                status="error",
+                tool=tool,
+                actor=actor,
+                audit_hash=audit_hash,
+                error_class=type(exc).__name__,
+            )
+
+        receipt = self._mint_receipt(record, audit_hash, previous_audit_hash)
 
         grant = _GateGrant(self._tools[tool])
         token = _ACTIVE_GRANT.set(grant)
@@ -527,6 +613,116 @@ class UniversalGateway:
             audit_hash=audit_hash,
             result=result,
             receipt=receipt,
+        )
+
+    def _capture_before_receipt(self, record: DecisionRecord, audit_hash: str) -> None:
+        """Persist configured D2 capture evidence before minting a receipt.
+
+        Capture is intentionally an issuer-path precondition only. It does not
+        feed the executor and it does not alter the DecisionReceipt schema.
+        """
+
+        config = self.capture_config
+        if config is None:
+            return
+        if config.mode is CaptureMode.DISABLED:
+            return
+        capture = self._capture_record(record, audit_hash, outcome="captured")
+        if config.mode is CaptureMode.REQUIRED:
+            if config.store is None or config.observation_sink is None:
+                raise CaptureError("required capture mode is missing a store or observation sink")
+            try:
+                ack = config.store.append(capture)
+                ack.validate_for(capture)
+                config.observation_sink.append(capture_observation("capture_persisted", capture))
+            except CaptureError as exc:
+                self._emit_capture_failed_observation(capture, exc)
+                raise
+            except Exception as exc:  # noqa: BLE001 - any required-capture failure blocks
+                self._emit_capture_failed_observation(capture, exc)
+                raise CaptureError("required capture failed") from exc
+            return
+
+        try:
+            if config.store is None:
+                raise CaptureError("best-effort capture mode has no store")
+            ack = config.store.append(capture)
+            ack.validate_for(capture)
+            if config.observation_sink is not None:
+                config.observation_sink.append(capture_observation("capture_persisted", capture))
+        except Exception as exc:  # noqa: BLE001 - best-effort must not authorize by silence
+            failed = self._capture_record(
+                record,
+                audit_hash,
+                outcome="capture_failed",
+                reason="best-effort-capture-failed",
+            )
+            if config.observation_sink is not None:
+                try:
+                    config.observation_sink.append(
+                        capture_observation(
+                            "capture_failed", failed, error_class=type(exc).__name__
+                        )
+                    )
+                except Exception:
+                    # Local/dev best-effort mode is explicitly non-authoritative:
+                    # a failed observation must not be upgraded into a capture
+                    # success claim, but it also must not block execution.
+                    return
+
+    def _emit_capture_failed_observation(self, capture: CaptureRecord, exc: Exception) -> None:
+        config = self.capture_config
+        if config is None or config.observation_sink is None:
+            return
+        failed = capture_record_for_decision(
+            tenant_id=capture.tenant_id,
+            event_id=capture.event_id,
+            audit_event_hash=capture.audit_event_hash,
+            policy_bundle_id=capture.policy_bundle_id,
+            policy_version=capture.policy_version,
+            policy_hash=capture.policy_hash,
+            evaluator_version=capture.evaluator_version,
+            projection_version=capture.projection_version,
+            decision_time=capture.decision_time,
+            field_status=capture.field_status,
+            privacy_outcome=capture.privacy_outcome,
+            capture_outcome="capture_failed",
+            capture_reason="required-capture-failed",
+        )
+        try:
+            config.observation_sink.append(
+                capture_observation("capture_failed", failed, error_class=type(exc).__name__)
+            )
+        except Exception:
+            # REQUIRED still blocks issuance. The secondary observation failure
+            # must not hide the original capture failure or permit a receipt.
+            return
+
+    def _capture_record(
+        self,
+        record: DecisionRecord,
+        audit_hash: str,
+        *,
+        outcome: str,
+        reason: str = "captured-after-audit-before-receipt",
+    ) -> CaptureRecord:
+        config = self.capture_config
+        if config is None:
+            raise CaptureError("capture is not configured")
+        return capture_record_for_decision(
+            tenant_id=self.tenant_id,
+            event_id=record.event_id,
+            audit_event_hash=audit_hash,
+            policy_bundle_id=self.policy_bundle_id,
+            policy_version=record.policy_version,
+            policy_hash=self.policy.version,
+            evaluator_version=config.evaluator_version,
+            projection_version=config.projection_version,
+            decision_time=record.timestamp_iso,
+            field_status=config.field_status,
+            privacy_outcome=config.privacy_outcome,
+            capture_outcome=outcome,
+            capture_reason=reason,
         )
 
     # -- bypass detection ---------------------------------------------------- #
@@ -592,6 +788,36 @@ class UniversalGateway:
             return ""
         return (datetime.now(UTC) + timedelta(seconds=self.receipt_ttl_seconds)).isoformat()
 
+    def _mint_receipt(
+        self, record: DecisionRecord, audit_hash: str, previous_audit_hash: str
+    ) -> DecisionReceipt:
+        """Mint the receipt for one decision — v2 under scoped trust, else v1."""
+        common: dict[str, Any] = {
+            "audit_hash": audit_hash,
+            "previous_audit_hash": previous_audit_hash,
+            "tenant_id": self.tenant_id,
+            "execution_boundary": self.execution_boundary,
+            "policy_bundle_id": self.policy_bundle_id,
+            "policy_hash": self.policy.version,
+            "request_id": record.decision_request_hash or record.event_id,
+            "validator": self.validator,
+            "authority": self.authority,
+            "expires_at": self._receipt_expires_at(),
+        }
+        if not self.scoped_trust:
+            return DecisionReceipt.from_record(record, signer=self.profile.signer, **common)
+        signer = self.profile.signer
+        if signer is None or self.trust_epoch is None:  # pragma: no cover - guarded at __init__
+            raise ValueError("scoped receipt-v2 minting requires a signer and a trust epoch")
+        return DecisionReceipt.from_record_v2(
+            record,
+            project_id=self.project_id,
+            environment_id=self.environment_id,
+            trust_epoch=self.trust_epoch,
+            signer=signer,
+            **common,
+        )
+
     def _gate_kwargs(self) -> dict[str, Any]:
         # The strict profile's as_gate_kwargs() already emits
         # consumption_ledger; __init__ guarantees self._ledger IS that ledger,
@@ -599,6 +825,14 @@ class UniversalGateway:
         # adapters.mcp_gateway._gate_kwargs).
         kwargs = dict(self.profile.as_gate_kwargs())
         kwargs["consumption_ledger"] = self._ledger
+        # Threaded unconditionally (``None`` when unscoped) so the executor's
+        # fail-closed v2 branch is load-bearing on this path: a receipt-v2
+        # presented to a gateway with no registry is refused, never executed.
+        kwargs["trust_registry"] = self.trust_registry
+        if self.scoped_trust:
+            kwargs["trust_purpose"] = self.trust_purpose
+            kwargs["expected_project_id"] = self.project_id
+            kwargs["expected_environment_id"] = self.environment_id
         return kwargs
 
     # -- MCP surface ---------------------------------------------------------- #
@@ -847,22 +1081,19 @@ class UniversalGateway:
                 record.reason or f"{record.decision.value} requires human review",
             )
 
+        for record, audit_hash, _previous_audit_hash in decided:
+            try:
+                self._capture_before_receipt(record, audit_hash)
+            except CaptureError as exc:
+                return _hook_response(
+                    action_kind,
+                    "deny",
+                    f"runtime capture unavailable: {type(exc).__name__}",
+                )
+
         anchors: list[dict[str, Any]] = []
         for record, audit_hash, previous_audit_hash in decided:
-            receipt = DecisionReceipt.from_record(
-                record,
-                audit_hash=audit_hash,
-                previous_audit_hash=previous_audit_hash,
-                tenant_id=self.tenant_id,
-                execution_boundary=self.execution_boundary,
-                policy_bundle_id=self.policy_bundle_id,
-                policy_hash=self.policy.version,
-                request_id=record.decision_request_hash or record.event_id,
-                validator=self.validator,
-                authority=self.authority,
-                expires_at=self._receipt_expires_at(),
-                signer=self.profile.signer,
-            )
+            receipt = self._mint_receipt(record, audit_hash, previous_audit_hash)
             anchors.append(
                 {
                     "tool": record.tool,
@@ -870,6 +1101,7 @@ class UniversalGateway:
                     "audit_hash": audit_hash,
                     "policy_hash": self.policy.version,
                     "signature_algorithm": receipt.signature_algorithm,
+                    "receipt_schema_version": receipt.receipt_schema_version,
                 }
             )
         response = _hook_response(action_kind, "allow", "allowed by policy")

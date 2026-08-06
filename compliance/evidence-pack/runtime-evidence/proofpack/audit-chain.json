@@ -44,5 +44,5 @@
   ],
   "genesis_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "last_hash": "1ca1c6a38e600fee802e2d2fdd402efe479ca09c778f6576d093c7b7c294c688",
-  "schema_version": "acgs/proof-pack/v1"
+  "schema_version": "acgs/proof-pack/v1.1"
 }

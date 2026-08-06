@@ -8,20 +8,20 @@
   },
   "artifacts": {
     "audit-chain.json": {
-      "bytes": 1944,
-      "sha256": "177f1286efab2e6036f70e57c492fe8fbb6af9c0622b5f5a9eb246178d6f8191"
+      "bytes": 1946,
+      "sha256": "9c3c733dfa8a9f9a2def5f5019a6bbaf112d7ca0b068d4f50a82e72de171d2f4"
     },
     "decision-receipt.json": {
       "bytes": 1279,
       "sha256": "f14e1d6077acbe97e5c2d69cb4e0bb1dcd3dbd69bb42a82233f6d12798a84c29"
     },
     "replay-report.json": {
-      "bytes": 290,
-      "sha256": "55f01a0cfa2af33a73e9ce4f687fd09fe1719ecff47ac768b02d3f9f2c93544e"
+      "bytes": 292,
+      "sha256": "ab4f317c4bb739dfab44fcb8579ee69076240c9ba0f82f83c5889bdd7458c395"
     },
     "verification-summary.md": {
-      "bytes": 4424,
-      "sha256": "2bb30eb16fb0ba9255fabd01b2de9600d19bf665c3d99304624a1fb3f1c03cbe"
+      "bytes": 5899,
+      "sha256": "ccc45e701777b96040198b8176f4e41e35d333987e1f850f37170e7684b53bff"
     }
   },
   "audit": {
@@ -51,5 +51,5 @@
     "signature_algorithm": "none",
     "signing_key_id": ""
   },
-  "schema_version": "acgs/proof-pack/v1"
+  "schema_version": "acgs/proof-pack/v1.1"
 }
