@@ -43,6 +43,10 @@ TRANSCRIPT_RECORD_KEYS = {
     "selectors",
 }
 NODE_AWARE_TRANSCRIPT_RECORD_KEYS = TRANSCRIPT_RECORD_KEYS | {"cwd_scope"}
+EVID_GATE_PYTEST_NODE_IDS = (
+    "tests/saas_beta/test_evidence_bootstrap.py::test_literal_prover_reviewed_corpus_is_exact",
+    "tests/saas_beta/test_evidence_bootstrap.py::test_universal_evidence_interpreter_offline",
+)
 REVIEWED_P0_TRANSCRIPT = (
     (
         "root:EVID-gate",
@@ -51,8 +55,7 @@ REVIEWED_P0_TRANSCRIPT = (
             "-m",
             "pytest",
             "-q",
-            "tests/saas_beta/test_evidence_bootstrap.py::"
-            "test_universal_evidence_interpreter_offline",
+            *EVID_GATE_PYTEST_NODE_IDS,
         ),
     ),
     ("packages/acgs-control-plane:local-gate", (".venv/bin/ruff", "check", ".")),
@@ -338,6 +341,32 @@ P3_APPROVAL_ROOT_SELECTORS = (
     "test_approval_contract_locks_vote_and_resume_assurance",
 )
 P4_RUNTIME_ENROLLMENT_SELECTORS = (
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_populated_runtime_enrollment_0011_through_0012_upgrades_to_0013_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_lineage_schema_objects_are_required_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_report_provider_outages_are_redacted_and_atomic_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_identical_runtime_reports_converge_on_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_identical_concurrent_wiring_reports_replay_without_debris_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_concurrent_different_runtime_report_body_conflicts_without_debris",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_wiring_challenge_is_invalidated_by_intervening_report_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_report_post_persistence_failure_rolls_back_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_report_head_composite_anchor_is_enforced_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_wiring_historical_replay_and_projection_binding_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_wiring_attestations_are_immutable_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_wiring_challenge_consumptions_are_immutable_postgresql",
+    "tests/integration/test_runtime_enrollment_postgres.py::"
+    "test_runtime_report_bigint_schema_and_current_binding_postgresql",
     "tests/integration/test_runtime_enrollment_postgres.py::"
     "test_100_identical_runtime_enrollments_converge_to_one_identity",
     "tests/integration/test_runtime_enrollment_postgres.py::"

@@ -855,23 +855,34 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
             _upgrade_to(database_url, "0001" if case == "0001" else HEAD_REVISION)
         if case == "partial":
             with pg_engine.begin() as connection:
-                # Revision 0003 through 0010 tables reference environments or
-                # managed_decision_receipts, so seeding the partial revision
-                # 0001 shape must remove them first. Dropping environments
-                # with CASCADE instead would leave them in place minus their
-                # foreign keys, which is not a shape any real 0001 database
-                # has. One statement drops the whole set together, so
-                # dependencies among the listed tables (the 0005 bootstrap
-                # tables all reference platform_bootstrap_invitations, the
-                # 0007/0008 idempotency and policy tables all reference
-                # managed_decision_receipts, and the 0009/0010 approval
-                # tables reference managed_decision_receipts and each other)
+                # Revision 0003 through 0013 tables reference environments,
+                # managed_decision_receipts, or policy_versions, so seeding
+                # the partial revision 0001 shape must remove them first.
+                # Dropping environments with CASCADE instead would leave them
+                # in place minus their foreign keys, which is not a shape any
+                # real 0001 database has. One statement drops the whole set
+                # together, so dependencies among the listed tables (the 0005
+                # bootstrap tables all reference
+                # platform_bootstrap_invitations, the 0007/0008 idempotency
+                # and policy tables all reference managed_decision_receipts,
+                # the 0009/0010 approval tables reference
+                # managed_decision_receipts and each other, and the
+                # 0011/0012/0013 runtime tables reference
+                # managed_decision_receipts, policy_versions, and each other)
                 # do not constrain the order.
                 connection.execute(
                     sa.text(
                         "DROP TABLE agent_registration_idempotency, "
                         "approval_resume_authorizations, approval_outcomes, "
                         "approval_votes, approval_requests, "
+                        "runtime_wiring_attestations, "
+                        "runtime_wiring_challenge_consumptions, "
+                        "runtime_report_heads, runtime_reports, "
+                        "runtime_operation_idempotency, runtime_request_nonces, "
+                        "runtime_enrollment_idempotency, "
+                        "runtime_credential_generations, "
+                        "runtime_enrollment_bootstraps, runtime_identities, "
+                        "runtime_identity_gates, "
                         "tenant_bootstrap_refusal_events, "
                         "tenant_bootstrap_pending_outbox, pending_approvals, "
                         "tenant_bootstrap_policy_artifacts, "
@@ -885,16 +896,20 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
                         "policy_versions"
                     )
                 )
-                # Revision 0008 installs guard trigger functions alongside its
-                # tables. The triggers vanish with the tables above, but the
-                # functions survive and would make the seeded shape read as an
-                # unknown schema instead of a real 0001 database.
-                connection.execute(
-                    sa.text("DROP FUNCTION IF EXISTS acgs_policy_versions_immutable()")
-                )
-                connection.execute(
-                    sa.text("DROP FUNCTION IF EXISTS acgs_environment_policy_heads_monotonic()")
-                )
+                # Revisions 0008, 0012, and 0013 install guard trigger
+                # functions alongside their tables. The triggers vanish with
+                # the tables above, but the functions survive and would make
+                # the seeded shape read as an unknown schema instead of a real
+                # 0001 database.
+                for function_name in (
+                    "acgs_policy_versions_immutable",
+                    "acgs_environment_policy_heads_monotonic",
+                    "acgs_runtime_reports_immutable",
+                    "acgs_runtime_wiring_attestations_immutable",
+                    "acgs_runtime_report_heads_monotonic",
+                    "acgs_runtime_wiring_challenge_consumptions_immutable",
+                ):
+                    connection.execute(sa.text(f"DROP FUNCTION IF EXISTS {function_name}()"))
                 # Revision 0006 puts the scope columns on agents, so agents now
                 # references environments too. Dropping those columns takes the
                 # scope foreign key and check constraint with them and restores
@@ -1022,7 +1037,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         operator_status, operator_payload = _decode_json_object(operator_stdout)
         assert operator_status == "object"
         assert operator_payload == {
-            "after": DatabaseSchemaState.VERSION_0010.value,
+            "after": DatabaseSchemaState(f"version_{HEAD_REVISION}").value,
             "before": "version_0001",
             "command": "upgrade",
             "ok": True,
@@ -1055,6 +1070,17 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
             "policy_registry_idempotency",
             "policy_versions",
             "projects",
+            "runtime_credential_generations",
+            "runtime_enrollment_bootstraps",
+            "runtime_enrollment_idempotency",
+            "runtime_identities",
+            "runtime_identity_gates",
+            "runtime_operation_idempotency",
+            "runtime_report_heads",
+            "runtime_reports",
+            "runtime_request_nonces",
+            "runtime_wiring_attestations",
+            "runtime_wiring_challenge_consumptions",
             "tenant_bootstrap_idempotency",
             "tenant_bootstrap_pending_outbox",
             "tenant_bootstrap_policy_artifacts",
@@ -1083,7 +1109,9 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         ready = new_probe.request("ready")
         assert ready["status_code"] == 503
         assert ready["body"]["schema_current"] is True
-        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0010.value
+        assert (
+            ready["body"]["schema_state"] == DatabaseSchemaState(f"version_{HEAD_REVISION}").value
+        )
         assert old_probe.request("get_org")["status_code"] == 200
         assert new_probe.request("get_org")["status_code"] == 200
 
@@ -1162,5 +1190,5 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         _close_upgrade_processes(operator, new_probe, old_probe)
 
     _assert_no_connections(pg_engine)
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
+    assert inspect_schema(database_url).state is DatabaseSchemaState(f"version_{HEAD_REVISION}")
     assert _OLD_CANDIDATE_COMMIT == "4f0c685b5d2ffac0e6a71810b77c6357b8d56a94"

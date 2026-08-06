@@ -49,6 +49,7 @@ from acgs_control_plane.runtime_enrollment import (
     _runtime_public_key_bytes,
     _runtime_timestamp,
     _to_utc,
+    validate_current_runtime_identity_binding,
 )
 from acgs_control_plane.schemas import PolicySyncSnapshot
 from acgs_control_plane.trust import (
@@ -111,11 +112,13 @@ class PolicySyncService:
         attestation_issuer: ManagedPlatformIssuer,
         policy_registry_issuer: ManagedPlatformIssuer,
         receipt_sealer: ReceiptArtifactSealer,
+        descriptor_signer: Any,
     ) -> None:
         self._session_factory = session_factory
         self._attestation_issuer = attestation_issuer
         self._policy_registry_issuer = policy_registry_issuer
         self._receipt_sealer = receipt_sealer
+        self._descriptor_signer = descriptor_signer
 
     def fetch(
         self,
@@ -137,8 +140,9 @@ class PolicySyncService:
         if raw_path != expected_raw_path or body != b"":
             raise _authentication_refused()
         with self._session_factory() as session, session.begin():
-            identity = _authenticate_runtime_read(
+            identity, credential = _authenticate_runtime_read(
                 session,
+                descriptor_signer=self._descriptor_signer,
                 identity_id=identity_id,
                 auth=auth,
                 path=path,
@@ -146,7 +150,6 @@ class PolicySyncService:
                 body=body,
                 now=now,
             )
-            credential = _active_credential(session, identity=identity, auth=auth, now=now)
             gate = _active_gate(session, identity=identity)
             head, version = _active_policy_snapshot(session, identity=identity)
             envelope = dict(version.canonical_envelope)
@@ -310,13 +313,14 @@ class PolicySyncService:
 def _authenticate_runtime_read(
     session: Session,
     *,
+    descriptor_signer: Any,
     identity_id: str,
     auth: PolicySyncAuth,
     path: str,
     query: str,
     body: bytes,
     now: Any,
-) -> RuntimeIdentity:
+) -> tuple[RuntimeIdentity, RuntimeCredentialGeneration]:
     if body != b"" or auth.body_sha256 != sha256_bytes(body):
         raise _authentication_refused()
     identity = session.scalars(
@@ -330,6 +334,16 @@ def _authenticate_runtime_read(
         raise _authentication_refused()
     if auth.audience != RUNTIME_ENROLLMENT_AUTHORITY:
         raise _authentication_refused()
+    credential = _active_credential(session, identity=identity, auth=auth, now=now)
+    try:
+        validate_current_runtime_identity_binding(
+            identity,
+            credential,
+            descriptor_signer=descriptor_signer,
+            now=_to_utc(now),
+        )
+    except RuntimeIdentityError as exc:
+        raise _authentication_refused() from exc
     try:
         verify_signed_runtime_request(
             public_key=_runtime_public_key_bytes(identity.public_key),
@@ -357,7 +371,7 @@ def _authenticate_runtime_read(
         raise _authentication_refused() from exc
     if timestamp_skew > RUNTIME_SIGNED_REQUEST_SKEW_SECONDS:
         raise _authentication_refused()
-    return identity
+    return identity, credential
 
 
 def _active_credential(

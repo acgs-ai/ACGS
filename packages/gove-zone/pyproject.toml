@@ -76,7 +76,16 @@ strict = true
 python_version = "3.11"
 files = ["src/gove_zone"]
 
-# The adapters guard optional-extra imports (langchain-core / mcp) behind
+[[tool.mypy.overrides]]
+module = ["mcp", "mcp.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["langchain_core", "langchain_core.*"]
+follow_imports = "skip"
+ignore_missing_imports = true
+
+# These modules guard optional-extra imports (langchain-core / mcp) behind
 # try/except or lazy imports. The inline `type: ignore`s on those guards are
 # load-bearing only when the extra is ABSENT; with the extra installed they
 # would trip strict's warn_unused_ignores (and vice versa for ignores that are
@@ -84,7 +93,7 @@ files = ["src/gove_zone"]
 # these modules so the strict gate is green regardless of which extras the
 # environment has synced. All other strict checks remain in force.
 [[tool.mypy.overrides]]
-module = ["gove_zone.adapters.langgraph", "gove_zone.adapters.mcp_gateway"]
+module = ["gove_zone.adapters.langgraph", "gove_zone.adapters.mcp_gateway", "gove_zone.gateway"]
 warn_unused_ignores = false
 
 [tool.pytest.ini_options]

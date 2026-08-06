@@ -23,6 +23,7 @@ from acgs_control_plane import migration_recovery as recovery
 from acgs_control_plane.db import make_engine
 from acgs_control_plane.migration_recovery import RecoveryRefused
 from acgs_control_plane.migrations import (
+    HEAD_REVISION,
     DatabaseSchemaState,
     inspect_schema,
     upgrade_database,
@@ -186,7 +187,7 @@ def test_live_bytea_fingerprint_and_oversize_preflight_are_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     upgrade_database(DATABASE_URL)
-    assert inspect_schema(DATABASE_URL).state is DatabaseSchemaState.VERSION_0010
+    assert inspect_schema(DATABASE_URL).state is DatabaseSchemaState(f"version_{HEAD_REVISION}")
 
     engine = sa.create_engine(DATABASE_URL, poolclass=NullPool, future=True)
     table = _table()

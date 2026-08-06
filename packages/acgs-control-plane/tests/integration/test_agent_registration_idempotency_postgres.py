@@ -23,7 +23,7 @@ from acgs_control_plane.agent_registration import (
 from acgs_control_plane.app import create_app
 from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.managed_mutations import CONTROL_PLANE_AGENT_CREATE_ACTION
-from acgs_control_plane.migrations import DatabaseSchemaState, upgrade_database
+from acgs_control_plane.migrations import HEAD_REVISION, DatabaseSchemaState, upgrade_database
 from acgs_control_plane.models import (
     AgentRecord,
     AgentRegistrationIdempotency,
@@ -289,7 +289,7 @@ def _postgres_agent_registration_app(
 
     _reset_postgres_schema(database_url)
     result = upgrade_database(database_url, expected_database=EXPECTED_DATABASE)
-    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert result.after.state is DatabaseSchemaState(f"version_{HEAD_REVISION}")
 
     issuer = local_agent_registration_issuer()
     receipt_issuer = (

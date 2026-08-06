@@ -45,7 +45,12 @@ jobs:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .github/codex/prompts/review.md
           output-file: codex-review-output.md
-          sandbox: read-only
+          # The default drop-sudo safety strategy fails on Blacksmith runners:
+          # the running job keeps its sudo group membership after deluser, so
+          # the action's "Verify sudo privilege removed" check always fails.
+          # read-only forces the same legacy read-only sandbox without the
+          # sudo-drop step.
+          safety-strategy: read-only
 
       - name: Post Codex feedback
         if: ${{ env.OPENAI_API_KEY != '' && steps.codex-review.outputs.final-message != '' }}

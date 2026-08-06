@@ -96,9 +96,19 @@ class InProcessPlatformIssuer:
 class SqlReceiptTrustRegistry:
     """ReceiptTrustRegistry backed by the caller's active SQLAlchemy Session."""
 
-    def __init__(self, session: Session, *, lock_rows: bool = False) -> None:
+    def __init__(
+        self,
+        session: Session,
+        *,
+        lock_rows: bool = False,
+        preloaded_rows: Iterable[ManagedTrustKey] | None = None,
+        preloaded_index: Mapping[tuple[str, str, str, str], tuple[ManagedTrustKey, ...]]
+        | None = None,
+    ) -> None:
         self._session = session
         self._lock_rows = lock_rows
+        self._preloaded_rows = tuple(preloaded_rows) if preloaded_rows is not None else None
+        self._preloaded_index = preloaded_index
 
     def resolve(
         self,
@@ -116,19 +126,39 @@ class SqlReceiptTrustRegistry:
             raise TrustConfigurationError("trust_epoch must be a positive integer")
         now = _parse_aware_utc(now_iso, field_name="now_iso")
         scope.__post_init__()
-        query = (
-            sa.select(ManagedTrustKey)
-            .where(
-                ManagedTrustKey.org_id == scope.tenant_id,
-                ManagedTrustKey.project_id == scope.project_id,
-                ManagedTrustKey.environment_id == scope.environment_id,
-                ManagedTrustKey.purpose == scope.purpose,
+        if self._preloaded_rows is None and self._preloaded_index is None:
+            query = (
+                sa.select(ManagedTrustKey)
+                .where(
+                    ManagedTrustKey.org_id == scope.tenant_id,
+                    ManagedTrustKey.project_id == scope.project_id,
+                    ManagedTrustKey.environment_id == scope.environment_id,
+                    ManagedTrustKey.purpose == scope.purpose,
+                )
+                .order_by(ManagedTrustKey.activated_epoch.asc())
             )
-            .order_by(ManagedTrustKey.activated_epoch.asc())
-        )
-        if self._lock_rows:
-            query = query.with_for_update()
-        rows = list(self._session.scalars(query))
+            if self._lock_rows:
+                query = query.with_for_update()
+            rows = list(self._session.scalars(query))
+        elif self._preloaded_index is not None:
+            rows = list(
+                self._preloaded_index.get(
+                    (scope.tenant_id, scope.project_id, scope.environment_id, scope.purpose), ()
+                )
+            )
+        else:
+            assert self._preloaded_rows is not None
+            rows = sorted(
+                (
+                    row
+                    for row in self._preloaded_rows
+                    if row.org_id == scope.tenant_id
+                    and row.project_id == scope.project_id
+                    and row.environment_id == scope.environment_id
+                    and row.purpose == scope.purpose
+                ),
+                key=lambda row: row.activated_epoch,
+            )
         active_rows = [row for row in rows if row.status == "active"]
         if len(active_rows) > 1:
             raise TrustConfigurationError("multiple active trust roots for scope")

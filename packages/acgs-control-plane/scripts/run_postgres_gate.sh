@@ -83,6 +83,19 @@ p3_approval_selectors=(
   'tests/integration/test_approval_resume_postgres.py::test_pg_approval_composite_constraints_reject_cross_scope_rows'
 )
 p4_runtime_enrollment_selectors=(
+  'tests/integration/test_runtime_enrollment_postgres.py::test_populated_runtime_enrollment_0011_through_0012_upgrades_to_0013_postgresql'
+  'tests/integration/test_runtime_enrollment_postgres.py::test_runtime_lineage_schema_objects_are_required_postgresql'
+  'tests/integration/test_runtime_enrollment_postgres.py::test_runtime_report_provider_outages_are_redacted_and_atomic_postgresql'
+  'tests/integration/test_runtime_enrollment_postgres.py::test_identical_runtime_reports_converge_on_postgresql'
+  'tests/integration/test_runtime_enrollment_postgres.py::test_identical_concurrent_wiring_reports_replay_without_debris_postgresql'
+  'tests/integration/test_runtime_enrollment_postgres.py::test_concurrent_different_runtime_report_body_conflicts_without_debris'
+  'tests/integration/test_runtime_enrollment_postgres.py::test_runtime_wiring_challenge_is_invalidated_by_intervening_report_postgresql'
+  'tests/integration/test_runtime_enrollment_postgres.py::test_runtime_report_post_persistence_failure_rolls_back_postgresql'
+  'tests/integration/test_runtime_enrollment_postgres.py::test_runtime_report_head_composite_anchor_is_enforced_postgresql'
+  'tests/integration/test_runtime_enrollment_postgres.py::test_runtime_wiring_historical_replay_and_projection_binding_postgresql'
+  'tests/integration/test_runtime_enrollment_postgres.py::test_runtime_wiring_attestations_are_immutable_postgresql'
+  'tests/integration/test_runtime_enrollment_postgres.py::test_runtime_wiring_challenge_consumptions_are_immutable_postgresql'
+  'tests/integration/test_runtime_enrollment_postgres.py::test_runtime_report_bigint_schema_and_current_binding_postgresql'
   'tests/integration/test_runtime_enrollment_postgres.py::test_100_identical_runtime_enrollments_converge_to_one_identity'
   'tests/integration/test_runtime_enrollment_postgres.py::test_runtime_enrollment_conflict_and_cross_scope_idempotency_are_isolated'
   'tests/integration/test_runtime_enrollment_postgres.py::test_runtime_renew_replay_revoke_and_expired_paths_are_nonduplicating'
@@ -180,7 +193,7 @@ if [[ -z "$selector_mode" && $# == "${#p3_approval_selectors[@]}" ]]; then
 fi
 if [[ -z "$selector_mode" && $# == "${#p4_runtime_enrollment_selectors[@]}" ]]; then
   selector_mode='p4-runtime-enrollment'
-  junit_expected_tests=3
+  junit_expected_tests=18
   actual_selectors=("$@")
   for index in "${!p4_runtime_enrollment_selectors[@]}"; do
     if [[ "${actual_selectors[index]}" != "${p4_runtime_enrollment_selectors[index]}" ]]; then

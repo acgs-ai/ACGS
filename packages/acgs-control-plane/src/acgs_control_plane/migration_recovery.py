@@ -36,6 +36,7 @@ from acgs_control_plane.db import make_engine
 from acgs_control_plane.migrations import (
     _POSTGRES_MIGRATION_LOCK_CLASS_ID,
     _POSTGRES_MIGRATION_LOCK_OBJECT_ID,
+    HEAD_REVISION,
     DatabaseSchemaState,
     MigrationPreflightError,
     _bind_postgresql_operator_target,
@@ -81,6 +82,17 @@ EXPECTED_TABLES: Final = (
     "policy_versions",
     "projects",
     "receipts",
+    "runtime_credential_generations",
+    "runtime_enrollment_bootstraps",
+    "runtime_enrollment_idempotency",
+    "runtime_identities",
+    "runtime_identity_gates",
+    "runtime_operation_idempotency",
+    "runtime_report_heads",
+    "runtime_reports",
+    "runtime_request_nonces",
+    "runtime_wiring_attestations",
+    "runtime_wiring_challenge_consumptions",
     "tenant_bootstrap_idempotency",
     "tenant_bootstrap_pending_outbox",
     "tenant_bootstrap_policy_artifacts",
@@ -628,7 +640,7 @@ def _capture_database_state(
     if expected_database is not None:
         _assert_connection_database(connection, expected_database)
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0010:
+    if preflight.state is not DatabaseSchemaState(f"version_{HEAD_REVISION}"):
         raise RecoveryRefused("database is not the exact supported migration head schema")
     inspector = sa.inspect(connection)
     observed = tuple(sorted(inspector.get_table_names(schema="public")))

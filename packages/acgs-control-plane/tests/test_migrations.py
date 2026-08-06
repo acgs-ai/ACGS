@@ -38,18 +38,31 @@ from acgs_control_plane.migrations import (
     HEAD_REVISION,
     LEGACY_V0_REVISION,
     RUNTIME_ENROLLMENT_REVISION,
+    RUNTIME_REPORTS_REVISION,
     SCOPED_REVISION,
     DatabaseSchemaState,
     MigrationPreflightError,
+    StartupSchemaPreflightError,
     _check_constraint_signature,
     _ColumnSpec,
     _index_where_signature,
     _matches_type,
+    assert_current_startup_schema,
     inspect_schema,
     migration_config,
     upgrade_database,
 )
-from acgs_control_plane.models import AgentRecord
+from acgs_control_plane.models import (
+    AgentRecord,
+    RuntimeReport,
+    RuntimeReportHead,
+    RuntimeWiringAttestation,
+)
+from acgs_control_plane.runtime_lineage_schema import (
+    SQLITE_RUNTIME_LINEAGE_OBJECTS,
+    SQLITE_RUNTIME_LINEAGE_OBJECTS_0012,
+    SQLITE_RUNTIME_LINEAGE_OBJECTS_0013_DELTA,
+)
 
 
 def _load_migration_revision_module(filename: str) -> object:
@@ -106,8 +119,8 @@ def test_revision_0006_scopes_agents_without_fabricating_legacy_scope(
 ) -> None:
     database_url = _database_url(tmp_path)
     result = upgrade_database(database_url)
-    assert result.after.state is DatabaseSchemaState.VERSION_0011
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0011
+    assert result.after.state is DatabaseSchemaState.VERSION_0013
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0013
 
     engine = make_engine(database_url)
     try:
@@ -266,6 +279,163 @@ def test_revision_0006_scopes_agents_without_fabricating_legacy_scope(
                 )
     finally:
         engine.dispose()
+
+
+_SQLITE_RUNTIME_LINEAGE_TRIGGER_TARGETS = {
+    "runtime_reports_immutable_update": ("UPDATE", "runtime_reports"),
+    "runtime_reports_immutable_delete": ("DELETE", "runtime_reports"),
+    "runtime_wiring_attestations_immutable_update": (
+        "UPDATE",
+        "runtime_wiring_attestations",
+    ),
+    "runtime_wiring_attestations_immutable_delete": (
+        "DELETE",
+        "runtime_wiring_attestations",
+    ),
+    "runtime_wiring_challenge_consumptions_immutable_update": (
+        "UPDATE",
+        "runtime_wiring_challenge_consumptions",
+    ),
+    "runtime_wiring_challenge_consumptions_immutable_delete": (
+        "DELETE",
+        "runtime_wiring_challenge_consumptions",
+    ),
+    "runtime_report_heads_monotonic_update": ("UPDATE", "runtime_report_heads"),
+    "runtime_report_heads_monotonic_delete": ("DELETE", "runtime_report_heads"),
+}
+
+
+def test_runtime_report_orm_metadata_matches_revision_0012_constraints() -> None:
+    report_constraints = {item.name: item for item in RuntimeReport.__table__.constraints}
+    report_org_fk = report_constraints["fk_runtime_reports_organization"]
+    assert isinstance(report_org_fk, sa.ForeignKeyConstraint)
+    assert report_org_fk.deferrable is True
+    assert report_org_fk.initially == "DEFERRED"
+
+    head_constraints = {item.name: item for item in RuntimeReportHead.__table__.constraints}
+    head_org_fk = head_constraints["fk_runtime_report_heads_organization"]
+    assert isinstance(head_org_fk, sa.ForeignKeyConstraint)
+    assert head_org_fk.deferrable is True
+    assert head_org_fk.initially == "DEFERRED"
+    assert "ck_runtime_report_heads_history_count" in head_constraints
+
+    attestation_constraints = {
+        item.name: item for item in RuntimeWiringAttestation.__table__.constraints
+    }
+    assert "uq_runtime_wiring_attestations_attestation_hash" in attestation_constraints
+
+
+@pytest.mark.parametrize("trigger_name", sorted(_SQLITE_RUNTIME_LINEAGE_TRIGGER_TARGETS))
+@pytest.mark.parametrize("mutation", ["drop", "replace"])
+def test_revision_0013_requires_exact_sqlite_runtime_lineage_trigger_definitions(
+    tmp_path: Path,
+    trigger_name: str,
+    mutation: str,
+) -> None:
+    database_url = _database_url(tmp_path)
+    upgrade_database(database_url)
+    event, table_name = _SQLITE_RUNTIME_LINEAGE_TRIGGER_TARGETS[trigger_name]
+    engine = make_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(sa.text(f'DROP TRIGGER "{trigger_name}"'))
+            if mutation == "replace":
+                connection.execute(
+                    sa.text(
+                        f'CREATE TRIGGER "{trigger_name}" BEFORE {event} ON "{table_name}" '
+                        "BEGIN SELECT 1; END"
+                    )
+                )
+        preflight = inspect_schema(database_url)
+        assert preflight.state is DatabaseSchemaState.UNKNOWN
+        assert "runtime lineage" in preflight.detail
+        with engine.connect() as connection:
+            with pytest.raises(StartupSchemaPreflightError):
+                assert_current_startup_schema(connection)
+    finally:
+        engine.dispose()
+
+
+def test_historical_0012_upgrades_to_0013_with_only_delta_objects_added(
+    tmp_path: Path,
+) -> None:
+    database_url = _database_url(tmp_path)
+    config = migration_config(database_url)
+    migration_module._run_controlled_operation(  # type: ignore[attr-defined]
+        config,
+        migration_module._SCOPE_RESUME_TOKEN,  # type: ignore[attr-defined]
+        DatabaseSchemaState.EMPTY,
+        lambda: command.upgrade(config, RUNTIME_REPORTS_REVISION),
+    )
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0012
+
+    engine = make_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            trigger_names = set(
+                connection.scalars(
+                    sa.text("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+                ).all()
+            )
+            assert set(SQLITE_RUNTIME_LINEAGE_OBJECTS_0012) <= trigger_names
+            assert set(SQLITE_RUNTIME_LINEAGE_OBJECTS_0013_DELTA).isdisjoint(trigger_names)
+    finally:
+        engine.dispose()
+
+    result = upgrade_database(database_url)
+    assert result.before.state is DatabaseSchemaState.VERSION_0012
+    assert result.after.state is DatabaseSchemaState.VERSION_0013
+
+    engine = make_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            trigger_names = set(
+                connection.scalars(
+                    sa.text("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+                ).all()
+            )
+            assert set(SQLITE_RUNTIME_LINEAGE_OBJECTS) <= trigger_names
+    finally:
+        engine.dispose()
+
+
+def test_0012_stamp_with_0013_delta_object_is_unknown(tmp_path: Path) -> None:
+    database_url = _database_url(tmp_path)
+    config = migration_config(database_url)
+    migration_module._run_controlled_operation(  # type: ignore[attr-defined]
+        config,
+        migration_module._SCOPE_RESUME_TOKEN,  # type: ignore[attr-defined]
+        DatabaseSchemaState.EMPTY,
+        lambda: command.upgrade(config, RUNTIME_REPORTS_REVISION),
+    )
+    engine = make_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text(next(iter(SQLITE_RUNTIME_LINEAGE_OBJECTS_0013_DELTA.values())))
+            )
+    finally:
+        engine.dispose()
+
+    preflight = inspect_schema(database_url)
+    assert preflight.state is DatabaseSchemaState.UNKNOWN
+    assert "runtime lineage objects" in preflight.detail
+
+
+def test_revision_0013_downgrade_refuses_before_mutation(tmp_path: Path) -> None:
+    database_url = _database_url(tmp_path)
+    upgrade_database(database_url)
+    database_path = tmp_path / "control-plane.sqlite3"
+    before = hashlib.sha256(database_path.read_bytes()).hexdigest()
+    revision_0013 = _load_migration_revision_module(
+        "0013_runtime_challenge_consumption_immutability.py"
+    )
+
+    with pytest.raises(NotImplementedError, match="forward-only"):
+        revision_0013.downgrade()  # type: ignore[attr-defined]
+
+    assert hashlib.sha256(database_path.read_bytes()).hexdigest() == before
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0013
 
 
 def _insert_legacy_receipt_evidence(database_url: str, receipt_id: str) -> None:
@@ -591,6 +761,8 @@ def test_wheel_ships_and_resolves_the_canonical_alembic_resources(tmp_path: Path
             "acgs_control_plane/migrations/versions/0009_approval_substrate.py",
             "acgs_control_plane/migrations/versions/0010_approval_vote_binding.py",
             "acgs_control_plane/migrations/versions/0011_runtime_enrollment.py",
+            "acgs_control_plane/migrations/versions/0012_runtime_reports.py",
+            "acgs_control_plane/migrations/versions/0013_runtime_challenge_consumption_immutability.py",
         } <= names
         archive.extractall(extracted_root)
 
@@ -616,8 +788,8 @@ assert Path(config.config_file_name).resolve() == package_root / "alembic.ini"
 assert Path(config.get_main_option("script_location")).resolve() == package_root / "migrations"
 result = upgrade_database(database_url)
 assert result.before.state is DatabaseSchemaState.EMPTY
-assert result.after.state is DatabaseSchemaState.VERSION_0011
-assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0011
+assert result.after.state is DatabaseSchemaState.VERSION_0013
+assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0013
 engine = sa.create_engine(database_url)
 try:
     assert set(sa.inspect(engine).get_table_names()) == {
@@ -654,7 +826,11 @@ try:
         "runtime_identities",
         "runtime_identity_gates",
         "runtime_operation_idempotency",
-        "runtime_request_nonces",
+            "runtime_reports",
+            "runtime_report_heads",
+            "runtime_request_nonces",
+            "runtime_wiring_attestations",
+            "runtime_wiring_challenge_consumptions",
         "tenant_bootstrap_idempotency",
         "tenant_bootstrap_pending_outbox",
         "tenant_bootstrap_policy_artifacts",
@@ -686,7 +862,7 @@ def test_empty_database_migrates_to_head_through_alembic(tmp_path: Path) -> None
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.EMPTY
-    assert result.after.state is DatabaseSchemaState.VERSION_0011
+    assert result.after.state is DatabaseSchemaState.VERSION_0013
     assert _table_names(database_url) == {
         "agent_registration_idempotency",
         "agents",
@@ -721,7 +897,11 @@ def test_empty_database_migrates_to_head_through_alembic(tmp_path: Path) -> None
         "runtime_identities",
         "runtime_identity_gates",
         "runtime_operation_idempotency",
+        "runtime_reports",
+        "runtime_report_heads",
         "runtime_request_nonces",
+        "runtime_wiring_attestations",
+        "runtime_wiring_challenge_consumptions",
         "tenant_bootstrap_idempotency",
         "tenant_bootstrap_pending_outbox",
         "tenant_bootstrap_policy_artifacts",
@@ -806,7 +986,7 @@ def test_revision_0010_upgrades_to_0011_runtime_enrollment_tables(tmp_path: Path
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0010
-    assert result.after.state is DatabaseSchemaState.VERSION_0011
+    assert result.after.state is DatabaseSchemaState.VERSION_0013
     assert {
         "runtime_credential_generations",
         "runtime_enrollment_bootstraps",
@@ -816,6 +996,189 @@ def test_revision_0010_upgrades_to_0011_runtime_enrollment_tables(tmp_path: Path
         "runtime_operation_idempotency",
         "runtime_request_nonces",
     } <= _table_names(database_url)
+
+
+def test_populated_revision_0011_is_current_for_upgrade_and_preserved_through_0013(
+    tmp_path: Path,
+) -> None:
+    database_url = _database_url(tmp_path)
+    config = migration_config(database_url)
+    migration_module._run_controlled_operation(  # type: ignore[attr-defined]
+        config,
+        migration_module._SCOPE_RESUME_TOKEN,  # type: ignore[attr-defined]
+        DatabaseSchemaState.EMPTY,
+        lambda: command.upgrade(config, RUNTIME_ENROLLMENT_REVISION),
+    )
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0011
+    engine = make_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    "INSERT INTO organizations "
+                    "(id, name, created_at, audit_anchor_count, audit_anchor_hash) "
+                    "VALUES ('org-0011', 'Org 0011', :now, 0, '')"
+                ),
+                {"now": "2026-08-01T00:00:00+00:00"},
+            )
+            descriptor = json.dumps(
+                {
+                    "schema": "runtime-identity/v1",
+                    "runtime_identity_id": "identity-0011",
+                    "credential_id": "credential-0011",
+                    "credential_generation": 1,
+                    "binding": "preserve-exactly",
+                },
+                sort_keys=True,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO runtime_identities "
+                    "(id, org_id, project_id, environment_id, gate_id, name, actor, "
+                    "workload_key_id, public_key, public_key_thumbprint, descriptor, status, "
+                    "current_generation, created_at, updated_at, revoked_at) VALUES "
+                    "('identity-0011', 'org-0011', 'project-0011', 'env-0011', 'gate-0011', "
+                    "'Runtime 0011', 'runtime:identity-0011', 'workload-key-0011', "
+                    "'public-key-0011', :thumbprint, :descriptor, 'active', 1, :created_at, "
+                    ":updated_at, NULL)"
+                ),
+                {
+                    "thumbprint": "a" * 64,
+                    "descriptor": descriptor,
+                    "created_at": "2026-08-01T00:01:00+00:00",
+                    "updated_at": "2026-08-01T00:02:00+00:00",
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO runtime_credential_generations "
+                    "(id, org_id, project_id, environment_id, identity_id, generation, "
+                    "workload_key_id, public_key_thumbprint, not_before, not_after, status, "
+                    "descriptor, created_at, superseded_at, revoked_at) VALUES "
+                    "('credential-0011', 'org-0011', 'project-0011', 'env-0011', "
+                    "'identity-0011', 1, 'workload-key-0011', :thumbprint, :not_before, "
+                    ":not_after, 'active', :descriptor, :created_at, NULL, NULL)"
+                ),
+                {
+                    "thumbprint": "a" * 64,
+                    "not_before": "2026-08-01T00:00:00+00:00",
+                    "not_after": "2026-08-02T00:00:00+00:00",
+                    "descriptor": descriptor,
+                    "created_at": "2026-08-01T00:03:00+00:00",
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO projects (id, org_id, slug, name, created_at) "
+                    "VALUES ('project-0011', 'org-0011', 'project', 'Project', :now)"
+                ),
+                {"now": "2026-08-01T00:00:00+00:00"},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO environments "
+                    "(id, org_id, project_id, slug, name, created_at) "
+                    "VALUES ('env-0011', 'org-0011', 'project-0011', 'env', 'Env', :now)"
+                ),
+                {"now": "2026-08-01T00:00:00+00:00"},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO runtime_identity_gates "
+                    "(id, org_id, project_id, environment_id, status, created_at, updated_at) "
+                    "VALUES ('gate-0011', 'org-0011', 'project-0011', 'env-0011', "
+                    "'active', :now, :now)"
+                ),
+                {"now": "2026-08-01T00:00:00+00:00"},
+            )
+    finally:
+        engine.dispose()
+
+    result = upgrade_database(database_url)
+
+    assert result.before.state is DatabaseSchemaState.VERSION_0011
+    assert result.after.state is DatabaseSchemaState.VERSION_0013
+    engine = make_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            assert (
+                connection.scalar(
+                    sa.text("SELECT status FROM runtime_identity_gates WHERE id = 'gate-0011'")
+                )
+                == "active"
+            )
+            identity = (
+                connection.execute(
+                    sa.text("SELECT * FROM runtime_identities WHERE id = 'identity-0011'")
+                )
+                .mappings()
+                .one()
+            )
+            credential = (
+                connection.execute(
+                    sa.text(
+                        "SELECT * FROM runtime_credential_generations WHERE id = 'credential-0011'"
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            assert {
+                "org_id": identity["org_id"],
+                "project_id": identity["project_id"],
+                "environment_id": identity["environment_id"],
+                "gate_id": identity["gate_id"],
+                "status": identity["status"],
+                "current_generation": identity["current_generation"],
+                "workload_key_id": identity["workload_key_id"],
+                "public_key": identity["public_key"],
+                "public_key_thumbprint": identity["public_key_thumbprint"],
+                "descriptor": json.loads(identity["descriptor"]),
+                "created_at": identity["created_at"],
+                "updated_at": identity["updated_at"],
+            } == {
+                "org_id": "org-0011",
+                "project_id": "project-0011",
+                "environment_id": "env-0011",
+                "gate_id": "gate-0011",
+                "status": "active",
+                "current_generation": 1,
+                "workload_key_id": "workload-key-0011",
+                "public_key": "public-key-0011",
+                "public_key_thumbprint": "a" * 64,
+                "descriptor": json.loads(descriptor),
+                "created_at": "2026-08-01T00:01:00+00:00",
+                "updated_at": "2026-08-01T00:02:00+00:00",
+            }
+            assert {
+                "org_id": credential["org_id"],
+                "project_id": credential["project_id"],
+                "environment_id": credential["environment_id"],
+                "identity_id": credential["identity_id"],
+                "generation": credential["generation"],
+                "status": credential["status"],
+                "workload_key_id": credential["workload_key_id"],
+                "public_key_thumbprint": credential["public_key_thumbprint"],
+                "descriptor": json.loads(credential["descriptor"]),
+                "not_before": credential["not_before"],
+                "not_after": credential["not_after"],
+                "created_at": credential["created_at"],
+            } == {
+                "org_id": "org-0011",
+                "project_id": "project-0011",
+                "environment_id": "env-0011",
+                "identity_id": "identity-0011",
+                "generation": 1,
+                "status": "active",
+                "workload_key_id": "workload-key-0011",
+                "public_key_thumbprint": "a" * 64,
+                "descriptor": json.loads(descriptor),
+                "not_before": "2026-08-01T00:00:00+00:00",
+                "not_after": "2026-08-02T00:00:00+00:00",
+                "created_at": "2026-08-01T00:03:00+00:00",
+            }
+    finally:
+        engine.dispose()
 
 
 def test_runtime_enrollment_timestamp_columns_are_not_nullable(tmp_path: Path) -> None:
@@ -1014,6 +1377,82 @@ def test_head_schema_rejects_trust_active_root_unique_predicate_drift(
     assert expected_detail in preflight.detail
 
 
+@pytest.mark.parametrize(
+    "replacement_options",
+    (None, {}, {"deferrable": False, "initially": "IMMEDIATE"}),
+)
+def test_runtime_schema_rejects_missing_or_wrong_deferred_foreign_key_options(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    replacement_options: dict[str, object] | None,
+) -> None:
+    database_url = _database_url(tmp_path)
+    upgrade_database(database_url)
+    original = sa.engine.reflection.Inspector.get_foreign_keys
+
+    def drifted_foreign_keys(
+        inspector: sa.engine.reflection.Inspector,
+        table_name: str,
+        *args: object,
+        **kwargs: object,
+    ) -> list[dict[str, object]]:
+        rows = original(inspector, table_name, *args, **kwargs)
+        if table_name == "runtime_identities":
+            rows = [dict(row) for row in rows]
+            if replacement_options is None:
+                rows[0].pop("options", None)
+            else:
+                rows[0]["options"] = replacement_options
+        return rows
+
+    monkeypatch.setattr(
+        sa.engine.reflection.Inspector,
+        "get_foreign_keys",
+        drifted_foreign_keys,
+    )
+
+    preflight = inspect_schema(database_url)
+
+    assert preflight.state is DatabaseSchemaState.UNKNOWN
+    assert (
+        "runtime_identities has foreign-key options outside the frozen schema" in preflight.detail
+    )
+
+
+def test_frozen_pre_runtime_schema_still_allows_absent_foreign_key_options(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_url = _database_url(tmp_path)
+    config = migration_config(database_url)
+    migration_module._run_controlled_operation(  # type: ignore[attr-defined]
+        config,
+        migration_module._SCOPE_RESUME_TOKEN,  # type: ignore[attr-defined]
+        DatabaseSchemaState.EMPTY,
+        lambda: command.upgrade(config, "0010"),
+    )
+    original = sa.engine.reflection.Inspector.get_foreign_keys
+
+    def optionless_foreign_keys(
+        inspector: sa.engine.reflection.Inspector,
+        table_name: str,
+        *args: object,
+        **kwargs: object,
+    ) -> list[dict[str, object]]:
+        rows = [dict(row) for row in original(inspector, table_name, *args, **kwargs)]
+        for row in rows:
+            row.pop("options", None)
+        return rows
+
+    monkeypatch.setattr(
+        sa.engine.reflection.Inspector,
+        "get_foreign_keys",
+        optionless_foreign_keys,
+    )
+
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
+
+
 def test_postgresql_trust_active_root_predicate_reflection_is_normalized() -> None:
     assert (
         _index_where_signature(
@@ -1125,6 +1564,19 @@ def test_postgres_gate_wrapper_locks_runtime_enrollment_selector() -> None:
         package_dir / "tests" / "integration" / "test_runtime_enrollment_postgres.py"
     ).read_text(encoding="utf-8")
     expected_tests = [
+        "test_populated_runtime_enrollment_0011_through_0012_upgrades_to_0013_postgresql",
+        "test_runtime_lineage_schema_objects_are_required_postgresql",
+        "test_runtime_report_provider_outages_are_redacted_and_atomic_postgresql",
+        "test_identical_runtime_reports_converge_on_postgresql",
+        "test_identical_concurrent_wiring_reports_replay_without_debris_postgresql",
+        "test_concurrent_different_runtime_report_body_conflicts_without_debris",
+        "test_runtime_wiring_challenge_is_invalidated_by_intervening_report_postgresql",
+        "test_runtime_report_post_persistence_failure_rolls_back_postgresql",
+        "test_runtime_report_head_composite_anchor_is_enforced_postgresql",
+        "test_runtime_wiring_historical_replay_and_projection_binding_postgresql",
+        "test_runtime_wiring_attestations_are_immutable_postgresql",
+        "test_runtime_wiring_challenge_consumptions_are_immutable_postgresql",
+        "test_runtime_report_bigint_schema_and_current_binding_postgresql",
         "test_100_identical_runtime_enrollments_converge_to_one_identity",
         "test_runtime_enrollment_conflict_and_cross_scope_idempotency_are_isolated",
         "test_runtime_renew_replay_revoke_and_expired_paths_are_nonduplicating",
@@ -1143,7 +1595,7 @@ def test_postgres_gate_wrapper_locks_runtime_enrollment_selector() -> None:
         in script
     )
     assert "  selector_mode='p4-runtime-enrollment'" in script
-    assert "  junit_expected_tests=3" in script
+    assert "  junit_expected_tests=18" in script
     assert (
         'for index in "${!p4_runtime_enrollment_selectors[@]}"; do\n'
         '    if [[ "${actual_selectors[index]}" != '
@@ -1158,6 +1610,10 @@ def test_postgres_gate_wrapper_locks_runtime_enrollment_selector() -> None:
     mode_index = script.index("selector_mode='p4-runtime-enrollment'")
     export_index = script.index('export ACP_TEST_POSTGRES_SELECTOR_MODE="$selector_mode"')
     assert selector_block_index < mode_index < export_index
+
+    approval_mode_index = script.index("selector_mode='p3-approval'")
+    approval_junit_index = script.index("  junit_expected_tests=12", approval_mode_index)
+    assert approval_mode_index < approval_junit_index < mode_index
 
 
 def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
@@ -9285,7 +9741,7 @@ def test_exact_legacy_schema_is_stamped_only_after_preflight_then_upgraded(tmp_p
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0011
+    assert result.after.state is DatabaseSchemaState.VERSION_0013
 
 
 def test_prior_0002_schema_upgrade_to_0003_preserves_scoped_rows(tmp_path: Path) -> None:
@@ -9303,8 +9759,8 @@ def test_prior_0002_schema_upgrade_to_0003_preserves_scoped_rows(tmp_path: Path)
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0002
-    assert result.after.state is DatabaseSchemaState.VERSION_0011
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0011
+    assert result.after.state is DatabaseSchemaState.VERSION_0013
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0013
     assert _version_number(database_url) == HEAD_REVISION
     assert _scoped_0002_rows(database_url) == (
         ("project-prior-0002", "org-prior-0002"),
@@ -9337,7 +9793,7 @@ def test_current_legacy_create_all_contract_is_adoptable_by_the_guard(tmp_path: 
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0011
+    assert result.after.state is DatabaseSchemaState.VERSION_0013
 
 
 @pytest.mark.parametrize("table_name", ["unowned_explicit_table", "organizations"])
@@ -9599,7 +10055,7 @@ def test_app_create_tables_rejects_a_versioned_schema_until_startup_migration_in
             )
         )
 
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0011
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0013
     assert _table_names(database_url) == table_names_before
 
 
@@ -9800,6 +10256,11 @@ def test_postgresql_non_table_objects_and_probe_failures_are_fail_closed() -> No
 
     probe = _PostgreSQLProbe([("policy", "public.receipts.tenant_isolation")])
     detail = migration_module._non_table_object_detail(probe)  # type: ignore[arg-type]
+    truncate_trigger = (
+        "trigger",
+        "public.runtime_wiring_challenge_consumptions."
+        "runtime_wiring_challenge_consumptions_immutable_truncate",
+    )
 
     assert detail == "unexpected non-table schema objects: policy:public.receipts.tenant_isolation"
     assert "pg_catalog.pg_views" in probe.statement
@@ -9807,6 +10268,18 @@ def test_postgresql_non_table_objects_and_probe_failures_are_fail_closed() -> No
     assert "pg_catalog.pg_trigger" in probe.statement
     assert "relrowsecurity" in probe.statement
     assert "pg_catalog.pg_policies" in probe.statement
+    assert (
+        migration_module._non_table_object_detail(  # type: ignore[arg-type]
+            _PostgreSQLProbe([truncate_trigger])
+        )
+        is None
+    )
+    assert migration_module._non_table_object_detail(  # type: ignore[arg-type]
+        _PostgreSQLProbe([("trigger", "runtime_wiring_challenge_consumptions_immutable_truncate")])
+    ) == (
+        "unexpected non-table schema objects: "
+        "trigger:runtime_wiring_challenge_consumptions_immutable_truncate"
+    )
     assert (
         migration_module._non_table_object_detail(  # type: ignore[arg-type]
             _FailingPostgreSQLProbe()
@@ -9845,6 +10318,9 @@ def test_check_constraint_signature_matches_postgresql_native_reflection_without
     )
 
     assert _check_constraint_signature("((assurance_class)::text = 'native'::text)") == expected
+    assert _check_constraint_signature(
+        "kind::text = ANY (ARRAY['status'::character varying, 'wiring'::character varying]::text[])"
+    ) == _check_constraint_signature("kind IN ('status', 'wiring')")
     assert _check_constraint_signature("source_system='gove-zone'") == _check_constraint_signature(
         "(source_system)::text = 'gove-zone'::text"
     )
@@ -10278,9 +10754,9 @@ def test_upgrade_can_be_retried_after_a_completed_run(tmp_path: Path) -> None:
     first = upgrade_database(database_url)
     second = upgrade_database(database_url)
 
-    assert first.after.state is DatabaseSchemaState.VERSION_0011
-    assert second.before.state is DatabaseSchemaState.VERSION_0011
-    assert second.after.state is DatabaseSchemaState.VERSION_0011
+    assert first.after.state is DatabaseSchemaState.VERSION_0013
+    assert second.before.state is DatabaseSchemaState.VERSION_0013
+    assert second.after.state is DatabaseSchemaState.VERSION_0013
 
 
 def test_retry_after_failure_immediately_after_legacy_stamp_preserves_evidence(
@@ -10364,7 +10840,7 @@ def test_retry_after_failure_immediately_after_legacy_stamp_preserves_evidence(
 
     result = upgrade_database(database_url)
     assert result.before.state is DatabaseSchemaState.VERSION_0001
-    assert result.after.state is DatabaseSchemaState.VERSION_0011
+    assert result.after.state is DatabaseSchemaState.VERSION_0013
 
 
 def test_0002_projects_only_interruption_retries_without_rewriting_legacy_evidence(
@@ -10388,7 +10864,7 @@ def test_0002_projects_only_interruption_retries_without_rewriting_legacy_eviden
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0001_PARTIAL_PROJECTS
-    assert result.after.state is DatabaseSchemaState.VERSION_0011
+    assert result.after.state is DatabaseSchemaState.VERSION_0013
     assert _receipt_payload(database_url, "receipt-0002-projects") == (
         "org-0002-resume",
         json.dumps({"preserve": "0002-resume"}),
@@ -10410,7 +10886,7 @@ def test_0002_full_scope_interruption_retries_when_both_empty_tables_are_exact(
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0001_PARTIAL_SCOPE
-    assert result.after.state is DatabaseSchemaState.VERSION_0011
+    assert result.after.state is DatabaseSchemaState.VERSION_0013
 
 
 def test_0002_data_bearing_partial_scope_is_rejected_without_resuming(

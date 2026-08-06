@@ -36,6 +36,7 @@ from acgs_control_plane.managed_mutations import (  # type: ignore[import-untype
     TENANT_BOOTSTRAP_EXECUTION_BOUNDARY,
 )
 from acgs_control_plane.migrations import (  # type: ignore[import-untyped]
+    HEAD_REVISION,
     DatabaseSchemaState,
     upgrade_database,
 )
@@ -116,7 +117,7 @@ def app_client(tmp_path: Path) -> Iterator[tuple[TestClient, Any]]:
     expected_database = "acgs_control_plane_test"
     _reset_postgres_schema(database_url, expected_database)
     result = upgrade_database(database_url, expected_database=expected_database)
-    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert result.after.state is DatabaseSchemaState(f"version_{HEAD_REVISION}")
     app = create_app(
         Settings(
             database_url=database_url,

@@ -70,6 +70,7 @@ from acgs_control_plane.governance import (
     production_blockers,
     reconcile_http_routes,
 )
+from acgs_control_plane.managed_mutations import ManagedReplayArtifactValidationError
 from acgs_control_plane.migrations import (
     DatabaseSchemaState,
     SchemaPreflight,
@@ -80,13 +81,21 @@ from acgs_control_plane.migrations import (
 from acgs_control_plane.models import (
     AgentRecord,
     ComplianceExport,
+    Environment,
     EnvironmentPolicyHead,
     Organization,
     PolicyBundle,
     PolicyVersion,
     ReceiptRow,
+    RuntimeCredentialGeneration,
+    RuntimeIdentity,
+    RuntimeIdentityGate,
+    RuntimeReport,
+    RuntimeReportHead,
+    RuntimeWiringAttestation,
     User,
     new_id,
+    utcnow,
 )
 from acgs_control_plane.mutation_inventory import (
     MutationGuardedFastAPI,
@@ -118,10 +127,16 @@ from acgs_control_plane.runtime_enrollment import (
     RuntimeBootstrapPepper,
     RuntimeEnrollmentHttpError,
     RuntimeEnrollmentService,
+    _to_utc,
     local_runtime_bootstrap_pepper,
     local_runtime_descriptor_signer,
     local_runtime_enrollment_issuer,
     local_runtime_enrollment_receipt_sealer,
+)
+from acgs_control_plane.runtime_reports import (
+    RuntimeReportAuth,
+    RuntimeReportProviderUnavailable,
+    RuntimeReportService,
 )
 from acgs_control_plane.schemas import (
     AgentRegisterRequest,
@@ -133,6 +148,9 @@ from acgs_control_plane.schemas import (
     ExportCreateRequest,
     ExportDetail,
     ExportSummary,
+    FleetResponse,
+    FleetRuntime,
+    FleetState,
     OrgCreateRequest,
     OrgCreateResponse,
     OrgResponse,
@@ -144,11 +162,14 @@ from acgs_control_plane.schemas import (
     ReceiptListResponse,
     ReceiptSummary,
     ReceiptVerifyResponse,
+    RuntimeAttestationChallengeResponse,
     RuntimeEnrollmentBootstrapCreateRequest,
     RuntimeEnrollmentBootstrapCreateResponse,
     RuntimeEnrollmentRequest,
     RuntimeEnrollmentResponse,
     RuntimeIdentityRevokeRequest,
+    RuntimeReportRequest,
+    RuntimeReportResponse,
     RuntimeSignedRequest,
     SimulateRequest,
     SimulateResponse,
@@ -389,6 +410,67 @@ def require(permission: Permission):
         return principal
 
     return Depends(checker)
+
+
+def _runtime_report_provider_unavailable() -> RuntimeEnrollmentHttpError:
+    return RuntimeEnrollmentHttpError(
+        503,
+        "RUNTIME_REPORT_PROVIDER_UNAVAILABLE",
+        "service_unavailable",
+        "runtime report cryptographic provider is unavailable",
+    )
+
+
+def _runtime_report_auth(
+    *,
+    identity_id: str,
+    runtime_identity_id: str | None,
+    key_id: str | None,
+    audience: str | None,
+    credential_id: str | None,
+    credential_generation: str | None,
+    timestamp: str | None,
+    nonce: str | None,
+    body_sha256: str | None,
+    signature: str | None,
+) -> RuntimeReportAuth:
+    values = {
+        "runtime_identity_id": runtime_identity_id,
+        "key_id": key_id,
+        "audience": audience,
+        "credential_id": credential_id,
+        "credential_generation": credential_generation,
+        "timestamp": timestamp,
+        "nonce": nonce,
+        "body_sha256": body_sha256,
+        "signature": signature,
+    }
+    if any(value is None for value in values.values()) or runtime_identity_id != identity_id:
+        raise RuntimeEnrollmentHttpError(
+            401,
+            "RUNTIME_AUTHENTICATION_FAILED",
+            "unauthorized",
+            "runtime authentication failed",
+        )
+    try:
+        generation = int(cast(str, credential_generation))
+    except ValueError as exc:
+        raise RuntimeEnrollmentHttpError(
+            401,
+            "RUNTIME_AUTHENTICATION_FAILED",
+            "unauthorized",
+            "runtime authentication failed",
+        ) from exc
+    return RuntimeReportAuth(
+        key_id=cast(str, key_id),
+        credential_id=cast(str, credential_id),
+        credential_generation=generation,
+        audience=cast(str, audience),
+        timestamp=cast(str, timestamp),
+        nonce=cast(str, nonce),
+        body_sha256=cast(str, body_sha256),
+        signature=cast(str, signature),
+    )
 
 
 def _membrane(request: Request, session: Session, org: Organization, principal: Principal):
@@ -900,11 +982,17 @@ def create_app(
         bootstrap_pepper=cast(RuntimeBootstrapPepper, effective_runtime_bootstrap_pepper),
         descriptor_signer=effective_runtime_descriptor_signer,
     )
+    app.state.runtime_report_service = RuntimeReportService(
+        app.state.session_factory,
+        runtime_enrollment_service=app.state.runtime_enrollment_service,
+        descriptor_signer=effective_runtime_descriptor_signer,
+    )
     app.state.policy_sync_service = PolicySyncService(
         app.state.session_factory,
         attestation_issuer=effective_policy_sync_attestation_issuer,
         policy_registry_issuer=effective_policy_registry_issuer,
         receipt_sealer=effective_policy_registry_receipt_sealer,
+        descriptor_signer=effective_runtime_descriptor_signer,
     )
     try:
         app.state.mutation_inventory_seal = build_mutation_inventory_seal(app)
@@ -929,7 +1017,7 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/readyz", tags=["meta"])
     def readyz(request: Request) -> JSONResponse:
         preflight: SchemaPreflight = request.app.state.schema_preflight
-        schema_current = preflight.state is DatabaseSchemaState.VERSION_0011
+        schema_current = preflight.state is DatabaseSchemaState.VERSION_0013
         blockers: tuple[PostureBlocker, ...] = request.app.state.readiness_blockers
         return JSONResponse(
             status_code=503,
@@ -1215,6 +1303,447 @@ def _register_routes(app: FastAPI) -> None:
         return _agent_response(rec, receipt_id=outcome.receipt.id)
 
     # -- runtime identity enrollment ----------------------------------------
+
+    @app.get(
+        "/v1/runtime-identities/{identity_id}/attestation-challenges",
+        response_model=RuntimeAttestationChallengeResponse,
+        tags=["runtime-identities"],
+        operation_id="runtime-attestation-challenge.issue",
+    )
+    def issue_runtime_attestation_challenge(
+        identity_id: str,
+        request: Request,
+        runtime_build_digest: Annotated[str, Query(pattern=r"^[0-9a-f]{64}$")],
+        configuration_digest: Annotated[str, Query(pattern=r"^[0-9a-f]{64}$")],
+        policy_snapshot_hash: Annotated[str, Query(pattern=r"^[0-9a-f]{64}$")],
+        runtime_identity_id: Annotated[
+            str | None, Header(alias="X-ACGS-Runtime-Identity-ID")
+        ] = None,
+        key_id: Annotated[str | None, Header(alias="X-ACGS-Runtime-Key-ID")] = None,
+        audience: Annotated[str | None, Header(alias="X-ACGS-Runtime-Audience")] = None,
+        credential_id: Annotated[str | None, Header(alias="X-ACGS-Runtime-Credential-ID")] = None,
+        credential_generation: Annotated[
+            str | None, Header(alias="X-ACGS-Runtime-Credential-Generation")
+        ] = None,
+        timestamp: Annotated[str | None, Header(alias="X-ACGS-Runtime-Timestamp")] = None,
+        nonce: Annotated[str | None, Header(alias="X-ACGS-Runtime-Nonce")] = None,
+        body_sha256: Annotated[str | None, Header(alias="X-ACGS-Runtime-Body-Sha256")] = None,
+        signature: Annotated[str | None, Header(alias="X-ACGS-Runtime-Signature")] = None,
+    ) -> RuntimeAttestationChallengeResponse:
+        auth = _runtime_report_auth(
+            identity_id=identity_id,
+            runtime_identity_id=runtime_identity_id,
+            key_id=key_id,
+            audience=audience,
+            credential_id=credential_id,
+            credential_generation=credential_generation,
+            timestamp=timestamp,
+            nonce=nonce,
+            body_sha256=body_sha256,
+            signature=signature,
+        )
+        service: RuntimeReportService = request.app.state.runtime_report_service
+        try:
+            return service.issue_challenge(
+                identity_id=identity_id,
+                auth=auth,
+                raw_path=request.scope.get("raw_path", b""),
+                raw_query=request.url.query,
+                runtime_build_digest=runtime_build_digest,
+                configuration_digest=configuration_digest,
+                policy_snapshot_hash=policy_snapshot_hash,
+            )
+        except RuntimeReportProviderUnavailable as exc:
+            raise _runtime_report_provider_unavailable() from exc
+
+    @app.post(
+        "/v1/runtime-identities/{identity_id}/reports",
+        response_model=RuntimeReportResponse,
+        status_code=201,
+        tags=["runtime-identities"],
+        operation_id="runtime-report.accept",
+    )
+    async def accept_runtime_report(
+        identity_id: str,
+        body: RuntimeReportRequest,
+        request: Request,
+        runtime_identity_id: Annotated[
+            str | None, Header(alias="X-ACGS-Runtime-Identity-ID")
+        ] = None,
+        key_id: Annotated[str | None, Header(alias="X-ACGS-Runtime-Key-ID")] = None,
+        audience: Annotated[str | None, Header(alias="X-ACGS-Runtime-Audience")] = None,
+        credential_id: Annotated[str | None, Header(alias="X-ACGS-Runtime-Credential-ID")] = None,
+        credential_generation: Annotated[
+            str | None, Header(alias="X-ACGS-Runtime-Credential-Generation")
+        ] = None,
+        timestamp: Annotated[str | None, Header(alias="X-ACGS-Runtime-Timestamp")] = None,
+        nonce: Annotated[str | None, Header(alias="X-ACGS-Runtime-Nonce")] = None,
+        body_sha256: Annotated[str | None, Header(alias="X-ACGS-Runtime-Body-Sha256")] = None,
+        signature: Annotated[str | None, Header(alias="X-ACGS-Runtime-Signature")] = None,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> RuntimeReportResponse:
+        auth = _runtime_report_auth(
+            identity_id=identity_id,
+            runtime_identity_id=runtime_identity_id,
+            key_id=key_id,
+            audience=audience,
+            credential_id=credential_id,
+            credential_generation=credential_generation,
+            timestamp=timestamp,
+            nonce=nonce,
+            body_sha256=body_sha256,
+            signature=signature,
+        )
+        service: RuntimeReportService = request.app.state.runtime_report_service
+        try:
+            return service.accept(
+                identity_id=identity_id,
+                auth=auth,
+                body=body,
+                raw_body=await request.body(),
+                raw_path=request.scope.get("raw_path", b""),
+                idempotency_key=idempotency_key,
+            )
+        except RuntimeReportProviderUnavailable as exc:
+            raise _runtime_report_provider_unavailable() from exc
+
+    @app.get(
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/fleet",
+        response_model=FleetResponse,
+        tags=["runtime-identities"],
+        operation_id="runtime-fleet.read",
+    )
+    def get_runtime_fleet(
+        project_id: str,
+        environment_id: str,
+        org: OrgDep,
+        response: Response,
+        session: SessionDep,
+        _principal: Annotated[Principal, require(Permission.RUNTIME_FLEET_READ)],
+        cursor: Annotated[str | None, Query(min_length=1, max_length=64)] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    ) -> FleetResponse:
+        environment = session.scalars(
+            select(Environment).where(
+                Environment.org_id == org.id,
+                Environment.project_id == project_id,
+                Environment.id == environment_id,
+            )
+        ).one_or_none()
+        if environment is None:
+            raise HTTPException(status_code=404, detail="environment not found")
+        response.headers["Cache-Control"] = "private, no-store"
+        now = utcnow()
+        identity_stmt = select(RuntimeIdentity).where(
+            RuntimeIdentity.org_id == org.id,
+            RuntimeIdentity.project_id == project_id,
+            RuntimeIdentity.environment_id == environment_id,
+        )
+        if cursor is not None:
+            identity_stmt = identity_stmt.where(RuntimeIdentity.id > cursor)
+        identity_page = list(
+            session.scalars(identity_stmt.order_by(RuntimeIdentity.id).limit(limit + 1))
+        )
+        next_cursor = identity_page[limit - 1].id if len(identity_page) > limit else None
+        identities = identity_page[:limit]
+        identity_ids = [identity.id for identity in identities]
+        gate_ids = [identity.gate_id for identity in identities]
+        gates = {
+            gate.id: gate
+            for gate in session.scalars(
+                select(RuntimeIdentityGate).where(RuntimeIdentityGate.id.in_(gate_ids))
+            )
+        }
+        credentials = {
+            credential.identity_id: credential
+            for credential in session.scalars(
+                select(RuntimeCredentialGeneration).where(
+                    RuntimeCredentialGeneration.org_id == org.id,
+                    RuntimeCredentialGeneration.project_id == project_id,
+                    RuntimeCredentialGeneration.environment_id == environment_id,
+                    RuntimeCredentialGeneration.identity_id.in_(identity_ids),
+                    RuntimeCredentialGeneration.status == "active",
+                )
+            )
+        }
+        head = session.scalars(
+            select(EnvironmentPolicyHead).where(
+                EnvironmentPolicyHead.org_id == org.id,
+                EnvironmentPolicyHead.project_id == project_id,
+                EnvironmentPolicyHead.environment_id == environment_id,
+            )
+        ).one_or_none()
+        active_policy = (
+            session.get(PolicyVersion, head.active_policy_version_id) if head is not None else None
+        )
+        report_heads = {
+            head.identity_id: head
+            for head in session.scalars(
+                select(RuntimeReportHead).where(
+                    RuntimeReportHead.org_id == org.id,
+                    RuntimeReportHead.project_id == project_id,
+                    RuntimeReportHead.environment_id == environment_id,
+                    RuntimeReportHead.identity_id.in_(identity_ids),
+                )
+            )
+        }
+        latest_report_ids = [head.latest_report_id for head in report_heads.values()]
+        latest_reports = {
+            report.identity_id: report
+            for report in session.scalars(
+                select(RuntimeReport).where(
+                    RuntimeReport.org_id == org.id,
+                    RuntimeReport.project_id == project_id,
+                    RuntimeReport.environment_id == environment_id,
+                    RuntimeReport.id.in_(latest_report_ids),
+                )
+            )
+        }
+        latest_wiring_ids = [
+            head.latest_wiring_report_id
+            for head in report_heads.values()
+            if head.latest_wiring_report_id is not None
+        ]
+        wiring_reports = {
+            report.identity_id: report
+            for report in session.scalars(
+                select(RuntimeReport).where(
+                    RuntimeReport.org_id == org.id,
+                    RuntimeReport.project_id == project_id,
+                    RuntimeReport.environment_id == environment_id,
+                    RuntimeReport.kind == "wiring",
+                    RuntimeReport.id.in_(latest_wiring_ids),
+                )
+            )
+        }
+        wiring_report_ids = [report.id for report in wiring_reports.values()]
+        wiring_evidence_by_report = {
+            evidence.report_id: evidence
+            for evidence in session.scalars(
+                select(RuntimeWiringAttestation).where(
+                    RuntimeWiringAttestation.report_id.in_(wiring_report_ids)
+                )
+            )
+        }
+        identity_by_id = {identity.id: identity for identity in identities}
+        lineage_pairs = [
+            (report, identity_by_id[report.identity_id])
+            for report in {
+                report.id: report for report in (*latest_reports.values(), *wiring_reports.values())
+            }.values()
+            if report.identity_id in identity_by_id
+        ]
+        try:
+            lineage_valid_by_report_id = (
+                app.state.runtime_report_service.validate_stored_report_lineages(
+                    session, reports=lineage_pairs, now=now
+                )
+                if lineage_pairs
+                else {}
+            )
+        except RuntimeReportProviderUnavailable as exc:
+            raise _runtime_report_provider_unavailable() from exc
+        runtimes: list[FleetRuntime] = []
+        report_service: RuntimeReportService = app.state.runtime_report_service
+        for identity in identities:
+            gate = gates.get(identity.gate_id)
+            credential = credentials.get(identity.id)
+            report_head = report_heads.get(identity.id)
+            latest_report = latest_reports.get(identity.id)
+            wiring_report = wiring_reports.get(identity.id)
+            registered = True
+            identity_active = identity.status == "active"
+            current_identity_binding_valid = False
+            if identity_active and credential is not None:
+                try:
+                    report_service.validate_current_identity_binding(
+                        identity=identity,
+                        credential=credential,
+                        now=now,
+                    )
+                except RuntimeReportProviderUnavailable as exc:
+                    raise _runtime_report_provider_unavailable() from exc
+                except ManagedReplayArtifactValidationError:
+                    pass
+                else:
+                    current_identity_binding_valid = True
+            latest_lineage_valid = False
+            wiring_lineage_valid = False
+            if report_head is not None and latest_report is not None:
+                latest_lineage_valid = (
+                    report_head.last_sequence == latest_report.sequence
+                    and report_head.latest_report_id == latest_report.id
+                    and report_head.latest_report_hash == latest_report.report_hash
+                    and report_head.latest_projection_commitment
+                    == latest_report.projection_commitment
+                )
+                latest_lineage_valid = latest_lineage_valid and lineage_valid_by_report_id.get(
+                    latest_report.id, False
+                )
+            if report_head is not None and wiring_report is not None:
+                wiring_lineage_valid = (
+                    report_head.latest_wiring_kind == "wiring"
+                    and report_head.latest_wiring_sequence == wiring_report.sequence
+                    and report_head.latest_wiring_report_id == wiring_report.id
+                    and report_head.latest_wiring_report_hash == wiring_report.report_hash
+                    and report_head.latest_wiring_projection_commitment
+                    == wiring_report.projection_commitment
+                )
+                wiring_lineage_valid = wiring_lineage_valid and lineage_valid_by_report_id.get(
+                    wiring_report.id, False
+                )
+            runtime_binding_current = (
+                current_identity_binding_valid
+                and gate is not None
+                and gate.status == "active"
+                and credential is not None
+                and credential.status == "active"
+                and credential.generation == identity.current_generation
+                and _to_utc(credential.not_before) <= now < _to_utc(credential.not_after)
+            )
+            report_current = (
+                runtime_binding_current
+                and latest_lineage_valid
+                and latest_report is not None
+                and now < _to_utc(latest_report.expires_at)
+            )
+            report_policy_current = False
+            if (
+                runtime_binding_current
+                and report_current
+                and latest_report is not None
+                and head is not None
+                and active_policy is not None
+                and credential is not None
+            ):
+                report_policy_current = (
+                    latest_report.policy_version_id == head.active_policy_version_id
+                    and latest_report.policy_head_generation == head.generation
+                    and latest_report.policy_content_hash == active_policy.content_hash
+                    and now < _to_utc(latest_report.policy_fresh_until)
+                    and now < _to_utc(latest_report.policy_expires_at)
+                    and latest_report.credential_id == credential.id
+                    and latest_report.credential_generation == credential.generation
+                )
+            wiring_evidence = (
+                wiring_evidence_by_report.get(wiring_report.id)
+                if wiring_report is not None
+                else None
+            )
+            wiring_current = False
+            if (
+                runtime_binding_current
+                and report_policy_current
+                and wiring_lineage_valid
+                and wiring_report is not None
+                and wiring_evidence is not None
+                and latest_report is not None
+                and head is not None
+                and credential is not None
+            ):
+                wiring_current = (
+                    now < _to_utc(wiring_report.expires_at)
+                    and wiring_report.policy_version_id == head.active_policy_version_id
+                    and wiring_report.policy_head_generation == head.generation
+                    and wiring_report.credential_id == credential.id
+                    and wiring_report.credential_generation == credential.generation
+                    and wiring_report.runtime_build_digest == latest_report.runtime_build_digest
+                    and wiring_report.configuration_digest == latest_report.configuration_digest
+                    and wiring_report.policy_version_id == latest_report.policy_version_id
+                    and wiring_report.policy_head_generation == latest_report.policy_head_generation
+                    and wiring_report.policy_content_hash == latest_report.policy_content_hash
+                    and wiring_report.credential_id == latest_report.credential_id
+                    and wiring_report.credential_generation == latest_report.credential_generation
+                )
+            runtimes.append(
+                FleetRuntime(
+                    identity_id=identity.id,
+                    gate_id=identity.gate_id,
+                    registered=FleetState(
+                        available=registered,
+                        reason=(
+                            "active_registration"
+                            if identity_active
+                            else "durable_registration_revoked"
+                        ),
+                        observed_at=identity.created_at,
+                    ),
+                    online=FleetState(
+                        available=report_current,
+                        reason=(
+                            "latest_accepted_runtime_report_current"
+                            if report_current
+                            else (
+                                "registration_revoked"
+                                if not identity_active
+                                else (
+                                    "runtime_report_lineage_invalid"
+                                    if report_head is not None
+                                    else "no_current_accepted_runtime_report"
+                                )
+                            )
+                        ),
+                        observed_at=(
+                            latest_report.observed_at
+                            if report_current and latest_report is not None
+                            else None
+                        ),
+                    ),
+                    policy_current=FleetState(
+                        available=report_policy_current,
+                        reason=(
+                            "latest_accepted_report_policy_current"
+                            if report_policy_current
+                            else (
+                                "registration_revoked"
+                                if not identity_active
+                                else "no_current_accepted_report_policy_binding"
+                            )
+                        ),
+                        observed_at=(
+                            latest_report.observed_at
+                            if report_policy_current and latest_report is not None
+                            else None
+                        ),
+                    ),
+                    proven_wired=FleetState(
+                        available=wiring_current,
+                        reason=(
+                            "current_observed_in_process_public_surface_conformance"
+                            if wiring_current
+                            else (
+                                "wiring_attestation_not_current"
+                                if wiring_report is not None
+                                and wiring_evidence is not None
+                                and wiring_lineage_valid
+                                else (
+                                    "wiring_attestation_lineage_invalid"
+                                    if report_head is not None
+                                    and report_head.latest_wiring_report_id is not None
+                                    else "no_current_observed_wiring_attestation"
+                                )
+                            )
+                        ),
+                        observed_at=(
+                            wiring_report.observed_at
+                            if wiring_current and wiring_report is not None
+                            else None
+                        ),
+                    ),
+                    evidence_current=FleetState(
+                        available=False,
+                        reason="accepted_evidence_ingestion_not_implemented",
+                        observed_at=None,
+                    ),
+                )
+            )
+        return FleetResponse(
+            org_id=org.id,
+            project_id=project_id,
+            environment_id=environment_id,
+            runtimes=runtimes,
+            next_cursor=next_cursor,
+        )
 
     @app.post(
         "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/runtime-enrollment-bootstraps",

@@ -20,7 +20,7 @@ from acgs_control_plane.managed_mutations import (
     CONTROL_PLANE_POLICY_ACTIVATE_ACTION,
     TENANT_BOOTSTRAP_ACTION,
 )
-from acgs_control_plane.migrations import DatabaseSchemaState, upgrade_database
+from acgs_control_plane.migrations import HEAD_REVISION, DatabaseSchemaState, upgrade_database
 from acgs_control_plane.models import (
     AgentRecord,
     AgentRegistrationIdempotency,
@@ -240,7 +240,7 @@ def _vertical_app(tmp_path: Path) -> tuple[Any, TestClient, str]:
 
     _reset_postgres_schema(database_url)
     result = upgrade_database(database_url, expected_database=EXPECTED_DATABASE)
-    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert result.after.state is DatabaseSchemaState(f"version_{HEAD_REVISION}")
     app = create_app(
         Settings(
             database_url=database_url,

@@ -6,15 +6,47 @@ from typing import Any
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
+from acgs_control_plane import runtime_reports
 from acgs_control_plane.auth import Principal
 from acgs_control_plane.governance import ROUTE_CONTRACTS, ExecutionClass
 from acgs_control_plane.mutation_inventory import (
     CANONICAL_MUTATION_DEFINITIONS,
     MutationDefinition,
     MutationEffectClass,
+    _callable_fingerprint,
     verify_static_sql_atomic_safety,
 )
+from acgs_control_plane.runtime_reports import RuntimeReportService
 from acgs_control_plane.tenant_bootstrap import BOOTSTRAP_IDEMPOTENCY_HEADER
+
+
+def test_callable_fingerprint_binds_scalar_constants() -> None:
+    def post() -> str:
+        return "POST"
+
+    def get() -> str:
+        return "GET"
+
+    assert _callable_fingerprint(post)["code_hash"] != _callable_fingerprint(get)["code_hash"]
+
+
+def test_runtime_report_local_alias_drift_fails_health_before_dispatch(
+    client: TestClient, monkeypatch: Any
+) -> None:
+    monkeypatch.setattr(runtime_reports, "verify_policy_sync_snapshot", lambda *_a, **_k: None)
+    response = client.get("/healthz")
+    assert response.status_code == 503
+    assert response.json()["code"] == "MUTATION_INVENTORY_DRIFT"
+
+
+def test_runtime_report_provider_field_drift_fails_health_before_dispatch(
+    client: TestClient, monkeypatch: Any
+) -> None:
+    service = client.app.state.runtime_report_service
+    monkeypatch.setattr(service, "_descriptor_signer", object())
+    response = client.get("/healthz")
+    assert response.status_code == 503
+    assert response.json()["code"] == "MUTATION_INVENTORY_DRIFT"
 
 
 def test_mutation_inventory_preserves_canonical_and_legacy_truth(client: TestClient) -> None:
@@ -29,10 +61,10 @@ def test_mutation_inventory_preserves_canonical_and_legacy_truth(client: TestCli
         if contract.execution_class is ExecutionClass.LEGACY_UNSIGNED_WRITE
     ]
 
-    # 10 canonical writes plus the 7 /v1 aliases whose source path is not
+    # 11 canonical writes plus the 7 /v1 aliases whose source path is not
     # already versioned. Tenant bootstrap, runtime enroll, and runtime renew are
     # already served only under /v1.
-    assert len(canonical_contracts) == 17
+    assert len(canonical_contracts) == 18
     assert len(legacy_contracts) == 12
     assert {
         (definition.method, definition.path, definition.action, definition.effect_class)
@@ -58,6 +90,7 @@ def test_mutation_inventory_preserves_canonical_and_legacy_truth(client: TestCli
         "runtime-identity.renew",
         "runtime-identity.revoke",
         "runtime-identity.revoke.v1",
+        "runtime-report.accept",
         "environment-policy.publish",
         "environment-policy.publish.v1",
         "environment-policy.activate",
@@ -73,7 +106,9 @@ def test_mutation_inventory_preserves_canonical_and_legacy_truth(client: TestCli
     runtime_definitions = {
         definition.operation_id: definition
         for definition in CANONICAL_MUTATION_DEFINITIONS
-        if definition.operation_id.startswith(("runtime-enrollment", "runtime-identity"))
+        if definition.operation_id.startswith(
+            ("runtime-enrollment", "runtime-identity", "runtime-report")
+        )
     }
     assert set(runtime_definitions) == {
         "runtime-enrollment-bootstrap.issue",
@@ -82,6 +117,7 @@ def test_mutation_inventory_preserves_canonical_and_legacy_truth(client: TestCli
         "runtime-identity.renew",
         "runtime-identity.revoke",
         "runtime-identity.revoke.v1",
+        "runtime-report.accept",
     }
     assert {
         definition.operation_id
@@ -89,7 +125,11 @@ def test_mutation_inventory_preserves_canonical_and_legacy_truth(client: TestCli
         if definition.service == "acgs_control_plane.runtime_enrollment.RuntimeEnrollmentService"
         and definition.state_key == "runtime_enrollment_service"
         and definition.dispatcher == "managed-mutation-uow.execute_with_receipt"
-    } == set(runtime_definitions)
+    } == set(runtime_definitions) - {"runtime-report.accept"}
+    report_definition = runtime_definitions["runtime-report.accept"]
+    assert report_definition.service == "acgs_control_plane.runtime_reports.RuntimeReportService"
+    assert report_definition.state_key == "runtime_report_service"
+    assert report_definition.dispatcher == "managed-mutation-uow.execute_with_receipt"
     assert {
         operation_id: definition.service_method
         for operation_id, definition in runtime_definitions.items()
@@ -100,6 +140,7 @@ def test_mutation_inventory_preserves_canonical_and_legacy_truth(client: TestCli
         "runtime-identity.renew": "renew",
         "runtime-identity.revoke": "revoke",
         "runtime-identity.revoke.v1": "revoke",
+        "runtime-report.accept": "accept",
     }
     assert (
         len(
@@ -311,6 +352,25 @@ def test_service_method_monkeypatch_is_refused_before_method_call(
     assert "method-drift-agent" not in response.text
 
 
+def test_runtime_report_delegate_monkeypatch_is_refused_before_delegate_call(
+    client: TestClient, monkeypatch: Any
+) -> None:
+    reached = {"delegate": False}
+
+    def replacement_accept_serialized(self: Any, **_kwargs: Any) -> Any:
+        del self
+        reached["delegate"] = True
+        raise AssertionError("sealed delegate must not execute")
+
+    monkeypatch.setattr(RuntimeReportService, "_accept_serialized", replacement_accept_serialized)
+
+    response = client.get("/healthz")
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "MUTATION_INVENTORY_DRIFT"
+    assert reached == {"delegate": False}
+
+
 def test_later_middleware_is_refused_before_middleware_side_effect(client: TestClient) -> None:
     reached = {"middleware": False}
 
@@ -426,6 +486,23 @@ def test_static_guard_scans_registered_real_callback_surface() -> None:
     assert "acgs_control_plane.policy_registry.PolicyRegistryService.activate" in symbols
     assert "acgs_control_plane.managed_mutations._execute_verified_operation" in symbols
     assert verify_static_sql_atomic_safety(CANONICAL_MUTATION_DEFINITIONS) == ()
+
+
+def test_runtime_report_inventory_seals_explicit_security_delegates() -> None:
+    definition = next(
+        definition
+        for definition in CANONICAL_MUTATION_DEFINITIONS
+        if definition.operation_id == "runtime-report.accept"
+    )
+
+    assert set(definition.delegated_symbols) >= {
+        "acgs_control_plane.runtime_reports.RuntimeReportService._accept_serialized",
+        "acgs_control_plane.runtime_reports.RuntimeReportService._replay_after_conflict",
+        "acgs_control_plane.runtime_reports.RuntimeReportService._verify_challenge",
+        "acgs_control_plane.runtime_reports._replay_report_operation",
+        "acgs_control_plane.runtime_reports._validate_anchored_report_lineage",
+        "acgs_control_plane.managed_mutations.validate_managed_replay_artifacts",
+    }
 
 
 def _api_route(client: TestClient, method: str, path: str) -> APIRoute:

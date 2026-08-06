@@ -384,6 +384,7 @@ def test_v1_org_aliases_share_v0_endpoints_with_stable_operation_ids(tmp_path: P
                     "approval.resume",
                     "runtime-enrollment-bootstrap.issue",
                     "runtime-identity.revoke",
+                    "runtime-fleet.read",
                 }:
                     assert alias.operation_id == f"v1_{route.operation_id}"
                 else:

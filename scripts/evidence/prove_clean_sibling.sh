@@ -3903,6 +3903,7 @@ run_contained_bootstrap "$WORKTREE" "$EVIDENCE_PY" "$WORKTREE/scripts/evidence/v
 run_contained "$WORKTREE" "$UV_BIN" pip freeze --python "$EVIDENCE_PY" \
   >"$NODE_EVIDENCE/evidence.freeze"
 EVID_GATE=(.venv-evidence/bin/python -m pytest -q \
+  tests/saas_beta/test_evidence_bootstrap.py::test_literal_prover_reviewed_corpus_is_exact \
   tests/saas_beta/test_evidence_bootstrap.py::test_universal_evidence_interpreter_offline)
 EVID_GATE_STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_contained "$WORKTREE" "${EVID_GATE[@]}" \
@@ -4439,7 +4440,7 @@ run_trusted_parent_p0_launcher_authority_gate() {
   shift 5
   local started finished stdout_file stderr_file gate_status
   local launcher_path launcher_fd launcher_path_stat launcher_fd_stat launcher_sha
-  local trusted_launcher_sha256='ed5f0f338a5d2f009fc7b90fdce7b48dd750e2783be690ca9d14b09a342b15c6'
+  local trusted_launcher_sha256='2382fb98adbb72e2460b9ee375f3badf682de172026a7c97635659d4c86761cd'
   local target_sha='1111111111111111111111111111111111111111'
   [[ "$scope" == P0 ]] || die 'trusted parent P0 launcher gate is P0-only'
   [[ "$cwd" == "$WORKTREE" ]] || die 'trusted parent P0 launcher gate cwd must be repository root'
@@ -5323,6 +5324,19 @@ elif [[ "$NODE_ID" == P3-APPROVAL-003 || "$NODE_ID" == P3-APPROVAL-003B || "$NOD
     "${P3_APPROVAL_ROOT_GATE[@]}"
 elif [[ "$NODE_ID" == P4-ENROLLMENT-001 ]]; then
   P4_RUNTIME_ENROLLMENT_CP_GATE=(./scripts/run_postgres_gate.sh \
+    tests/integration/test_runtime_enrollment_postgres.py::test_populated_runtime_enrollment_0011_through_0012_upgrades_to_0013_postgresql \
+    tests/integration/test_runtime_enrollment_postgres.py::test_runtime_lineage_schema_objects_are_required_postgresql \
+    tests/integration/test_runtime_enrollment_postgres.py::test_runtime_report_provider_outages_are_redacted_and_atomic_postgresql \
+    tests/integration/test_runtime_enrollment_postgres.py::test_identical_runtime_reports_converge_on_postgresql \
+    tests/integration/test_runtime_enrollment_postgres.py::test_identical_concurrent_wiring_reports_replay_without_debris_postgresql \
+    tests/integration/test_runtime_enrollment_postgres.py::test_concurrent_different_runtime_report_body_conflicts_without_debris \
+    tests/integration/test_runtime_enrollment_postgres.py::test_runtime_wiring_challenge_is_invalidated_by_intervening_report_postgresql \
+    tests/integration/test_runtime_enrollment_postgres.py::test_runtime_report_post_persistence_failure_rolls_back_postgresql \
+    tests/integration/test_runtime_enrollment_postgres.py::test_runtime_report_head_composite_anchor_is_enforced_postgresql \
+    tests/integration/test_runtime_enrollment_postgres.py::test_runtime_wiring_historical_replay_and_projection_binding_postgresql \
+    tests/integration/test_runtime_enrollment_postgres.py::test_runtime_wiring_attestations_are_immutable_postgresql \
+    tests/integration/test_runtime_enrollment_postgres.py::test_runtime_wiring_challenge_consumptions_are_immutable_postgresql \
+    tests/integration/test_runtime_enrollment_postgres.py::test_runtime_report_bigint_schema_and_current_binding_postgresql \
     tests/integration/test_runtime_enrollment_postgres.py::test_100_identical_runtime_enrollments_converge_to_one_identity \
     tests/integration/test_runtime_enrollment_postgres.py::test_runtime_enrollment_conflict_and_cross_scope_idempotency_are_isolated \
     tests/integration/test_runtime_enrollment_postgres.py::test_runtime_renew_replay_revoke_and_expired_paths_are_nonduplicating)

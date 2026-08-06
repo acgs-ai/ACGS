@@ -31,7 +31,7 @@ from gove_zone.runtime_identity import (
 from gove_zone.runtime_identity import (
     public_key_thumbprint as gove_public_key_thumbprint,
 )
-from gove_zone.signing import Ed25519Signer
+from gove_zone.signing import Ed25519Signer, ReceiptSigner
 from gove_zone.tool import ToolCall, normalize_path_context
 from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustScope, TrustConfigurationError
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -125,6 +125,45 @@ class RuntimeEnrollmentHttpError(RuntimeError):
     detail: str
     receipt_id: str | None = None
     decision: str | None = None
+
+
+class RuntimeIdentityProviderUnavailable(RuntimeIdentityError):
+    """The injected runtime-identity cryptographic provider is unavailable."""
+
+
+class RuntimeEnrollmentProviderUnavailable(RuntimeError):
+    """An external runtime-enrollment provider failed at its explicit boundary."""
+
+
+@dataclass(frozen=True)
+class _ProviderBoundaryReceiptSigner:
+    delegate: ReceiptSigner
+    key_id: str
+    algorithm: str
+
+    def sign(self, payload: bytes) -> str:
+        try:
+            return self.delegate.sign(payload)
+        except Exception as exc:
+            raise RuntimeEnrollmentProviderUnavailable from exc
+
+    def verify(self, payload: bytes, signature: str) -> bool:
+        try:
+            return self.delegate.verify(payload, signature)
+        except Exception as exc:
+            raise RuntimeEnrollmentProviderUnavailable from exc
+
+
+@dataclass(frozen=True)
+class _BoundRuntimeEnrollmentIssuer:
+    signer: _ProviderBoundaryReceiptSigner
+    key_id: str
+    algorithm: str
+
+    def signer_for_scope(self, _scope: ReceiptTrustScope, *, trust_epoch: int) -> ReceiptSigner:
+        if trust_epoch <= 0:
+            raise ManagedTrustError("managed issuer requires a positive trust epoch")
+        return self.signer
 
 
 class RuntimeBootstrapPepper(Protocol):
@@ -1604,18 +1643,56 @@ class RuntimeEnrollmentService:
         audit_hash: str,
         request_id: str,
     ) -> DecisionReceipt:
+        scope = ReceiptTrustScope(
+            context.org_id,
+            context.project_id,
+            context.environment_id,
+            DECISION_RECEIPT_PURPOSE,
+        )
         try:
-            trust_epoch = active_trust_epoch_for_scope(
-                session,
-                ReceiptTrustScope(
-                    context.org_id,
-                    context.project_id,
-                    context.environment_id,
-                    DECISION_RECEIPT_PURPOSE,
-                ),
+            trust_epoch = active_trust_epoch_for_scope(session, scope)
+        except (TrustConfigurationError, ManagedTrustError, ReceiptValidationError) as exc:
+            raise RuntimeEnrollmentHttpError(
+                503,
+                "SIGNER_UNAVAILABLE",
+                "signer_unavailable",
+                "runtime enrollment signer or trust root unavailable",
+            ) from exc
+        try:
+            provider_signer = self._providers.issuer.signer_for_scope(
+                scope, trust_epoch=trust_epoch
             )
+            provider_key_id = self._providers.issuer.key_id
+            provider_algorithm = self._providers.issuer.algorithm
+            signer_key_id = provider_signer.key_id
+            signer_algorithm = provider_signer.algorithm
+        except Exception as exc:
+            raise RuntimeEnrollmentHttpError(
+                503,
+                "SIGNER_UNAVAILABLE",
+                "signer_unavailable",
+                "runtime enrollment signer or trust root unavailable",
+            ) from exc
+        if signer_key_id != provider_key_id or signer_algorithm != provider_algorithm:
+            raise RuntimeEnrollmentHttpError(
+                503,
+                "SIGNER_UNAVAILABLE",
+                "signer_unavailable",
+                "runtime enrollment signer or trust root unavailable",
+            )
+        boundary_signer = _ProviderBoundaryReceiptSigner(
+            provider_signer,
+            key_id=signer_key_id,
+            algorithm=signer_algorithm,
+        )
+        bound_issuer = _BoundRuntimeEnrollmentIssuer(
+            boundary_signer,
+            key_id=provider_key_id,
+            algorithm=provider_algorithm,
+        )
+        try:
             return mint_managed_decision_receipt_v2(
-                issuer=self._providers.issuer,
+                issuer=bound_issuer,
                 context=cast(ManagedReceiptContext, context),
                 record=record,
                 audit_hash=audit_hash,
@@ -1627,7 +1704,12 @@ class RuntimeEnrollmentService:
                 constraints={"schema": "runtime-enrollment-constraints/v1"},
                 approval_chain_summary={},
             )
-        except (TrustConfigurationError, ManagedTrustError, ReceiptValidationError) as exc:
+        except (
+            TrustConfigurationError,
+            ManagedTrustError,
+            ReceiptValidationError,
+            RuntimeEnrollmentProviderUnavailable,
+        ) as exc:
             raise RuntimeEnrollmentHttpError(
                 503,
                 "SIGNER_UNAVAILABLE",
@@ -1729,6 +1811,83 @@ def _runtime_public_key_bytes(public_key: str) -> bytes:
             "bad_request",
             "runtime public key is malformed",
         ) from exc
+
+
+def validate_current_runtime_identity_binding(
+    identity: RuntimeIdentity,
+    credential: RuntimeCredentialGeneration,
+    *,
+    descriptor_signer: Any,
+    now: datetime,
+) -> GoveRuntimeIdentityDescriptor:
+    """Validate the complete current workload-key and issuer-descriptor binding."""
+    try:
+        descriptor_issuer_public_key = descriptor_signer.public_key_bytes()
+    except Exception as exc:
+        raise RuntimeIdentityProviderUnavailable(
+            "runtime identity descriptor provider is unavailable"
+        ) from exc
+    try:
+        public_key = b64url_decode(identity.public_key, expected_len=32)
+        derived_thumbprint = gove_public_key_thumbprint(public_key)
+        identity_descriptor = GoveRuntimeIdentityDescriptor.from_dict(identity.descriptor)
+        credential_descriptor = GoveRuntimeIdentityDescriptor.from_dict(credential.descriptor)
+        expected_scope = GateScope(
+            org_id=identity.org_id,
+            project_id=identity.project_id,
+            environment=identity.environment_id,
+            gate_id=identity.gate_id,
+        )
+        for descriptor in (identity_descriptor, credential_descriptor):
+            descriptor.verify(
+                descriptor_issuer_public_key,
+                expected_scope=expected_scope,
+                expected_audience=RUNTIME_ENROLLMENT_AUTHORITY,
+                now=_to_utc(now),
+            )
+    except (RuntimeIdentityError, TypeError, ValueError) as exc:
+        raise RuntimeIdentityError("current runtime identity binding is invalid") from exc
+
+    checks = {
+        "identity_status": identity.status == "active",
+        "credential_status": credential.status == "active",
+        "generation": identity.current_generation == credential.generation,
+        "credential_identity": credential.identity_id == identity.id,
+        "credential_scope": (
+            credential.org_id,
+            credential.project_id,
+            credential.environment_id,
+        )
+        == (identity.org_id, identity.project_id, identity.environment_id),
+        "workload_key_id": identity.workload_key_id == credential.workload_key_id,
+        "identity_thumbprint": identity.public_key_thumbprint == derived_thumbprint,
+        "credential_thumbprint": credential.public_key_thumbprint == derived_thumbprint,
+        "descriptor_copies": identity_descriptor == credential_descriptor,
+        "identity_descriptor_canonical": identity_descriptor.to_dict() == dict(identity.descriptor),
+        "credential_descriptor_canonical": credential_descriptor.to_dict()
+        == dict(credential.descriptor),
+        "descriptor_identity": identity_descriptor.runtime_identity_id == identity.id,
+        "descriptor_credential": identity_descriptor.credential_id == credential.id,
+        "descriptor_generation": identity_descriptor.credential_generation == credential.generation,
+        "descriptor_public_key": identity_descriptor.public_key_bytes == public_key
+        and identity_descriptor.public_key == identity.public_key,
+        "descriptor_thumbprint": identity_descriptor.public_key_thumbprint == derived_thumbprint,
+        "descriptor_issuer": identity_descriptor.issuer == "acgs-control-plane",
+        "descriptor_signer": identity_descriptor.signing_key_id == descriptor_signer.key_id,
+        "descriptor_not_before": _to_utc(credential.not_before)
+        <= _descriptor_issued_at(identity_descriptor),
+        "descriptor_not_after": _to_utc(credential.not_after)
+        == _descriptor_expires_at(identity_descriptor),
+        "credential_current": _to_utc(credential.not_before)
+        <= _to_utc(now)
+        < _to_utc(credential.not_after),
+    }
+    failed = sorted(name for name, valid in checks.items() if not valid)
+    if failed:
+        raise RuntimeIdentityError(
+            "current runtime identity binding is invalid: " + ", ".join(failed)
+        )
+    return identity_descriptor
 
 
 def _bootstrap_token_from_authorization(authorization: str | None) -> str:
@@ -2206,21 +2365,24 @@ def _sealed_terminal_response_payload(
 ) -> dict[str, Any]:
     terminal_payload = dict(payload)
     terminal_payload.pop(_TERMINAL_RESPONSE_SEAL_KEY, None)
-    envelope = receipt_sealer.seal(
-        canonical_json(terminal_payload).encode("utf-8"),
-        associated_data=_terminal_response_aad(
-            org_id=org_id,
-            project_id=project_id,
-            environment_id=environment_id,
-            identity_id=identity_id,
-            action=action,
-            operation=operation,
-            request_hash=request_hash,
-            idempotency_key_hash=idempotency_key_hash,
-            receipt_id=receipt_id,
-            receipt_hash=receipt_hash,
-        ),
-    )
+    try:
+        envelope = receipt_sealer.seal(
+            canonical_json(terminal_payload).encode("utf-8"),
+            associated_data=_terminal_response_aad(
+                org_id=org_id,
+                project_id=project_id,
+                environment_id=environment_id,
+                identity_id=identity_id,
+                action=action,
+                operation=operation,
+                request_hash=request_hash,
+                idempotency_key_hash=idempotency_key_hash,
+                receipt_id=receipt_id,
+                receipt_hash=receipt_hash,
+            ),
+        )
+    except Exception as exc:
+        raise RuntimeEnrollmentProviderUnavailable from exc
     return {**terminal_payload, _TERMINAL_RESPONSE_SEAL_KEY: dict(envelope)}
 
 
@@ -2265,6 +2427,23 @@ def _verified_stored_terminal_payload(
                 receipt_hash=receipt_hash,
             ),
         )
+    except Exception as exc:
+        local_validation_failure = isinstance(receipt_sealer, AesGcmReceiptArtifactSealer) and (
+            isinstance(exc, (ValueError, TypeError))
+            or (
+                type(exc).__module__ == "cryptography.exceptions"
+                and type(exc).__name__ == "InvalidTag"
+            )
+        )
+        if local_validation_failure:
+            raise RuntimeEnrollmentHttpError(
+                503,
+                "TERMINAL_RESPONSE_TAMPERED",
+                "terminal_response_tampered",
+                "runtime terminal response seal is invalid",
+            ) from exc
+        raise RuntimeEnrollmentProviderUnavailable from exc
+    try:
         sealed_payload = json.loads(plaintext.decode("utf-8"))
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         raise RuntimeEnrollmentHttpError(

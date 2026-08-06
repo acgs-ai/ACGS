@@ -56,6 +56,7 @@ from acgs_control_plane.managed_mutations import (
     CONTROL_PLANE_RUNTIME_IDENTITY_ENROLL_ACTION,
     CONTROL_PLANE_RUNTIME_IDENTITY_RENEW_ACTION,
     CONTROL_PLANE_RUNTIME_IDENTITY_REVOKE_ACTION,
+    CONTROL_PLANE_RUNTIME_REPORT_ACCEPT_ACTION,
     TENANT_BOOTSTRAP_ACTION,
 )
 from acgs_control_plane.models import Organization, PolicyBundle, ReceiptRow
@@ -226,6 +227,30 @@ ROUTE_CONTRACTS: tuple[RouteContract, ...] = (
         True,
         False,
         False,
+    ),
+    RouteContract(
+        "POST",
+        "/v1/runtime-identities/{identity_id}/reports",
+        ExecutionClass.CANONICAL_MANAGED_WRITE,
+        CONTROL_PLANE_RUNTIME_REPORT_ACCEPT_ACTION,
+        True,
+        False,
+        False,
+    ),
+    RouteContract(
+        "GET",
+        "/v1/runtime-identities/{identity_id}/attestation-challenges",
+        ExecutionClass.READ_ONLY_OPERATION,
+    ),
+    RouteContract(
+        "GET",
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/fleet",
+        ExecutionClass.READ_ONLY_OPERATION,
+    ),
+    RouteContract(
+        "GET",
+        "/v1/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/fleet",
+        ExecutionClass.READ_ONLY_OPERATION,
     ),
     RouteContract(
         "POST",

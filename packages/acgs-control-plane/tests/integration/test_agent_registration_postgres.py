@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from acgs_control_plane.agent_registration import local_agent_registration_issuer
 from acgs_control_plane.app import create_app
 from acgs_control_plane.config import RuntimePosture, Settings
-from acgs_control_plane.migrations import DatabaseSchemaState, upgrade_database
+from acgs_control_plane.migrations import HEAD_REVISION, DatabaseSchemaState, upgrade_database
 from acgs_control_plane.models import PolicyBundle, new_id
 from tests.test_agent_registration_managed_route import (
     BOOTSTRAP_TOKEN,
@@ -41,7 +41,7 @@ def test_real_postgres_concurrent_policy_activation_preserves_single_active(
 
     _reset_postgres_schema(database_url)
     result = upgrade_database(database_url, expected_database=EXPECTED_DATABASE)
-    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert result.after.state is DatabaseSchemaState(f"version_{HEAD_REVISION}")
 
     issuer = local_agent_registration_issuer()
     app = create_app(
