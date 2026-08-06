@@ -54,20 +54,24 @@ jobs:
             "$PR_BASE_REF" \
             "+refs/pull/$PR_NUMBER/head"
 
+      # `continue-on-error` keeps a failed review step from turning the job red on its
+      # own: the "Gate on review outcome" step below is the sole decider of this required
+      # check (it reads `steps.codex-review.outcome`, which records the real result even
+      # with `continue-on-error`), so an unwaived failure still fails the gate.
       - name: Run Codex Code Review
         if: ${{ env.OPENAI_API_KEY != '' && env.IS_INTERNAL == 'true' }}
         id: codex-review
-        # The "Gate on review outcome" step below is the sole decider of this required
-        # check, so a hard failure here must not fail the job directly: the gate reads
-        # steps.codex-review.outcome (which continue-on-error preserves as 'failure')
-        # and still fails closed unless a maintainer applied 'codex-review-waived'.
         continue-on-error: true
         uses: openai/codex-action@v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .github/codex/prompts/review.md
           output-file: codex-review-output.md
-          sandbox: read-only
+          # `read-only` forces the legacy read-only sandbox (equivalent to
+          # `sandbox: read-only`) without the default `drop-sudo` strategy, whose
+          # "verify sudo removed" assertion fails deterministically on Blacksmith
+          # runners because sudo is not granted via the mechanisms it strips.
+          safety-strategy: read-only
 
       - name: Post Codex feedback
         if: ${{ env.OPENAI_API_KEY != '' && env.IS_INTERNAL == 'true' && steps.codex-review.outputs.final-message != '' }}
