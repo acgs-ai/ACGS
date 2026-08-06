@@ -17,7 +17,7 @@ audit chain, and replay engine. Any violated invariant exits non-zero.
     4. AUDIT   — every decision left a tamper-evident, hash-chained record.
     5. REPLAY  — re-run the recorded decisions against policy; they still match.
 
-Status: foundational / Alpha (0.1.0a1). This proves the LOCAL invariant.
+Status: foundational / Beta (1.0.0rc1). This proves the LOCAL invariant.
 It is NOT a production, compliance, or regulator-ready certification. The demo
 runs UNSIGNED by default (receipts are ``unsigned_local``); Ed25519 signing is
 opt-in (see SECURITY.md). The registered "tool" is a stand-in — gove-zone decides

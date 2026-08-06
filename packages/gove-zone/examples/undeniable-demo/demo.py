@@ -27,7 +27,7 @@ demonstrates WHERE the gate slots in.
 --------------------------------------------------------------------------------
 Honest scope
 --------------------------------------------------------------------------------
-Status: foundational / Alpha (``0.1.0a1``). This proves the LOCAL invariant
+Status: foundational / Beta (``1.0.0rc1``). This proves the LOCAL invariant
 with a keypair generated inside this process (correct and self-contained for a
 pedagogical example, but obviously not real key custody). It is NOT a
 production, compliance, or regulator-ready certification. See ``SECURITY.md``
