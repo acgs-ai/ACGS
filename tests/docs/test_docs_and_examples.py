@@ -11,6 +11,26 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
+
+def _uninitialized_submodule_prefixes() -> tuple[str, ...]:
+    """Path prefixes of declared submodules absent from this checkout.
+
+    Paths under a submodule declared in ``.gitmodules`` whose working tree is
+    not initialized (no ``<path>/.git``) cannot be verified here, e.g. the
+    credential-gated ``packages/acgs-control-plane`` on public lanes. Their
+    contents are enforced by the lanes that do initialize them; everything
+    else stays strictly checked, and an initialized submodule is checked in
+    full.
+    """
+    gitmodules = ROOT / ".gitmodules"
+    if not gitmodules.is_file():
+        return ()
+    declared = re.findall(
+        r"(?m)^\s*path\s*=\s*(\S+)", gitmodules.read_text(encoding="utf-8")
+    )
+    return tuple(f"{p}/" for p in declared if not (ROOT / p / ".git").exists())
+
+
 REQUIRED_DOCS = [
     "README.md",
     "AGENTS.md",
@@ -154,7 +174,9 @@ def test_claim_ledger_evidence_exists() -> None:
             if f"{name}.py" not in test_files and f"def {name}(" not in test_defs:
                 missing.append(f"{label} -> {name}")
         for rel in set(re.findall(r"`((?:packages|examples|docs)/[\w./-]+)`", cited)):
-            if not (ROOT / rel).exists():
+            if not (ROOT / rel).exists() and not rel.startswith(
+                _uninitialized_submodule_prefixes()
+            ):
                 missing.append(f"{label} -> {rel}")
     assert not missing, "claim ledger cites evidence not present in the tree:\n  " + "\n  ".join(
         missing

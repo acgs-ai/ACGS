@@ -22,7 +22,6 @@ Parent-tracked packages (declared in `pyproject.toml` `[tool.uv.workspace]` or
 | `docs/archive/acgs-enterprise-ai-manager/frontend/` | parent files | Vue 3, Vite 5 (archived) | none (archived) | Enterprise manager frontend — archived 2026-07-05, removed from pnpm workspace; rationale in `docs/archive/acgs-enterprise-ai-manager/ARCHIVED.md` |
 | `acgs_governance_eval_mvp/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-eval-mvp.yml` | Eval MVP — path-filtered on `acgs_governance_eval_mvp/**`; also hosts the Hermes/Phoenix host adapter (`governance/adapters/hermes/`, folded in from the retired `hermes_acgs_bundle/`) |
 | `acgs-cft-governance-pack/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-cft-pack.yml` | CFT governance pack — path-filtered |
-| `packages/acgs-control-plane/` | parent files | Python ≥3.11, FastAPI, SQLAlchemy 2 (PostgreSQL), pytest, ruff, mypy | `.github/workflows/python-acgs-control-plane.yml` (path-filtered) | Enterprise Governance Control Plane — multi-tenant receipt-gated management API over gove-zone (org model, agent/policy registries, receipt explorer, audit dashboard, compliance export, RBAC) |
 | `packages/agent-bus-analyzer/` | parent files | Python ≥3.11, pytest, ruff | `.github/workflows/python-agent-bus-analyzer.yml` (path-filtered); also in root Makefile fan-out | Enhanced Agent Bus observability layer |
 | `packages/research-engine/` | parent files | Python ≥3.11, pytest, ruff, mypy `--strict` | `.github/workflows/python-research-engine.yml` (path-filtered); also in root Makefile fan-out (`lint-py`/`test-py`/`typecheck-py`) | `delve` — self-deepening research engine (fan-out research, citation-backed knowledge graph, adversarial verification); core has zero runtime deps, real backends are optional extras |
 | `packages/gove-zone/` | parent files | Python ≥3.11, pytest, ruff | `.github/workflows/python-gove-zone.yml` (path-filtered); also in root Makefile fan-out | Governed runtime kernel — main receipt-gated execution membrane |
@@ -57,6 +56,7 @@ pinned SHA in a follow-up parent commit.
 | `packages/acgs-lite/` | `main` | yes — v2.10.1 (`requires-python = ">=3.10"`) | n/a (it IS acgs-lite) | `python-acgs-lite.yml` |
 | `packages/Acgs-Swarm/` | `main` | no — depends on `acgs-lite>=2.8.1` | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-acgs-swarm.yml` |
 | `packages/clinicalguard/` | `main` | no | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-clinicalguard.yml` |
+| `packages/acgs-control-plane/` | `main` — **private** `acgs-ai/acgs-control-plane` (proprietary; history through `9c6168f` remains Apache-2.0) | no | still a `[tool.uv.workspace]` member — requires an initialized submodule for root `uv` commands | `python-acgs-control-plane.yml`; also built by `saas-beta-required.yml` (required gate) and `saas-beta-p0-evidence.yml` — all three hard-fail without `SUBMODULE_TOKEN` access to the private repo |
 | `packages/ACGS-agency-agents/` | pinned SHA (no `branch` in `.gitmodules`) | no | n/a — not a uv workspace member; often an empty checkout locally | none |
 
 ## Third-party `external/` references

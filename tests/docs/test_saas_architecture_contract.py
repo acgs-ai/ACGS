@@ -1,11 +1,41 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SAAS = ROOT / "docs" / "saas"
 ADR = ROOT / "docs" / "adr"
+
+
+def _uninitialized_submodule_prefixes() -> tuple[str, ...]:
+    """Path prefixes of declared submodules absent from this checkout.
+
+    Paths under a submodule declared in ``.gitmodules`` whose working tree is
+    not initialized (no ``<path>/.git``) cannot be verified here, e.g. the
+    credential-gated ``packages/acgs-control-plane`` on public lanes. Their
+    contents are enforced by the lanes that do initialize them; everything
+    else stays strictly checked, and an initialized submodule is checked in
+    full.
+    """
+    gitmodules = ROOT / ".gitmodules"
+    if not gitmodules.is_file():
+        return ()
+    declared = re.findall(
+        r"(?m)^\s*path\s*=\s*(\S+)", gitmodules.read_text(encoding="utf-8")
+    )
+    return tuple(f"{p}/" for p in declared if not (ROOT / p / ".git").exists())
+
+
+def _assert_repo_files_exist(paths: set[str]) -> None:
+    skip = _uninitialized_submodule_prefixes()
+    missing = [
+        path
+        for path in sorted(paths)
+        if not (ROOT / path).is_file() and not path.startswith(skip)
+    ]
+    assert missing == []
 
 
 def _text(path: Path) -> str:
@@ -360,7 +390,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "packages/acgs-control-plane/tests/test_api_contract.py",
     }
     assert actual_g102a_files <= set(g102["likely_interfaces_files"])
-    assert all((ROOT / path).is_file() for path in actual_g102a_files)
+    _assert_repo_files_exist(actual_g102a_files)
     assert (
         "cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q"
         in g102["validation_commands"]
@@ -378,7 +408,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "requirements/saas-beta/cp-test.lock",
     }
     assert actual_g102b_files <= set(g102["likely_interfaces_files"])
-    assert all((ROOT / path).is_file() for path in actual_g102b_files)
+    _assert_repo_files_exist(actual_g102b_files)
     assert (
         "cd packages/acgs-control-plane && uv run pytest tests/test_receipt_cursor_pagination.py -q"
         in g102["validation_commands"]
@@ -387,7 +417,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "packages/acgs-control-plane/tests/test_openapi_drift.py",
     }
     assert actual_g102c_files <= set(g102["likely_interfaces_files"])
-    assert all((ROOT / path).is_file() for path in actual_g102c_files)
+    _assert_repo_files_exist(actual_g102c_files)
     assert (
         "cd packages/acgs-control-plane && uv run pytest tests/test_openapi_drift.py -q"
         in g102["validation_commands"]
@@ -402,7 +432,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "packages/acgs-control-plane/tests/test_v1_api_contract.py",
     }
     assert actual_g102d_files <= set(g102["likely_interfaces_files"])
-    assert all((ROOT / path).is_file() for path in actual_g102d_files)
+    _assert_repo_files_exist(actual_g102d_files)
     assert (
         "cd packages/acgs-control-plane && uv run pytest tests/test_v1_api_contract.py "
         "tests/test_openapi_drift.py tests/test_startup_preflight.py "

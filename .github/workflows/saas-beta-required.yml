@@ -29,6 +29,26 @@ jobs:
           persist-credentials: false
           submodules: false
 
+      # acgs-control-plane is a private submodule (proprietary extraction).
+      # This gate is required on every PR, so a missing/underscoped
+      # SUBMODULE_TOKEN must fail loudly here, not soft-skip: the gate's
+      # whole job is to run the control-plane suites.
+      - name: Init control-plane submodule (hard requirement)
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          # Ephemeral global gitconfig so the token never lands in a real
+          # ~/.gitconfig (see python-clinicalguard.yml for rationale).
+          export GIT_CONFIG_GLOBAL="${RUNNER_TEMP}/submodule-gitconfig"
+          if [ -z "${SUBMODULE_TOKEN}" ]; then
+            echo "::error::SUBMODULE_TOKEN is required: acgs-control-plane is a private submodule and this gate must run its tests." >&2
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git submodule sync -- packages/acgs-control-plane
+          git submodule update --init --recursive -- packages/acgs-control-plane
+
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
         with:
           version: 0.11.19
@@ -138,6 +158,11 @@ jobs:
         # can only prove containment if bwrap can actually unshare, and Ubuntu 24.04
         # restricts unprivileged user namespaces through AppArmor. Without this the
         # test fails "containment runner unavailable" — untestable, not satisfied.
+        # The AppArmor profile load is gated on the AppArmor securityfs interface
+        # being present: Blacksmith runner VMs boot without the AppArmor LSM active,
+        # so its userns restriction cannot apply there and apparmor_parser has no
+        # kernel interface to load into. The bwrap unshare smoke test below is the
+        # authoritative check either way and still hard-fails if userns is blocked.
         # Scoped to /usr/bin/bwrap alone on the ephemeral runner. Adds no credential
         # surface and no outbound mutation, so it stays inside the side-effect contract
         # asserted by test_saas_beta_required_gate_has_no_privileged_or_external_side_effect_surface.
@@ -148,11 +173,6 @@ jobs:
           sudo apt-get install --yes bubblewrap
           test "$(command -v bwrap)" = /usr/bin/bwrap
           bwrap --version
-          # The AppArmor userns restriction only exists on kernels with AppArmor
-          # enabled and its securityfs interface mounted; apparmor_parser hard-fails
-          # without that interface ("unable to find a suitable fs in /proc/mounts").
-          # On such runners the restriction cannot apply, so skip the profile load.
-          # The bwrap smoke run below still proves unshare works either way.
           if [ -d /sys/kernel/security/apparmor ]; then
             if ! command -v apparmor_parser >/dev/null 2>&1; then
               sudo apt-get install --yes apparmor
@@ -166,6 +186,8 @@ jobs:
           }
           APPARMOR
             sudo apparmor_parser -r /etc/apparmor.d/acgs-ci-bwrap
+          else
+            echo "AppArmor securityfs absent; skipping profile load (userns restriction cannot apply)"
           fi
           bwrap \
             --unshare-all --unshare-user --die-with-parent --new-session --disable-userns \
