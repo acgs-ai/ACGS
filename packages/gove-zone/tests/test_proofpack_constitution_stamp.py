@@ -19,7 +19,11 @@ import pytest
 jsonschema = pytest.importorskip("jsonschema")
 
 from gove_zone.decision import sha256_json  # noqa: E402
-from gove_zone.proofpack import EVIDENCE_FILE, generate_proof_pack  # noqa: E402
+from gove_zone.proofpack import (  # noqa: E402
+    EVIDENCE_FILE,
+    PACK_SCHEMA_VERSION,
+    generate_proof_pack,
+)
 from gove_zone.proofpack_cli import main as acgs_main  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -34,12 +38,10 @@ CONSTITUTION = {
 
 
 def _evidence_schema() -> Any:
-    text = (
-        resources.files("gove_zone")
-        .joinpath("schemas")
-        .joinpath("proof-pack.v1.evidence.schema.json")
-        .read_text("utf-8")
-    )
+    # Freshly generated packs declare PACK_SCHEMA_VERSION; validate against
+    # that version's own schema file (v1 stays frozen under its own $id).
+    schema_file = f"proof-pack.{PACK_SCHEMA_VERSION.rsplit('/', 1)[1]}.evidence.schema.json"
+    text = resources.files("gove_zone").joinpath("schemas").joinpath(schema_file).read_text("utf-8")
     doc = json.loads(text)
     assert isinstance(doc, dict)
     return doc
