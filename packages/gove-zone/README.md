@@ -177,6 +177,9 @@ wheel packages, all console scripts, and the public API fixture.
 | Decision Receipts | `docs/decision-receipts.md` |
 | Audit evidence | `docs/audit-evidence.md` |
 | Policy bundles | `docs/policy-bundles.md` |
+| Workflow receipt chains | `docs/workflow-receipt-chain.md` |
+| Plan-level governance | `docs/plan-level-governance.md` |
+| Game-day incident-evidence drill | `docs/gameday-runbook.md` |
 | API stability | `docs/API_STABILITY.md` |
 | Release process | `docs/RELEASING.md` |
 | Changelog | `CHANGELOG.md` |
