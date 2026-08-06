@@ -146,12 +146,18 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install --yes bubblewrap
-          if ! command -v apparmor_parser >/dev/null 2>&1; then
-            sudo apt-get install --yes apparmor
-          fi
           test "$(command -v bwrap)" = /usr/bin/bwrap
           bwrap --version
-          sudo tee /etc/apparmor.d/acgs-ci-bwrap >/dev/null <<'APPARMOR'
+          # The AppArmor userns restriction only exists on kernels with AppArmor
+          # enabled and its securityfs interface mounted; apparmor_parser hard-fails
+          # without that interface ("unable to find a suitable fs in /proc/mounts").
+          # On such runners the restriction cannot apply, so skip the profile load.
+          # The bwrap smoke run below still proves unshare works either way.
+          if [ -d /sys/kernel/security/apparmor ]; then
+            if ! command -v apparmor_parser >/dev/null 2>&1; then
+              sudo apt-get install --yes apparmor
+            fi
+            sudo tee /etc/apparmor.d/acgs-ci-bwrap >/dev/null <<'APPARMOR'
           abi <abi/4.0>,
           include <tunables/global>
 
@@ -159,7 +165,8 @@ jobs:
             userns,
           }
           APPARMOR
-          sudo apparmor_parser -r /etc/apparmor.d/acgs-ci-bwrap
+            sudo apparmor_parser -r /etc/apparmor.d/acgs-ci-bwrap
+          fi
           bwrap \
             --unshare-all --unshare-user --die-with-parent --new-session --disable-userns \
             --proc /proc --dev /dev --tmpfs /tmp --tmpfs /run \
