@@ -28,6 +28,10 @@ on:
     paths:
       - 'examples/**'
       - 'tests/docs/**'
+      # tests/docs/test_skill_frontmatter.py validates these trees. Without them in
+      # the filter the gate would not run on the one change it exists to catch.
+      - '.agents/skills/**'
+      - '.claude/skills/**'
       - 'compliance/**'
       - 'evidence/**'
       - 'docs/**'
@@ -44,6 +48,10 @@ on:
     paths:
       - 'examples/**'
       - 'tests/docs/**'
+      # tests/docs/test_skill_frontmatter.py validates these trees. Without them in
+      # the filter the gate would not run on the one change it exists to catch.
+      - '.agents/skills/**'
+      - '.claude/skills/**'
       - 'compliance/**'
       - 'evidence/**'
       - 'docs/**'
