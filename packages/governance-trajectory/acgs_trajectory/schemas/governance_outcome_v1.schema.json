@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acgs.ai/schemas/governance_outcome/v1",
+  "title": "governance_outcome/v1",
+  "description": "Measurable outcome grounding for a trajectory + its annotation. Separate artifact; never mutates trajectory or annotation. Confirms high tiers only with evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["outcome_version", "outcome_id", "trajectory_ref", "annotation_ref", "commit", "tests", "ci", "review", "deploy", "grounded_tier", "integrity"],
+  "properties": {
+    "outcome_version": { "const": "governance_outcome/v1" },
+    "outcome_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "trajectory_ref": {
+      "type": "object", "additionalProperties": false,
+      "required": ["trajectory_id", "normalized_sha256"],
+      "properties": {
+        "trajectory_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "normalized_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "annotation_ref": {
+      "type": "object", "additionalProperties": false,
+      "required": ["annotation_id", "annotation_sha256", "evaluator_version"],
+      "properties": {
+        "annotation_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "annotation_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "evaluator_version": { "type": "string" }
+      }
+    },
+    "commit": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["sha"],
+          "properties": {
+            "sha": { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
+            "diff_ref": { "oneOf": [
+              { "type": "object", "additionalProperties": false, "required": ["uri", "sha256"],
+                "properties": { "uri": { "type": "string" }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } },
+              { "type": "null" } ] } } },
+        { "type": "null" }
+      ]
+    },
+    "tests": {
+      "type": "object", "additionalProperties": false, "required": ["passed"],
+      "properties": {
+        "passed": { "type": ["boolean", "null"] },
+        "command": { "type": ["string", "null"] },
+        "marker_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "ci": { "type": "object", "additionalProperties": false, "required": ["status"],
+      "properties": { "status": { "enum": ["passed", "failed", "pending", "none"] } } },
+    "review": { "type": "object", "additionalProperties": false, "required": ["decision"],
+      "properties": {
+        "decision": { "enum": ["approved", "changes_requested", "commented", "none"] },
+        "reviewer": { "type": ["string", "null"] } } },
+    "deploy": { "type": "object", "additionalProperties": false, "required": ["status"],
+      "properties": { "status": { "enum": ["deployed", "failed", "none"] } } },
+    "grounded_tier": {
+      "type": "object", "additionalProperties": false,
+      "required": ["assigned", "confirmed_by", "reasons"],
+      "properties": {
+        "assigned": { "enum": ["S", "A", "B", "C"] },
+        "confirmed_by": { "type": "array", "items": { "type": "string" } },
+        "reasons": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "integrity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["outcome_sha256", "inputs_present", "fail_closed"],
+      "properties": {
+        "outcome_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "inputs_present": { "type": "array", "items": { "type": "string" } },
+        "fail_closed": { "type": "boolean" }
+      }
+    }
+  }
+}
