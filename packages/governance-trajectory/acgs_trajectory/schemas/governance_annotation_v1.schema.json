@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acgs.ai/schemas/governance_annotation/v1",
+  "title": "governance_annotation/v1",
+  "description": "Deterministic, evidence-cited evaluation of a governance_trajectory/v2 record. Separate artifact; never mutates the frozen trajectory. Rebuildable from the trajectory + evaluator_version.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["annotation_version", "annotation_id", "trajectory_ref", "evaluator_version", "scores", "checks", "labels", "tier", "system_area", "integrity"],
+  "properties": {
+    "annotation_version": { "const": "governance_annotation/v1" },
+    "annotation_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "trajectory_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trajectory_id", "normalized_sha256"],
+      "properties": {
+        "trajectory_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "normalized_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "evaluator_version": { "type": "string" },
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trajectory", "risk", "governance", "engineering_quality"],
+      "properties": {
+        "trajectory": { "type": "number", "minimum": 0, "maximum": 1 },
+        "risk": { "type": "number", "minimum": 0, "maximum": 1 },
+        "governance": { "type": "number", "minimum": 0, "maximum": 1 },
+        "engineering_quality": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "passed", "score", "evidence"],
+        "properties": {
+          "name": { "type": "string" },
+          "passed": { "type": "boolean" },
+          "score": { "type": "number", "minimum": 0, "maximum": 1 },
+          "evidence": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+        }
+      }
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engineering", "governance"],
+      "properties": {
+        "engineering": { "$ref": "#/$defs/label_list" },
+        "governance": { "$ref": "#/$defs/label_list" }
+      }
+    },
+    "tier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assigned", "ceiling", "candidate_for", "reasons"],
+      "properties": {
+        "assigned": { "enum": ["S", "A", "B", "C"] },
+        "ceiling": { "enum": ["S", "A", "B", "C"] },
+        "candidate_for": { "enum": ["S", "A", "B", "C", null] },
+        "reasons": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "system_area": {
+      "oneOf": [
+        { "enum": ["governance", "receipt", "executor", "trust", "policy", "security", "data_pipeline"] },
+        { "type": "null" }
+      ]
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["annotation_sha256", "evaluator_version", "inputs_verified", "trajectory_status"],
+      "properties": {
+        "annotation_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "evaluator_version": { "type": "string" },
+        "inputs_verified": { "type": "boolean" },
+        "trajectory_status": { "enum": ["complete", "incomplete", "quarantined"] }
+      }
+    }
+  },
+  "$defs": {
+    "label_list": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "present", "evidence"],
+        "properties": {
+          "name": { "type": "string" },
+          "present": { "type": "boolean" },
+          "evidence": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

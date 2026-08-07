@@ -1,0 +1,207 @@
+{
+  "acceptance_mapping": {
+    "A1 schema contract valid": "jsonschema check_schema + sample validates (test_v6_schema_loads_and_is_draft2020)",
+    "A2 golden round-trip": "replay byte-identical (test_replay_byte_identical_across_runs)",
+    "A3 orphan=0 on golden": "test_v1_clean_on_complete",
+    "A4 tamper detection": "test_tamper_detection_v4 + test_verify_raw_detects_tamper",
+    "A5 missing-field fail-closed": "test_missing_git_head_is_incomplete_not_complete",
+    "A6 unknown-type quarantine": "test_unknown_record_type_quarantined_but_retained",
+    "A7 secret boundary": "test_secret_session_quarantined_and_not_in_shared_archive",
+    "A8 raw immutability": "test_content_addressed_worm + test_manifest_hash_chain",
+    "A9 determinism": "test_determinism_identical_input_identical_output + test_replay_byte_identical_across_runs"
+  },
+  "checks": {
+    "manifest_chain": {
+      "errors": [],
+      "verified": true
+    },
+    "replay": {
+      "byte_identical": true,
+      "canonical_sha256": "9e9d2530132a3d5e99c163846846ab82a583a4c2bbcfe404a1a034bffc2e3a56",
+      "fixture": "tests/fixtures/complete_session.jsonl",
+      "fixture_unmutated": true,
+      "normalized_sha256": "bcc589d875db31a375bdbdb098e3b3b4100dad7c52fff9d4edd2fc879fc71c0d",
+      "runs": 2,
+      "status": "complete",
+      "trajectory_id": "f91157f59536ce6471bf10c94539a771370e039b48bd12eb8fc198485dadccfa"
+    },
+    "schema_validation": {
+      "sample_errors": [],
+      "sample_valid": true,
+      "schema_is_draft2020": true
+    }
+  },
+  "fixtures": [
+    {
+      "path": "tests/fixtures/complete_session.jsonl",
+      "purpose": "real-shape passing session (golden replay input)",
+      "sha256": "70e65dbde173aaff149cb048fb4b1cebd377eb9946b8faccc83cb388fd3ce996"
+    },
+    {
+      "path": "tests/fixtures/subagent_session.jsonl",
+      "purpose": "sidechain / subagent nesting",
+      "sha256": "a62f83fe1763d01da5cf6323b916f68169b81072aa1afb4f2f33ef962ba51756"
+    },
+    {
+      "path": "tests/fixtures/hook_prevented_session.jsonl",
+      "purpose": "governance hook evidence (preventedContinuation)",
+      "sha256": "0b0dbb6412a28076196c613bc2fa58a8adcb9160b7c92914a75d3124953cbfaf"
+    },
+    {
+      "path": "tests/fixtures/missing_parent_session.jsonl",
+      "purpose": "V1 orphan",
+      "sha256": "c4aedcd71030aac3e4382da643098dcee0fb6e1b0b9cabc2d69a49f5b430cb47"
+    },
+    {
+      "path": "tests/fixtures/broken_tool_ref_session.jsonl",
+      "purpose": "V2 broken tool reference",
+      "sha256": "0c3eea4913a61878eeee7f84930f7254ffccd4350d2bce09a2c6af612418488c"
+    },
+    {
+      "path": "tests/fixtures/secret_session.jsonl",
+      "purpose": "V5 secret boundary (AWS canonical example key)",
+      "sha256": "3858746a8f939d1a700a919ed11a2adeefc9f6bfc99f53012247526e860d8b8a"
+    },
+    {
+      "path": "tests/fixtures/unsupported_version_session.jsonl",
+      "purpose": "V6 unsupported version quarantine",
+      "sha256": "3e9582c3bf0eb6206911055fd2b13af88c4c7612237083a0b14ae5c5fbb6176e"
+    },
+    {
+      "path": "tests/fixtures/unknown_type_session.jsonl",
+      "purpose": "V6 unknown record type quarantine",
+      "sha256": "ecad0b5bb20900bfb5a777010f16dd5b3485cfc66c3adf7d8d8cb250fc2bbbbb"
+    },
+    {
+      "path": "tests/fixtures/malformed_session.jsonl",
+      "purpose": "malformed JSON -> ParseError",
+      "sha256": "d5873389a0c91c241c68a3159e9b23879fca3ac1da78a18b33cd0706e4004911"
+    }
+  ],
+  "implementation_files": [
+    {
+      "path": "acgs_trajectory/__init__.py",
+      "sha256": "fe0af12cc9f65bdeb6f2a040903c5b6c32cf1ce6afdaebf91f67b8cc4dc41a9c"
+    },
+    {
+      "path": "acgs_trajectory/canonical.py",
+      "sha256": "205b70f34ff63a0cc8c52a60a4033f13325f4acd793fc15022055d4d1fcb6422"
+    },
+    {
+      "path": "acgs_trajectory/errors.py",
+      "sha256": "c8aa461a739ca6919d67a7a979ccaac807a3d9f873e6530a1627fd0181a26791"
+    },
+    {
+      "path": "acgs_trajectory/adapter.py",
+      "sha256": "41e8a138f5af036dd07adb2b6741fe6ff491e6febbeb5b98685a85d2c7df68c6"
+    },
+    {
+      "path": "acgs_trajectory/secrets_scan.py",
+      "sha256": "38b94f3dbf52d6e219f50f9c7c296a1e6ac8c23fb16a292449be573cecc66e2e"
+    },
+    {
+      "path": "acgs_trajectory/raw_store.py",
+      "sha256": "4752a976dafcd43e5089ebf3c6a4e365f69fed0778080df99a9f58c8d72fa4f8"
+    },
+    {
+      "path": "acgs_trajectory/materialize.py",
+      "sha256": "6d69e0b1bdf3a0fc27a6ca4a7247cc6e0a7204fdcf387b60034ca0214997921e"
+    },
+    {
+      "path": "acgs_trajectory/validate.py",
+      "sha256": "52823ba1578df66a50ad020bbe9f4ce2de9306e0edbed06f7333a8158c414b05"
+    },
+    {
+      "path": "acgs_trajectory/ingest.py",
+      "sha256": "7db476e33e4153a39d6e6e5aa457989d75fa06c29723ee85635f5b39964a0142"
+    },
+    {
+      "path": "acgs_trajectory/replay.py",
+      "sha256": "2c0a4c39eb373f97df9bdd9147bd58824f446c4ff1cb2e7c378e9bc3b26b6441"
+    },
+    {
+      "path": "acgs_trajectory/cli.py",
+      "sha256": "c612b1a58f2ec075ca9a0d05cd3acce561cfd8f1280945f9d52121c42a285f60"
+    },
+    {
+      "path": "acgs_trajectory/schemas/governance_trajectory_v2.schema.json",
+      "sha256": "4a61b5d2a6b8b25fb72c161cf599cd8f57dcaa60b9bbd9b41a11edaad0b2e2dd"
+    }
+  ],
+  "known_limitations_ref": "docs/phase1/implementation-summary.md#6-known-limitations",
+  "manifest_version": "phase1-evidence/1",
+  "phase": "1.1 Evidence Freeze",
+  "repository": {
+    "branch": "master",
+    "commit": "913147852d9859c4a764cb8529805ada08bc6d96",
+    "dirty": false
+  },
+  "schema": {
+    "file": "acgs_trajectory/schemas/governance_trajectory_v2.schema.json",
+    "schema_version": "governance_trajectory/v2",
+    "sha256": "4a61b5d2a6b8b25fb72c161cf599cd8f57dcaa60b9bbd9b41a11edaad0b2e2dd"
+  },
+  "scope": "ingestion foundation only (no evaluator/scoring/labels/annotation/tiering/packaging)",
+  "supported_claude_code_versions": {
+    "exact": [
+      "2.1.170"
+    ],
+    "prefixes": [
+      "2."
+    ],
+    "unknown_policy": "quarantine + adapter review (docs/evidence/version-boundary.md)"
+  },
+  "test_suite_result": "38 passed",
+  "validation_coverage": {
+    "V1 causal integrity": {
+      "impl": "validate.v1_causal_graph",
+      "tests": [
+        "test_v1_clean_on_complete",
+        "test_v1_orphan_detected",
+        "test_v1_sidechain_linked",
+        "test_subagent_relationship_and_edges"
+      ]
+    },
+    "V2 block/tool linkage": {
+      "impl": "adapter.SourceAdapter.parse (tool join) + validate.v2_block_integrity",
+      "tests": [
+        "test_tool_use_result_linkage",
+        "test_v1_broken_tool_ref",
+        "test_v2_block_integrity_clean",
+        "test_block_separation_thinking_text_tooluse"
+      ]
+    },
+    "V3 tamper detection": {
+      "impl": "validate.v4_tamper + raw_store.verify_raw + raw_store.verify_chain",
+      "tests": [
+        "test_tamper_detection_v4",
+        "test_verify_raw_detects_tamper",
+        "test_manifest_chain_detects_modification"
+      ]
+    },
+    "V4 provenance completeness": {
+      "impl": "validate.v3_provenance",
+      "tests": [
+        "test_missing_git_head_is_incomplete_not_complete",
+        "test_environment_and_leaf"
+      ]
+    },
+    "V5 secret boundary": {
+      "impl": "secrets_scan.scan_text + ingest quarantine routing",
+      "tests": [
+        "test_v5_secret_detection",
+        "test_v5_git_sha_whitelisted",
+        "test_secret_session_quarantined_and_not_in_shared_archive"
+      ]
+    },
+    "V6 unsupported input handling": {
+      "impl": "adapter version boundary + ingest quarantine + validate.v6_schema",
+      "tests": [
+        "test_unsupported_version_quarantined",
+        "test_unknown_record_type_quarantined_but_retained",
+        "test_malformed_line_raises",
+        "test_v6_rejects_derived_values"
+      ]
+    }
+  }
+}
