@@ -1,0 +1,1 @@
+{"version": "2.1.170", "entrypoint": "cli", "cwd": "/repo", "gitBranch": "master", "userType": "external", "isSidechain": false, "type": "user", "uuid": "u1", "parentUuid": null, "timestamp": "2026-08-06T19:40:00Z", "message": {"role": "user", "content": [{"type": "text", "text": "hi"}]}}
