@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acgs.ai/schemas/governance_trajectory/v2",
+  "title": "governance_trajectory/v2",
+  "description": "Immutable, provenance-stamped, replayable Claude Code execution trajectory. Raw is authoritative; derived is separated and null in Phase 1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "trajectory_id", "provenance", "environment", "human_intent", "trajectory", "tool_events", "hook_events", "code_changes", "derived", "integrity"],
+  "properties": {
+    "schema_version": { "const": "governance_trajectory/v2" },
+    "trajectory_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["raw_ref", "captured_at", "collector_version", "source", "registry_ref"],
+      "properties": {
+        "raw_ref": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["uri", "sha256", "byte_len", "record_count"],
+          "properties": {
+            "uri": { "type": "string" },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "byte_len": { "type": "integer", "minimum": 0 },
+            "record_count": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "captured_at": { "type": "string", "format": "date-time" },
+        "collector_version": { "type": "string" },
+        "source": { "const": "claude-code" },
+        "registry_ref": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["entry_sha256", "prev_entry_sha256"],
+          "properties": {
+            "entry_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "prev_entry_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
+          }
+        }
+      }
+    },
+
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["session_id", "model", "claude_code_version", "entrypoint", "cwd", "git"],
+      "properties": {
+        "session_id": { "type": "string" },
+        "model": { "type": "string" },
+        "claude_code_version": { "type": "string" },
+        "entrypoint": { "type": "string" },
+        "cwd": { "type": "string" },
+        "host": { "type": ["string", "null"] },
+        "git": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["branch", "head_sha", "dirty"],
+          "properties": {
+            "branch": { "type": ["string", "null"] },
+            "head_sha": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,40}$" },
+            "dirty": { "type": ["boolean", "null"] },
+            "remote": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+
+    "human_intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prompts"],
+      "properties": {
+        "prompts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["uuid", "ts", "text"],
+            "properties": {
+              "uuid": { "type": "string" },
+              "ts": { "type": "string", "format": "date-time" },
+              "text": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "trajectory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodes", "edges", "root_uuids", "leaf_uuid"],
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["uuid", "parent_uuid", "seq", "type", "is_sidechain", "raw_line", "digest", "ts"],
+            "properties": {
+              "uuid": { "type": "string" },
+              "parent_uuid": { "type": ["string", "null"] },
+              "seq": { "type": "integer", "minimum": 0 },
+              "type": { "enum": ["user", "assistant", "tool_use", "tool_result", "hook", "attachment"] },
+              "role": { "type": ["string", "null"] },
+              "is_sidechain": { "type": "boolean" },
+              "content_kind": { "enum": ["text", "thinking", "tool_use", "tool_result", null] },
+              "raw_line": { "type": "integer", "minimum": 0 },
+              "block_index": { "type": ["integer", "null"], "minimum": 0 },
+              "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "ts": { "type": ["string", "null"], "format": "date-time" }
+            }
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["parent_uuid", "child_uuid", "kind"],
+            "properties": {
+              "parent_uuid": { "type": "string" },
+              "child_uuid": { "type": "string" },
+              "kind": { "enum": ["reply", "tool_call", "tool_return", "sidechain_spawn"] }
+            }
+          }
+        },
+        "root_uuids": { "type": "array", "items": { "type": "string" } },
+        "leaf_uuid": { "type": ["string", "null"] }
+      }
+    },
+
+    "tool_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["use_uuid", "tool_use_id", "name", "caller", "input_ref", "result_ref", "is_error", "subagent"],
+        "properties": {
+          "use_uuid": { "type": "string" },
+          "tool_use_id": { "type": "string" },
+          "name": { "type": "string" },
+          "caller": { "type": ["object", "string", "null"] },
+          "input_ref": { "$ref": "#/$defs/raw_pointer" },
+          "result_ref": { "oneOf": [ { "$ref": "#/$defs/raw_pointer" }, { "type": "null" } ] },
+          "is_error": { "type": ["boolean", "null"] },
+          "ts_call": { "type": ["string", "null"], "format": "date-time" },
+          "ts_return": { "type": ["string", "null"], "format": "date-time" },
+          "subagent": { "type": "boolean" }
+        }
+      }
+    },
+
+    "hook_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["uuid", "subtype", "hook_names", "prevented_continuation"],
+        "properties": {
+          "uuid": { "type": "string" },
+          "subtype": { "type": ["string", "null"] },
+          "hook_names": { "type": "array", "items": { "type": "string" } },
+          "hook_errors": { "type": "array", "items": { "type": "string" } },
+          "prevented_continuation": { "type": ["boolean", "null"] },
+          "stop_reason": { "type": ["string", "null"] },
+          "tool_use_id": { "type": ["string", "null"] },
+          "ts": { "type": ["string", "null"], "format": "date-time" }
+        }
+      }
+    },
+
+    "code_changes": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "diff_ref": {
+          "oneOf": [
+            { "type": "object", "additionalProperties": false, "required": ["uri", "sha256"],
+              "properties": { "uri": { "type": "string" }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } },
+            { "type": "null" }
+          ]
+        },
+        "files": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "change_kind"],
+            "properties": {
+              "path": { "type": "string" },
+              "change_kind": { "enum": ["added", "modified", "deleted", "renamed"] },
+              "adds": { "type": ["integer", "null"], "minimum": 0 },
+              "dels": { "type": ["integer", "null"], "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+
+    "derived": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Phase 1: all null. Separated, rebuildable. Populating any field is out of Phase 1 scope.",
+      "required": ["scores", "labels", "tier", "outcome"],
+      "properties": {
+        "scores": { "type": "null" },
+        "labels": { "type": "null" },
+        "tier": { "type": "null" },
+        "outcome": { "type": "null" }
+      }
+    },
+
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["normalized_sha256", "status", "reasons"],
+      "properties": {
+        "normalized_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "status": { "enum": ["complete", "incomplete", "quarantined"] },
+        "reasons": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+
+  "$defs": {
+    "raw_pointer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["raw_line", "digest"],
+      "properties": {
+        "raw_line": { "type": "integer", "minimum": 0 },
+        "block_index": { "type": ["integer", "null"], "minimum": 0 },
+        "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}
