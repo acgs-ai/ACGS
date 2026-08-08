@@ -21,6 +21,14 @@ authors = [{ name = "ACGS Team", email = "hello@acgs.dev" }]
 package = false
 
 [tool.uv.workspace]
+# packages/acgs-control-plane is intentionally NOT a member: it is a private
+# gitlink (#429), and uv fails to resolve the whole workspace when a listed
+# member directory is present-but-uninitialized with leftover content (uv only
+# tolerates fully EMPTY member dirs). That broke every submodule-free lane
+# (e.g. python-gove-zone's `uv build --package gove-zone`). The lanes that
+# need the control plane (saas-beta-required, python-acgs-control-plane) init
+# the submodule explicitly and install it standalone via `uv pip sync` +
+# `--editable --no-deps`, so workspace membership is not required.
 members = [
     "packages/acgs-lite",
     "packages/Acgs-Swarm",
@@ -28,7 +36,6 @@ members = [
     "packages/gove-zone",
     "packages/acgs-proofpack-verifier",
     "packages/agent-bus-analyzer",
-    "packages/acgs-control-plane",
     "acgs_governance_eval_mvp",
     "acgs-cft-governance-pack",
     "packages/research-engine",
