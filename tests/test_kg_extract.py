@@ -271,8 +271,36 @@ def test_semantic_snapshot_props_publishes_metadata_alongside_the_loaded_graph(
         "ua_analyzed_at": "2026-08-09",
         "ua_analyzed_files": 10,
         "semantic_layer_is_stale": False,
+        "semantic_dirty_paths": [],
     }
     assert extract.semantic_snapshot_props("other")["semantic_layer_is_stale"] is True
+
+
+def test_semantic_snapshot_props_marks_dirty_analyzed_files_as_stale(tmp_path, monkeypatch):
+    """REGRESSION. A layer generated at the current HEAD still passed the
+    commit-equality check after a tracked source file was edited in the
+    working tree, so reports called the layer "current" and counted the dirty
+    file as analyzed although its summaries and TESTED_BY edges describe the
+    committed version. A dirty path with semantic coverage must mark the
+    layer stale; dirt the graph never analyzed must not."""
+    graph = tmp_path / "knowledge-graph.json"
+    graph.write_text(
+        json.dumps(
+            {"nodes": [{"id": "n1", "type": "file", "filePath": "src/a.py"}], "edges": []}
+        )
+    )
+    monkeypatch.setattr(extract, "UA_GRAPH", graph)
+    meta = tmp_path / "meta.json"
+    meta.write_text(json.dumps({"gitCommitHash": "abc"}))
+    monkeypatch.setattr(extract, "UA_META", meta)
+
+    uncovered = extract.semantic_snapshot_props("abc", ["docs/notes.md"])
+    covered = extract.semantic_snapshot_props("abc", ["src/a.py", "docs/notes.md"])
+
+    assert uncovered["semantic_layer_is_stale"] is False
+    assert uncovered["semantic_dirty_paths"] == []
+    assert covered["semantic_layer_is_stale"] is True
+    assert covered["semantic_dirty_paths"] == ["src/a.py"]
 
 
 # --------------------------------------------------------------------------- #
@@ -474,6 +502,43 @@ def test_control_id_normalises_nist_functions_to_a_single_separator():
     }
 
     assert ids == {"NIST AI RMF MAP-2.3"}
+
+
+def test_top_level_eu_articles_are_recognised_controls():
+    """REGRESSION. The EU pattern required a parenthesized paragraph, so the
+    `Art. 19` rows already present in the compliance readiness report never
+    became Control nodes and the per-framework totals undercounted."""
+    assert extract.control_id("EU AI Act", _match("EU AI Act", "Art. 19")) == ("EU AI Act Art 19")
+
+
+def test_top_level_nist_categories_are_recognised_controls():
+    """REGRESSION companion: the NIST pattern required a decimal subcategory,
+    dropping the `GOVERN 1` / `MAP 1` / `MEASURE 2` / `MANAGE 2` rows the
+    crosswalk actually uses."""
+    ids = {
+        extract.control_id("NIST AI RMF", _match("NIST AI RMF", text))
+        for text in ("GOVERN 1", "GOVERN-1", "MAP 1", "MEASURE 2", "MANAGE 2")
+    }
+
+    assert ids == {
+        "NIST AI RMF GOVERN-1",
+        "NIST AI RMF MAP-1",
+        "NIST AI RMF MEASURE-2",
+        "NIST AI RMF MANAGE-2",
+    }
+
+
+def test_detailed_citations_do_not_also_mint_their_top_level_parents():
+    """`Art. 12(1)` is one control, not `Art 12(1)` plus `Art 12`; likewise
+    `GOVERN 1.5` must not also produce `GOVERN-1`."""
+    eu = dict(extract.CONTROL_PATTERNS)["EU AI Act"]
+    nist = dict(extract.CONTROL_PATTERNS)["NIST AI RMF"]
+
+    eu_ids = {extract.control_id("EU AI Act", m) for m in eu.finditer("see Art. 12(1) here")}
+    nist_ids = {extract.control_id("NIST AI RMF", m) for m in nist.finditer("see GOVERN 1.5 here")}
+
+    assert eu_ids == {"EU AI Act Art 12(1)"}
+    assert nist_ids == {"NIST AI RMF GOVERN-1.5"}
 
 
 @pytest.mark.parametrize(

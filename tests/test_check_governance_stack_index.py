@@ -168,3 +168,22 @@ def test_repository_documents_currently_pass(capsys):
         pytest.skip("governance routing documents are not present in this checkout")
 
     assert gate.main() == 0, capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "workflow", [".github/workflows/tests-root.yml", ".github/workflows/tests-root-hosted.yml"]
+)
+def test_ci_gates_trigger_on_the_documents_the_gate_validates(workflow):
+    """REGRESSION. Neither root gate listed the two routing documents in its
+    ``paths`` filters, so a docs-only edit — e.g. adding a forbidden
+    "production-ready" claim — merged without
+    ``test_repository_documents_currently_pass`` ever running. The workflows
+    must trigger on the exact files this gate validates."""
+    yaml = pytest.importorskip("yaml")
+    spec = yaml.safe_load((gate.ROOT / workflow).read_text(encoding="utf-8"))
+
+    triggers = spec[True] if True in spec else spec["on"]  # YAML parses `on:` as True
+    for event in ("pull_request", "push"):
+        paths = triggers[event]["paths"]
+        assert "docs/governance-stack-index.md" in paths, f"{workflow}:{event}"
+        assert "docs/integration-readiness-task-map.md" in paths, f"{workflow}:{event}"

@@ -25,6 +25,7 @@ import re
 import subprocess
 import sys
 from collections import Counter, defaultdict
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -1031,9 +1032,13 @@ def build_doc_links() -> None:
 
 
 CONTROL_PATTERNS = [
-    ("EU AI Act", re.compile(r"Art(?:icle)?\.?\s*(\d+)\((\d+)\)(?:\(([a-z])\))?")),
+    # The paragraph (EU) and decimal subcategory (NIST) are optional: the
+    # scanned mappings also cite top-level identifiers ("Art. 19", "GOVERN 1"),
+    # and requiring the detailed form silently dropped those rows from the
+    # Control nodes and every per-framework total derived from them.
+    ("EU AI Act", re.compile(r"\bArt(?:icle)?\.?\s*(\d+)(?:\((\d+)\)(?:\(([a-z])\))?)?")),
     ("HIPAA", re.compile(r"§\s*(164\.\d+(?:\([a-z0-9]\))*)")),
-    ("NIST AI RMF", re.compile(r"\b(GOVERN|MAP|MEASURE|MANAGE)[-. ](\d+\.\d+)\b")),
+    ("NIST AI RMF", re.compile(r"\b(GOVERN|MAP|MEASURE|MANAGE)[-. ](\d+(?:\.\d+)?)\b")),
     ("ISO/IEC 42001", re.compile(r"\b(?:Annex\s+)?(A\.\d+\.\d+(?:\.\d+)?)\b")),
     ("SOC 2", re.compile(r"\b(CC\d\.\d+)\b")),
 ]
@@ -1063,7 +1068,12 @@ CONTROL_DOC_HINTS = (
 def control_id(framework: str, m: re.Match) -> str:
     if framework == "EU AI Act":
         art, para, lit = m.group(1), m.group(2), m.group(3)
-        return f"EU AI Act Art {art}({para})" + (f"({lit})" if lit else "")
+        cid = f"EU AI Act Art {art}"
+        if para:
+            cid += f"({para})"
+        if lit:
+            cid += f"({lit})"
+        return cid
     if framework == "NIST AI RMF":
         return f"NIST AI RMF {m.group(1)}-{m.group(2)}"
     return f"{framework} {m.group(1)}"
@@ -1338,7 +1348,7 @@ def collect_dirty_paths() -> list[str]:
     return dirty
 
 
-def semantic_snapshot_props(head: str) -> dict:
+def semantic_snapshot_props(head: str, dirty: Sequence[str] = ()) -> dict:
     """Snapshot fields describing the semantic layer.
 
     Availability is derived from UA_GRAPH — the artifact build_semantic()
@@ -1347,17 +1357,31 @@ def semantic_snapshot_props(head: str) -> dict:
     semantic commit (potentially even marking it current) for a layer no query
     can reach, while a graph without metadata is loaded but unverifiable, so
     it must be recorded as stale rather than labelled absent.
+
+    Commit equality alone is not currency: a layer generated at the current
+    HEAD still describes the *committed* contents, so a dirty working-tree
+    edit to a file the graph analyzed means its summaries and TESTED_BY edges
+    no longer match what is being reported. Any dirty path with semantic
+    coverage marks the layer stale, and the offending paths are published as
+    ``semantic_dirty_paths``.
     """
     loaded = UA_GRAPH.exists()
     if not loaded:
         return {"semantic_layer_loaded": False}
     meta = json.loads(UA_META.read_text()) if UA_META.exists() else {}
+    analyzed = {
+        n["filePath"]
+        for n in json.loads(UA_GRAPH.read_text()).get("nodes", [])
+        if n.get("filePath")
+    }
+    dirty_analyzed = sorted(analyzed.intersection(dirty))
     return {
         "semantic_layer_loaded": True,
         "ua_commit": meta.get("gitCommitHash"),
         "ua_analyzed_at": meta.get("lastAnalyzedAt"),
         "ua_analyzed_files": meta.get("analyzedFiles"),
-        "semantic_layer_is_stale": meta.get("gitCommitHash") != head,
+        "semantic_layer_is_stale": meta.get("gitCommitHash") != head or bool(dirty_analyzed),
+        "semantic_dirty_paths": dirty_analyzed,
     }
 
 
@@ -1375,7 +1399,7 @@ def main() -> int:
         generated_at=datetime.now(UTC).isoformat(),
         dirty_paths=dirty,
         dirty_count=len(dirty),
-        **semantic_snapshot_props(head),
+        **semantic_snapshot_props(head, dirty),
     )
 
     tracked = build_spine()

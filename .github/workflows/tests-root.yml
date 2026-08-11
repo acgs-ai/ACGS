@@ -35,6 +35,12 @@ on:
       - 'Makefile'
       - 'docs/PLAN-MONOREPO.md'
       - 'docs/constitutional-hashes.lock'
+      # The claim-safety gate validates these two documents directly
+      # (test_repository_documents_currently_pass); a docs-only edit to either
+      # must trigger this workflow or the gate is stale-green for the exact
+      # change it guards.
+      - 'docs/governance-stack-index.md'
+      - 'docs/integration-readiness-task-map.md'
   push:
     branches: [master]
     paths:
@@ -48,6 +54,8 @@ on:
       - 'Makefile'
       - 'docs/PLAN-MONOREPO.md'
       - 'docs/constitutional-hashes.lock'
+      - 'docs/governance-stack-index.md'
+      - 'docs/integration-readiness-task-map.md'
 
 concurrency:
   group: tests-root-${{ github.ref }}

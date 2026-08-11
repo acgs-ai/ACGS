@@ -49,7 +49,7 @@ shell:
 	docker exec -it acgs-kg-neo4j cypher-shell -u neo4j -p "$$NEO4J_PASSWORD"
 
 browser:
-	@echo "http://localhost:7474  (neo4j / $(NEO4J_PASSWORD))"
+	@echo "http://localhost:7474  (neo4j / $$NEO4J_PASSWORD)"
 
 logs:
 	$(COMPOSE) logs -f neo4j
