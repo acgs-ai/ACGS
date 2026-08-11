@@ -1,0 +1,8 @@
+{
+  "schema": "authority-pdf-renderer-lock/v1",
+  "source_date_epoch": 1786406400,
+  "versions": {
+    "python_markdown": "3.10.2",
+    "weasyprint": "68.1"
+  }
+}

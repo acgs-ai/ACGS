@@ -110,7 +110,9 @@ test-py:
 	for pkg in packages/Acgs-Swarm packages/gove-zone packages/agent-bus-analyzer packages/research-engine acgs_governance_eval_mvp acgs-cft-governance-pack; do \
 	  echo "==> test $$pkg"; \
 	  (cd $$pkg && $(UV) run python -m pytest --import-mode=importlib) || exit $$?; \
-	done
+	done; \
+	echo "==> test packages/mutation-authority"; \
+	(cd packages/mutation-authority && $(UV) run --with cryptography --with jsonschema python -m pytest tests integration_tests EXTERNAL_SUBSTRATE_IDENTITY_AND_AUTHORITY_INGESTION_V1/attack_suite --import-mode=importlib) || exit $$?
 
 lint-py:
 	@set -e; \

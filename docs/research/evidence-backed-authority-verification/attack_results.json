@@ -1,0 +1,511 @@
+{
+  "attacks": {
+    "D_subuid": {
+      "attack": "D_delegated_subuid_remap",
+      "changed_canonical": false,
+      "stderr": "/bin/sh: line 1: /tmp/cspa3-e59509353b61/canon/files/README.md: Permission denied",
+      "verdict": "DENIED_BY_DAC",
+      "why": "the delegated range tops out at 589823; uid 940 is not in it, so remapping lands on a principal with no authority over the store"
+    },
+    "E_setns": {
+      "attack": "E_setns_reentry",
+      "docker_route": {
+        "changed_canonical": true,
+        "route": "docker exec, i.e. the root-equivalent socket",
+        "stderr": "",
+        "verdict": "EXPECTED_SUCCESS",
+        "why": "this is not a namespace weakness. It is the Docker socket, and its remediation is removing that socket, not changing namespaces."
+      },
+      "procfs_route": {
+        "error": "Permission denied",
+        "openable": false,
+        "route": "/proc/<pid>/ns via the namespace boundary",
+        "verdict": "DENIED_BY_DAC"
+      }
+    },
+    "F_ptrace": {
+      "attached_authority": false,
+      "attack": "F_nondescendant_ptrace",
+      "broker_pid_found": 1763211,
+      "container_pid": "1763169",
+      "control_attached_agent_owned_process": true,
+      "maps_readable": false,
+      "mem_readable": false,
+      "stdout": "DENIED Operation not permitted",
+      "verdict": "DENIED_BY_DAC",
+      "why": "ptrace_may_access requires matching uid or CAP_SYS_PTRACE in the target's user namespace. The authority is uid 940, which the agent cannot become -- so ptrace_scope=0 no longer helps it. This is the direct reversal of V2's result."
+    },
+    "J_broker_replacement": {
+      "J1_host_write_to_code": {
+        "detail": "Permission denied",
+        "verdict": "DENIED_BY_DAC"
+      },
+      "J2_docker_cp_into_container": {
+        "returncode": 0,
+        "stderr": "",
+        "verdict": "EXPECTED_SUCCESS",
+        "why": "the Docker socket writes into the authority's filesystem regardless of who owns it"
+      },
+      "J3_replace_whole_authority": {
+        "container_running": "true",
+        "detail": "the agent can 'docker rm -f' this container and start its own with substituted code; the container is running under the agent's own Docker authority",
+        "not_executed": "the destructive form is not run because it would end the measurement; J2 already demonstrates write access to the authority's code, which is the same capability",
+        "verdict": "EXPECTED_SUCCESS"
+      },
+      "control_plane_agent_replaceable": true,
+      "derived_from": [
+        "J1_host_write_to_code",
+        "J2_docker_cp_into_container"
+      ]
+    },
+    "K_socket_impersonation": {
+      "attack": "K_socket_impersonation",
+      "detail": "Permission denied",
+      "rename": "denied (Permission denied)",
+      "runtime_dir_mode": "0o771",
+      "runtime_dir_owner": 940,
+      "verdict": "DENIED_BY_DAC"
+    },
+    "Q_key_material": {
+      "attack": "Q_authority_key_material",
+      "detail": "Permission denied",
+      "key_file": "/tmp/cspa3-e59509353b61/run/authority.key",
+      "mode": "0o640",
+      "owner_gid": 940,
+      "owner_uid": 941,
+      "verdict": "DENIED_BY_DAC"
+    },
+    "container_roots": {
+      "H_rootful_container_root": {
+        "changed_canonical": true,
+        "stdout": "ok",
+        "verdict": "EXPECTED_SUCCESS",
+        "why": "real host root; DAC does not apply to it and is not claimed to"
+      },
+      "I_rootless_container_root": {
+        "changed_canonical": false,
+        "output": "Error: short-name resolution enforced but cannot prompt without a TTY",
+        "verdict": "DENIED_BY_DAC",
+        "why": "rootless container root maps to the agent uid or its delegated subuid range, neither of which owns the store"
+      }
+    }
+  },
+  "carriers": [
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/planted.md'",
+      "canonical_changed": false,
+      "carrier": "create",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "overwrite",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "append",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "truncate",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "unlink",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/README.md' -> '/tmp/cspa3-e59509353b61/canon/files/README.md.moved'",
+      "canonical_changed": false,
+      "carrier": "rename_source",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "FileNotFoundError: [Errno 2] No such file or directory: '/tmp/cspa3-e59509353b61/ws/payload.md' -> '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "rename_destination",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/ws/payload.md' -> '/tmp/cspa3-e59509353b61/canon/files/linked.md'",
+      "canonical_changed": false,
+      "carrier": "hardlink",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/ws/payload.md' -> '/tmp/cspa3-e59509353b61/canon/files/.attacker-link'",
+      "canonical_changed": false,
+      "carrier": "symlink_replacement",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 1] Operation not permitted: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "chmod",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 1] Operation not permitted: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "exec_bit_transition",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 1] Operation not permitted: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "chown",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 1] Operation not permitted: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "utime",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "xattr",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "OSError: setfacl: /tmp/cspa3-e59509353b61/canon/files/README.md: Operation not permitted",
+      "canonical_changed": false,
+      "carrier": "acl_change",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/planted-dir'",
+      "canonical_changed": false,
+      "carrier": "directory_entry_mutation",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/README.md.tmp'",
+      "canonical_changed": false,
+      "carrier": "atomic_replace",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/.staged'",
+      "canonical_changed": false,
+      "carrier": "temp_file_then_rename",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": null,
+      "canonical_changed": false,
+      "carrier": "shell_redirection",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": null,
+      "canonical_changed": false,
+      "carrier": "subprocess",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "mmap_write",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": null,
+      "canonical_changed": false,
+      "carrier": "git_checkout",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": null,
+      "canonical_changed": false,
+      "carrier": "git_reset_hard",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": null,
+      "canonical_changed": false,
+      "carrier": "git_restore",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": null,
+      "canonical_changed": false,
+      "carrier": "git_worktree_add",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    }
+  ],
+  "elapsed_seconds": 4.76,
+  "environment": {
+    "agent_uid": 1000,
+    "broker_uid": 940,
+    "code_owner_uid": 940,
+    "decision_uid": 941,
+    "identity_model": {
+      "directories_safe_because": "the agent cannot create one; see the directory_entry_mutation carrier",
+      "excluded": [
+        "directories",
+        "owner",
+        "timestamps",
+        "non-exec permission bits",
+        "xattrs"
+      ],
+      "included": [
+        "file content",
+        "executable bit"
+      ]
+    },
+    "image": "acgs-p1-remote-377935-downstream:latest",
+    "roles": {
+      "PROVISIONING_AUTHORITY": "root via rootful docker socket (one-time in deployment)",
+      "RUNTIME_AGENT_AUTHORITY": "uid 1000 on the host",
+      "RUNTIME_BROKER_AUTHORITY": "uid 940 / 941",
+      "launcher_in_runtime_trust_path": true,
+      "why": "the agent holds the Docker socket that keeps this container alive, so the launcher is not absent from the runtime trust path and this deployment does not demonstrate closure"
+    },
+    "runtime_dir_mode": "0o771",
+    "store_owner_uid": 940
+  },
+  "leakage": {
+    "all_denied": true,
+    "broker_created_file_ownership": {
+      "agent_uid": 1000,
+      "agent_writable": false,
+      "owner_uid": 940,
+      "verdict": "DENIED_BY_DAC"
+    },
+    "directory_fd_write": {
+      "detail": "Permission denied",
+      "verdict": "DENIED_BY_DAC"
+    },
+    "staging_residue": {
+      "leftovers": [],
+      "verdict": "DENIED_BY_DAC"
+    },
+    "writable_fd_after_promotion": {
+      "detail": "Permission denied",
+      "verdict": "DENIED_BY_DAC"
+    }
+  },
+  "protocol": {
+    "M_replayed_receipt": {
+      "actual": "DENIED_REPLAY",
+      "expected": "DENIED_REPLAY",
+      "pass": true
+    },
+    "N_toctou_payload_swap": {
+      "actual": "DENIED_EFFECT_MISMATCH",
+      "expected": "DENIED_EFFECT_MISMATCH",
+      "pass": true
+    },
+    "POSITIVE_authorized_promotion": {
+      "actual": "PROMOTED",
+      "after": "98bfd34b23f52828e0797d59adaffff00224de201b474a9154fbacfc42fed6d3",
+      "before": "f387304a8cf59985004bc0644b96362dc756878fa6ff2e4f7cf80c64d53b178d",
+      "expected": "PROMOTED",
+      "matches_receipt": true,
+      "pass": true
+    },
+    "failures": [],
+    "identity_spoof_in_message": {
+      "actual": {
+        "gid": 1000,
+        "pid": 0,
+        "uid": 1000
+      },
+      "expected": "kernel peer uid 1000",
+      "note": "SO_PEERCRED pid is 0 across the container's pid namespace; the broker checks uid only, and a systemd deployment would see a meaningful pid",
+      "pass": true
+    },
+    "path_escape": {
+      "actual": "DENIED_PATH_ESCAPE",
+      "expected": "DENIED_PATH_ESCAPE",
+      "pass": true
+    },
+    "stale_before_hash": {
+      "actual": "DENIED_STALE",
+      "expected": "DENIED_STALE",
+      "pass": true
+    },
+    "tampered_actor": {
+      "actual": "DENIED_SIGNATURE",
+      "expected": "DENIED_SIGNATURE",
+      "pass": true
+    },
+    "tampered_content_sha256": {
+      "actual": "DENIED_SIGNATURE",
+      "expected": "DENIED_SIGNATURE",
+      "pass": true
+    },
+    "tampered_expected_after_hash": {
+      "actual": "DENIED_SIGNATURE",
+      "expected": "DENIED_SIGNATURE",
+      "pass": true
+    },
+    "tampered_path": {
+      "actual": "DENIED_SIGNATURE",
+      "expected": "DENIED_SIGNATURE",
+      "pass": true
+    },
+    "tampered_resource": {
+      "actual": "DENIED_SIGNATURE",
+      "expected": "DENIED_SIGNATURE",
+      "pass": true
+    }
+  },
+  "workspace_git": {
+    "all_passed": true,
+    "checks": [
+      {
+        "detail": "",
+        "exit_code": 0,
+        "observed_effect": true,
+        "operation": "git init",
+        "pass": true
+      },
+      {
+        "detail": "",
+        "exit_code": null,
+        "observed_effect": true,
+        "operation": "file creation",
+        "pass": true
+      },
+      {
+        "detail": "",
+        "exit_code": null,
+        "observed_effect": true,
+        "operation": "chmod exec bit",
+        "pass": true
+      },
+      {
+        "detail": "",
+        "exit_code": 0,
+        "observed_effect": true,
+        "operation": "git add",
+        "pass": true
+      },
+      {
+        "detail": "",
+        "exit_code": 0,
+        "observed_effect": true,
+        "operation": "git commit",
+        "pass": true
+      },
+      {
+        "detail": "",
+        "exit_code": null,
+        "observed_effect": true,
+        "operation": "exec bit tracked as 100755",
+        "pass": true
+      },
+      {
+        "detail": "",
+        "exit_code": 0,
+        "observed_effect": true,
+        "operation": "branch creation",
+        "pass": true
+      },
+      {
+        "detail": "",
+        "exit_code": 0,
+        "observed_effect": true,
+        "operation": "checkout / switch",
+        "pass": true
+      },
+      {
+        "detail": "",
+        "exit_code": 0,
+        "observed_effect": true,
+        "operation": "git mv",
+        "pass": true
+      },
+      {
+        "detail": "",
+        "exit_code": 0,
+        "observed_effect": true,
+        "operation": "git rm",
+        "pass": true
+      },
+      {
+        "detail": "",
+        "exit_code": 0,
+        "observed_effect": true,
+        "operation": "git apply",
+        "pass": true
+      },
+      {
+        "detail": "",
+        "exit_code": 0,
+        "observed_effect": true,
+        "operation": "mode change committed",
+        "pass": true
+      },
+      {
+        "detail": "",
+        "exit_code": 0,
+        "observed_effect": true,
+        "operation": "git status",
+        "pass": true
+      }
+    ],
+    "count": 13,
+    "failures": []
+  }
+}

@@ -1,0 +1,2291 @@
+{
+ "admissible": true,
+ "blocking_classifications": [
+  "ROOT_EQUIVALENT",
+  "REQUIRES_OPERATOR_EVIDENCE",
+  "UNKNOWN"
+ ],
+ "blocking_paths": [
+  "container_runtimes:docker_rootful_socket",
+  "container_runtimes:libvirt_ro_socket",
+  "container_runtimes:libvirt_socket",
+  "groups:membership_docker",
+  "groups:membership_wheel",
+  "polkit:dbus_system_bus",
+  "polkit:pkexec",
+  "setuid:/opt/1Password/chrome-sandbox",
+  "setuid:/usr/bin/chfn",
+  "setuid:/usr/bin/chsh",
+  "setuid:/usr/bin/gpasswd",
+  "setuid:/usr/bin/pkexec",
+  "setuid:/usr/bin/su",
+  "setuid:/usr/bin/sudo",
+  "setuid:/usr/bin/userhelper",
+  "setuid:/usr/bin/vmware-user-suid-wrapper",
+  "setuid:/usr/libexec/dbus-1/dbus-daemon-launch-helper",
+  "setuid:/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper",
+  "sudo:sudo",
+  "systemd:systemd_run"
+ ],
+ "classification_rule": {
+  "NON_ROOT_EQUIVALENT": "measured bounded, with the bound named and the provenance of the bytes verified",
+  "NOT_PRESENT": "the mechanism does not exist on this host",
+  "REQUIRES_OPERATOR_EVIDENCE": "the deciding fact is unreadable by the agent; the exact command that answers it is recorded. BLOCKING, never a pass",
+  "ROOT_EQUIVALENT": "measured to confer uid-0-equivalent authority"
+ },
+ "counts": {
+  "blocking": 20,
+  "non_root_equivalent": 37,
+  "not_present": 0,
+  "requires_operator_evidence": 18,
+  "root_equivalent": 2,
+  "total": 57,
+  "unknown": 0
+ },
+ "measurement_context": {
+  "capabilities": {
+   "ambient": "0000000000000000",
+   "bounding": "000001ffffffffff",
+   "effective": "0000000000000000",
+   "inheritable": "0000000800000000",
+   "permitted": "0000000000000000"
+  },
+  "credential_sha256": "63cc804c8dd4d4fbef0907e0698e944cefeb926b1578165570ea66166731226e",
+  "disqualifiers": [],
+  "euid": 1000,
+  "filesystem_visibility": {
+   "/etc/fstab": {
+    "mode": "0o644",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "parent_searchable": true,
+    "readable_by_agent": true,
+    "state": "PRESENT"
+   },
+   "/etc/group": {
+    "mode": "0o644",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "parent_searchable": true,
+    "readable_by_agent": true,
+    "state": "PRESENT"
+   },
+   "/etc/gshadow": {
+    "mode": "0o0",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "parent_searchable": true,
+    "readable_by_agent": false,
+    "state": "PRESENT"
+   },
+   "/etc/polkit-1/rules.d": {
+    "mode": "0o750",
+    "owner_gid": 114,
+    "owner_uid": 0,
+    "parent_searchable": true,
+    "readable_by_agent": false,
+    "state": "PRESENT"
+   },
+   "/etc/subgid": {
+    "mode": "0o644",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "parent_searchable": true,
+    "readable_by_agent": true,
+    "state": "PRESENT"
+   },
+   "/etc/subuid": {
+    "mode": "0o644",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "parent_searchable": true,
+    "readable_by_agent": true,
+    "state": "PRESENT"
+   },
+   "/etc/sudoers": {
+    "mode": "0o440",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "parent_searchable": true,
+    "readable_by_agent": false,
+    "state": "PRESENT"
+   },
+   "/etc/sudoers.d": {
+    "mode": "0o750",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "parent_searchable": true,
+    "readable_by_agent": false,
+    "state": "PRESENT"
+   },
+   "/proc/self/status": {
+    "mode": "0o444",
+    "owner_gid": 1000,
+    "owner_uid": 1000,
+    "parent_searchable": true,
+    "readable_by_agent": true,
+    "state": "PRESENT"
+   },
+   "/usr/bin/sudo": {
+    "mode": "0o4111",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "parent_searchable": true,
+    "readable_by_agent": false,
+    "state": "PRESENT"
+   },
+   "/usr/share/polkit-1/rules.d": {
+    "mode": "0o755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "parent_searchable": true,
+    "readable_by_agent": true,
+    "state": "PRESENT"
+   },
+   "/var/run/docker.sock": {
+    "mode": "0o660",
+    "owner_gid": 969,
+    "owner_uid": 0,
+    "parent_searchable": true,
+    "readable_by_agent": true,
+    "state": "PRESENT"
+   },
+   "_mountinfo_entries": {
+    "count": 56
+   }
+  },
+  "fingerprint_sha256": "0e528faf49f07c976c9b92a1f8b0906c3bcef59b039497cecab856f5536d7ccb",
+  "getgroups": [
+   10,
+   969,
+   1000
+  ],
+  "gid_map": [
+   [
+    0,
+    0,
+    4294967295
+   ]
+  ],
+  "host_representative": true,
+  "namespaces": {
+   "cgroup": "cgroup:[4026531835]",
+   "ipc": "ipc:[4026531839]",
+   "mnt": "mnt:[4026531832]",
+   "net": "net:[4026531833]",
+   "pid": "pid:[4026531836]",
+   "pid_for_children": "pid:[4026531836]",
+   "time": "time:[4026531834]",
+   "time_for_children": "time:[4026531834]",
+   "user": "user:[4026531837]",
+   "uts": "uts:[4026531838]"
+  },
+  "requirement": "uid_map == gid_map == [(0, 0, 4294967295)] and NoNewPrivs == 0 and Seccomp == 0; an inventory taken outside this context is not evidence about the host and is treated as absent",
+  "status": {
+   "CapAmb": "0000000000000000",
+   "CapBnd": "000001ffffffffff",
+   "CapEff": "0000000000000000",
+   "CapInh": "0000000800000000",
+   "CapPrm": "0000000000000000",
+   "Gid": "1000\t1000\t1000\t1000",
+   "Groups": "10 969 1000",
+   "NoNewPrivs": "0",
+   "Seccomp": "0",
+   "Seccomp_filters": "0",
+   "Uid": "1000\t1000\t1000\t1000"
+  },
+  "uid": 1000,
+  "uid_map": [
+   [
+    0,
+    0,
+    4294967295
+   ]
+  ],
+  "undetermined_paths": []
+ },
+ "mutations_performed": [],
+ "non_root_equivalent_paths": [
+  "container_runtimes:containerd_socket",
+  "filecaps:/usr/bin/arping",
+  "filecaps:/usr/bin/clockdiff",
+  "filecaps:/usr/bin/mtr-packet",
+  "filecaps:/usr/bin/newgidmap",
+  "filecaps:/usr/bin/newuidmap",
+  "filecaps:/usr/bin/suexec",
+  "filecaps:/usr/bin/warp-svc",
+  "filecaps:/usr/libexec/gstreamer-1.0/gst-ptp-helper",
+  "filecaps:/usr/libexec/sssd/krb5_child",
+  "filecaps:/usr/libexec/sssd/ldap_child",
+  "filecaps:/usr/libexec/sssd/sssd_pam",
+  "setuid:/opt/google/chrome-unstable/chrome-sandbox",
+  "setuid:/opt/google/chrome/chrome-sandbox",
+  "setuid:/usr/bin/at",
+  "setuid:/usr/bin/chage",
+  "setuid:/usr/bin/crontab",
+  "setuid:/usr/bin/fusermount",
+  "setuid:/usr/bin/fusermount-glusterfs",
+  "setuid:/usr/bin/fusermount3",
+  "setuid:/usr/bin/grub2-set-bootflag",
+  "setuid:/usr/bin/mount",
+  "setuid:/usr/bin/mount.nfs",
+  "setuid:/usr/bin/newgrp",
+  "setuid:/usr/bin/pam_timestamp_check",
+  "setuid:/usr/bin/passwd",
+  "setuid:/usr/bin/umount",
+  "setuid:/usr/bin/unix_chkpwd",
+  "setuid:/usr/lib/claude-desktop-unofficial/chrome-sandbox",
+  "setuid:/usr/lib/polkit-1/polkit-agent-helper-1",
+  "setuid:/usr/lib64/cef/chrome-sandbox",
+  "setuid:/usr/libexec/libgtop_server2",
+  "setuid:/usr/libexec/qemu-bridge-helper",
+  "setuid:/usr/share/antigravity/chrome-sandbox",
+  "setuid:/usr/share/code/chrome-sandbox",
+  "setuid:/usr/share/cursor/chrome-sandbox",
+  "systemd:systemd_unit_control"
+ ],
+ "not_present_paths": [],
+ "paths": {
+  "container_runtimes:containerd_socket": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "carried forward from the source inventory, which measured it in a host-representative context",
+   "evidence": {
+    "socket": {
+     "connect": "REFUSED: Permission denied",
+     "exists": true,
+     "mode": "0o660",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/run/containerd/containerd.sock",
+     "readable_by_agent": false,
+     "setuid": false,
+     "writable_by_agent": false
+    }
+   },
+   "prior_classification": "NON_ROOT_EQUIVALENT",
+   "privilege_effect": "containerd runs as uid 0; reaching its socket is equivalent to reaching the docker socket",
+   "surface": "container_runtimes"
+  },
+  "container_runtimes:docker_rootful_socket": {
+   "blocking": true,
+   "carrier_analysis": {
+    "acl_measured": [
+     "user::rw-",
+     "group::rw-",
+     "other::---"
+    ],
+    "boundary_explanation": "No kernel boundary is defeated. The kernel's DAC check on connect(2) to a mode-0o660 socket owned by uid 0 gid 969 *passes*, because gid 969 is in the agent's credential [10, 969, 1000]. Authority is granted at the socket and then exercised by a daemon already running as uid 0 -- so there is no exploit to detect, no boundary to harden, and nothing for a sandbox, capability drop or seccomp filter to stop. That is precisely why it is root-equivalent: the only remedy is to stop granting it.",
+    "carrier": "AF_UNIX stream socket /var/run/docker.sock (mode 0o660, 0:969) speaking the Docker Engine API",
+    "classification": "ROOT_EQUIVALENT",
+    "classification_basis": "measurement, not convention: a container started through this socket wrote to the host filesystem and the resulting file was owned by uid 4242, which the agent cannot produce by any other measured route",
+    "evidence_provenance": "ROOT_EQUIVALENCE_REGISTRY.json and attack_results.json, both produced by the sanctioned V3 attack suite. No new escalation was attempted by this pass.",
+    "kernel_enforced_boundary_crossed": "NONE",
+    "measured_evidence": {
+     "agent_credential_gids": [
+      10,
+      969,
+      1000
+     ],
+     "attack_H_changed_canonical": true,
+     "attack_H_verdict": "EXPECTED_SUCCESS",
+     "container_uid_map": [
+      "         0          0 4294967295"
+     ],
+     "host_file_uid_after_write": 4242,
+     "rootless_daemon": false,
+     "selinux_note": "SELinux denies the bind-mount write by default; --security-opt label=disable removes it. A flag is not a boundary when the attacker chooses the flags.",
+     "socket": {
+      "exists": true,
+      "mode": "0o660",
+      "owner_gid": 969,
+      "owner_uid": 0,
+      "path": "/var/run/docker.sock",
+      "setgid": false,
+      "setuid": false,
+      "writable_by_agent": true
+     },
+     "socket_group_in_credential": true,
+     "targets_reached": {
+      "A_arbitrary_host_write": true,
+      "B_arbitrary_host_chown": true,
+      "C_uid_0": true,
+      "E_capabilities": true,
+      "F_mount_defeats_dac": true
+     }
+    },
+    "mechanism_detail": "connect(2) succeeds under DAC, then `POST /containers/create` with a host bind mount and `--security-opt label=disable`, then `POST /containers/{id}/start`. The container's first process runs with the host's real uid 0 (`container_uid_map` = ['         0          0 4294967295']), so writes through the bind mount land on the host as root.",
+    "removal": "remove the agent from group 'docker' (or drop the ACL entry); the daemon itself needs no change"
+   },
+   "classification": "ROOT_EQUIVALENT",
+   "discriminator": "carried forward from the source inventory, which measured it in a host-representative context",
+   "evidence": {
+    "corroborating_measurement": "ROOT_EQUIVALENT_REGISTRY.json: a container started through this socket reported uid_map 0 0 4294967295 and chowned a host file to uid 4242",
+    "docker_info_rc": 0,
+    "rootless": false,
+    "socket": {
+     "connect": "ACCEPTED",
+     "exists": true,
+     "mode": "0o660",
+     "owner_gid": 969,
+     "owner_uid": 0,
+     "path": "/var/run/docker.sock",
+     "readable_by_agent": true,
+     "setuid": false,
+     "writable_by_agent": true
+    }
+   },
+   "prior_classification": "ROOT_EQUIVALENT",
+   "privilege_effect": "the daemon runs as uid 0 and executes container specifications chosen by whoever reaches the socket, including bind mounts of / with label=disable",
+   "surface": "container_runtimes"
+  },
+  "container_runtimes:libvirt_ro_socket": {
+   "blocking": true,
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
+   "evidence": {
+    "action_id": "org.libvirt.unix.manage",
+    "admin_identities_from_50_default": [],
+    "agent_groups": [
+     "wheel",
+     "docker",
+     "agent-user"
+    ],
+    "agent_is_admin_identity": false,
+    "implicit": {
+     "implicit active": "auth_admin_keep",
+     "implicit any": "auth_admin_keep",
+     "implicit inactive": "auth_admin_keep"
+    },
+    "libvirt_rules": {
+     "content": "// Allow any user in the 'libvirt' group to connect to system libvirtd\n// without entering a password.\n\npolkit.addRule(function(action, subject) {\n    if (action.id == \"org.libvirt.unix.manage\" &&\n        subject.isInGroup(\"libvirt\")) {\n        return polkit.Result.YES;\n    }\n});\n",
+     "path": "/usr/share/polkit-1/rules.d/50-libvirt.rules",
+     "readable_by_agent": true
+    },
+    "libvirtd_conf": {
+     "exists": false,
+     "parent_searchable": false,
+     "path": "/etc/libvirt/libvirtd.conf",
+     "state": "UNDETERMINED",
+     "why": "/etc/libvirt is not searchable by the agent"
+    },
+    "overlap": [],
+    "polkit_local_rules_listable_by_agent": false,
+    "socket_from_before": {
+     "connect": "ACCEPTED",
+     "exists": true,
+     "mode": "0o666",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/var/run/libvirt/libvirt-sock-ro",
+     "readable_by_agent": true,
+     "setuid": false,
+     "writable_by_agent": true
+    }
+   },
+   "operator_action": "operator reads /etc/libvirt/libvirtd.conf (auth_unix_rw, unix_sock_group) and confirms this identity is in no group the libvirt polkit rules grant",
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "an authorised libvirt session can attach host block devices to a guest, which is root-equivalent; the socket is world-connectable by design and decides nothing",
+   "surface": "container_runtimes"
+  },
+  "container_runtimes:libvirt_socket": {
+   "blocking": true,
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
+   "evidence": {
+    "action_id": "org.libvirt.unix.manage",
+    "admin_identities_from_50_default": [],
+    "agent_groups": [
+     "wheel",
+     "docker",
+     "agent-user"
+    ],
+    "agent_is_admin_identity": false,
+    "implicit": {
+     "implicit active": "auth_admin_keep",
+     "implicit any": "auth_admin_keep",
+     "implicit inactive": "auth_admin_keep"
+    },
+    "libvirt_rules": {
+     "content": "// Allow any user in the 'libvirt' group to connect to system libvirtd\n// without entering a password.\n\npolkit.addRule(function(action, subject) {\n    if (action.id == \"org.libvirt.unix.manage\" &&\n        subject.isInGroup(\"libvirt\")) {\n        return polkit.Result.YES;\n    }\n});\n",
+     "path": "/usr/share/polkit-1/rules.d/50-libvirt.rules",
+     "readable_by_agent": true
+    },
+    "libvirtd_conf": {
+     "exists": false,
+     "parent_searchable": false,
+     "path": "/etc/libvirt/libvirtd.conf",
+     "state": "UNDETERMINED",
+     "why": "/etc/libvirt is not searchable by the agent"
+    },
+    "overlap": [],
+    "polkit_local_rules_listable_by_agent": false,
+    "socket_from_before": {
+     "connect": "ACCEPTED",
+     "exists": true,
+     "mode": "0o666",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/var/run/libvirt/libvirt-sock",
+     "readable_by_agent": true,
+     "setuid": false,
+     "writable_by_agent": true
+    }
+   },
+   "operator_action": "operator reads /etc/libvirt/libvirtd.conf (auth_unix_rw, unix_sock_group) and confirms this identity is in no group the libvirt polkit rules grant",
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "an authorised libvirt session can attach host block devices to a guest, which is root-equivalent; the socket is world-connectable by design and decides nothing",
+   "surface": "container_runtimes"
+  },
+  "filecaps:/usr/bin/arping": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "carried forward from the source inventory, which measured it in a host-representative context",
+   "evidence": {
+    "agent_cap_inheritable": "0000000800000000",
+    "capabilities": {
+     "capabilities": [
+      "cap_net_raw"
+     ],
+     "effective": false,
+     "flags": "p",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_net_raw=p"
+    },
+    "exists": true,
+    "mode": "0o755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/arping",
+    "readable_by_agent": true,
+    "setuid": false,
+    "writable_by_agent": false
+   },
+   "prior_classification": "NON_ROOT_EQUIVALENT",
+   "privilege_effect": "every capability on this file is bounded to networking or scheduling (['cap_net_raw']); none confers authority over another principal's files, processes or credentials",
+   "surface": "filecaps"
+  },
+  "filecaps:/usr/bin/clockdiff": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "carried forward from the source inventory, which measured it in a host-representative context",
+   "evidence": {
+    "agent_cap_inheritable": "0000000800000000",
+    "capabilities": {
+     "capabilities": [
+      "cap_net_raw"
+     ],
+     "effective": false,
+     "flags": "p",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_net_raw=p"
+    },
+    "exists": true,
+    "mode": "0o755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/clockdiff",
+    "readable_by_agent": true,
+    "setuid": false,
+    "writable_by_agent": false
+   },
+   "prior_classification": "NON_ROOT_EQUIVALENT",
+   "privilege_effect": "every capability on this file is bounded to networking or scheduling (['cap_net_raw']); none confers authority over another principal's files, processes or credentials",
+   "surface": "filecaps"
+  },
+  "filecaps:/usr/bin/mtr-packet": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "carried forward from the source inventory, which measured it in a host-representative context",
+   "evidence": {
+    "agent_cap_inheritable": "0000000800000000",
+    "capabilities": {
+     "capabilities": [
+      "cap_net_raw"
+     ],
+     "effective": true,
+     "flags": "ep",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_net_raw=ep"
+    },
+    "exists": true,
+    "mode": "0o755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/mtr-packet",
+    "readable_by_agent": true,
+    "setuid": false,
+    "writable_by_agent": false
+   },
+   "prior_classification": "NON_ROOT_EQUIVALENT",
+   "privilege_effect": "every capability on this file is bounded to networking or scheduling (['cap_net_raw']); none confers authority over another principal's files, processes or credentials",
+   "surface": "filecaps"
+  },
+  "filecaps:/usr/bin/newgidmap": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "carried forward from the source inventory, which measured it in a host-representative context",
+   "evidence": {
+    "agent_cap_inheritable": "0000000800000000",
+    "capabilities": {
+     "capabilities": [
+      "cap_setgid"
+     ],
+     "effective": true,
+     "flags": "ep",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_setgid=ep"
+    },
+    "exists": true,
+    "mode": "0o755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/newgidmap",
+    "readable_by_agent": true,
+    "setuid": false,
+    "writable_by_agent": false
+   },
+   "prior_classification": "NON_ROOT_EQUIVALENT",
+   "privilege_effect": "bounded by /etc/subgid",
+   "surface": "filecaps"
+  },
+  "filecaps:/usr/bin/newuidmap": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "carried forward from the source inventory, which measured it in a host-representative context",
+   "evidence": {
+    "agent_cap_inheritable": "0000000800000000",
+    "capabilities": {
+     "capabilities": [
+      "cap_setuid"
+     ],
+     "effective": true,
+     "flags": "ep",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_setuid=ep"
+    },
+    "exists": true,
+    "mode": "0o755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/newuidmap",
+    "readable_by_agent": true,
+    "setuid": false,
+    "writable_by_agent": false
+   },
+   "prior_classification": "NON_ROOT_EQUIVALENT",
+   "privilege_effect": "bounded by /etc/subuid; V3 measured it refusing uid 940",
+   "surface": "filecaps"
+  },
+  "filecaps:/usr/bin/suexec": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "the agent cannot execute this file: mode 0o510, owner 0:48, and os.access(X_OK) is False for credential [10, 969, 1000]. A capability on a file the caller may not exec is not a path for that caller",
+   "evidence": {
+    "binary_hash": null,
+    "capabilities": {
+     "capabilities": [
+      "cap_setgid",
+      "cap_setuid"
+     ],
+     "effective": true,
+     "flags": "ep",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_setgid,cap_setuid=ep"
+    },
+    "executable_by_agent": false,
+    "file": {
+     "exists": true,
+     "mode": "0o510",
+     "owner_gid": 48,
+     "owner_uid": 0,
+     "path": "/usr/bin/suexec",
+     "setgid": false,
+     "setuid": false,
+     "writable_by_agent": false
+    },
+    "integrity": "FILE_UNREADABLE_BY_AGENT",
+    "package_owner": "httpd-core-2.4.68-1.fc44.x86_64"
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "would confer ['cap_setgid', 'cap_setuid'] on exec",
+   "surface": "filecaps"
+  },
+  "filecaps:/usr/bin/warp-svc": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "the capabilities are inheritable-only (flags 'ei', no 'p'), so exec grants only what the caller's own inheritable set contains. The agent's CapInh is 0000000800000000, whose intersection with ['cap_dac_read_search', 'cap_net_admin', 'cap_net_bind_service', 'cap_net_raw', 'cap_setgid', 'cap_setuid', 'cap_sys_ptrace'] is empty -- computed bit by bit, not assumed",
+   "evidence": {
+    "agent_cap_inheritable": "0000000800000000",
+    "binary_hash": "891a347dc54d8b884b9177de1d1a695e1cae8910d328382fefa1447fff1ccda1",
+    "capabilities": {
+     "capabilities": [
+      "cap_dac_read_search",
+      "cap_net_admin",
+      "cap_net_bind_service",
+      "cap_net_raw",
+      "cap_setgid",
+      "cap_setuid",
+      "cap_sys_ptrace"
+     ],
+     "effective": true,
+     "flags": "ei",
+     "inheritable_only": true,
+     "permitted": false,
+     "raw": "cap_dac_read_search,cap_setgid,cap_setuid,cap_net_bind_service,cap_net_admin,cap_net_raw,cap_sys_ptrace=ei"
+    },
+    "capabilities_the_agent_could_activate": [],
+    "executable_by_agent": true,
+    "file": {
+     "exists": true,
+     "mode": "0o755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/warp-svc",
+     "setgid": false,
+     "setuid": false,
+     "writable_by_agent": false
+    },
+    "integrity": "NOT_PACKAGED",
+    "package_owner": "cloudflare-warp-2026.4.1390.0-1.x86_64"
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "would confer ['cap_dac_read_search', 'cap_net_admin', 'cap_net_bind_service', 'cap_net_raw', 'cap_setgid', 'cap_setuid', 'cap_sys_ptrace'] to a caller that already holds them",
+   "surface": "filecaps"
+  },
+  "filecaps:/usr/libexec/gstreamer-1.0/gst-ptp-helper": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "carried forward from the source inventory, which measured it in a host-representative context",
+   "evidence": {
+    "agent_cap_inheritable": "0000000800000000",
+    "capabilities": {
+     "capabilities": [
+      "cap_net_admin",
+      "cap_net_bind_service",
+      "cap_sys_nice"
+     ],
+     "effective": true,
+     "flags": "ep",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_net_bind_service,cap_net_admin,cap_sys_nice=ep"
+    },
+    "exists": true,
+    "mode": "0o755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/libexec/gstreamer-1.0/gst-ptp-helper",
+    "readable_by_agent": true,
+    "setuid": false,
+    "writable_by_agent": false
+   },
+   "prior_classification": "NON_ROOT_EQUIVALENT",
+   "privilege_effect": "every capability on this file is bounded to networking or scheduling (['cap_net_admin', 'cap_net_bind_service', 'cap_sys_nice']); none confers authority over another principal's files, processes or credentials",
+   "surface": "filecaps"
+  },
+  "filecaps:/usr/libexec/sssd/krb5_child": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "the agent cannot execute this file: mode 0o750, owner 0:980, and os.access(X_OK) is False for credential [10, 969, 1000]. A capability on a file the caller may not exec is not a path for that caller",
+   "evidence": {
+    "binary_hash": null,
+    "capabilities": {
+     "capabilities": [
+      "cap_dac_read_search",
+      "cap_setgid",
+      "cap_setuid"
+     ],
+     "effective": false,
+     "flags": "p",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_dac_read_search,cap_setgid,cap_setuid=p"
+    },
+    "executable_by_agent": false,
+    "file": {
+     "exists": true,
+     "mode": "0o750",
+     "owner_gid": 980,
+     "owner_uid": 0,
+     "path": "/usr/libexec/sssd/krb5_child",
+     "setgid": false,
+     "setuid": false,
+     "writable_by_agent": false
+    },
+    "integrity": "FILE_UNREADABLE_BY_AGENT",
+    "package_owner": "sssd-krb5-common-2.13.1-2.fc44.x86_64"
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "would confer ['cap_dac_read_search', 'cap_setgid', 'cap_setuid'] on exec",
+   "surface": "filecaps"
+  },
+  "filecaps:/usr/libexec/sssd/ldap_child": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "the agent cannot execute this file: mode 0o750, owner 0:980, and os.access(X_OK) is False for credential [10, 969, 1000]. A capability on a file the caller may not exec is not a path for that caller",
+   "evidence": {
+    "binary_hash": null,
+    "capabilities": {
+     "capabilities": [
+      "cap_dac_read_search"
+     ],
+     "effective": false,
+     "flags": "p",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_dac_read_search=p"
+    },
+    "executable_by_agent": false,
+    "file": {
+     "exists": true,
+     "mode": "0o750",
+     "owner_gid": 980,
+     "owner_uid": 0,
+     "path": "/usr/libexec/sssd/ldap_child",
+     "setgid": false,
+     "setuid": false,
+     "writable_by_agent": false
+    },
+    "integrity": "FILE_UNREADABLE_BY_AGENT",
+    "package_owner": "sssd-krb5-common-2.13.1-2.fc44.x86_64"
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "would confer ['cap_dac_read_search'] on exec",
+   "surface": "filecaps"
+  },
+  "filecaps:/usr/libexec/sssd/sssd_pam": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "the agent cannot execute this file: mode 0o750, owner 0:980, and os.access(X_OK) is False for credential [10, 969, 1000]. A capability on a file the caller may not exec is not a path for that caller",
+   "evidence": {
+    "binary_hash": null,
+    "capabilities": {
+     "capabilities": [
+      "cap_dac_read_search"
+     ],
+     "effective": false,
+     "flags": "p",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_dac_read_search=p"
+    },
+    "executable_by_agent": false,
+    "file": {
+     "exists": true,
+     "mode": "0o750",
+     "owner_gid": 980,
+     "owner_uid": 0,
+     "path": "/usr/libexec/sssd/sssd_pam",
+     "setgid": false,
+     "setuid": false,
+     "writable_by_agent": false
+    },
+    "integrity": "FILE_UNREADABLE_BY_AGENT",
+    "package_owner": "sssd-common-2.13.1-2.fc44.x86_64"
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "would confer ['cap_dac_read_search'] on exec",
+   "surface": "filecaps"
+  },
+  "groups:membership_docker": {
+   "blocking": true,
+   "carrier_analysis": {
+    "boundary_explanation": "No kernel boundary is defeated. The kernel's DAC check on connect(2) to a mode-0o660 socket owned by uid 0 gid 969 *passes*, because gid 969 is in the agent's credential [10, 969, 1000]. Authority is granted at the socket and then exercised by a daemon already running as uid 0 -- so there is no exploit to detect, no boundary to harden, and nothing for a sandbox, capability drop or seccomp filter to stop. That is precisely why it is root-equivalent: the only remedy is to stop granting it.",
+    "carrier": "supplementary group membership: gid 969 (docker) present in the process credential",
+    "classification": "ROOT_EQUIVALENT",
+    "classification_basis": "measurement, not convention: a container started through this socket wrote to the host filesystem and the resulting file was owned by uid 4242, which the agent cannot produce by any other measured route",
+    "evidence_provenance": "ROOT_EQUIVALENCE_REGISTRY.json and attack_results.json, both produced by the sanctioned V3 attack suite. No new escalation was attempted by this pass.",
+    "kernel_enforced_boundary_crossed": "NONE",
+    "measured_evidence": {
+     "agent_credential_gids": [
+      10,
+      969,
+      1000
+     ],
+     "attack_H_changed_canonical": true,
+     "attack_H_verdict": "EXPECTED_SUCCESS",
+     "container_uid_map": [
+      "         0          0 4294967295"
+     ],
+     "host_file_uid_after_write": 4242,
+     "rootless_daemon": false,
+     "selinux_note": "SELinux denies the bind-mount write by default; --security-opt label=disable removes it. A flag is not a boundary when the attacker chooses the flags.",
+     "socket": {
+      "exists": true,
+      "mode": "0o660",
+      "owner_gid": 969,
+      "owner_uid": 0,
+      "path": "/var/run/docker.sock",
+      "setgid": false,
+      "setuid": false,
+      "writable_by_agent": true
+     },
+     "socket_group_in_credential": true,
+     "targets_reached": {
+      "A_arbitrary_host_write": true,
+      "B_arbitrary_host_chown": true,
+      "C_uid_0": true,
+      "E_capabilities": true,
+      "F_mount_defeats_dac": true
+     }
+    },
+    "mechanism_detail": "The credential is the carrier. `getgroups(2)` returns [10, 969, 1000]; group `docker` is gid 969. Membership is what makes the DAC check on the socket succeed, so this path and the socket path are one mechanism observed at two layers -- both are listed because removing either one alone does not necessarily remove the other (an ACL entry can replace the group).",
+    "removal": "remove the agent from group 'docker' (or drop the ACL entry); the daemon itself needs no change",
+    "routes_measured": [
+     "group membership: agent is in group 'docker'"
+    ]
+   },
+   "classification": "ROOT_EQUIVALENT",
+   "discriminator": "carried forward from the source inventory, which measured it in a host-representative context",
+   "evidence": {
+    "group": "docker",
+    "held": true
+   },
+   "prior_classification": "ROOT_EQUIVALENT",
+   "privilege_effect": "member of 'docker': controls a rootful container daemon",
+   "surface": "groups"
+  },
+  "groups:membership_wheel": {
+   "blocking": true,
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
+   "evidence": {
+    "action_id": "org.freedesktop.policykit.exec",
+    "admin_identities_from_50_default": [],
+    "agent_groups": [
+     "wheel",
+     "docker",
+     "agent-user"
+    ],
+    "agent_is_admin_identity": false,
+    "group_roster": null,
+    "implicit": {
+     "implicit active": "auth_admin",
+     "implicit any": "auth_admin",
+     "implicit inactive": "auth_admin"
+    },
+    "overlap": [],
+    "polkit_local_rules_listable_by_agent": false
+   },
+   "operator_action": "operator removes this identity from `wheel` (`gpasswd -d agent-user wheel`) after confirming no other admin identity depends on it",
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "membership of the polkit administrator group and, on RPM-family hosts, the conventional sudoers group: it is the identity that authenticates privileged actions, not a mechanism of its own",
+   "surface": "groups"
+  },
+  "polkit:dbus_system_bus": {
+   "blocking": true,
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
+   "evidence": {
+    "action_id": "org.freedesktop.systemd1.manage-units",
+    "admin_identities_from_50_default": [],
+    "agent_groups": [
+     "wheel",
+     "docker",
+     "agent-user"
+    ],
+    "agent_is_admin_identity": false,
+    "implicit": {
+     "implicit active": "auth_admin_keep",
+     "implicit any": "auth_admin",
+     "implicit inactive": "auth_admin"
+    },
+    "overlap": [],
+    "polkit_local_rules_listable_by_agent": false
+   },
+   "operator_action": "operator enumerates the local polkit rules and confirms no rule grants this identity a privileged system-bus action without authentication",
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "the system bus carries privileged RPCs (StartTransientUnit among them); reachability is by design and authority is decided per RPC by polkit",
+   "surface": "polkit"
+  },
+  "polkit:pkexec": {
+   "blocking": true,
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
+   "evidence": {
+    "action_id": "org.freedesktop.policykit.exec",
+    "admin_identities_from_50_default": [],
+    "agent_groups": [
+     "wheel",
+     "docker",
+     "agent-user"
+    ],
+    "agent_is_admin_identity": false,
+    "implicit": {
+     "implicit active": "auth_admin",
+     "implicit any": "auth_admin",
+     "implicit inactive": "auth_admin"
+    },
+    "overlap": [],
+    "polkit_local_rules_listable_by_agent": false
+   },
+   "operator_action": "operator reads /etc/polkit-1/rules.d/* for a rule returning YES on this action, and removes this identity from the admin group",
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "runs an arbitrary program as another user, including root",
+   "surface": "polkit"
+  },
+  "setuid:/opt/1Password/chrome-sandbox": {
+   "blocking": true,
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the bytes match the package but the package declares mode 100755 while the disk carries setuid: the privilege was granted after packaging and no vendor statement bounds it",
+   "evidence": {
+    "binary_hash": "2015304df43beff0b74409cdc4d858107efcde650d9bc8afb1288041d62cec4b",
+    "capabilities": "none",
+    "expected_hash": "887875dc21801dd0685b3f46ea5d5c24",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/opt/1Password/chrome-sandbox",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "1password-8.12.30-1.x86_64",
+    "rule": {
+     "bound_if_provenance_held": "bounded by the SUID sandbox protocol: the helper refuses to run unless invoked as the sandbox host of its own process tree",
+     "provenance": {
+      "digest_algorithm": "md5",
+      "integrity": "MATCH",
+      "mode_matches_package": false,
+      "package_owner": "1password-8.12.30-1.x86_64",
+      "packaged": true,
+      "setuid_declared_by_package": false,
+      "setuid_on_disk": true
+     }
+    }
+   },
+   "operator_action": "operator determines who set the setuid bit and whether the vendor intends this binary to run as root; if not, `chmod u-s` it",
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "creates a user/PID namespace for a browser renderer and execs only the target passed by its own zygote; it does not take a caller-chosen command",
+   "surface": "setuid"
+  },
+  "setuid:/opt/google/chrome-unstable/chrome-sandbox": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "owning package identified, the on-disk digest equals the digest rpm recorded for this file at build time, and the setuid bit is the one the package declares",
+   "evidence": {
+    "binary_hash": "18391bf9d217ddbde9956347cbb1346d2808a73ade4baa3f88a610447cf946b4",
+    "capabilities": "none",
+    "expected_hash": "18391bf9d217ddbde9956347cbb1346d2808a73ade4baa3f88a610447cf946b4",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/opt/google/chrome-unstable/chrome-sandbox",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "google-chrome-unstable-152.0.7939.5-1.x86_64",
+    "rule": {
+     "bound": "bounded by the SUID sandbox protocol: the helper refuses to run unless invoked as the sandbox host of its own process tree",
+     "provenance": {
+      "digest_algorithm": "sha256",
+      "integrity": "MATCH",
+      "mode_matches_package": true,
+      "package_owner": "google-chrome-unstable-152.0.7939.5-1.x86_64",
+      "packaged": true,
+      "setuid_declared_by_package": true,
+      "setuid_on_disk": true
+     }
+    }
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "creates a user/PID namespace for a browser renderer and execs only the target passed by its own zygote; it does not take a caller-chosen command",
+   "surface": "setuid"
+  },
+  "setuid:/opt/google/chrome/chrome-sandbox": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "owning package identified, the on-disk digest equals the digest rpm recorded for this file at build time, and the setuid bit is the one the package declares",
+   "evidence": {
+    "binary_hash": "34da15f461b6236f4fed24138c133153d7a10e7e2c9216fd80b4874eb23b5a74",
+    "capabilities": "none",
+    "expected_hash": "34da15f461b6236f4fed24138c133153d7a10e7e2c9216fd80b4874eb23b5a74",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/opt/google/chrome/chrome-sandbox",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "google-chrome-stable-150.0.7871.128-1.x86_64",
+    "rule": {
+     "bound": "bounded by the SUID sandbox protocol: the helper refuses to run unless invoked as the sandbox host of its own process tree",
+     "provenance": {
+      "digest_algorithm": "sha256",
+      "integrity": "MATCH",
+      "mode_matches_package": true,
+      "package_owner": "google-chrome-stable-150.0.7871.128-1.x86_64",
+      "packaged": true,
+      "setuid_declared_by_package": true,
+      "setuid_on_disk": true
+     }
+    }
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "creates a user/PID namespace for a browser renderer and execs only the target passed by its own zygote; it does not take a caller-chosen command",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/at": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "owning package identified, the on-disk digest equals the digest rpm recorded for this file at build time, and the setuid bit is the one the package declares",
+   "evidence": {
+    "binary_hash": "142b02216e3901c0ff20ddbee4cc90b86675d7d47af3bf1952eff7d6452860b5",
+    "capabilities": "none",
+    "expected_hash": "142b02216e3901c0ff20ddbee4cc90b86675d7d47af3bf1952eff7d6452860b5",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/at",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "at-3.2.5-21.fc44.x86_64",
+    "rule": {
+     "allow_file": {
+      "exists": false,
+      "path": "/etc/at.allow"
+     },
+     "bound": {
+      "bound": "bounded: a submitted job executes under the caller's own uid, so it confers no authority the caller does not already hold",
+      "provenance": {
+       "digest_algorithm": "sha256",
+       "integrity": "MATCH",
+       "mode_matches_package": true,
+       "package_owner": "at-3.2.5-21.fc44.x86_64",
+       "packaged": true,
+       "setuid_declared_by_package": true,
+       "setuid_on_disk": true
+      }
+     },
+     "deny_file": {
+      "content": "",
+      "exists": true,
+      "path": "/etc/at.deny"
+     },
+     "note": "the allow/deny files decide *who may submit*, not *as whom the job runs*; they are recorded because they bound the blast radius, not because they change the classification"
+    }
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "writes into the job spool directory as root, then the daemon runs the job as the *submitting* user",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/chage": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "owning package identified, the on-disk digest equals the digest rpm recorded for this file at build time, and the setuid bit is the one the package declares",
+   "evidence": {
+    "binary_hash": "9112c96dc2285596bf3bfd13a8d19f22e21e1607edea101d12fca50cb10f0156",
+    "capabilities": "none",
+    "expected_hash": "9112c96dc2285596bf3bfd13a8d19f22e21e1607edea101d12fca50cb10f0156",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/chage",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "shadow-utils-4.19.0-7.fc44.x86_64",
+    "rule": {
+     "bound": "bounded to the caller's own row in /etc/passwd, /etc/shadow or the PAM timestamp; it cannot grant a group or a uid the caller lacks",
+     "provenance": {
+      "digest_algorithm": "sha256",
+      "integrity": "MATCH",
+      "mode_matches_package": true,
+      "package_owner": "shadow-utils-4.19.0-7.fc44.x86_64",
+      "packaged": true,
+      "setuid_declared_by_package": true,
+      "setuid_on_disk": true
+     }
+    }
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "edits the invoking user's own account record after PAM authentication; it takes no caller-chosen command and writes no caller-chosen path",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/chfn": {
+   "blocking": true,
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "no verified provenance for these bytes (integrity=FILE_UNREADABLE_BY_AGENT), so the design bound cannot be attributed to the binary actually on disk",
+   "evidence": {
+    "binary_hash": null,
+    "capabilities": "none",
+    "expected_hash": "18a46f289e2437330a839ef71e9e1b5e57811c607d889702353a38077cbb1f47",
+    "file": {
+     "exists": true,
+     "mode": "0o4711",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/chfn",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "FILE_UNREADABLE_BY_AGENT",
+    "package_owner": "util-linux-2.41.5-1.fc44.x86_64",
+    "rule": {
+     "bound_if_provenance_held": "bounded to the caller's own row in /etc/passwd, /etc/shadow or the PAM timestamp; it cannot grant a group or a uid the caller lacks",
+     "provenance": {
+      "digest_algorithm": "sha256",
+      "integrity": "FILE_UNREADABLE_BY_AGENT",
+      "mode_matches_package": true,
+      "package_owner": "util-linux-2.41.5-1.fc44.x86_64",
+      "packaged": true,
+      "setuid_declared_by_package": true,
+      "setuid_on_disk": true
+     }
+    }
+   },
+   "operator_action": "operator establishes provenance for this binary (vendor manifest, checksum, or a package whose digest the agent can read) or removes the setuid bit",
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "edits the invoking user's own account record after PAM authentication; it takes no caller-chosen command and writes no caller-chosen path",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/chsh": {
+   "blocking": true,
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "no verified provenance for these bytes (integrity=FILE_UNREADABLE_BY_AGENT), so the design bound cannot be attributed to the binary actually on disk",
+   "evidence": {
+    "binary_hash": null,
+    "capabilities": "none",
+    "expected_hash": "b2b33675e042afaedc38873d85959ef733e9cc2248f16356bf4665b84bcb905f",
+    "file": {
+     "exists": true,
+     "mode": "0o4711",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/chsh",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "FILE_UNREADABLE_BY_AGENT",
+    "package_owner": "util-linux-2.41.5-1.fc44.x86_64",
+    "rule": {
+     "bound_if_provenance_held": "bounded to the caller's own row in /etc/passwd, /etc/shadow or the PAM timestamp; it cannot grant a group or a uid the caller lacks",
+     "provenance": {
+      "digest_algorithm": "sha256",
+      "integrity": "FILE_UNREADABLE_BY_AGENT",
+      "mode_matches_package": true,
+      "package_owner": "util-linux-2.41.5-1.fc44.x86_64",
+      "packaged": true,
+      "setuid_declared_by_package": true,
+      "setuid_on_disk": true
+     }
+    }
+   },
+   "operator_action": "operator establishes provenance for this binary (vendor manifest, checksum, or a package whose digest the agent can read) or removes the setuid bit",
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "edits the invoking user's own account record after PAM authentication; it takes no caller-chosen command and writes no caller-chosen path",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/crontab": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "owning package identified, the on-disk digest equals the digest rpm recorded for this file at build time, and the setuid bit is the one the package declares",
+   "evidence": {
+    "binary_hash": "d4671b407d990826dcf0f83d167f40c5a4991d5dbf363c5f16fc2fa31c2c7d24",
+    "capabilities": "none",
+    "expected_hash": "d4671b407d990826dcf0f83d167f40c5a4991d5dbf363c5f16fc2fa31c2c7d24",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/crontab",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "cronie-1.7.2-16.fc44.x86_64",
+    "rule": {
+     "allow_file": {
+      "exists": false,
+      "path": "/etc/cron.allow"
+     },
+     "bound": {
+      "bound": "bounded: a submitted job executes under the caller's own uid, so it confers no authority the caller does not already hold",
+      "provenance": {
+       "digest_algorithm": "sha256",
+       "integrity": "MATCH",
+       "mode_matches_package": true,
+       "package_owner": "cronie-1.7.2-16.fc44.x86_64",
+       "packaged": true,
+       "setuid_declared_by_package": true,
+       "setuid_on_disk": true
+      }
+     },
+     "deny_file": {
+      "content": "",
+      "exists": true,
+      "path": "/etc/cron.deny"
+     },
+     "note": "the allow/deny files decide *who may submit*, not *as whom the job runs*; they are recorded because they bound the blast radius, not because they change the classification"
+    }
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "writes into the job spool directory as root, then the daemon runs the job as the *submitting* user",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/fusermount": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "carried forward from the source inventory, which measured it in a host-representative context",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/fusermount",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "prior_classification": "NON_ROOT_EQUIVALENT",
+   "privilege_effect": "bounded to the caller's own FUSE mounts",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/fusermount-glusterfs": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "owning package identified, the on-disk digest equals the digest rpm recorded for this file at build time, and the setuid bit is the one the package declares; and /etc/fstab contains no `user`/`users` entry (0 matches)",
+   "evidence": {
+    "binary_hash": "9b6434262614e97268bbd57afe21b3584696cf759ba17009ffaf059041ffb19a",
+    "capabilities": "none",
+    "expected_hash": "9b6434262614e97268bbd57afe21b3584696cf759ba17009ffaf059041ffb19a",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/fusermount-glusterfs",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "glusterfs-fuse-11.2-8.fc44.x86_64",
+    "rule": {
+     "bound": {
+      "bound": "bounded: with no `user`/`users` entry in fstab the helper refuses an unprivileged caller, and it accepts no caller-chosen mount source",
+      "provenance": {
+       "digest_algorithm": "sha256",
+       "integrity": "MATCH",
+       "mode_matches_package": true,
+       "package_owner": "glusterfs-fuse-11.2-8.fc44.x86_64",
+       "packaged": true,
+       "setuid_declared_by_package": true,
+       "setuid_on_disk": true
+      }
+     },
+     "fstab_user_entries": []
+    }
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "mounts a filesystem as root",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/fusermount3": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "carried forward from the source inventory, which measured it in a host-representative context",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/fusermount3",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "prior_classification": "NON_ROOT_EQUIVALENT",
+   "privilege_effect": "bounded to the caller's own FUSE mounts",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/gpasswd": {
+   "blocking": true,
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the administrator list lives in /etc/gshadow, which is 0000 root and unreadable by the agent",
+   "evidence": {
+    "binary_hash": "5d7eea7f619c5b7a2b7129d52023e78f8619c206e46c9a3189563e1f95cf5f4e",
+    "capabilities": "none",
+    "expected_hash": "5d7eea7f619c5b7a2b7129d52023e78f8619c206e46c9a3189563e1f95cf5f4e",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/gpasswd",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "shadow-utils-4.19.0-7.fc44.x86_64",
+    "rule": {
+     "gshadow_mode": "0o0",
+     "gshadow_readable": false
+    }
+   },
+   "operator_action": "operator reads /etc/gshadow and confirms this identity administers no group (an empty admin field on every privileged group)",
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "administers group membership; root-equivalent exactly when the agent administers a privileged group, because adding itself to `docker` or `wheel` re-opens a closed path",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/grub2-set-bootflag": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "carried forward from the source inventory, which measured it in a host-representative context",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/grub2-set-bootflag",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "prior_classification": "NON_ROOT_EQUIVALENT",
+   "privilege_effect": "writes one bootflag byte",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/mount": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "carried forward from the source inventory, which measured it in a host-representative context",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/mount",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "prior_classification": "NON_ROOT_EQUIVALENT",
+   "privilege_effect": "bounded by fstab 'user' entries",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/mount.nfs": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "owning package identified, the on-disk digest equals the digest rpm recorded for this file at build time, and the setuid bit is the one the package declares; and /etc/fstab contains no `user`/`users` entry (0 matches)",
+   "evidence": {
+    "binary_hash": "da5be99dccfdca306d066e4e5c005cac71c4605949080c62c072592f80c5e8f7",
+    "capabilities": "none",
+    "expected_hash": "da5be99dccfdca306d066e4e5c005cac71c4605949080c62c072592f80c5e8f7",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/mount.nfs",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "nfs-common-utils-2.8.7-6.fc44.x86_64",
+    "rule": {
+     "bound": {
+      "bound": "bounded: with no `user`/`users` entry in fstab the helper refuses an unprivileged caller, and it accepts no caller-chosen mount source",
+      "provenance": {
+       "digest_algorithm": "sha256",
+       "integrity": "MATCH",
+       "mode_matches_package": true,
+       "package_owner": "nfs-common-utils-2.8.7-6.fc44.x86_64",
+       "packaged": true,
+       "setuid_declared_by_package": true,
+       "setuid_on_disk": true
+      }
+     },
+     "fstab_user_entries": []
+    }
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "mounts a filesystem as root",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/newgrp": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "owning package identified, the on-disk digest equals the digest rpm recorded for this file at build time, and the setuid bit is the one the package declares",
+   "evidence": {
+    "binary_hash": "9e4c6ed4000e631dac868fefa1247e99e58e546c3741632903999738537d23a7",
+    "capabilities": "none",
+    "expected_hash": "9e4c6ed4000e631dac868fefa1247e99e58e546c3741632903999738537d23a7",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/newgrp",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "shadow-utils-4.19.0-7.fc44.x86_64",
+    "rule": {
+     "bound": "bounded to the caller's own row in /etc/passwd, /etc/shadow or the PAM timestamp; it cannot grant a group or a uid the caller lacks",
+     "provenance": {
+      "digest_algorithm": "sha256",
+      "integrity": "MATCH",
+      "mode_matches_package": true,
+      "package_owner": "shadow-utils-4.19.0-7.fc44.x86_64",
+      "packaged": true,
+      "setuid_declared_by_package": true,
+      "setuid_on_disk": true
+     }
+    }
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "edits the invoking user's own account record after PAM authentication; it takes no caller-chosen command and writes no caller-chosen path",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/pam_timestamp_check": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "carried forward from the source inventory, which measured it in a host-representative context",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/pam_timestamp_check",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "prior_classification": "NON_ROOT_EQUIVALENT",
+   "privilege_effect": "timestamp file only",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/passwd": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "owning package identified, the on-disk digest equals the digest rpm recorded for this file at build time, and the setuid bit is the one the package declares",
+   "evidence": {
+    "binary_hash": "193f9b0002108bf4b1b4c11d342f15bbf9e66ad729cb37697d746cf517afb968",
+    "capabilities": "none",
+    "expected_hash": "193f9b0002108bf4b1b4c11d342f15bbf9e66ad729cb37697d746cf517afb968",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/passwd",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "shadow-utils-4.19.0-7.fc44.x86_64",
+    "rule": {
+     "bound": "bounded to the caller's own row in /etc/passwd, /etc/shadow or the PAM timestamp; it cannot grant a group or a uid the caller lacks",
+     "provenance": {
+      "digest_algorithm": "sha256",
+      "integrity": "MATCH",
+      "mode_matches_package": true,
+      "package_owner": "shadow-utils-4.19.0-7.fc44.x86_64",
+      "packaged": true,
+      "setuid_declared_by_package": true,
+      "setuid_on_disk": true
+     }
+    }
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "edits the invoking user's own account record after PAM authentication; it takes no caller-chosen command and writes no caller-chosen path",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/pkexec": {
+   "blocking": true,
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the gate is the authorisation policy, which is unreadable by the agent (/etc/sudoers is 0440 root, /etc/polkit-1/rules.d is 0700 root)",
+   "evidence": {
+    "binary_hash": "926bdb901a39b1cc0fb051dea2c789d95f53e1ef13794e923d7469cd6d579d9a",
+    "capabilities": "none",
+    "expected_hash": "926bdb901a39b1cc0fb051dea2c789d95f53e1ef13794e923d7469cd6d579d9a",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/pkexec",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "polkit-127-2.fc44.2.x86_64",
+    "rule": {
+     "package": "polkit-127-2.fc44.2.x86_64",
+     "polkit_local_listable": false,
+     "sudoers_readable": false
+    }
+   },
+   "operator_action": "operator runs `sudo -l -U agent-user`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/su": {
+   "blocking": true,
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the gate is the authorisation policy, which is unreadable by the agent (/etc/sudoers is 0440 root, /etc/polkit-1/rules.d is 0700 root)",
+   "evidence": {
+    "binary_hash": "410973435216008c113693ee29743a4d7c3d232cfbc1013227fc8d0be666f209",
+    "capabilities": "none",
+    "expected_hash": "410973435216008c113693ee29743a4d7c3d232cfbc1013227fc8d0be666f209",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/su",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "util-linux-2.41.5-1.fc44.x86_64",
+    "rule": {
+     "package": "util-linux-2.41.5-1.fc44.x86_64",
+     "polkit_local_listable": false,
+     "sudoers_readable": false
+    }
+   },
+   "operator_action": "operator runs `sudo -l -U agent-user`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/sudo": {
+   "blocking": true,
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the gate is the authorisation policy, which is unreadable by the agent (/etc/sudoers is 0440 root, /etc/polkit-1/rules.d is 0700 root)",
+   "evidence": {
+    "binary_hash": null,
+    "capabilities": "none",
+    "expected_hash": "52d280f4d4411a54afcad91468f765790056c8b388e1074f2324dad3e31846de",
+    "file": {
+     "exists": true,
+     "mode": "0o4111",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/sudo",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "FILE_UNREADABLE_BY_AGENT",
+    "package_owner": "sudo-1.9.17-8.p2.fc44.x86_64",
+    "rule": {
+     "package": "sudo-1.9.17-8.p2.fc44.x86_64",
+     "polkit_local_listable": false,
+     "sudoers_readable": false
+    }
+   },
+   "operator_action": "operator runs `sudo -l -U agent-user`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/umount": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "carried forward from the source inventory, which measured it in a host-representative context",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/umount",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "prior_classification": "NON_ROOT_EQUIVALENT",
+   "privilege_effect": "bounded by fstab 'user' entries",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/unix_chkpwd": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "owning package identified, the on-disk digest equals the digest rpm recorded for this file at build time, and the setuid bit is the one the package declares",
+   "evidence": {
+    "binary_hash": "0cb285f3c1819e3ca92545b448fed4d0b6a41ce81899ad11d9512d80b18b7e79",
+    "capabilities": "none",
+    "expected_hash": "0cb285f3c1819e3ca92545b448fed4d0b6a41ce81899ad11d9512d80b18b7e79",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/unix_chkpwd",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "pam-1.7.2-2.fc44.x86_64",
+    "rule": {
+     "bound": "bounded to the caller's own row in /etc/passwd, /etc/shadow or the PAM timestamp; it cannot grant a group or a uid the caller lacks",
+     "provenance": {
+      "digest_algorithm": "sha256",
+      "integrity": "MATCH",
+      "mode_matches_package": true,
+      "package_owner": "pam-1.7.2-2.fc44.x86_64",
+      "packaged": true,
+      "setuid_declared_by_package": true,
+      "setuid_on_disk": true
+     }
+    }
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "edits the invoking user's own account record after PAM authentication; it takes no caller-chosen command and writes no caller-chosen path",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/userhelper": {
+   "blocking": true,
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the gate is the authorisation policy, which is unreadable by the agent (/etc/sudoers is 0440 root, /etc/polkit-1/rules.d is 0700 root)",
+   "evidence": {
+    "binary_hash": null,
+    "capabilities": "none",
+    "expected_hash": "fbb10ea3f210c48e5a9cc623f43d40b1b603beb1ef00a339c2a23e3f7585f6be",
+    "file": {
+     "exists": true,
+     "mode": "0o4711",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/userhelper",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "FILE_UNREADABLE_BY_AGENT",
+    "package_owner": "usermode-1.114-16.fc44.x86_64",
+    "rule": {
+     "package": "usermode-1.114-16.fc44.x86_64",
+     "polkit_local_listable": false,
+     "sudoers_readable": false
+    }
+   },
+   "operator_action": "operator runs `sudo -l -U agent-user`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor",
+   "surface": "setuid"
+  },
+  "setuid:/usr/bin/vmware-user-suid-wrapper": {
+   "blocking": true,
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "no discriminator is defined for this binary, and an unclassified setuid-root binary is treated as unresolved, never as safe",
+   "evidence": {
+    "binary_hash": "89905a0051eaaec3f7d62034e6c07fea9d3930645056bfb1c2b9b8489d38454e",
+    "capabilities": "none",
+    "expected_hash": "89905a0051eaaec3f7d62034e6c07fea9d3930645056bfb1c2b9b8489d38454e",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/vmware-user-suid-wrapper",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "open-vm-tools-desktop-13.1.0-2.fc44.x86_64",
+    "rule": {
+     "basename": "vmware-user-suid-wrapper"
+    }
+   },
+   "operator_action": "operator determines whether caller-controlled input can reach a privileged effect (arbitrary exec, arbitrary write, namespace or device manipulation, credential change); if not needed, remove the setuid bit",
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "setuid-root binary with no measured bound",
+   "surface": "setuid"
+  },
+  "setuid:/usr/lib/claude-desktop-unofficial/chrome-sandbox": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "owning package identified, the on-disk digest equals the digest rpm recorded for this file at build time, and the setuid bit is the one the package declares",
+   "evidence": {
+    "binary_hash": "2015304df43beff0b74409cdc4d858107efcde650d9bc8afb1288041d62cec4b",
+    "capabilities": "none",
+    "expected_hash": "2015304df43beff0b74409cdc4d858107efcde650d9bc8afb1288041d62cec4b",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/lib/claude-desktop-unofficial/chrome-sandbox",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "claude-desktop-unofficial-1.24012.9-3.2.1.fc42.x86_64",
+    "rule": {
+     "bound": "bounded by the SUID sandbox protocol: the helper refuses to run unless invoked as the sandbox host of its own process tree",
+     "provenance": {
+      "digest_algorithm": "sha256",
+      "integrity": "MATCH",
+      "mode_matches_package": true,
+      "package_owner": "claude-desktop-unofficial-1.24012.9-3.2.1.fc42.x86_64",
+      "packaged": true,
+      "setuid_declared_by_package": true,
+      "setuid_on_disk": true
+     }
+    }
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "creates a user/PID namespace for a browser renderer and execs only the target passed by its own zygote; it does not take a caller-chosen command",
+   "surface": "setuid"
+  },
+  "setuid:/usr/lib/polkit-1/polkit-agent-helper-1": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "owning package identified, the on-disk digest equals the digest rpm recorded for this file at build time, and the setuid bit is the one the package declares",
+   "evidence": {
+    "binary_hash": "026972c2853aa610480cdf5957dacdf28d7b07059977282cfee0a5d8deb0605a",
+    "capabilities": "none",
+    "expected_hash": "026972c2853aa610480cdf5957dacdf28d7b07059977282cfee0a5d8deb0605a",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/lib/polkit-1/polkit-agent-helper-1",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "polkit-127-2.fc44.2.x86_64",
+    "rule": {
+     "bound": "bounded: it is the credential-checking half of the polkit conversation. It cannot grant an action -- polkitd does that, and polkitd's decision is the separately-classified pkexec path",
+     "provenance": {
+      "digest_algorithm": "sha256",
+      "integrity": "MATCH",
+      "mode_matches_package": true,
+      "package_owner": "polkit-127-2.fc44.2.x86_64",
+      "packaged": true,
+      "setuid_declared_by_package": true,
+      "setuid_on_disk": true
+     }
+    }
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "authenticates the caller to polkitd over a private channel; it execs nothing and writes no caller-chosen path",
+   "surface": "setuid"
+  },
+  "setuid:/usr/lib64/cef/chrome-sandbox": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "owning package identified, the on-disk digest equals the digest rpm recorded for this file at build time, and the setuid bit is the one the package declares",
+   "evidence": {
+    "binary_hash": "3cb77cf3a2fd251c4c43c7d164b20472f6818a25ffcf88f0330f0b3df8f62ba3",
+    "capabilities": "none",
+    "expected_hash": "3cb77cf3a2fd251c4c43c7d164b20472f6818a25ffcf88f0330f0b3df8f62ba3",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/lib64/cef/chrome-sandbox",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "cef-146.0.11^chromium146.0.7680.177-2.fc44.x86_64",
+    "rule": {
+     "bound": "bounded by the SUID sandbox protocol: the helper refuses to run unless invoked as the sandbox host of its own process tree",
+     "provenance": {
+      "digest_algorithm": "sha256",
+      "integrity": "MATCH",
+      "mode_matches_package": true,
+      "package_owner": "cef-146.0.11^chromium146.0.7680.177-2.fc44.x86_64",
+      "packaged": true,
+      "setuid_declared_by_package": true,
+      "setuid_on_disk": true
+     }
+    }
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "creates a user/PID namespace for a browser renderer and execs only the target passed by its own zygote; it does not take a caller-chosen command",
+   "surface": "setuid"
+  },
+  "setuid:/usr/libexec/dbus-1/dbus-daemon-launch-helper": {
+   "blocking": true,
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "no verified provenance for these bytes (integrity=FILE_UNREADABLE_BY_AGENT), so the design bound cannot be attributed to the binary actually on disk; and neither D-Bus system-service directory is agent-writable",
+   "evidence": {
+    "binary_hash": null,
+    "capabilities": "none",
+    "expected_hash": "3276f1f7ce40adbbd7cfa2bc00d62cb53ec1348da4719d9a5d34aa31c7421aef",
+    "file": {
+     "exists": true,
+     "mode": "0o4750",
+     "owner_gid": 81,
+     "owner_uid": 0,
+     "path": "/usr/libexec/dbus-1/dbus-daemon-launch-helper",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "FILE_UNREADABLE_BY_AGENT",
+    "package_owner": "dbus-daemon-1.16.2-1.fc44.x86_64",
+    "rule": {
+     "bound": {
+      "bound_if_provenance_held": "bounded: the service files it may launch live in root-owned directories the agent cannot write, so it takes no caller-chosen binary",
+      "provenance": {
+       "digest_algorithm": "sha256",
+       "integrity": "FILE_UNREADABLE_BY_AGENT",
+       "mode_matches_package": true,
+       "package_owner": "dbus-daemon-1.16.2-1.fc44.x86_64",
+       "packaged": true,
+       "setuid_declared_by_package": true,
+       "setuid_on_disk": true
+      }
+     },
+     "conf": {
+      "exists": true,
+      "mode": "0o755",
+      "owner_uid": 0,
+      "path": "/etc/dbus-1/system.d",
+      "writable_by_agent": false
+     },
+     "services": {
+      "exists": true,
+      "mode": "0o755",
+      "owner_uid": 0,
+      "path": "/usr/share/dbus-1/system-services",
+      "writable_by_agent": false
+     }
+    }
+   },
+   "operator_action": "operator establishes provenance for this binary (vendor manifest, checksum, or a package whose digest the agent can read) or removes the setuid bit",
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "launches a system service as the user named in its .service file",
+   "surface": "setuid"
+  },
+  "setuid:/usr/libexec/libgtop_server2": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "owning package identified, the on-disk digest equals the digest rpm recorded for this file at build time, and the setuid bit is the one the package declares",
+   "evidence": {
+    "binary_hash": "74c298a23c56b07d977355d3d143cc1c98c35e4d658eae8de49a36853a379dd3",
+    "capabilities": "none",
+    "expected_hash": "74c298a23c56b07d977355d3d143cc1c98c35e4d658eae8de49a36853a379dd3",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/libexec/libgtop_server2",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "libgtop2-2.41.3-5.fc44.x86_64",
+    "rule": {
+     "bound": "bounded: it discloses information and performs no write, no exec and no credential change. Information disclosure is not uid-0 authority under the classification criteria",
+     "provenance": {
+      "digest_algorithm": "sha256",
+      "integrity": "MATCH",
+      "mode_matches_package": true,
+      "package_owner": "libgtop2-2.41.3-5.fc44.x86_64",
+      "packaged": true,
+      "setuid_declared_by_package": true,
+      "setuid_on_disk": true
+     }
+    }
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "reports system and process statistics to a desktop client",
+   "surface": "setuid"
+  },
+  "setuid:/usr/libexec/qemu-bridge-helper": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "owning package identified, the on-disk digest equals the digest rpm recorded for this file at build time, and the setuid bit is the one the package declares; and the readable allow list names specific bridges",
+   "evidence": {
+    "binary_hash": "42788deb78c835fbd8279f97af9586179b16f0fdbd8b3d88afcdbede90db0b72",
+    "capabilities": "none",
+    "expected_hash": "42788deb78c835fbd8279f97af9586179b16f0fdbd8b3d88afcdbede90db0b72",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/libexec/qemu-bridge-helper",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "qemu-common-10.2.2-1.fc44.x86_64",
+    "rule": {
+     "allow_entries": [
+      "allow virbr0"
+     ],
+     "bound": {
+      "bound": "bounded by the allow list in /etc/qemu/bridge.conf: ['allow virbr0']",
+      "provenance": {
+       "digest_algorithm": "sha256",
+       "integrity": "MATCH",
+       "mode_matches_package": true,
+       "package_owner": "qemu-common-10.2.2-1.fc44.x86_64",
+       "packaged": true,
+       "setuid_declared_by_package": true,
+       "setuid_on_disk": true
+      }
+     }
+    }
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "attaches a tap device to a bridge as root",
+   "surface": "setuid"
+  },
+  "setuid:/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper": {
+   "blocking": true,
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "no discriminator is defined for this binary, and an unclassified setuid-root binary is treated as unresolved, never as safe",
+   "evidence": {
+    "binary_hash": "df25e68200204f4dc88b01697b68bccaa52c386314ad51ae9cd274da9a32fec8",
+    "capabilities": "none",
+    "expected_hash": "df25e68200204f4dc88b01697b68bccaa52c386314ad51ae9cd274da9a32fec8",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "spice-glib-0.42-8.fc44.x86_64",
+    "rule": {
+     "basename": "spice-client-glib-usb-acl-helper"
+    }
+   },
+   "operator_action": "operator determines whether caller-controlled input can reach a privileged effect (arbitrary exec, arbitrary write, namespace or device manipulation, credential change); if not needed, remove the setuid bit",
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "setuid-root binary with no measured bound",
+   "surface": "setuid"
+  },
+  "setuid:/usr/share/antigravity/chrome-sandbox": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "owning package identified, the on-disk digest equals the digest rpm recorded for this file at build time, and the setuid bit is the one the package declares",
+   "evidence": {
+    "binary_hash": "b80ae15c6479c7feaba09d0be5baa7dc5e9f6c4a8318ad810ab2403bd19c1556",
+    "capabilities": "none",
+    "expected_hash": "b80ae15c6479c7feaba09d0be5baa7dc5e9f6c4a8318ad810ab2403bd19c1556",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/share/antigravity/chrome-sandbox",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "antigravity-1.23.2-1776330658.el8.x86_64",
+    "rule": {
+     "bound": "bounded by the SUID sandbox protocol: the helper refuses to run unless invoked as the sandbox host of its own process tree",
+     "provenance": {
+      "digest_algorithm": "sha256",
+      "integrity": "MATCH",
+      "mode_matches_package": true,
+      "package_owner": "antigravity-1.23.2-1776330658.el8.x86_64",
+      "packaged": true,
+      "setuid_declared_by_package": true,
+      "setuid_on_disk": true
+     }
+    }
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "creates a user/PID namespace for a browser renderer and execs only the target passed by its own zygote; it does not take a caller-chosen command",
+   "surface": "setuid"
+  },
+  "setuid:/usr/share/code/chrome-sandbox": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "owning package identified, the on-disk digest equals the digest rpm recorded for this file at build time, and the setuid bit is the one the package declares",
+   "evidence": {
+    "binary_hash": "2015304df43beff0b74409cdc4d858107efcde650d9bc8afb1288041d62cec4b",
+    "capabilities": "none",
+    "expected_hash": "2015304df43beff0b74409cdc4d858107efcde650d9bc8afb1288041d62cec4b",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/share/code/chrome-sandbox",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "code-1.129.0-1784075033.el8.x86_64",
+    "rule": {
+     "bound": "bounded by the SUID sandbox protocol: the helper refuses to run unless invoked as the sandbox host of its own process tree",
+     "provenance": {
+      "digest_algorithm": "sha256",
+      "integrity": "MATCH",
+      "mode_matches_package": true,
+      "package_owner": "code-1.129.0-1784075033.el8.x86_64",
+      "packaged": true,
+      "setuid_declared_by_package": true,
+      "setuid_on_disk": true
+     }
+    }
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "creates a user/PID namespace for a browser renderer and execs only the target passed by its own zygote; it does not take a caller-chosen command",
+   "surface": "setuid"
+  },
+  "setuid:/usr/share/cursor/chrome-sandbox": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "owning package identified, the on-disk digest equals the digest rpm recorded for this file at build time, and the setuid bit is the one the package declares",
+   "evidence": {
+    "binary_hash": "566d3ebc00aeacc9072e7c9345845f598d5ebf9c78d9bba0918034030866e069",
+    "capabilities": "none",
+    "expected_hash": "566d3ebc00aeacc9072e7c9345845f598d5ebf9c78d9bba0918034030866e069",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/share/cursor/chrome-sandbox",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "cursor-3.12.10-1784174250.el8.x86_64",
+    "rule": {
+     "bound": "bounded by the SUID sandbox protocol: the helper refuses to run unless invoked as the sandbox host of its own process tree",
+     "provenance": {
+      "digest_algorithm": "sha256",
+      "integrity": "MATCH",
+      "mode_matches_package": true,
+      "package_owner": "cursor-3.12.10-1784174250.el8.x86_64",
+      "packaged": true,
+      "setuid_declared_by_package": true,
+      "setuid_on_disk": true
+     }
+    }
+   },
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "creates a user/PID namespace for a browser renderer and execs only the target passed by its own zygote; it does not take a caller-chosen command",
+   "surface": "setuid"
+  },
+  "sudo:sudo": {
+   "blocking": true,
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "`sudo -n -l` distinguishes *no entry* ('not allowed to run sudo') from *an entry behind a password* ('a password is required'). It cannot reveal which commands the entry grants, and /etc/sudoers is 0440 root",
+   "evidence": {
+    "interpretation": "an entry exists; its command set is unmeasured. `ALL=(ALL) ALL` would be root-equivalent",
+    "probe": {
+     "argv": [
+      "sudo",
+      "-n",
+      "-l"
+     ],
+     "rc": 1,
+     "stderr": "sudo: a password is required",
+     "stdout": ""
+    },
+    "sudoers_entry_exists_for_agent": true,
+    "sudoers_mode": "0o440",
+    "sudoers_readable_by_agent": false
+   },
+   "operator_action": "operator runs `sudo -l -U agent-user` and reads /etc/sudoers plus /etc/sudoers.d/*; any root-capable entry for this identity must be removed",
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "arbitrary command execution as uid 0 if the policy grants it",
+   "surface": "sudo"
+  },
+  "systemd:systemd_run": {
+   "blocking": true,
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
+   "evidence": {
+    "action_id": "org.freedesktop.systemd1.manage-units",
+    "admin_identities_from_50_default": [],
+    "agent_groups": [
+     "wheel",
+     "docker",
+     "agent-user"
+    ],
+    "agent_is_admin_identity": false,
+    "implicit": {
+     "implicit active": "auth_admin_keep",
+     "implicit any": "auth_admin",
+     "implicit inactive": "auth_admin"
+    },
+    "overlap": [],
+    "polkit_local_rules_listable_by_agent": false
+   },
+   "operator_action": "operator confirms no polkit rule grants this identity org.freedesktop.systemd1.manage-units without authentication",
+   "prior_classification": "UNKNOWN",
+   "privilege_effect": "starts a transient unit under the system manager, which runs as root by default",
+   "surface": "systemd"
+  },
+  "systemd:systemd_unit_control": {
+   "blocking": false,
+   "classification": "NON_ROOT_EQUIVALENT",
+   "discriminator": "carried forward from the source inventory, which measured it in a host-representative context",
+   "evidence": {
+    "root_services_with_agent_writable_exec": [],
+    "unit_dirs": {
+     "/etc/systemd/system": {
+      "exists": true,
+      "mode": "0o755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/etc/systemd/system",
+      "readable_by_agent": true,
+      "setuid": false,
+      "writable_by_agent": false
+     },
+     "/run/systemd/system": {
+      "exists": true,
+      "mode": "0o755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/run/systemd/system",
+      "readable_by_agent": true,
+      "setuid": false,
+      "writable_by_agent": false
+     },
+     "/usr/lib/systemd/system": {
+      "exists": true,
+      "mode": "0o755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/lib/systemd/system",
+      "readable_by_agent": true,
+      "setuid": false,
+      "writable_by_agent": false
+     }
+    }
+   },
+   "prior_classification": "NON_ROOT_EQUIVALENT",
+   "privilege_effect": "no system unit directory is agent-writable and no root service has an agent-writable executable",
+   "surface": "systemd"
+  }
+ },
+ "read_only": true,
+ "requires_operator_evidence_paths": [
+  "container_runtimes:libvirt_ro_socket",
+  "container_runtimes:libvirt_socket",
+  "groups:membership_wheel",
+  "polkit:dbus_system_bus",
+  "polkit:pkexec",
+  "setuid:/opt/1Password/chrome-sandbox",
+  "setuid:/usr/bin/chfn",
+  "setuid:/usr/bin/chsh",
+  "setuid:/usr/bin/gpasswd",
+  "setuid:/usr/bin/pkexec",
+  "setuid:/usr/bin/su",
+  "setuid:/usr/bin/sudo",
+  "setuid:/usr/bin/userhelper",
+  "setuid:/usr/bin/vmware-user-suid-wrapper",
+  "setuid:/usr/libexec/dbus-1/dbus-daemon-launch-helper",
+  "setuid:/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper",
+  "sudo:sudo",
+  "systemd:systemd_run"
+ ],
+ "root_equivalent_paths": [
+  "container_runtimes:docker_rootful_socket",
+  "groups:membership_docker"
+ ],
+ "source_inventory": {
+  "counts": {
+   "non_root_equivalent": 14,
+   "root_equivalent": 2,
+   "total": 57,
+   "unknown": 41
+  },
+  "path": "PRIVILEGE_TOPOLOGY.json",
+  "sha256": "ef0f09e327fad62d1d2651d6a4fb7ba544fe47aca1c4c3c45bf29411989a1369"
+ },
+ "surface_results": {
+  "container_runtimes": {
+   "completed": true,
+   "path_count": 4,
+   "status": "SUCCESS"
+  },
+  "filecaps": {
+   "completed": true,
+   "path_count": 11,
+   "status": "SUCCESS"
+  },
+  "groups": {
+   "completed": true,
+   "path_count": 2,
+   "status": "SUCCESS"
+  },
+  "polkit": {
+   "completed": true,
+   "path_count": 2,
+   "status": "SUCCESS"
+  },
+  "setuid": {
+   "completed": true,
+   "path_count": 35,
+   "status": "SUCCESS"
+  },
+  "sudo": {
+   "completed": true,
+   "path_count": 1,
+   "status": "SUCCESS"
+  },
+  "systemd": {
+   "completed": true,
+   "path_count": 2,
+   "status": "SUCCESS"
+  }
+ },
+ "unknown_privilege_paths": []
+}

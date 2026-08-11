@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "acgs_substrate_identity/v1",
+  "title": "External substrate identity manifest",
+  "description": "A small, repository-governed cryptographic description of the external COMMERCIAL_BUYER_READINESS_V1 substrate. It is Layer B in the A/B/C separation: it is NOT the substrate bytes (Layer A, 232 GB, never copied here) and NOT legal authority (Layer C). Identity is bound to the bytes of a fixed critical-object set and the counts re-derived from the live registries; it is deliberately independent of the absolute pathname so the substrate can be relocated.",
+  "type": "object",
+  "required": [
+    "schema", "schema_version", "substrate_id", "substrate_type",
+    "canonical_observed_path", "critical_objects", "critical_set_digest",
+    "expected_counts", "identity_strength", "identity_class"
+  ],
+  "properties": {
+    "schema": {"const": "acgs_substrate_identity/v1"},
+    "schema_version": {"const": 1},
+    "substrate_id": {"type": "string", "description": "first 16 hex of critical_set_digest"},
+    "substrate_type": {"const": "COMMERCIAL_BUYER_READINESS_V1"},
+    "canonical_observed_path": {"type": "string", "description": "Where the substrate was observed. NOT load-bearing — verification matches by bytes, not path."},
+    "path_binding": {
+      "type": "object",
+      "description": "Corroborating evidence: verify_readiness.py hardcodes its ROOT under this tree.",
+      "properties": {
+        "type": {"type": "string"},
+        "observed_parent": {"type": "string"},
+        "verified": {"type": "boolean"}
+      }
+    },
+    "source_bundle_identity": {"type": "object"},
+    "critical_object_count": {"type": "integer"},
+    "critical_objects": {
+      "type": "object",
+      "description": "{relpath: {sha256, bytes}} over the fixed critical set.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {"sha256": {"type": "string"}, "bytes": {"type": ["integer", "null"]}}
+      }
+    },
+    "critical_set_digest": {"type": "string", "description": "sha256 over the sorted {relpath: sha256} map. Path-independent."},
+    "expected_counts": {
+      "type": "object",
+      "description": "Structural counts re-derived from the live registries at build time. Verification re-derives them and fails closed on drift.",
+      "additionalProperties": {"type": "integer"}
+    },
+    "identity_generated_from": {"type": "array", "items": {"type": "string"}},
+    "generation_basis": {"type": "string", "description": "Deterministic; no wall-clock embedded so a rebuild reproduces the manifest."},
+    "identity_strength": {
+      "type": "object",
+      "required": ["path_binding", "structural_fingerprint", "cryptographic_binding", "vcs_lineage"],
+      "properties": {
+        "path_binding": {"enum": ["strong", "weak"]},
+        "structural_fingerprint": {"enum": ["exact", "approximate"]},
+        "cryptographic_binding": {"enum": ["critical_objects", "full_tree", "none"]},
+        "vcs_lineage": {"enum": ["available", "unavailable"]}
+      }
+    },
+    "identity_class": {
+      "enum": ["EXACT_PRIOR_SUBSTRATE", "COMPATIBLE_BUT_UNPROVEN", "DIVERGED_SUBSTRATE", "TEST_SUBSTRATE"],
+      "description": "EXACT_PRIOR_SUBSTRATE requires authorship/path binding + exact critical-object hashes + exact count fingerprint. It never claims commit lineage (vcs_lineage is unavailable)."
+    },
+    "limitations": {"type": "array", "items": {"type": "string"}}
+  }
+}

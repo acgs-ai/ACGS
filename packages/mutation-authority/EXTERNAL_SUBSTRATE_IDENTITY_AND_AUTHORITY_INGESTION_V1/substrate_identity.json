@@ -1,0 +1,113 @@
+{
+ "canonical_observed_path": "~/Downloads/traj_procurement_guideline_20260609 (2)/governance_trajectories/COMMERCIAL_BUYER_READINESS_V1",
+ "canonical_observed_path_sha256": "3b95065115a378efb72a81a6d527f2cc70a515c5bc5f7166b745c01107375de6",
+ "critical_object_count": 15,
+ "critical_objects": {
+  "COMMERCIAL_RIGHTS_REQUEST_EXECUTION_V1/COMMERCIAL_RIGHTS_REQUEST_COVERAGE.json": {
+   "bytes": 100834,
+   "sha256": "590fac648201f63864b998641011d38f01670a5b910e4c521810f9e7720e96c4"
+  },
+  "COMMERCIAL_RIGHTS_REQUEST_EXECUTION_V1/COMMERCIAL_RIGHTS_REQUEST_REGISTRY.json": {
+   "bytes": 631043,
+   "sha256": "aade071e9057529c0b2ed5177f72230c86515ae09ac7502700bca50f142c2841"
+  },
+  "COMMERCIAL_RIGHTS_REQUEST_EXECUTION_V1/COMMERCIAL_RIGHTS_REQUEST_SCHEMA.json": {
+   "bytes": 22383,
+   "sha256": "f6b2bbd2ec2ce7416733a9f44a854e5e9d32d26a4a73071f98374c7f32069554"
+  },
+  "COMMERCIAL_RIGHTS_REQUEST_EXECUTION_V1/COMMERCIAL_RIGHTS_REQUIREMENT_ONTOLOGY.json": {
+   "bytes": 25699,
+   "sha256": "e0e082d25d0ce4174cee972bea6759787ef54b13443a9ba4ce27a609810acb5a"
+  },
+  "COMMERCIAL_RIGHTS_REQUEST_EXECUTION_V1/CRE_INDEX.json": {
+   "bytes": 1531,
+   "sha256": "62df3f27d333166ac1821f71222dc15dddaff39b9c4f8b27dd8bd245cb4b9db4"
+  },
+  "COMMERCIAL_RIGHTS_REQUEST_EXECUTION_V1/sha256sums.txt": {
+   "bytes": 1085,
+   "sha256": "08f1fd3b4af528d3d9076817850bb820467481ec5e51c6db63744e48d5c0c8ac"
+  },
+  "COMMERCIAL_RIGHTS_REQUEST_EXECUTION_V1/verify_commercial_rights_requests.py": {
+   "bytes": 53805,
+   "sha256": "d4cdd8e2dff64a60eefe04b5c602264bc627ed5b03b582ef1e401c1187d03135"
+  },
+  "COMMERCIAL_RIGHTS_REQUIREMENT_MODEL_V1/COMMERCIAL_RIGHTS_REQUIREMENTS.json": {
+   "bytes": 43786,
+   "sha256": "9dfba9006b379cee1b87c154ca5fb3d7762e3908f7731a3bbd77a6714aa9c722"
+  },
+  "COMMERCIAL_RIGHTS_REQUIREMENT_MODEL_V1/CR_INDEX.json": {
+   "bytes": 1206,
+   "sha256": "98631dd66fa677e0ad5b33d718a303f6d27d83edb139b0a7e5d239773c8a2215"
+  },
+  "COMMERCIAL_RIGHTS_REQUIREMENT_MODEL_V1/RIGHTS_REQUEST_MAPPING.json": {
+   "bytes": 302683,
+   "sha256": "7c92dc1647a70813a41b390e6cfdd4ae1bbf178442a5b0e9df5a32374a93d566"
+  },
+  "COMMERCIAL_RIGHTS_REQUIREMENT_MODEL_V1/RIGHTS_REQUIREMENT_SCHEMA.json": {
+   "bytes": 18189,
+   "sha256": "2c64decee690fe1e1da10486e6d63d824f0eb250a990cd7d399275fd6b5df7f0"
+  },
+  "COMMERCIAL_RIGHTS_REQUIREMENT_MODEL_V1/sha256sums.txt": {
+   "bytes": 842,
+   "sha256": "eabc50b9d81700219ef72830052da1e3c8c3056ea9cf952c6a60634383791e29"
+  },
+  "COMMERCIAL_RIGHTS_REQUIREMENT_MODEL_V1/verify_rights_requirements.py": {
+   "bytes": 29254,
+   "sha256": "844734d5da13369c8f25bfd77df149726701c68b95b0f70994e614a2e832913c"
+  },
+  "README.md": {
+   "bytes": 13866,
+   "sha256": "d4ddeff5de7b06ed80a41bffefdb62922670a33c7c5cd6927c611a7eb40ae9fa"
+  },
+  "verify_readiness.py": {
+   "bytes": 45325,
+   "sha256": "cab91f5756a673ff23f264a264e5b24f960324ecf46abac840de1ee43fdf64a7"
+  }
+ },
+ "critical_set_digest": "4bf789b9fc7b82a9285fba2f07f4dc65a363b86718bfefd7102e4ac4a9553e14",
+ "expected_counts": {
+  "assets": 34,
+  "coverage_edges": 340,
+  "mappings": 408,
+  "no_appointed_controller": 34,
+  "no_evidenced_counsel_identity": 306,
+  "ready_to_send": 0,
+  "recipients_invented": 0,
+  "requests": 340,
+  "requirements": 12,
+  "rights_assertions": 0,
+  "routing_required": 340,
+  "source_blocked": 68,
+  "source_request_required": 340
+ },
+ "generation_basis": "deterministic (critical_set_digest); no wall-clock embedded",
+ "identity_class": "EXACT_PRIOR_SUBSTRATE",
+ "identity_generated_from": [
+  "sha256 of a fixed 15-object critical set",
+  "structural counts re-derived from the live registries"
+ ],
+ "identity_strength": {
+  "cryptographic_binding": "critical_objects",
+  "path_binding": "strong",
+  "structural_fingerprint": "exact",
+  "vcs_lineage": "unavailable"
+ },
+ "limitations": [
+  "No VCS lineage exists; identity is authorship path-binding + exact critical-object hashes + exact count fingerprint, not commit ancestry.",
+  "Binds a critical subset, not all 232 GB; the two layers carrying the 340 requests / 408 mappings / 12 requirements plus each layer's own sha256sums.txt (which transitively pins its files) and the top verifier.",
+  "Identity proves this is the same artifact; it proves nothing about any real-world legal authority, right, or recipient."
+ ],
+ "path_binding": {
+  "observed_parent": "~/Downloads/traj_procurement_guideline_20260609 (2)/governance_trajectories",
+  "type": "verify_readiness.py hardcodes ROOT to the substrate parent",
+  "verified": true
+ },
+ "schema": "acgs_substrate_identity/v1",
+ "schema_version": 1,
+ "source_bundle_identity": {
+  "bundle_dir": "traj_procurement_guideline_20260609 (2)",
+  "note": "downloaded trajectory bundle; extraction of the sibling .zip"
+ },
+ "substrate_id": "4bf789b9fc7b82a9",
+ "substrate_type": "COMMERCIAL_BUYER_READINESS_V1"
+}
