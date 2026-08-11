@@ -32,18 +32,33 @@ class ReceiptError(RuntimeError):
 def load_or_create_key(keystore: Path) -> bytes:
     """Load the HMAC key from a keystore outside the substrate, creating it on
     first use. The keystore lives in this package (gitignored), never in the
-    read-only substrate."""
-    if keystore.is_file():
+    read-only substrate.
+
+    Creation is atomic and owner-only: the file is opened with
+    O_CREAT|O_EXCL and mode 0600, so the key bytes are never observable
+    through a world-readable window and a failure to restrict permissions
+    fails closed instead of leaving a readable keystore behind."""
+    if keystore.exists():
+        if keystore.is_file():
+            data = keystore.read_bytes().strip()
+            if len(data) >= 32:
+                return data
+        raise ReceiptError(f"keystore exists but holds no usable key: {keystore}")
+    key = secrets.token_bytes(32)
+    keystore.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(keystore, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
         data = keystore.read_bytes().strip()
         if len(data) >= 32:
             return data
-    key = secrets.token_bytes(32)
-    keystore.parent.mkdir(parents=True, exist_ok=True)
-    keystore.write_bytes(key)
+        raise ReceiptError(f"keystore exists but holds no usable key: {keystore}") from None
+    except OSError as exc:
+        raise ReceiptError(f"cannot create keystore with owner-only permissions: {exc}") from exc
     try:
-        os.chmod(keystore, 0o600)
-    except OSError:
-        pass
+        os.write(fd, key)
+    finally:
+        os.close(fd)
     return key
 
 

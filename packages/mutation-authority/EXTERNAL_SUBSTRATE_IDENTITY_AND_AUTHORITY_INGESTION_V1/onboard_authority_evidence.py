@@ -34,7 +34,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 import ingest_authority_evidence as ingest
@@ -48,6 +50,7 @@ from authority_lifecycle import (
     superseded_ids_of,
     validate_onboarding_record,
 )
+from authority_receipt import load_or_create_key
 
 HERE = Path(__file__).resolve().parent
 
@@ -135,11 +138,17 @@ def main(argv: list[str]) -> int:
             return 5
 
     # Gate 4 — receipted, idempotent ingest via the trusted V1 path. The
-    # attested record (with bound source_digest) is passed through a temp file
-    # so ingest re-validates exactly what we checked.
-    staged = rec_path.with_suffix(".staged.json")
-    staged.write_text(json.dumps(record, sort_keys=True, ensure_ascii=False), encoding="utf-8")
+    # attested record (with bound source_digest) is passed through a unique
+    # temp file (never a deterministic sibling name that could clobber and
+    # then delete a user's file) so ingest re-validates exactly what we
+    # checked.
+    fd, staged_name = tempfile.mkstemp(
+        dir=str(rec_path.parent), prefix=rec_path.stem + ".", suffix=".staged.json"
+    )
+    staged = Path(staged_name)
     try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, sort_keys=True, ensure_ascii=False))
         rc = ingest.main(
             [
                 "--record",
@@ -173,6 +182,7 @@ def main(argv: list[str]) -> int:
         events=events,
         keystore_dir=Path(args.validator_keystore),
         policy=VT.load_policy(HERE / VT.POLICY_NAME),
+        receipt_key=load_or_create_key(Path(args.keystore)),
     )
     print(f"lifecycle_state = {state}")
     if state != "ACTIVE":

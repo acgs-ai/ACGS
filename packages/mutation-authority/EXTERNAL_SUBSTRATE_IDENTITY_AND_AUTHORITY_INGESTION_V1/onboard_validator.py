@@ -46,11 +46,13 @@ from validator_onboarding import (
     verify_key_ownership,
 )
 from validator_trust import (
+    APPOINTMENTS_DIR_NAME,
     ED25519,
     EVENT_SCHEMA,
     VALIDATOR_KEYSTORE_NAME,
     VALIDATOR_REGISTRY_NAME,
     _parse_z,
+    chain_intact,
     load_validator_events,
 )
 
@@ -143,6 +145,13 @@ def main(argv: list[str]) -> int:
     if events is None:
         print("FATAL: validator registry is malformed — refusing to append", file=sys.stderr)
         return 2
+    if not chain_intact(events):
+        print(
+            "FATAL: validator registry hash chain is broken — refusing to append "
+            "(appending would launder tampered history behind a fresh chain link)",
+            file=sys.stderr,
+        )
+        return 2
     vid = appointment["validator_id"]
     if any(e.get("event") == "REGISTER" and e.get("validator_id") == vid for e in events):
         print(f"REFUSED: conflicting appointment — {vid} is already registered", file=sys.stderr)
@@ -184,6 +193,17 @@ def main(argv: list[str]) -> int:
     }
     if kb["key_algorithm"] == ED25519:
         event["public_key"] = kb["public_key"]
+
+    # Retain the verified appointment record BEFORE appending: REGISTER
+    # provenance is only meaningful if later verification can re-validate the
+    # appointment material independently of the registry event itself.
+    retained_dir = Path(args.keystore) / APPOINTMENTS_DIR_NAME
+    retained_dir.mkdir(parents=True, exist_ok=True)
+    retained_path = retained_dir / f"{event['appointment_binding']}.json"
+    retained_path.write_text(
+        json.dumps(appointment, sort_keys=True, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
     _append(registry, event)
 
     state = derive_ceremony_state(

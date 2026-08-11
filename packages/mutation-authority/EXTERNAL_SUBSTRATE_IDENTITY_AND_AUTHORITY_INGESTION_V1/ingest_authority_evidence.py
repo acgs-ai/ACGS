@@ -109,6 +109,10 @@ def main(argv: list[str]) -> int:
     )
     record.setdefault("ingested_by", "ingest_authority_evidence.py")
     record["ingestion_receipt"] = receipt["receipt_id"]
+    # Retain the FULL signed receipt on the record: downstream trust
+    # derivation re-verifies it against the authority receipt key, so a
+    # registry writer cannot fake ingestion with a receipt-shaped string.
+    record["ingestion_receipt_record"] = receipt
 
     # Retain the source-document bytes next to the registry so the digest
     # stays independently re-verifiable: routing eligibility re-hashes the

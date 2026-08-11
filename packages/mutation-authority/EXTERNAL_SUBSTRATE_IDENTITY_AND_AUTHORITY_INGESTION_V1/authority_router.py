@@ -80,9 +80,11 @@ def validate_evidence(record: dict[str, Any]) -> None:
     scope = record["authority_scope"]
     if not isinstance(scope, dict) or "asset_ids" not in scope or "requirement_ids" not in scope:
         raise EvidenceError("authority_scope must carry asset_ids and requirement_ids")
-    for k in ("source_reference", "source_digest"):
+    for k in ("subject_identity", "source_reference", "source_digest"):
         if not isinstance(record[k], str) or not record[k].strip():
-            raise EvidenceError(f"{k} must be a non-empty string (a real source is required)")
+            raise EvidenceError(
+                f"{k} must be a non-empty string (a real, named source is required)"
+            )
 
 
 def source_digest_matches(record: dict[str, Any], document_bytes: bytes) -> bool:

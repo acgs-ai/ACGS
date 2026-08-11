@@ -12,12 +12,13 @@ the file (Attack F) or a second use of the same receipt (Attack E).
 from __future__ import annotations
 
 import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 
 from .canonical import ABSENT, hash_file
 from .engine import _verify_chain_root_binding
-from .ledger import EVENT_COMMIT, AuditLedger
+from .ledger import EVENT_COMMIT, EVENT_GENESIS, AuditLedger
 from .receipt import MutationDecisionReceipt
 from .root import GovernanceRoot
 
@@ -71,8 +72,24 @@ class EffectBinder:
         if receipt.receipt_id in self.ledger.committed_receipt_ids():
             return CommitResult(REJECTED, "receipt already consumed (replay rejected)")
 
-        # 4. Expiry.
-        if now > receipt.expiry:
+        # 4. Expiry. `now` is caller-supplied, so clamp it against the audit
+        #    chain's own clock: time never runs backwards past the newest
+        #    committed effect, so a caller cannot resurrect an expired receipt
+        #    by passing a backdated `now`. Only GENESIS/COMMIT timestamps are
+        #    trusted here — COMMIT times are themselves receipt-gated by this
+        #    check, whereas DECISION events can carry attacker-injected
+        #    timestamps (a direct decide() DENY still appends one) and must
+        #    not be able to expire live receipts (clock-skew DoS, Attack H).
+        chain_now = max(
+            (
+                e.timestamp
+                for e in self.ledger.events()
+                if e.type in (EVENT_GENESIS, EVENT_COMMIT)
+            ),
+            default=now,
+        )
+        effective_now = max(now, chain_now)
+        if effective_now > receipt.expiry:
             return CommitResult(REJECTED, "receipt expired")
 
         # 5. Content/operation coherence.
@@ -92,6 +109,21 @@ class EffectBinder:
             return CommitResult(
                 REJECTED, "resource resolves outside the governed repository (symlink escape)"
             )
+        # The governance root and protected prefixes are rechecked against the
+        # RESOLVED path too: a symlink that stays inside the repository but
+        # lands on governance material must not bypass the policy decision.
+        root_dir = self.root.root_dir.resolve()
+        if resolved == root_dir or resolved.is_relative_to(root_dir):
+            return CommitResult(
+                REJECTED, "resource resolves into the governance root (symlink escape)"
+            )
+        rel = resolved.relative_to(repo_root).as_posix()
+        for prefix in self.root.protected_prefixes():
+            if rel == prefix or rel.startswith(prefix.rstrip("/") + "/"):
+                return CommitResult(
+                    REJECTED,
+                    "resource resolves into a protected prefix (symlink escape)",
+                )
         before_hash = hash_file(target)
         if before_hash != receipt.previous_state_hash:
             return CommitResult(
@@ -108,10 +140,15 @@ class EffectBinder:
             after_hash = ABSENT
         else:
             assert new_content is not None
-            target.parent.mkdir(parents=True, exist_ok=True)
-            tmp = target.with_name(target.name + ".mutation-authority.tmp")
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+            tmp = resolved.with_name(resolved.name + ".mutation-authority.tmp")
             tmp.write_bytes(new_content)
-            os.replace(tmp, target)
+            if before_hash != ABSENT:
+                # An UPDATE replaces content, not file metadata: preserve the
+                # pre-existing permission bits (e.g. the executable bit) that
+                # os.replace with a fresh temp file would silently drop.
+                os.chmod(tmp, stat.S_IMODE(os.stat(resolved).st_mode))
+            os.replace(tmp, resolved)
             # Re-hash from disk (not from the input bytes) so the recorded
             # after-state binds exactly what the repository now contains,
             # including file-metadata state (symlink/exec) — never a value
@@ -133,7 +170,7 @@ class EffectBinder:
                     "after_hash": after_hash,
                     "decision": "ALLOW",
                 },
-                now,
+                effective_now,
             )
         except Exception as exc:
             if prior_bytes is None:

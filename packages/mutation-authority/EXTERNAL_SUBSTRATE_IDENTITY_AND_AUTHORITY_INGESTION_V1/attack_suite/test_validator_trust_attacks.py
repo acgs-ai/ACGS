@@ -33,6 +33,7 @@ from authority_lifecycle import (  # noqa: E402
 )
 from test_attacks import INSTANT, _evidence, build_fixture_substrate  # noqa: E402
 from test_onboarding_attacks import (  # noqa: E402
+    FIX_AUTH_KEY,
     FIX_KEY,
     FIX_KEY_ID,
     FIX_VALIDATOR,
@@ -83,6 +84,7 @@ def _gstate(rec, trust, *, instant=INSTANT, policy=_DEFAULT, events=None):
         events=events,
         keystore_dir=trust["keystore"],
         policy=dict(DEFAULT_POLICY) if policy is _DEFAULT else policy,
+        receipt_key=FIX_AUTH_KEY,
     )
 
 
@@ -244,6 +246,30 @@ def test_vt7_replayed_attestation_fails_closed(tmp_path):
     (trust["keystore"] / "vk-2").write_bytes(b"w" * 32)
     stale = _attested(_evidence())  # validated_at 2026-08-10, signed with vk-1
     assert _gstate(stale, trust) == INVALIDATED
+
+
+def test_vt7c_retired_key_attestation_requires_review(tmp_path):
+    # An attestation whose key was rotated away AFTER validated_at: the
+    # signature verified inside its window, but validated_at is signer-
+    # supplied, so a retired (possibly compromised) key holder could backdate
+    # fresh attestations into the old window. The record must not stay
+    # silently ACTIVE — it demotes to REQUIRES_REVIEW until revalidated.
+    trust = fixture_trust(tmp_path)
+    ev = _attested(_evidence())  # validated_at 2026-08-10, signed with vk-1
+    assert _gstate(ev, trust) == ACTIVE
+    _append_event(
+        trust,
+        {
+            "schema": EVENT_SCHEMA,
+            "event": "ROTATE",
+            "validator_id": FIX_VALIDATOR,
+            "key_id": "vk-2",
+            "key_fingerprint": sha256_hex(b"w" * 32),
+            "instant": "2026-08-11T00:00:00Z",  # AFTER validated_at
+        },
+    )
+    (trust["keystore"] / "vk-2").write_bytes(b"w" * 32)
+    assert _gstate(ev, trust, instant="2026-08-12T00:00:00Z") == REQUIRES_REVIEW
 
 
 def test_vt8_registry_tamper_or_key_drift_invalidated(tmp_path):

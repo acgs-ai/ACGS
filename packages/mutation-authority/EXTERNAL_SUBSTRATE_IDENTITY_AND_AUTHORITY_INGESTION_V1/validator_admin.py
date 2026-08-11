@@ -37,11 +37,15 @@ from pathlib import Path
 
 from _canonical import sha256_hex
 from validator_trust import (
+    ED25519,
     EVENT_SCHEMA,
     GENESIS,
+    HMAC_SHA256,
+    KEY_ALGORITHMS,
     VALIDATOR_KEYSTORE_NAME,
     VALIDATOR_REGISTRY_NAME,
     _parse_z,
+    chain_intact,
     event_binding,
     load_validator_events,
 )
@@ -60,18 +64,24 @@ def _append(path: Path, event: dict) -> None:
 
 
 def _write_key(keystore: Path, key_id: str) -> str:
+    """Create a fresh HMAC key atomically with owner-only permissions.
+    O_CREAT|O_EXCL with mode 0600 means the key bytes are never observable
+    through a world-readable window; a permission failure fails closed."""
     if "/" in key_id or "\\" in key_id or ".." in key_id:
         raise ValueError(f"unsafe key_id: {key_id!r}")
     keystore.mkdir(parents=True, exist_ok=True)
     p = keystore / key_id
-    if p.exists():
-        raise ValueError(f"key_id already exists in keystore: {key_id}")
     key = secrets.token_bytes(32)
-    p.write_bytes(key)
     try:
-        os.chmod(p, 0o600)
-    except OSError:
-        pass
+        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        raise ValueError(f"key_id already exists in keystore: {key_id}") from None
+    except OSError as exc:
+        raise ValueError(f"cannot create key with owner-only permissions: {exc}") from exc
+    try:
+        os.write(fd, key)
+    finally:
+        os.close(fd)
     return sha256_hex(key)
 
 
@@ -85,6 +95,17 @@ def main(argv: list[str]) -> int:
     rot.add_argument("--validator-id", required=True)
     rot.add_argument("--key-id", required=True, help="NEW key id")
     rot.add_argument("--instant", required=True, help="rotation instant, ISO-8601 Z")
+    rot.add_argument(
+        "--algorithm",
+        choices=list(KEY_ALGORITHMS),
+        default=None,
+        help="successor key algorithm (default: the validator's current algorithm)",
+    )
+    rot.add_argument(
+        "--public-key",
+        default=None,
+        help="ed25519 successor public key (raw hex); the private key never leaves the validator",
+    )
 
     rev = sub.add_parser("revoke")
     rev.add_argument("--validator-id", required=True)
@@ -97,6 +118,13 @@ def main(argv: list[str]) -> int:
     if events is None:
         print("FATAL: validator registry is malformed — refusing to append", file=sys.stderr)
         return 2
+    if not chain_intact(events):
+        print(
+            "FATAL: validator registry hash chain is broken — refusing to append "
+            "(appending would launder tampered history behind a fresh chain link)",
+            file=sys.stderr,
+        )
+        return 2
     mine = [e for e in events if e.get("validator_id") == args.validator_id]
 
     if not any(e.get("event") == "REGISTER" for e in mine):
@@ -107,23 +135,54 @@ def main(argv: list[str]) -> int:
         return 3
 
     if args.cmd == "rotate":
-        try:
-            fingerprint = _write_key(keystore, args.key_id)
-        except ValueError as exc:
-            print(f"REFUSED: {exc}", file=sys.stderr)
-            return 3
-        _append(
-            registry,
-            {
-                "schema": EVENT_SCHEMA,
-                "event": "ROTATE",
-                "validator_id": args.validator_id,
-                "key_id": args.key_id,
-                "key_fingerprint": fingerprint,
-                "instant": args.instant,
-            },
+        # A rotation must not silently downgrade the validator's signature
+        # scheme: without --algorithm the successor key keeps the algorithm of
+        # the validator's current (latest) key instead of defaulting to HMAC.
+        current = [e for e in mine if e.get("event") in ("REGISTER", "ROTATE")]
+        inferred = current[-1].get("key_algorithm", HMAC_SHA256) if current else HMAC_SHA256
+        algorithm = args.algorithm or inferred
+        event = {
+            "schema": EVENT_SCHEMA,
+            "event": "ROTATE",
+            "validator_id": args.validator_id,
+            "key_id": args.key_id,
+            "key_algorithm": algorithm,
+            "instant": args.instant,
+        }
+        if algorithm == ED25519:
+            if not args.public_key:
+                print(
+                    "REFUSED: rotating an ed25519 validator requires --public-key "
+                    "(raw hex); pass --algorithm hmac-sha256 to downgrade explicitly",
+                    file=sys.stderr,
+                )
+                return 3
+            try:
+                pub = bytes.fromhex(args.public_key)
+            except ValueError:
+                pub = b""
+            if len(pub) != 32:
+                print("REFUSED: --public-key must be 32 raw ed25519 bytes as hex", file=sys.stderr)
+                return 3
+            event["public_key"] = pub.hex()
+            event["key_fingerprint"] = sha256_hex(pub)
+        else:
+            if args.public_key:
+                print(
+                    "REFUSED: --public-key is only valid with --algorithm ed25519",
+                    file=sys.stderr,
+                )
+                return 3
+            try:
+                event["key_fingerprint"] = _write_key(keystore, args.key_id)
+            except ValueError as exc:
+                print(f"REFUSED: {exc}", file=sys.stderr)
+                return 3
+        _append(registry, event)
+        print(
+            f"ROTATED {args.validator_id} -> key={args.key_id} "
+            f"algorithm={algorithm} fingerprint={event['key_fingerprint']}"
         )
-        print(f"ROTATED {args.validator_id} -> key={args.key_id} fingerprint={fingerprint}")
         return 0
 
     if args.cmd == "revoke":

@@ -50,6 +50,7 @@ from authority_lifecycle import (
     superseded_ids_of,
     validate_onboarding_record,
 )
+from authority_receipt import verify_receipt as _verify_transition_receipt
 from authority_router import in_effect, source_artifact_intact
 
 # Onboarding provenance a REGISTER event must carry (EXTERNAL_VALIDATOR_
@@ -66,6 +67,10 @@ GOVERNED_STATES = (*LIFECYCLE_STATES, INVALIDATED, CONFLICTED, REQUIRES_REVIEW)
 VALIDATOR_REGISTRY_NAME = "validator_registry.jsonl"
 VALIDATOR_KEYSTORE_NAME = ".validator_keystore"
 POLICY_NAME = "revalidation_policy.json"
+# Appointment material retained by the onboarding ceremony, keyed by the
+# appointment_binding digest. Lives with the keystore (same privilege tier,
+# outside the registry file an attacker may be able to append to).
+APPOINTMENTS_DIR_NAME = ".appointments"
 
 EVENT_SCHEMA = "acgs_validator_registry_event/v1"
 EVENTS = ("REGISTER", "ROTATE", "REVOKE")
@@ -182,19 +187,59 @@ def _hex64(v: Any) -> bool:
     return isinstance(v, str) and len(v) == 64 and all(c in "0123456789abcdef" for c in v)
 
 
-def _register_has_onboarding_provenance(reg: dict[str, Any]) -> bool:
+def _load_retained_appointment(keystore_dir: Path, binding: str) -> dict[str, Any] | None:
+    """The appointment record the onboarding ceremony retained for this
+    binding, or None. `binding` is validated 64-hex before this is called, so
+    it cannot traverse out of the appointments directory."""
+    p = keystore_dir / APPOINTMENTS_DIR_NAME / f"{binding}.json"
+    if not p.is_file():
+        return None
+    try:
+        obj = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _register_has_onboarding_provenance(reg: dict[str, Any], keystore_dir: Path) -> bool:
     """A REGISTER event must carry evidence-backed onboarding provenance:
     the onboarding protocol marker, the appointment binding digest, and the
-    digests of the appointment evidence reviewed during the key ceremony.
-    A bare REGISTER (e.g. hand-appended) authorizes nothing — fail closed."""
+    digests of the appointment evidence reviewed during the key ceremony —
+    AND the binding must correspond to appointment material the onboarding
+    ceremony independently retained. Digest-shaped strings alone prove
+    nothing: a hand-appended REGISTER with plausible 64-hex values must not
+    pass. A bare or unprovenanced REGISTER authorizes nothing — fail closed."""
     if reg.get("onboarding") != ONBOARDING_PROTOCOL:
         return False
-    if not _hex64(reg.get("appointment_binding")):
+    binding = reg.get("appointment_binding")
+    if not _hex64(binding):
         return False
     digests = reg.get("appointment_evidence_digests")
-    if not isinstance(digests, list) or not digests:
+    if not isinstance(digests, list) or not digests or not all(_hex64(d) for d in digests):
         return False
-    return all(_hex64(d) for d in digests)
+
+    appointment = _load_retained_appointment(keystore_dir, binding)
+    if appointment is None:
+        return False
+    # Lazy import: validator_onboarding imports this module at load time.
+    import validator_onboarding as _vo
+
+    try:
+        _vo.validate_appointment(appointment)
+    except _vo.AppointmentError:
+        return False
+    if _vo.appointment_binding(appointment) != binding:
+        return False
+    if not _vo.registration_provenance_ok(appointment, reg)[0]:
+        return False
+    if reg.get("validator_identity") != appointment.get("subject_identity"):
+        return False
+    app_digests = sorted(
+        e.get("source_digest")
+        for e in appointment.get("appointment_evidence") or []
+        if isinstance(e, dict)
+    )
+    return sorted(digests) == app_digests
 
 
 def authority_valid_at(evts: list[dict[str, Any]], at: str) -> bool:
@@ -261,6 +306,18 @@ def key_valid_at(evts: list[dict[str, Any]], key_id: str, at: str) -> bool:
         if kid == key_id and start <= at_dt and (end is None or at_dt < end):
             return True
     return False
+
+
+def key_retired(evts: list[dict[str, Any]], key_id: Any) -> bool:
+    """True when this key's signing window has ENDED (rotated away or the
+    validator revoked). validated_at is signer-supplied, so a holder of a
+    retired — possibly compromised — key could backdate new attestations into
+    the key's old window; records resting on a retired key must not stay
+    silently ACTIVE. Unknown key -> retired (fail closed)."""
+    for kid, _start, end in _key_windows(evts):
+        if kid == key_id:
+            return end is not None
+    return True
 
 
 def _key_event_of(evts: list[dict[str, Any]], key_id: str) -> dict[str, Any] | None:
@@ -401,8 +458,12 @@ def verify_attestation_trust(
     reg = _register_event(evts)
     if reg is None:
         return False, "validator_never_registered"
-    if not _register_has_onboarding_provenance(reg):
+    if not _register_has_onboarding_provenance(reg, keystore_dir):
         return False, "register_missing_onboarding_provenance"
+    # The attestation's human identity must be the registered one: a trusted
+    # key must not lend its signature to a different claimed validator.
+    if att["validator_identity"] != reg.get("validator_identity"):
+        return False, "validator_identity_mismatch"
     classes = reg.get("authorized_classes")
     if not isinstance(classes, list) or record.get("authority_type") not in classes:
         return False, "unauthorized_validator_class"
@@ -511,6 +572,31 @@ def is_stale(
 # --------------------------------------------------------------------------- #
 
 
+def ingestion_receipt_verified(record: dict[str, Any], receipt_key: bytes | None) -> bool:
+    """Was this record ingested through the receipted path? A bare receipt-id
+    string proves nothing — anyone who can write the registry can invent one.
+    The record must carry the full ingestion receipt, the receipt must verify
+    under the authority receipt key, and every bound field must match THIS
+    record. No key or no verifiable receipt -> not ingested (fail closed)."""
+    rid = record.get("ingestion_receipt")
+    if not isinstance(rid, str) or not rid.strip():
+        return False
+    receipt = record.get("ingestion_receipt_record")
+    if receipt_key is None or not isinstance(receipt, dict):
+        return False
+    if not _verify_transition_receipt(receipt_key, receipt):
+        return False
+    ev_id = record.get("authority_evidence_id")
+    return (
+        receipt.get("receipt_id") == rid
+        and receipt.get("new_state") == "INGESTED"
+        and receipt.get("request_id") == f"INGEST::{ev_id}"
+        and receipt.get("authority_evidence_id") == ev_id
+        and receipt.get("evidence_digest") == record.get("source_digest")
+        and hash_obj(receipt.get("authority_scope")) == hash_obj(record.get("authority_scope"))
+    )
+
+
 def _attestations(record: dict[str, Any]) -> list[dict[str, Any]]:
     """The primary `validation` block plus any `co_validations`. The primary is
     required (intrinsic gate); co-validations enable multi-validator review."""
@@ -530,6 +616,7 @@ def derive_governed_state(
     events: list[dict[str, Any]] | None,
     keystore_dir: Path,
     policy: dict[str, Any] | None,
+    receipt_key: bytes | None = None,
 ) -> str:
     """Trust-governed lifecycle state. Extends (never bypasses) the onboarding
     derivation: everything the intrinsic layer refuses, this layer refuses too,
@@ -571,12 +658,20 @@ def derive_governed_state(
         }:
             return CONFLICTED  # validator confirmed a different validity period
 
-    if not in_registry or not record.get("ingestion_receipt"):
+    if not in_registry or not ingestion_receipt_verified(record, receipt_key):
         return VALIDATED
     if not in_effect(record, instant):
         return INGESTED
     if any(
         revoked_after(_events_for(events or [], a["validator_id"]), a["validated_at"]) for a in atts
+    ):
+        return REQUIRES_REVIEW
+    # An attestation resting on a since-retired key (rotated away / revoked)
+    # is doubt, not proof: validated_at is signer-supplied, so a retired-key
+    # holder could backdate fresh attestations into the old window. Demote to
+    # review until revalidated under a current key.
+    if any(
+        key_retired(_events_for(events or [], a["validator_id"]), a.get("key_id")) for a in atts
     ):
         return REQUIRES_REVIEW
     if is_stale(record, atts, instant, policy):
@@ -615,6 +710,7 @@ def governed_active_records(
     keystore_dir: Path,
     policy: dict[str, Any] | None,
     artifact_dir: Path | None = None,
+    receipt_key: bytes | None = None,
 ) -> list[dict[str, Any]]:
     """Routing-eligible subset under validator trust governance: governed-ACTIVE
     only. INVALIDATED, CONFLICTED, and REQUIRES_REVIEW never route. When
@@ -635,6 +731,7 @@ def governed_active_records(
             events=events,
             keystore_dir=keystore_dir,
             policy=policy,
+            receipt_key=receipt_key,
         )
         if state == ACTIVE and (artifact_dir is None or source_artifact_intact(r, artifact_dir)):
             out.append(r)
@@ -648,6 +745,7 @@ def governed_lifecycle_distribution(
     events: list[dict[str, Any]] | None,
     keystore_dir: Path,
     policy: dict[str, Any] | None,
+    receipt_key: bytes | None = None,
 ) -> dict[str, int]:
     sids = _trusted_superseded_ids(records, instant, events=events, keystore_dir=keystore_dir)
     dist = dict.fromkeys(GOVERNED_STATES, 0)
@@ -664,6 +762,7 @@ def governed_lifecycle_distribution(
             events=events,
             keystore_dir=keystore_dir,
             policy=policy,
+            receipt_key=receipt_key,
         )
         dist[state] += 1
     return dist

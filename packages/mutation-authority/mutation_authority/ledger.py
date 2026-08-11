@@ -122,9 +122,21 @@ class AuditLedger:
             "prev_event_hash": prev_hash,
         }
         event = LedgerEvent(**body, event_hash=hash_obj(body))
+        prior_size = self.path.stat().st_size if self.path.exists() else 0
         with self.path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(event.to_dict(), sort_keys=True) + "\n")
-        self._write_anchor(count=len(events) + 1, head_hash=event.event_hash)
+            fh.flush()
+            os.fsync(fh.fileno())
+        try:
+            self._write_anchor(count=len(events) + 1, head_hash=event.event_hash)
+        except Exception:
+            # The ledger and its anchor must move together: an appended event
+            # without an advanced anchor would make every subsequent verify
+            # fail (or worse, mask a truncation). Roll the append back and
+            # surface the failure instead of leaving the two out of sync.
+            with self.path.open("rb+") as fh:
+                fh.truncate(prior_size)
+            raise
         return event
 
     def _write_anchor(self, count: int, head_hash: str) -> None:

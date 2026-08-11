@@ -105,6 +105,9 @@ def compute_state(
     )
     vkeystore = validator_keystore or (HERE / VT.VALIDATOR_KEYSTORE_NAME)
     policy = VT.load_policy(policy_path or (HERE / VT.POLICY_NAME))
+    # The authority receipt key gates INGESTED/ACTIVE: a record must carry a
+    # verifiable ingestion receipt, not just a receipt-shaped string.
+    key = load_or_create_key(keystore)
     routable = VT.governed_active_records(
         records,
         eval_instant,
@@ -112,9 +115,15 @@ def compute_state(
         keystore_dir=vkeystore,
         policy=policy,
         artifact_dir=registry_path.parent / ".authority_artifacts",
+        receipt_key=key,
     )
     lifecycle = VT.governed_lifecycle_distribution(
-        records, eval_instant, events=events, keystore_dir=vkeystore, policy=policy
+        records,
+        eval_instant,
+        events=events,
+        keystore_dir=vkeystore,
+        policy=policy,
+        receipt_key=key,
     )
 
     # --- substrate reads (best-effort; a drifted/absent substrate must not crash) ---
@@ -135,7 +144,6 @@ def compute_state(
     # in-memory by default (duplicates within one evaluation still fail).
     # An EXECUTION context — anything acting on receipts — must pass
     # replay_path so consumed receipt ids persist across process restarts.
-    key = load_or_create_key(keystore)
     if confirmed:
         routed = route(
             requests,
@@ -234,7 +242,20 @@ def compute_state(
 
 
 def main(argv: list[str]) -> int:
-    substrate_root = resolve_root(argv[0] if argv else None)
+    # Parse options BEFORE positionals: `--instant=...` as the only argument
+    # must set the evaluation instant, never be mistaken for a substrate root.
+    instant = None
+    positional: list[str] = []
+    for a in argv:
+        if a.startswith("--instant="):
+            instant = a.split("=", 1)[1]
+        elif a.startswith("--"):
+            print(f"FATAL: unknown option: {a}", file=sys.stderr)
+            return 2
+        else:
+            positional.append(a)
+
+    substrate_root = resolve_root(positional[0] if positional else None)
     manifest_path = HERE / MANIFEST_NAME
     if not manifest_path.is_file():
         print(f"VERDICT: {INTEGRATION_BLOCKED}")
@@ -242,11 +263,6 @@ def main(argv: list[str]) -> int:
             f"  {MANIFEST_NAME} not found — run build_substrate_identity.py first", file=sys.stderr
         )
         return 2
-
-    instant = None
-    for a in list(argv):
-        if a.startswith("--instant="):
-            instant = a.split("=", 1)[1]
 
     state = compute_state(
         substrate_root,

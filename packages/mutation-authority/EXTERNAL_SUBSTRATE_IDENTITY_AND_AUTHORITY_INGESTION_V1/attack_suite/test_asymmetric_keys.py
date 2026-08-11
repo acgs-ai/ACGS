@@ -26,8 +26,13 @@ import _ed25519  # noqa: E402
 from _canonical import sha256_hex  # noqa: E402
 from authority_lifecycle import ACTIVE, attestation_binding  # noqa: E402
 from test_attacks import FIXTURE_DOC, INSTANT, _evidence, build_fixture_substrate  # noqa: E402
-from test_onboarding_attacks import _compute  # noqa: E402
+from test_onboarding_attacks import _compute, _fixture_receipt  # noqa: E402
+from validator_onboarding import (  # noqa: E402
+    appointment_binding,
+    key_ownership_payload,
+)
 from validator_trust import (  # noqa: E402
+    APPOINTMENTS_DIR_NAME,
     ED25519,
     EVENT_SCHEMA,
     GENESIS,
@@ -55,7 +60,45 @@ def ed_trust(tmp_path):
     so verification needs no keystore access (third-party verifiable)."""
     tmp_path.mkdir(parents=True, exist_ok=True)
     priv, pub = _ed25519.generate()
-    (tmp_path / "edks").mkdir(exist_ok=True)  # keystore unused for ed25519 verify
+    ks = tmp_path / "edks"
+    ks.mkdir(exist_ok=True)  # keystore unused for ed25519 signature verify
+    # Real retained appointment material (as the onboarding ceremony retains
+    # it): REGISTER provenance must resolve to it, not to a digest-shaped
+    # placeholder.
+    appointment = {
+        "validator_appointment_id": "[FIXTURE] app-ed",
+        "validator_id": ED_VALIDATOR,
+        "subject_identity": "[FIXTURE] Ed Validator",
+        "organization": "[FIXTURE] Org",
+        "jurisdiction": "[FIXTURE] Jurisdiction X",
+        "appointment_authority": "[FIXTURE] General Counsel",
+        "authorized_classes": ["COUNSEL_OR_RIGHTS_AUTHORITY", "DATA_CONTROLLER"],
+        "effective_from": "2026-01-01T00:00:00Z",
+        "effective_until": None,
+        "revocation_conditions": "[FIXTURE] resignation or dismissal",
+        "appointment_evidence": [
+            {
+                "source_type": "appointment_deed",
+                "source_reference": "[FIXTURE] deed",
+                "source_digest": sha256_hex(FIXTURE_DOC),
+            }
+        ],
+        "key_binding": {
+            "key_id": ED_KEY_ID,
+            "key_algorithm": ED25519,
+            "key_fingerprint": sha256_hex(pub),
+            "public_key": pub.hex(),
+        },
+    }
+    appointment["key_binding"]["key_ownership_proof"] = _ed25519.sign(
+        priv, key_ownership_payload(appointment)
+    )
+    binding = appointment_binding(appointment)
+    app_dir = ks / APPOINTMENTS_DIR_NAME
+    app_dir.mkdir(exist_ok=True)
+    (app_dir / f"{binding}.json").write_text(
+        json.dumps(appointment, sort_keys=True) + "\n", encoding="utf-8"
+    )
     ev = {
         "schema": EVENT_SCHEMA,
         "event": "REGISTER",
@@ -70,7 +113,7 @@ def ed_trust(tmp_path):
         "effective_from": "2026-01-01T00:00:00Z",
         "effective_until": None,
         "onboarding": "EXTERNAL_VALIDATOR_ONBOARDING_V1",
-        "appointment_binding": sha256_hex(b"[FIXTURE] appointment binding"),
+        "appointment_binding": binding,
         "appointment_evidence_digests": [sha256_hex(FIXTURE_DOC)],
         "prev_event_binding": GENESIS,
     }
@@ -79,7 +122,7 @@ def ed_trust(tmp_path):
     reg.write_text(json.dumps(ev, sort_keys=True) + "\n", encoding="utf-8")
     return {
         "registry": reg,
-        "keystore": tmp_path / "edks",
+        "keystore": ks,
         "priv": priv,
         "pub": pub,
         "validator_id": ED_VALIDATOR,
@@ -106,7 +149,9 @@ def _ed_evidence(trust, *, validated_at="2026-08-10T11:00:00Z", key_id=ED_KEY_ID
         priv or trust["priv"], attestation_payload_v2(ev, att)
     )
     ev["validation"] = att
-    ev["ingestion_receipt"] = "r-fixture"
+    rec = _fixture_receipt(ev)
+    ev["ingestion_receipt"] = rec["receipt_id"]
+    ev["ingestion_receipt_record"] = rec
     return ev
 
 
@@ -260,3 +305,37 @@ def test_algorithm_mode_confusion_refused(tmp_path):
         policy=dict(DEFAULT_POLICY),
     )
     assert state == INVALIDATED
+
+
+def test_cli_rotation_preserves_ed25519_algorithm(tmp_path):
+    # Rotating an Ed25519 validator must not silently downgrade it to a
+    # locally minted HMAC key: without an explicit successor public key the
+    # rotation is refused; with one, the ROTATE event stays Ed25519.
+    import validator_admin as VA
+
+    trust = ed_trust(tmp_path)
+    base = ["--registry", str(trust["registry"]), "--keystore", str(trust["keystore"])]
+    rotate = ["rotate", "--validator-id", ED_VALIDATOR, "--key-id", "ed-k2"]
+    assert VA.main([*base, *rotate, "--instant", "2026-09-01T00:00:00Z"]) == 3
+    _priv2, pub2 = _ed25519.generate()
+    assert (
+        VA.main(
+            [
+                *base,
+                *rotate,
+                "--instant",
+                "2026-09-01T00:00:00Z",
+                "--public-key",
+                pub2.hex(),
+            ]
+        )
+        == 0
+    )
+    events = load_validator_events(trust["registry"])
+    rot = events[-1]
+    assert rot["event"] == "ROTATE"
+    assert rot["key_algorithm"] == ED25519
+    assert rot["public_key"] == pub2.hex()
+    assert rot["key_fingerprint"] == sha256_hex(pub2)
+    # No HMAC key material was minted for the ed25519 successor.
+    assert not (trust["keystore"] / "ed-k2").exists()

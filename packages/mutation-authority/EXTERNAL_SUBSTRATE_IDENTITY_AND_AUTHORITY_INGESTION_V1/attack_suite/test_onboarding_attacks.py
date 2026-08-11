@@ -37,6 +37,7 @@ from authority_lifecycle import (  # noqa: E402
     LIFECYCLE_STATES,
     REVOKED,
     SUPERSEDED,
+    VALIDATED,
     OnboardingError,
     active_records,
     attestation_binding,
@@ -44,13 +45,19 @@ from authority_lifecycle import (  # noqa: E402
     lifecycle_distribution,
     validate_onboarding_record,
 )
+from authority_receipt import mint_receipt  # noqa: E402
 from test_attacks import (  # noqa: E402
     FIXTURE_DOC,
     INSTANT,
     _evidence,
     build_fixture_substrate,
 )
+from validator_onboarding import (  # noqa: E402
+    appointment_binding,
+    key_ownership_payload,
+)
 from validator_trust import (  # noqa: E402
+    APPOINTMENTS_DIR_NAME,
     EVENT_SCHEMA,
     GENESIS,
     attestation_payload,
@@ -64,6 +71,41 @@ from validator_trust import (  # noqa: E402
 FIX_KEY = b"v" * 32
 FIX_VALIDATOR = "[FIXTURE] vld-1"
 FIX_KEY_ID = "vk-1"
+# Authority-receipt key: seeds the test keystores so fixture ingestion
+# receipts minted here verify inside compute_state / derive_governed_state.
+FIX_AUTH_KEY = b"a" * 32
+
+
+def _fixture_appointment(classes):
+    """A real, schema-valid appointment for the fixture validator, with an
+    HMAC key-ownership proof. Retained by fixture_trust the same way the
+    onboarding ceremony retains it."""
+    app = {
+        "validator_appointment_id": "[FIXTURE] app-1",
+        "validator_id": FIX_VALIDATOR,
+        "subject_identity": "[FIXTURE] Legal Validator",
+        "organization": "[FIXTURE] Org",
+        "jurisdiction": "[FIXTURE] Jurisdiction X",
+        "appointment_authority": "[FIXTURE] General Counsel",
+        "authorized_classes": sorted(classes),
+        "effective_from": "2026-01-01T00:00:00Z",
+        "effective_until": None,
+        "revocation_conditions": "[FIXTURE] resignation or dismissal",
+        "appointment_evidence": [
+            {
+                "source_type": "appointment_deed",
+                "source_reference": "[FIXTURE] deed",
+                "source_digest": sha256_hex(FIXTURE_DOC),
+            }
+        ],
+        "key_binding": {
+            "key_id": FIX_KEY_ID,
+            "key_algorithm": "hmac-sha256",
+            "key_fingerprint": sha256_hex(FIX_KEY),
+        },
+    }
+    app["key_binding"]["key_ownership_proof"] = hmac_sign(FIX_KEY, key_ownership_payload(app))
+    return app
 
 
 def fixture_trust(tmp_path, *, classes=("COUNSEL_OR_RIGHTS_AUTHORITY", "DATA_CONTROLLER")):
@@ -75,6 +117,16 @@ def fixture_trust(tmp_path, *, classes=("COUNSEL_OR_RIGHTS_AUTHORITY", "DATA_CON
     ks = tmp_path / "vks"
     ks.mkdir(exist_ok=True)
     (ks / FIX_KEY_ID).write_bytes(FIX_KEY)
+    # Retain the appointment material the way the onboarding ceremony does:
+    # REGISTER provenance must resolve to independently retained appointment
+    # facts, not just digest-shaped strings.
+    appointment = _fixture_appointment(classes)
+    binding = appointment_binding(appointment)
+    app_dir = ks / APPOINTMENTS_DIR_NAME
+    app_dir.mkdir(exist_ok=True)
+    (app_dir / f"{binding}.json").write_text(
+        json.dumps(appointment, sort_keys=True) + "\n", encoding="utf-8"
+    )
     ev = {
         "schema": EVENT_SCHEMA,
         "event": "REGISTER",
@@ -90,7 +142,7 @@ def fixture_trust(tmp_path, *, classes=("COUNSEL_OR_RIGHTS_AUTHORITY", "DATA_CON
         # without evidence-backed appointment provenance is refused at trust
         # verification time.
         "onboarding": "EXTERNAL_VALIDATOR_ONBOARDING_V1",
-        "appointment_binding": sha256_hex(b"[FIXTURE] appointment binding"),
+        "appointment_binding": binding,
         "appointment_evidence_digests": [sha256_hex(FIXTURE_DOC)],
         "prev_event_binding": GENESIS,
     }
@@ -109,11 +161,32 @@ def _sign_att(att: dict) -> dict:
     return att
 
 
-def _attested(ev: dict, *, receipt: str = "r-fixture", signed: bool = True) -> dict:
+def _fixture_receipt(ev: dict) -> dict:
+    """Mint a REAL ingestion receipt for this record under the fixture
+    authority key — a bare receipt-id string no longer counts as ingested."""
+    return mint_receipt(
+        FIX_AUTH_KEY,
+        request_id=f"INGEST::{ev['authority_evidence_id']}",
+        prior_state="ABSENT",
+        new_state="INGESTED",
+        authority_subject=ev["subject_identity"],
+        authority_evidence_id=ev["authority_evidence_id"],
+        evidence_digest=ev["source_digest"],
+        authority_scope=ev["authority_scope"],
+        substrate_critical_set_digest="d" * 64,
+        decision="INGEST",
+        decision_reason="[FIXTURE] ingested",
+        created_at="2026-08-10T11:30:00Z",
+    )
+
+
+def _attested(ev: dict, *, receipt: str | None = None, signed: bool = True) -> dict:
     """Attach a well-formed fixture attestation (isolated test fixture only).
 
     signed=True adds the VALIDATOR_TRUST_GOVERNANCE_V1 trust fields signed with
-    the fixture validator key (pairs with fixture_trust)."""
+    the fixture validator key (pairs with fixture_trust). By default a real
+    ingestion receipt is minted and attached; pass `receipt` to force a bare
+    (unverifiable) receipt-id string instead."""
     ev = dict(ev)
     ev.setdefault("issuer_or_appointing_party", "[FIXTURE] Board")
     if ev.get("authority_type") == "COUNSEL_OR_RIGHTS_AUTHORITY":
@@ -127,7 +200,12 @@ def _attested(ev: dict, *, receipt: str = "r-fixture", signed: bool = True) -> d
         "record_binding": attestation_binding(ev),
     }
     ev["validation"] = _sign_att(att) if signed else att
-    ev["ingestion_receipt"] = receipt
+    if receipt is None:
+        rec = _fixture_receipt(ev)
+        ev["ingestion_receipt"] = rec["receipt_id"]
+        ev["ingestion_receipt_record"] = rec
+    else:
+        ev["ingestion_receipt"] = receipt
     return ev
 
 
@@ -142,6 +220,11 @@ def _compute(substrate, tmp_path, registry_records, trust=None):
     mpath = tmp_path / "m.json"
     if not mpath.exists():
         mpath.write_text(json.dumps(build_manifest(substrate, "TEST_SUBSTRATE")), encoding="utf-8")
+    # Seed the authority-receipt keystore with the fixture key so ingestion
+    # receipts minted by _attested verify inside compute_state.
+    ob_ks = tmp_path / "ob_ks"
+    if not ob_ks.exists():
+        ob_ks.write_bytes(FIX_AUTH_KEY)
     reg = tmp_path / "ob_reg.jsonl"
     # Retain the fixture source artifact so source_artifact_intact can
     # re-verify the default fixture digest at routing time.
@@ -229,6 +312,17 @@ def test_ob6_evidence_replay_is_single_fact(substrate, tmp_path):
     assert st["report"]["ready_to_send"] == 2  # controller pair once, not twice
     assert st["report"]["authority_receipts"] == 4  # 2 per resolved request, exactly
     assert st["report"]["receipt_verification_failures"] == 0
+
+
+def test_ob6b_bare_receipt_id_never_activates(substrate, tmp_path):
+    # A receipt-shaped string without a verifiable receipt record proves
+    # nothing — anyone able to write the registry could invent one. The
+    # record stays VALIDATED (never ACTIVE) and never routes.
+    ev = _attested(_evidence(), receipt="r-invented")
+    st = _compute(substrate, tmp_path, [ev])
+    assert st["report"]["ready_to_send"] == 0
+    assert st["report"]["routable_authority_records"] == 0
+    assert st["report"]["lifecycle_distribution"][VALIDATED] == 1
 
 
 def test_ob7_fabricated_authority_records_rejected():

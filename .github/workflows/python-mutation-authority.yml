@@ -44,8 +44,10 @@ jobs:
           uv run --no-project --python 3.11 python verify_mutation_governance.py
 
       - name: Test
+        # `cryptography` is provisioned so the Ed25519 attack suite
+        # (test_asymmetric_keys.py) actually runs in CI instead of skipping.
         run: |
-          uv run --no-project --python 3.11 --with pytest \
+          uv run --no-project --python 3.11 --with pytest --with cryptography \
             python -m pytest tests integration_tests \
             EXTERNAL_SUBSTRATE_IDENTITY_AND_AUTHORITY_INGESTION_V1/attack_suite \
             -q --import-mode=importlib

@@ -19,6 +19,7 @@ returns INTEGRATION INCOMPLETE. Stdlib only, no network.
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 from pathlib import Path
@@ -43,6 +44,45 @@ def _run(cmd: list[str], cwd: Path) -> tuple[bool, str]:
     proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     tail = (proc.stdout.strip().splitlines() or [""])[-1]
     return proc.returncode == 0, tail
+
+
+def _imports_mutation_authority(tree: ast.AST) -> bool:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(a.name.split(".")[0] == "mutation_authority" for a in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and node.module.split(".")[0] == "mutation_authority":
+                return True
+    return False
+
+
+def _calls_mutation_gateway(tree: ast.AST) -> bool:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else None
+            if isinstance(func, ast.Attribute):
+                name = func.attr
+            if name == "MutationGateway":
+                return True
+    return False
+
+
+def _routes_through_gateway(src_dir: Path) -> int:
+    """Count gove-zone source files that REALLY wire through this package:
+    the file must both import mutation_authority and construct/call
+    MutationGateway. A bare mention in a comment, docstring, or string
+    (which the old substring scan counted) proves nothing."""
+    refs = 0
+    for py in src_dir.rglob("*.py"):
+        try:
+            tree = ast.parse(py.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue
+        if _imports_mutation_authority(tree) and _calls_mutation_gateway(tree):
+            refs += 1
+    return refs
 
 
 def main() -> int:
@@ -71,19 +111,16 @@ def main() -> int:
     )
 
     # 4. COVERAGE GATE (the structural dominance check). If gove-zone genuinely
-    #    routed mutation through this package, its source would import it.
-    #    Zero references ⇒ MutationGateway mediates nothing in gove-zone ⇒
+    #    routed mutation through this package, its source would import it AND
+    #    instantiate MutationGateway — verified at the AST level so comments,
+    #    docstrings, and string literals cannot fake wiring. Zero real
+    #    references ⇒ MutationGateway mediates nothing in gove-zone ⇒
     #    dominance is NOT established.
-    refs = 0
-    if GOVE_ZONE_SRC.is_dir():
-        for py in GOVE_ZONE_SRC.rglob("*.py"):
-            text = py.read_text(encoding="utf-8", errors="replace")
-            if "mutation_authority" in text or "MutationGateway" in text:
-                refs += 1
+    refs = _routes_through_gateway(GOVE_ZONE_SRC) if GOVE_ZONE_SRC.is_dir() else 0
     dominance_established = refs > 0
     lines.append(
         f"[{'OK ' if dominance_established else 'GAP'}] gateway dominance: "
-        f"{refs} gove-zone source file(s) reference MutationGateway"
+        f"{refs} gove-zone source file(s) import mutation_authority and call MutationGateway"
         + ("" if dominance_established else " — NOT mediated (no wiring present)")
     )
 
