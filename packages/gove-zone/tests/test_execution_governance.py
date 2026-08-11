@@ -116,6 +116,17 @@ def permission(response: dict[str, Any]) -> str:
     return str(response["hookSpecificOutput"]["permissionDecision"])
 
 
+@pytest.fixture(autouse=True)
+def _scrub_ambient_execution_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Classification consults the inherited process environment by design
+    (``GH_PAGER``/``PAGER`` for gh reads, ``NODE_OPTIONS`` for interpreter
+    probes), so baseline assertions must not depend on the runner's shell
+    configuration. Tests covering those channels set the variables
+    explicitly via ``monkeypatch.setenv`` or an explicit ``environ=``."""
+    for var in ("GH_PAGER", "PAGER", "NODE_OPTIONS"):
+        monkeypatch.delenv(var, raising=False)
+
+
 # -- 1. structural classification -------------------------------------------- #
 
 
