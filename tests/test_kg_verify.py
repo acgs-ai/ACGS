@@ -424,6 +424,17 @@ def test_catalog_q5_excludes_absent_hotspot_subjects():
     assert "coalesce(f.present, true)" in q5
 
 
+def test_catalog_q5_requires_analyzed_subjects():
+    """REGRESSION. TESTED_BY edges exist only for files the semantic snapshot
+    analyzed, so a hotspot with ua_covered=false (or a graph with no semantic
+    layer at all) can never carry one; the verifier's Q5 still reported such
+    files as "no test edge", turning unknown coverage into an apparent test
+    gap. Unanalyzed hotspots are Q10's finding, not a coverage verdict."""
+    q5 = dict(verify.CATALOG)["Q5 hotspots with no test edge"]
+
+    assert "f.ua_covered" in q5
+
+
 def test_catalog_queries_are_distinct():
     queries = [q for _, q in verify.CATALOG]
 

@@ -248,6 +248,99 @@ def test_a_mistyped_relationship_row_is_refused_before_touching_the_database(
     assert "driver" not in captured
 
 
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ({"x": 1}, "dict is not a storable Neo4j property type"),
+        ([[1, 2]], "array element is list; Neo4j arrays hold only primitives"),
+        ([{"x": 1}], "array element is dict; Neo4j arrays hold only primitives"),
+        ([1, None], "array properties cannot contain null"),
+        ([1, "a"], "array mixes number and string elements"),
+        ([True, 1], "array mixes boolean and number elements"),
+    ],
+)
+def test_a_neo4j_invalid_property_value_is_refused_before_touching_the_database(
+    tmp_path, monkeypatch, capsys, value, message
+):
+    """REGRESSION. The structural check accepted any `props` dict, so a row
+    with all required fields but a Neo4j-invalid property value (a nested
+    map like `{"meta": {"x": 1}}`, a mixed or null-bearing array) passed the
+    pre-wipe validation; `--wipe` then emptied the database before the first
+    `SET n += r.props` raised. Every property value must be validated as
+    storable before the loader connects, applies schema, or deletes data."""
+    graph_path = tmp_path / "graph.json"
+    graph_path.write_text(json.dumps(_graph(nodes=[_node("a.py", meta=value)])))
+    captured = fake_neo4j(monkeypatch, lambda query: [])
+    monkeypatch.setattr(sys, "argv", ["load.py", "--graph", str(graph_path), "--wipe"])
+
+    code = load.main()
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert f"node[0].props['meta']: {message}" in err
+    assert "driver" not in captured  # never connected, so nothing was wiped
+
+
+def test_relationship_property_values_are_validated_too(tmp_path, monkeypatch, capsys):
+    rel = _rel("IMPORTS", "a.py", "b.py", meta={"nested": True})
+    graph_path = tmp_path / "graph.json"
+    graph_path.write_text(json.dumps(_graph(nodes=[_node("a.py"), _node("b.py")], rels=[rel])))
+    captured = fake_neo4j(monkeypatch, lambda query: [])
+    monkeypatch.setattr(sys, "argv", ["load.py", "--graph", str(graph_path), "--wipe"])
+
+    code = load.main()
+
+    assert code == 1
+    assert "rel[0].props['meta']: dict is not a storable Neo4j property type" in (
+        capsys.readouterr().err
+    )
+    assert "driver" not in captured
+
+
+def test_valid_primitive_and_homogeneous_array_properties_still_load(run_load):
+    graph = _graph(
+        nodes=[
+            _node("a.py", language="Python", churn=3, hotspot=0.5, sealed=False, summary=None),
+            _node("b.py", authors=["ann", "bob"], counts=[1, 2, 3], mixed_numbers=[1, 2.5]),
+        ]
+    )
+
+    code, _, _ = run_load(graph)
+
+    assert code == 0
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda n, r: n.__setitem__("label", "File` ) DETACH DELETE (n) //"),
+        lambda n, r: n.__setitem__("extra", ["Doc`ument"]),
+        lambda n, r: r.__setitem__("type", "IMPORTS`]->() DETACH DELETE"),
+        lambda n, r: r.__setitem__("src_label", "File`"),
+        lambda n, r: r.__setitem__("dst_label", "no spaces allowed"),
+    ],
+)
+def test_a_non_identifier_dynamic_label_or_type_is_refused(tmp_path, monkeypatch, capsys, mutate):
+    """REGRESSION. Labels, extra labels, and relationship types are spliced
+    into the Cypher text inside backticks, not passed as parameters, so a
+    backtick-bearing or otherwise malformed name breaks (or injects into)
+    the generated statement, and only inside the batched UNWIND after the
+    schema and any wipe. They must be plain identifiers up front."""
+    node = _node("a.py")
+    rel = _rel("IMPORTS", "a.py", "a.py")
+    mutate(node, rel)
+    graph_path = tmp_path / "graph.json"
+    graph_path.write_text(json.dumps(_graph(nodes=[node], rels=[rel])))
+    captured = fake_neo4j(monkeypatch, lambda query: [])
+    monkeypatch.setattr(sys, "argv", ["load.py", "--graph", str(graph_path), "--wipe"])
+
+    code = load.main()
+
+    assert code == 1
+    assert "is not a plain Cypher identifier" in capsys.readouterr().err
+    assert "driver" not in captured  # never connected, so nothing was wiped
+
+
 def test_a_relationship_whose_endpoint_label_mismatches_is_dangling(tmp_path, monkeypatch, capsys):
     """Endpoint identity is (label, key), exactly what the MATCH clauses use:
     a rel naming the right key under the wrong label would also be silently

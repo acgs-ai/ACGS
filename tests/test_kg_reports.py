@@ -280,6 +280,18 @@ def test_catalog_q5_and_q13_ignore_test_edges_to_deleted_targets():
         assert f"coalesce({match.group(1)}.tracked, true)" in query
 
 
+def test_catalog_q5_requires_analyzed_subjects():
+    """REGRESSION. TESTED_BY edges exist only for files the semantic snapshot
+    analyzed, so a hotspot with ua_covered=false (or a graph with no semantic
+    layer at all) can never carry one; Q5 still reported such files under
+    "Hotspots with no test edge", turning unknown coverage into an apparent
+    test gap. Unanalyzed hotspots are Q10's finding (and the hotspot report's
+    explicit "not analyzed" state), not a coverage verdict."""
+    q5 = _catalog_query(5)
+
+    assert "f.ua_covered" in q5
+
+
 def test_working_tree_queries_exclude_files_recorded_as_absent():
     """REGRESSION. build_spine() deliberately keeps tracked=true for an
     unstaged deletion and records present=false, so tracked-only filtering

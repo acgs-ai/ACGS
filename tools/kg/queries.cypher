@@ -78,9 +78,13 @@ ORDER BY joint_commits DESC LIMIT 20;
 // keeps TESTED_BY edges to deleted test files (present=false) and to tests
 // removed from the index but left on disk (tracked=false); only a live
 // tracked target counts as test evidence, matching the generated reports.
+// TESTED_BY edges exist only for analyzed files: without ua_covered the
+// file has unknown coverage, not a missing test, and reporting it here
+// turns an absent semantic snapshot into an apparent test gap. Unanalyzed
+// files belong to Q10 (and the hotspot report's "not analyzed" state).
 MATCH (f:File)
 WHERE f.tracked AND coalesce(f.present, true) AND NOT f.is_test AND f.hotspot > 0.05
-  AND f.language IN ['Python', 'TypeScript']
+  AND f.language IN ['Python', 'TypeScript'] AND f.ua_covered
   AND NOT EXISTS {
     MATCH (f)-[:TESTED_BY]->(tt)
     WHERE coalesce(tt.present, true) AND coalesce(tt.tracked, true)

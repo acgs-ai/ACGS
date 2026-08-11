@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -48,8 +49,48 @@ REL_FIELDS: dict[str, type] = {
     "props": dict,
 }
 
+# Fields interpolated into the Cypher text (inside backticks) rather than
+# passed as parameters. A backtick or other exotic character in one of these
+# breaks (or injects into) the generated statement, and only inside the
+# batched UNWIND, after the schema and any wipe. Restrict them to plain
+# identifiers up front; every label/type the extractor emits already is one.
+NODE_IDENT_FIELDS = ("label",)
+REL_IDENT_FIELDS = ("type", "src_label", "dst_label")
+CYPHER_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
-def malformed_rows(rows: list, fields: dict[str, type], kind: str) -> list[str]:
+
+def prop_error(value) -> str | None:
+    """Why Neo4j cannot store ``value`` as a property, or None if it can.
+
+    ``SET n += r.props`` accepts only primitives and homogeneous arrays of
+    non-null primitives. A nested map, a mixed-type or null-bearing array,
+    or any other payload passes a dict-shape check but raises only inside
+    the batched UNWIND, after ``--wipe`` has already emptied the database.
+    """
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return None
+    if isinstance(value, list):
+        families = set()
+        for elem in value:
+            if elem is None:
+                return "array properties cannot contain null"
+            if isinstance(elem, bool):
+                families.add("boolean")
+            elif isinstance(elem, (int, float)):
+                families.add("number")
+            elif isinstance(elem, str):
+                families.add("string")
+            else:
+                return f"array element is {type(elem).__name__}; Neo4j arrays hold only primitives"
+        if len(families) > 1:
+            return "array mixes " + " and ".join(sorted(families)) + " elements"
+        return None
+    return f"{type(value).__name__} is not a storable Neo4j property type"
+
+
+def malformed_rows(
+    rows: list, fields: dict[str, type], kind: str, ident_fields: tuple[str, ...]
+) -> list[str]:
     """Human-readable structural errors for every invalid row of one kind."""
     errors: list[str] = []
     for i, row in enumerate(rows):
@@ -63,9 +104,26 @@ def malformed_rows(rows: list, fields: dict[str, type], kind: str) -> list[str]:
                 errors.append(
                     f"{kind}[{i}].{field} is {type(row[field]).__name__}, expected {ftype.__name__}"
                 )
+        for field in ident_fields:
+            value = row.get(field)
+            if isinstance(value, str) and not CYPHER_IDENT.fullmatch(value):
+                errors.append(f"{kind}[{i}].{field} {value!r} is not a plain Cypher identifier")
         extra = row.get("extra")
-        if isinstance(extra, list) and not all(isinstance(x, str) for x in extra):
-            errors.append(f"{kind}[{i}].extra must contain only strings")
+        if isinstance(extra, list):
+            if not all(isinstance(x, str) for x in extra):
+                errors.append(f"{kind}[{i}].extra must contain only strings")
+            else:
+                for x in extra:
+                    if not CYPHER_IDENT.fullmatch(x):
+                        errors.append(
+                            f"{kind}[{i}].extra label {x!r} is not a plain Cypher identifier"
+                        )
+        props = row.get("props")
+        if isinstance(props, dict):
+            for key in sorted(props):
+                err = prop_error(props[key])
+                if err:
+                    errors.append(f"{kind}[{i}].props[{key!r}]: {err}")
     return errors
 
 
@@ -100,8 +158,12 @@ def main() -> int:
 
     # Structural validation must complete before connecting, applying schema,
     # or wiping: discovering malformed input after an explicit DETACH DELETE
-    # leaves the requested replacement empty (see malformed_rows above).
-    invalid = malformed_rows(nodes, NODE_FIELDS, "node") + malformed_rows(rels, REL_FIELDS, "rel")
+    # leaves the requested replacement empty (see malformed_rows above). That
+    # includes value-level validation: a Neo4j-invalid property payload or a
+    # non-identifier dynamic label fails only inside the batched UNWIND.
+    invalid = malformed_rows(nodes, NODE_FIELDS, "node", NODE_IDENT_FIELDS) + malformed_rows(
+        rels, REL_FIELDS, "rel", REL_IDENT_FIELDS
+    )
     if invalid:
         for msg in invalid[:10]:
             log(f"ERROR: malformed row: {msg}")
