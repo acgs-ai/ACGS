@@ -52,20 +52,39 @@ def _subid_ranges(path: str, user: str) -> list[tuple[int, int]]:
 
 
 def _mappable(uid: int) -> dict:
-    """Ask newuidmap directly whether this uid can be mapped. Never inferred."""
+    """Ask newuidmap directly whether this uid can be mapped. Never inferred.
+
+    The child signals whether its user-namespace setup succeeded. If it did
+    not, a refusal from newuidmap measures the failed setup, not the uid, so
+    `mappable` is None: the probe did not run, which is uncertainty, not a
+    finding of non-mappability.
+    """
     read_fd, write_fd = os.pipe()
     pid = os.fork()
     if pid == 0:
         os.close(read_fd)
-        os.unshare(os.CLONE_NEWUSER)
-        os.write(write_fd, b"x")
+        try:
+            os.unshare(os.CLONE_NEWUSER)
+        except OSError:
+            os.write(write_fd, b"F")
+            os._exit(1)
+        os.write(write_fd, b"S")
         import time
 
         time.sleep(4)
         os._exit(0)
     os.close(write_fd)
-    os.read(read_fd, 1)
+    signal = os.read(read_fd, 1)
     os.close(read_fd)
+    if signal != b"S":
+        os.kill(pid, 9)
+        os.waitpid(pid, 0)
+        return {
+            "returncode": None,
+            "stderr": "user namespace setup failed in probe child; "
+            "newuidmap was not exercised",
+            "mappable": None,
+        }
     result = _run(["newuidmap", str(pid), "0", str(uid), "1"])
     os.kill(pid, 9)
     os.waitpid(pid, 0)
@@ -89,7 +108,7 @@ def evaluate(uid: int, user: str, allocated: dict[int, str]) -> dict:
         "3_not_in_agent_subuid": not in_subuid,
         "4_not_in_agent_subgid": not in_subgid,
         "5_no_group_grants_agent_write": True,
-        "6_no_transition_path": not mapping["mappable"],
+        "6_no_transition_path": mapping["mappable"] is False,
         "7_not_reused_by_unrelated_service": account is None,
         "8_agent_cannot_alter_account": not os.access("/etc/passwd", os.W_OK),
         "9_readable_but_not_mutable_supported": True,

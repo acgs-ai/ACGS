@@ -222,8 +222,10 @@ def render(output: Path) -> str:
     with tempfile.TemporaryDirectory(prefix="authority-render-") as tmp:
         html_path = Path(tmp) / "paper.html"
         html_path.write_text(page, encoding="utf-8")
+        # Invoke weasyprint through the interpreter whose module version was
+        # checked above; a bare `weasyprint` on PATH may be a different install.
         result = subprocess.run(
-            ["weasyprint", "-e", "utf-8", str(html_path), str(output)],
+            [sys.executable, "-m", "weasyprint", "-e", "utf-8", str(html_path), str(output)],
             capture_output=True,
             text=True,
             env=env,

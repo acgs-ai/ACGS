@@ -97,9 +97,28 @@ class Store:
         return entries
 
     def state_hash(self) -> str:
+        return self._hash_manifest(self.manifest())
+
+    @staticmethod
+    def _hash_manifest(entries: dict) -> str:
         return hashlib.sha256(
-            json.dumps(self.manifest(), sort_keys=True, separators=(",", ":")).encode()
+            json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
+
+    def prospective_state_hash(self, resolved: str, content_sha256: str, executable: bool) -> str:
+        """The state hash the store *would* have after this write, computed
+        without touching disk.
+
+        The manifest binds both the content hash and the exec bit, so a caller
+        that flips the unsigned `executable` flag changes the resulting state
+        even though the payload hash still matches. Computing this before the
+        write lets the broker reject the altered after-state instead of
+        installing the file and detecting the mismatch only afterward.
+        """
+        entries = self.manifest()
+        relative = os.path.relpath(resolved, self.files_dir)
+        entries[relative] = {"sha256": content_sha256, "exec": bool(executable)}
+        return self._hash_manifest(entries)
 
     def resolve(self, relative: str) -> str | None:
         """Canonicalize and confine. Returns None if it leaves the store."""
@@ -303,6 +322,11 @@ class Broker:
         self.resource = resource
         self.actors = actors
         self._consumed: set[str] = set()
+        #: `serve()` dispatches each connection on its own thread, so the
+        #: replay check, before-state check, write, and nonce insertion must be
+        #: one critical section: otherwise two concurrent submissions of the
+        #: same receipt can both observe the nonce absent and both promote.
+        self._lock = threading.Lock()
 
     def handle(self, request: dict, peer: dict) -> dict:
         kind = request.get("kind")
@@ -324,8 +348,6 @@ class Broker:
             return self._deny(DENIED_SCHEMA, {"errors": errors}, peer)
         if not verify(receipt, self.key):
             return self._deny(DENIED_SIGNATURE, {}, peer)
-        if receipt["nonce"] in self._consumed:
-            return self._deny(DENIED_REPLAY, {"nonce": receipt["nonce"]}, peer)
         if receipt["actor"] not in self.actors:
             return self._deny(DENIED_PEER, {"actor": receipt["actor"]}, peer)
         if receipt["resource"] != self.resource:
@@ -334,14 +356,6 @@ class Broker:
         resolved = self.store.resolve(receipt["path"])
         if resolved is None:
             return self._deny(DENIED_PATH_ESCAPE, {"path": receipt["path"]}, peer)
-
-        before = self.store.state_hash()
-        if before != receipt["expected_before_hash"]:
-            return self._deny(
-                DENIED_STALE,
-                {"actual": before, "receipt": receipt["expected_before_hash"]},
-                peer,
-            )
 
         # The bytes are carried by the request, but what they must hash to is
         # carried by the *receipt*. The broker recomputes rather than trusting
@@ -358,43 +372,70 @@ class Broker:
                 peer,
             )
 
-        self.store.write(resolved, payload, bool(request.get("executable")))
-        after = self.store.state_hash()
-        if after != receipt["expected_after_hash"]:
-            # The effect was performed but is not the authorized one. Say so
-            # rather than reporting success; the ledger records both hashes.
+        executable = bool(request.get("executable"))
+
+        # Replay rejection, before-state binding, the prospective after-state
+        # check, the write, and nonce consumption are one transaction. Holding
+        # the lock across all of them is what makes replay rejection atomic
+        # under concurrent submissions of the same receipt.
+        with self._lock:
+            if receipt["nonce"] in self._consumed:
+                return self._deny(DENIED_REPLAY, {"nonce": receipt["nonce"]}, peer)
+
+            before = self.store.state_hash()
+            if before != receipt["expected_before_hash"]:
+                return self._deny(
+                    DENIED_STALE,
+                    {"actual": before, "receipt": receipt["expected_before_hash"]},
+                    peer,
+                )
+
+            # Validate the authorized after-state *before* mutating the store.
+            # The exec bit is part of the manifest, so a caller that flips the
+            # unsigned `executable` flag changes the resulting state even with
+            # a matching payload hash. Rejecting here means the unauthorized
+            # side effect is never installed in the first place.
+            prospective = self.store.prospective_state_hash(
+                resolved, receipt["content_sha256"], executable
+            )
+            if prospective != receipt["expected_after_hash"]:
+                self.store.append_ledger(
+                    {
+                        "event": "effect_mismatch_prevented",
+                        "at": time.time(),
+                        "peer": peer,
+                        "before": before,
+                        "prospective_after": prospective,
+                        "expected_after": receipt["expected_after_hash"],
+                        "nonce": receipt["nonce"],
+                    }
+                )
+                self._consumed.add(receipt["nonce"])
+                return {
+                    "result": DENIED_EFFECT_MISMATCH,
+                    "state_hash": before,
+                    "prospective_after_hash": prospective,
+                    "expected_after_hash": receipt["expected_after_hash"],
+                    "reason": "prospective after-state does not match the "
+                    "authorized after-hash; no write was performed",
+                }
+
+            self.store.write(resolved, payload, executable)
+            after = self.store.state_hash()
+            self._consumed.add(receipt["nonce"])
             self.store.append_ledger(
                 {
-                    "event": "effect_mismatch",
+                    "event": "promotion",
                     "at": time.time(),
                     "peer": peer,
+                    "actor": receipt["actor"],
+                    "path": receipt["path"],
                     "before": before,
                     "after": after,
-                    "expected_after": receipt["expected_after_hash"],
                     "nonce": receipt["nonce"],
+                    "tag": receipt["tag"],
                 }
             )
-            self._consumed.add(receipt["nonce"])
-            return {
-                "result": DENIED_EFFECT_MISMATCH,
-                "state_hash": after,
-                "expected_after_hash": receipt["expected_after_hash"],
-            }
-
-        self._consumed.add(receipt["nonce"])
-        self.store.append_ledger(
-            {
-                "event": "promotion",
-                "at": time.time(),
-                "peer": peer,
-                "actor": receipt["actor"],
-                "path": receipt["path"],
-                "before": before,
-                "after": after,
-                "nonce": receipt["nonce"],
-                "tag": receipt["tag"],
-            }
-        )
         return {
             "result": OK,
             "state_hash": after,

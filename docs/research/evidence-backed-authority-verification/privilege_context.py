@@ -321,9 +321,34 @@ def credential_digest(context: dict | None) -> str | None:
     return hashlib.sha256(payload).hexdigest()
 
 
+def visibility_context_admissible(context: dict | None) -> bool:
+    """Require the filesystem-visibility half of the context to be complete.
+
+    A credential digest match proves *who* measured; it says nothing about
+    *what that process could see*. A context whose visibility map is missing,
+    partial, or captured outside identifiable mount/user namespaces would let
+    a namespace-blinded measurement pass as host-representative. Recorded
+    UNDETERMINED probe states remain admissible: they are honest uncertainty,
+    resolved downstream as REQUIRES_OPERATOR_EVIDENCE, not silently accepted.
+    """
+    if not isinstance(context, dict):
+        return False
+    visibility = context.get("filesystem_visibility")
+    namespaces = context.get("namespaces")
+    if not isinstance(visibility, dict) or not isinstance(namespaces, dict):
+        return False
+    if not isinstance(namespaces.get("mnt"), str) or not isinstance(namespaces.get("user"), str):
+        return False
+    return all(isinstance(visibility.get(path), dict) for path in VISIBILITY_PROBES)
+
+
 def is_host_representative(context: dict | None) -> bool:
-    """Accept only a recomputed credential matching the sealed expected digest."""
-    return credential_digest(context) == EXPECTED_CREDENTIAL_SHA256
+    """Accept only a complete context: sealed credential digest match *and*
+    an admissible filesystem-visibility record from identifiable namespaces."""
+    return (
+        credential_digest(context) == EXPECTED_CREDENTIAL_SHA256
+        and visibility_context_admissible(context)
+    )
 
 
 def main() -> int:

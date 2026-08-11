@@ -10,12 +10,18 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 MANIFEST = HERE / "SHA256SUMS"
 EXCLUDED_DIRS = {"__pycache__", ".pytest_cache", ".omc", ".benchmarks"}
+#: Machine-local caches written next to the sources (deployment.py's
+#: `.python_image`); they are not release content and would make the manifest
+#: fail on any host that has run the tooling.
+EXCLUDED_FILES = {".python_image"}
 
 
 def release_files() -> list[Path]:
     files = []
     for path in HERE.rglob("*"):
         if not path.is_file() or path == MANIFEST:
+            continue
+        if path.name in EXCLUDED_FILES:
             continue
         relative = path.relative_to(HERE)
         if any(part in EXCLUDED_DIRS for part in relative.parts):

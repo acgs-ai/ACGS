@@ -70,6 +70,40 @@ def load(name: str) -> tuple[dict | None, dict]:
         return None, binding
 
 
+#: Documents whose recorded digest in CUTOVER_GATE.json must still match the
+#: evidence this decision is computed from. Keyed by the manifest name the
+#: cutover-decision `bindings` map uses, valued by the basename the gate
+#: records under its `inputs` map.
+READINESS_BOUND_INPUTS = {
+    "ROOT_EQUIVALENCE_REGISTRY.json": "ROOT_EQUIVALENCE_REGISTRY.json",
+    "verification_result.json": "verification_result.json",
+    "PREFLIGHT_AUDIT.json": "PREFLIGHT_AUDIT.json",
+    "PRIVILEGE_TOPOLOGY_FINAL.json": "PRIVILEGE_TOPOLOGY_FINAL.json",
+}
+
+
+def readiness_inputs_current(gate: dict | None, bindings: dict[str, dict]) -> dict:
+    """Compare the readiness gate's recorded input digests with the evidence
+    loaded here. A gate verdict binds only to the state it measured.
+    """
+    recorded = (gate or {}).get("inputs")
+    per_input: dict[str, dict] = {}
+    all_current = isinstance(recorded, dict) and bool(recorded)
+    for binding_name, gate_name in READINESS_BOUND_INPUTS.items():
+        gate_entry = recorded.get(gate_name) if isinstance(recorded, dict) else None
+        current_entry = bindings.get(binding_name)
+        gate_sha = gate_entry.get("sha256") if isinstance(gate_entry, dict) else None
+        current_sha = current_entry.get("sha256") if isinstance(current_entry, dict) else None
+        matches = bool(gate_sha) and bool(current_sha) and gate_sha == current_sha
+        per_input[binding_name] = {
+            "gate_recorded_sha256": gate_sha,
+            "current_sha256": current_sha,
+            "matches": matches,
+        }
+        all_current = all_current and matches
+    return {"all_current": bool(all_current), "per_input": per_input}
+
+
 def worklist(topology: dict | None) -> list[dict]:
     """What an operator must measure or remove, in precedence order."""
     if not topology:
@@ -131,6 +165,13 @@ def build() -> dict:
     gate_verdict = (loaded["gate"] or {}).get("verdict")
     verifier_verdict = (loaded["verification"] or {}).get("verdict")
 
+    # The readiness gate's verdict is closure only against the exact inputs it
+    # was computed from. CUTOVER_GATE.json records the sha256 of every document
+    # it read; compare those against the documents loaded here, so a
+    # READY_FOR_FINAL_PROOF verdict over now-stale preflight/registry/topology/
+    # verification evidence cannot still clear this gate.
+    gate_input_currency = readiness_inputs_current(loaded["gate"], bindings)
+
     gates = {
         "no_root_equivalent_path": not exclusivity["root_equivalent_paths"],
         "no_unknown_path": not exclusivity["unknown_privilege_paths"],
@@ -142,6 +183,9 @@ def build() -> dict:
         "all_required_surfaces_covered": not exclusivity["surfaces_missing"],
         "privilege_graph_closed": exclusivity["graph_closure_holds"] is True,
         "readiness_gate_cleared": gate_verdict == "READY_FOR_FINAL_PROOF",
+        # not just the cached verdict string: the gate's recorded input digests
+        # must match the evidence loaded now, or the verdict is stale.
+        "readiness_gate_inputs_current": gate_input_currency["all_current"],
         "verifier_verdict_is_exclusive": verifier_verdict == exclusivity_model.VERIFIED,
     }
 
@@ -156,6 +200,7 @@ def build() -> dict:
         "verifier_verdict": verifier_verdict,
         "verifier_evidence_digest": (loaded["verification"] or {}).get("evidence_digest"),
         "readiness_gate_verdict": gate_verdict,
+        "readiness_gate_input_currency": gate_input_currency,
         "readiness_gate_blocking": (loaded["gate"] or {}).get("blocking_checks"),
         "operator_worklist": worklist(loaded["topology_final"]),
         "inputs": bindings,

@@ -73,6 +73,22 @@ CLASS_BUCKET = {
     "UNKNOWN": "unknown",
     "REQUIRES_OPERATOR_EVIDENCE": "operator",
 }
+#: Classifications that are a measured *pass* and confer no escalation. Any
+#: classification that is neither one of these nor a CLASS_BUCKET key -- a
+#: missing field or a typo such as `ROOT_EQUIVALNT` -- is not silently dropped;
+#: it enters the uncertainty bucket, because an unrecognised label is an
+#: unmeasured path, not a clean one.
+BENIGN_CLASSIFICATIONS = frozenset(
+    {"NON_ROOT_EQUIVALENT", "NOT_PRESENT", "PRESENT_NON_ESCALATING"}
+)
+#: The inventories exclusivity is computed from. Each must be present and
+#: admissible independently: a missing registry may not be masked by a clean
+#: topology, nor the reverse.
+REQUIRED_INVENTORIES = ("ROOT_EQUIVALENCE_REGISTRY", "PRIVILEGE_TOPOLOGY")
+#: Every section 16 condition key the verdict must see measured. Absence of any
+#: one is uncertainty, never an implicit pass. Condition 18 (repeatability) is
+#: the sole exclusion the caller may pass via `ignore_conditions`.
+EXPECTED_CONDITIONS = frozenset(f"{n:02d}" for n in range(1, 20))
 SUMMARY_KEYS = {
     "root": ("root_equivalent_paths",),
     "authority": ("authority_equivalent_paths",),
@@ -95,9 +111,15 @@ def _classified_entries(inventory: dict) -> dict[str, dict]:
 def _derived_classes(inventory: dict) -> dict[str, set[str]]:
     derived = {key: set() for key in SUMMARY_KEYS}
     for path_id, entry in _classified_entries(inventory).items():
-        bucket = CLASS_BUCKET.get(entry.get("classification"))
+        classification = entry.get("classification")
+        bucket = CLASS_BUCKET.get(classification)
         if bucket:
             derived[bucket].add(path_id)
+        elif classification not in BENIGN_CLASSIFICATIONS:
+            # A missing or unrecognised classification is not a pass. Fail it
+            # closed into uncertainty so a typo cannot make an entry vanish
+            # from every summary and leave the verdict free to go green.
+            derived["unknown"].add(path_id)
     return derived
 
 
@@ -153,6 +175,12 @@ def collect(
 
     for name, inventory in inventories:
         if inventory is None:
+            # A required inventory that was not supplied is not an absence of
+            # findings; it is an absence of measurement. Record it as an
+            # unresolved path and an inadmissible inventory so it can never be
+            # masked by the other inventory reporting clean.
+            unknown.add(f"inventory:{name}_absent")
+            admissibility[name] = False
             continue
         ok = context_admissible(inventory) if require_context else True
         digest = privilege_context.credential_digest(inventory.get("measurement_context"))
@@ -278,6 +306,11 @@ def compute(
         for key, entry in (conditions or {}).items()
         if key not in ignore and entry.get("met") is not True
     )
+    # Every expected condition must be present. A missing key is an unmeasured
+    # condition, not a satisfied one: `conditions=None`, `{}`, or an incomplete
+    # all-true subset must fail closed rather than reach VERIFIED.
+    provided = set(conditions or {})
+    missing_conditions = sorted((EXPECTED_CONDITIONS - ignore) - provided)
 
     if paths["root_equivalent_paths"]:
         verdict = BLOCKED_ROOT
@@ -302,6 +335,12 @@ def compute(
             "the privilege graph closure was not computed, so "
             "exclusivity is unmeasured rather than established"
         )
+    elif missing_conditions:
+        verdict = BLOCKED_UNCERTAIN
+        reasons.append(
+            "required conditions were not measured, so exclusivity is "
+            f"unmeasured rather than established: {missing_conditions}"
+        )
     elif failed:
         verdict = BLOCKED_AUTHORITY
         reasons.append(f"conditions not met: {failed}")
@@ -315,17 +354,20 @@ def compute(
 
     return {
         "verdict": verdict,
-        "specific_reason": specific_reason(verdict, paths, failed),
+        "specific_reason": specific_reason(verdict, paths, failed, missing_conditions),
         "reasons": reasons,
         **paths,
         "graph_closure_holds": closure_holds,
         "failed_conditions": failed,
+        "missing_conditions": missing_conditions,
         "exclusivity_requires": EXCLUSIVITY_REQUIRES,
         "precedence": list(PRECEDENCE),
     }
 
 
-def specific_reason(verdict: str, paths: dict, failed: list[str]) -> str:
+def specific_reason(
+    verdict: str, paths: dict, failed: list[str], missing_conditions: list[str] | None = None
+) -> str:
     """`BLOCKED_<specific_reason>`: which mechanism, not merely which class.
 
     Derived from the paths, never chosen by hand -- a verdict a human can spell
@@ -349,6 +391,8 @@ def specific_reason(verdict: str, paths: dict, failed: list[str]) -> str:
             return f"{BLOCKED_UNCERTAIN}_UNKNOWN_PATHS"
         if paths.get("requires_operator_evidence_paths"):
             return f"{BLOCKED_UNCERTAIN}_OPERATOR_EVIDENCE_REQUIRED"
+        if missing_conditions:
+            return f"{BLOCKED_UNCERTAIN}_CONDITIONS_NOT_MEASURED"
         return f"{BLOCKED_UNCERTAIN}_GRAPH_CLOSURE_NOT_COMPUTED"
     if verdict == BLOCKED_AUTHORITY:
         if paths.get("authority_equivalent_paths"):

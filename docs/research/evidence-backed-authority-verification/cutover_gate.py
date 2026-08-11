@@ -30,12 +30,43 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import pwd
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import exclusivity_model  # noqa: E402
+
+#: The three cutover services and the authority identity each must run under.
+#: The broker (uid 940) owns canonical state; the decision layer (uid 941)
+#: holds the signing key; the authority principal (uid 940) is the identity the
+#: store and IPC are owned by. A readiness verdict may not clear unless every
+#: one of these is loaded AND running under its designated uid.
+AUTHORITY_UID = 940
+DECISION_UID = 941
+REQUIRED_SERVICE_IDENTITIES = {
+    "promotion-authority.service": AUTHORITY_UID,
+    "promotion-decision.service": DECISION_UID,
+    "promotion-broker.service": AUTHORITY_UID,
+}
+
+
+def _unit_uid(user_value: object) -> int | None:
+    """Resolve a systemd unit's `User=` to a numeric uid, or None if it is
+    unset or cannot be resolved. A name is looked up; a numeric string is
+    taken as-is."""
+    if not isinstance(user_value, str) or not user_value.strip():
+        return None
+    value = user_value.strip()
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return pwd.getpwnam(value).pw_uid
+    except (KeyError, TypeError):
+        return None
 
 REGISTRY = os.path.join(HERE, "ROOT_EQUIVALENCE_REGISTRY.json")
 VERIFICATION = os.path.join(HERE, "verification_result.json")
@@ -307,25 +338,34 @@ def evaluate() -> dict:
             )
         )
         units = preflight.get("systemd", {})
-        under_uid = [
-            unit
-            for unit in (
-                "promotion-authority.service",
-                "promotion-decision.service",
-                "promotion-broker.service",
-            )
-            if units.get(unit, {}).get("LoadState") == "loaded" and units.get(unit, {}).get("User")
-        ]
+        service_identities: dict[str, dict] = {}
+        all_under_authority = True
+        for unit, expected_uid in REQUIRED_SERVICE_IDENTITIES.items():
+            info = units.get(unit, {})
+            loaded = info.get("LoadState") == "loaded"
+            resolved_uid = _unit_uid(info.get("User"))
+            unit_ok = loaded and resolved_uid == expected_uid
+            service_identities[unit] = {
+                "loaded": loaded,
+                "User": info.get("User"),
+                "resolved_uid": resolved_uid,
+                "expected_uid": expected_uid,
+                "runs_under_expected_authority": unit_ok,
+            }
+            all_under_authority = all_under_authority and unit_ok
         checks.append(
             check(
                 "services_run_under_authority_uid",
-                "MET" if under_uid else "PENDING",
+                "MET" if all_under_authority else "PENDING",
                 {
-                    "loaded_units_with_User": under_uid,
-                    "note": "while no unit exists the authority is started by the "
+                    "services": service_identities,
+                    "note": "every required unit must be loaded AND run under its "
+                    "designated authority uid; a single unit loaded under any "
+                    "nonempty User (root, or the agent) does not clear this. "
+                    "While no unit exists the authority is started by the "
                     "agent's own Docker socket, which is itself the blocker",
                 },
-                None if under_uid else BLOCKED_OTHER,
+                None if all_under_authority else BLOCKED_OTHER,
             )
         )
     else:

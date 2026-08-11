@@ -568,6 +568,7 @@ def _classify_unit(unit: dict, sink: list) -> None:
 
 def audit_setuid() -> dict:
     found = []
+    failed_roots: dict[str, str] = {}
     for root in SETUID_SEARCH_ROOTS:
         if not os.path.isdir(root):
             continue
@@ -575,12 +576,26 @@ def audit_setuid() -> dict:
             ["find", root, "-xdev", "-type", "f", "-perm", "-4000", "-print"],
             timeout=180,
         )
+        if res.get("error"):
+            failed_roots[root] = res["error"]
+            continue
         for line in res.get("stdout", "").splitlines():
             if line.strip():
                 found.append(line.strip())
     found = sorted(set(found))
 
     classified = {}
+    if failed_roots:
+        classified["setuid_sweep_incomplete"] = entry(
+            "setuid_sweep_incomplete",
+            UNKNOWN,
+            {"failed_roots": failed_roots},
+            "the setuid sweep did not complete for "
+            f"{sorted(failed_roots)}; a sweep that could not run and a sweep "
+            "that found nothing are not the same finding",
+            "administrator re-runs the setuid sweep over the failed roots "
+            "and classifies the result",
+        )
     for path in found:
         name = os.path.basename(path)
         facts = path_facts(path)
@@ -711,16 +726,31 @@ def audit_file_capabilities() -> dict:
             agent_inheritable = line.split(":", 1)[1].strip()
 
     found: dict[str, str] = {}
+    failed_roots: dict[str, str] = {}
     for root in CAP_SEARCH_ROOTS:
         if not os.path.isdir(root):
             continue
         res = run([getcap, "-r", root], timeout=300)
+        if res.get("error"):
+            failed_roots[root] = res["error"]
+            continue
         for line in res.get("stdout", "").splitlines():
             path, _, caps = line.strip().partition(" ")
             if path and caps:
                 found[path] = caps.strip()
 
     classified = {}
+    if failed_roots:
+        classified["capability_sweep_incomplete"] = entry(
+            "capability_sweep_incomplete",
+            UNKNOWN,
+            {"failed_roots": failed_roots},
+            "the file-capability sweep did not complete for "
+            f"{sorted(failed_roots)}; the surface under those roots was not "
+            "enumerated, and silence is not absence",
+            "administrator re-runs `getcap -r` over the failed roots and "
+            "classifies the result",
+        )
     for path, caps_text in sorted(found.items()):
         parsed = parse_caps(caps_text)
         facts = path_facts(path)

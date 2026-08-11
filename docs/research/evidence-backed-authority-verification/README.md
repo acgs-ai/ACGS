@@ -13,6 +13,13 @@ host.
 Pure replay is the default verification path. It reads only files in this
 directory and does not inspect the current host or invoke Docker.
 
+Only `render_pdf.py` needs third-party packages; install the sealed renderer
+versions first (the other commands use the standard library plus pytest):
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
 ```bash
 python3 artifact_replay.py --verify-shipped
 python3 table16_metrics.py --verify

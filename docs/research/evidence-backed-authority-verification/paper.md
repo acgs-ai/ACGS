@@ -1661,9 +1661,9 @@ reproduced in §13.3.
 | Distinct digests over those runs | `3` | `run_history.jsonl` | `evidence_digest` |
 | Final four runs identical | `True` | `run_history.jsonl` | last four `evidence_digest` |
 | Evidence digest | `ab4ae6bcb450971214b4e4e6a34be75147653826400ccd09c5e3786415e1c9ac` | `verification_result.json` | `evidence_digest` |
-| Shipped non-runtime Python lines | `9064` | `working tree` | all shipped Python except the four runtime-subject files |
+| Shipped non-runtime Python lines | `9283` | `working tree` | all shipped Python except the four runtime-subject files |
 | ...of which tests | `1345` | `working tree` | tests/*.py |
-| Runtime subject Python lines | `931` | `working tree` | container_launch.py, deployment.py, v3_authority.py, v3_client.py |
+| Runtime subject Python lines | `972` | `working tree` | container_launch.py, deployment.py, v3_authority.py, v3_client.py |
 
 Two rows deserve comment. `Runs recorded` counts every recorded run, not only
 the four that satisfy condition 18; the three distinct digests across those runs

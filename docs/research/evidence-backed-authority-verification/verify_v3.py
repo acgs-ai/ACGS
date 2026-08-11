@@ -498,6 +498,14 @@ def main() -> int:
     # and stamps the measurement context. rc=1 means "resolved, and something is
     # still blocking" -- that is data, not a stage failure. rc=2 means the
     # process is not measuring the host identity, which is fatal to the verdict.
+    #
+    # Delete any prior resolved inventory first. rc=1 is used for both the
+    # intentional "resolved but blocking" outcome and an unexpected crash, so
+    # the existence of TOPOLOGY_FINAL cannot be trusted unless this run wrote
+    # it: a leftover file would let the verifier continue on stale
+    # classifications that no longer match the freshly collected raw topology.
+    if os.path.exists(TOPOLOGY_FINAL):
+        os.unlink(TOPOLOGY_FINAL)
     resolution_run = run_stage(
         "privilege resolution",
         [sys.executable, os.path.join(HERE, "privilege_resolution.py")],
