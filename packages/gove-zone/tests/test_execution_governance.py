@@ -261,6 +261,41 @@ def test_untrusted_context_with_another_reason_stays_unclassified() -> None:
 
 
 @pytest.mark.parametrize(
+    ("command", "action", "subcommand"),
+    [
+        ("yarnpkg add left-pad", ACTION_PACKAGE_INSTALL, "add"),
+        ("yarnpkg install", ACTION_PACKAGE_INSTALL, "install"),
+        ("yarnpkg run build", ACTION_PACKAGE_INVOKE, "run"),
+    ],
+)
+def test_yarnpkg_alias_is_normalized_to_yarn(command: str, action: str, subcommand: str) -> None:
+    """Yarn ships ``yarnpkg`` alongside ``yarn`` — the same CLI under a second
+    name. Absent from the manager table, ``yarnpkg add left-pad`` in a pnpm
+    workspace classified as an undecidable ``env.shell.exec`` and returned an
+    approvable ask instead of the hard canonical-manager DENY produced for
+    ``yarn add`` — and approving that ask performed the forbidden mutation."""
+    event = classify_command(command, canonical_package_manager="pnpm")
+
+    assert event.action == action
+    assert event.tier_hint == TIER_DEPENDENCY
+    assert event.decidable is True
+    assert event.argv_prefix == ("yarn", subcommand)
+    assert event.facts["manager"] == "yarn"
+    assert event.facts["manager_contract_applies"] is True
+    assert event.facts["manager_is_canonical"] is False
+
+
+def test_yarnpkg_alias_is_canonical_when_yarn_is_declared() -> None:
+    """Positive control: the alias shares yarn's contract in both directions —
+    in a yarn-declared checkout ``yarnpkg`` is the canonical manager."""
+    event = classify_command("yarnpkg add left-pad", canonical_package_manager="yarn")
+
+    assert event.action == ACTION_PACKAGE_INSTALL
+    assert event.facts["manager"] == "yarn"
+    assert event.facts["manager_is_canonical"] is True
+
+
+@pytest.mark.parametrize(
     "command",
     [
         "/tmp/git status",
@@ -1583,6 +1618,22 @@ def test_non_canonical_package_manager_is_denied(tmp_path: Path) -> None:
     assert "deny-non-canonical-package-manager" in event["matched_rules"]
 
 
+def test_yarnpkg_alias_is_denied_like_yarn(tmp_path: Path) -> None:
+    """``yarnpkg add left-pad`` in a pnpm workspace performs Yarn's dependency
+    mutation under its standard executable alias; it must receive the same
+    hard denial as ``yarn add``, not an approvable undecidable-shell ask."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "yarnpkg add left-pad")
+
+    assert permission(response) == "deny"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["tool"] == ACTION_PACKAGE_INSTALL
+    assert event["decision"] == "deny"
+    assert "deny-non-canonical-package-manager" in event["matched_rules"]
+
+
 def test_option_bearing_wrapper_is_denied_before_receipt_minting(tmp_path: Path) -> None:
     gateway = make_execution_gateway(tmp_path)
 
@@ -2289,6 +2340,103 @@ def test_ordinary_source_writes_stay_on_the_source_tier(tmp_path: Path) -> None:
     gateway = make_execution_gateway(tmp_path)
 
     for file_path in ("src/app.py", ".github/ISSUE_TEMPLATE/bug.md"):
+        response = governed_write(gateway, file_path)
+        assert permission(response) == "allow"
+        assert response["gove_zone"]["receipts"]
+
+
+@pytest.mark.parametrize(
+    "file_path",
+    [
+        ".GOVE-ZONE/gate.mode",
+        "/workspace/checkout/.Gove-Zone/gate.mode",
+        ".GOVE-ZONE/audit.jsonl",
+    ],
+)
+def test_trust_root_paths_are_matched_case_insensitively(tmp_path: Path, file_path: str) -> None:
+    """On a case-insensitive checkout (macOS and Windows defaults)
+    ``.GOVE-ZONE/gate.mode`` resolves to the protected ``.gove-zone/gate.mode``,
+    but the exact segment comparison assigned no tier — the write evaluated as
+    an ordinary source-tier allow, letting the hook switch itself into observe
+    mode when the host permitted the write."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = governed_write(gateway, file_path)
+
+    assert permission(response) == "deny"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["tool"] == "runtime.Write"
+    assert "deny-trust-root-path-mutation" in event["matched_rules"]
+
+
+@pytest.mark.parametrize(
+    "file_path",
+    [
+        ".CLAUDE/settings.json",
+        ".Codex/config.toml",
+        ".GitHub/Workflows/ci.yml",
+    ],
+)
+def test_control_surface_paths_are_matched_case_insensitively(
+    tmp_path: Path, file_path: str
+) -> None:
+    gateway = make_execution_gateway(tmp_path)
+
+    response = governed_write(gateway, file_path)
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert "escalate-control-surface-path-mutation" in event["matched_rules"]
+
+
+@pytest.mark.parametrize(
+    "file_path",
+    [
+        "package.json",
+        "/workspace/checkout/package.json",
+        "apps/web/pnpm-lock.yaml",
+        "yarn.lock",
+        "Package.JSON",
+        "requirements.txt",
+        "requirements-dev.txt",
+        "pyproject.toml",
+        "Cargo.toml",
+        "Gemfile.lock",
+        "composer.json",
+        "go.mod",
+    ],
+)
+def test_dependency_manifest_writes_require_a_human(tmp_path: Path, file_path: str) -> None:
+    """A governed ``Write`` to a dependency manifest or lockfile admits a new
+    dependency — and its install scripts — into tracked state without running
+    a package manager, and a later CI install fetches and executes it outside
+    this hook. It previously inherited the ordinary source-tier allow while
+    ``npm install`` of the same dependency was denied or escalated
+    (developer-tool-mutation-governance M3: approval-requiring)."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = governed_write(gateway, file_path)
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["tool"] == "runtime.Write"
+    assert "escalate-dependency-manifest-path-mutation" in event["matched_rules"]
+
+
+def test_files_merely_near_manifest_names_stay_on_the_source_tier(tmp_path: Path) -> None:
+    """Positive control: only the written file's own name marks the dependency
+    surface — documentation about a manifest or code handling lockfiles is an
+    ordinary source edit."""
+    gateway = make_execution_gateway(tmp_path)
+
+    for file_path in (
+        "docs/package.json.md",
+        "src/requirements_parser.py",
+        "tools/lockfile_utils.py",
+    ):
         response = governed_write(gateway, file_path)
         assert permission(response) == "allow"
         assert response["gove_zone"]["receipts"]

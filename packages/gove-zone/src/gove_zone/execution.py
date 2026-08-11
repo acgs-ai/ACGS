@@ -266,6 +266,17 @@ _COMMAND_LAUNCHERS = frozenset(
 #: is over-approximated: an escalation, never a false allow.
 _FIND_EXEC_PRIMARIES = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
 
+#: Executable aliases the manager distributions themselves ship next to the
+#: primary binary. Yarn installs ``yarnpkg`` alongside ``yarn`` (the same CLI
+#: under a second name; its ``add --help`` describes adding dependencies to
+#: the project), so ``yarnpkg add left-pad`` performs Yarn's dependency
+#: mutation while appearing in no manager table — it classified as an
+#: undecidable ``env.shell.exec`` and returned an approvable ask instead of
+#: the hard ``deny-non-canonical-package-manager`` produced for ``yarn add``.
+#: Normalized before any table lookup so the alias and the primary name share
+#: one manager contract.
+_MANAGER_EXECUTABLE_ALIASES: Mapping[str, str] = {"yarnpkg": "yarn"}
+
 _INSTALL_SUBCOMMANDS: Mapping[str, frozenset[str]] = {
     "npm": frozenset({"install", "i", "ci", "add", "update", "up"}),
     "pnpm": frozenset({"install", "i", "add", "update", "up"}),
@@ -1267,6 +1278,10 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
 
     binary = _portable_basename(argv[0])
     invoked_by_absolute_path = argv[0] != binary
+    # A standard alias (`yarnpkg`) is the same manager under a second name;
+    # resolving it before any table lookup keeps the alias inside the manager
+    # contract instead of letting it fall to the undecidable-shell ask.
+    binary = _MANAGER_EXECUTABLE_ALIASES.get(binary, binary)
     untrusted_invocation_context = bool(wrappers) or invoked_by_absolute_path
     if untrusted_invocation_context and not reasons:
         reasons.append("untrusted-execution-context")
@@ -1915,6 +1930,23 @@ EXECUTION_RULE_BUNDLE: dict[str, Any] = {
             ),
         },
         {
+            "id": "escalate-dependency-manifest-path-mutation",
+            "effect": "escalate",
+            "tools": [
+                "runtime.Edit",
+                "runtime.MultiEdit",
+                "runtime.NotebookEdit",
+                "runtime.Write",
+            ],
+            "state_equals": {"governance_path_tier": TIER_DEPENDENCY},
+            "reason": (
+                "path declares or locks the dependency graph; a manifest or "
+                "lockfile edit admits dependencies and install scripts a later "
+                "install will fetch and execute, so it requires the same human "
+                "approval as a package-manager mutation"
+            ),
+        },
+        {
             "id": "escalate-install-with-lifecycle-scripts-enabled",
             "effect": "escalate",
             "tools": [ACTION_PACKAGE_INSTALL],
@@ -2088,6 +2120,51 @@ _CONTROL_SURFACE_PATH_SEGMENT_PAIRS: frozenset[tuple[str, str]] = frozenset(
     {(".github", "workflows")}
 )
 
+#: Final path segments that declare or lock the dependency graph, per manager
+#: ecosystem this classifier already governs. An ``Edit``/``Write`` to one of
+#: these admits a dependency (and its install scripts) into tracked state
+#: directly — the same M3 dependency-graph change a package-manager mutation
+#: performs (docs/governance/developer-tool-mutation-governance.md), so it
+#: must not inherit the ordinary source-tier allow. Stored casefolded; matched
+#: against the casefolded final segment.
+_DEPENDENCY_MANIFEST_FILENAMES = frozenset(
+    {
+        # Node: npm / pnpm / yarn / bun.
+        "package.json",
+        "package-lock.json",
+        "npm-shrinkwrap.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        "bun.lock",
+        "bun.lockb",
+        # Python: pip / uv / poetry / pipenv.
+        "pyproject.toml",
+        "poetry.lock",
+        "uv.lock",
+        "pipfile",
+        "pipfile.lock",
+        # Rust.
+        "cargo.toml",
+        "cargo.lock",
+        # Ruby.
+        "gemfile",
+        "gemfile.lock",
+        "gems.rb",
+        "gems.locked",
+        # PHP.
+        "composer.json",
+        "composer.lock",
+        # Go.
+        "go.mod",
+        "go.sum",
+    }
+)
+
+#: pip requirements manifests: ``requirements.txt`` plus the common split
+#: spellings (``requirements-dev.txt``, ``requirements_test.in``). Matched on
+#: the casefolded final segment.
+_REQUIREMENTS_FILENAME_RE = re.compile(r"^requirements[a-z0-9._-]*\.(?:txt|in)$")
+
 #: Host-runtime file-mutation surfaces the governance-path rules apply to.
 _FILE_MUTATION_TOOLS = frozenset(
     {"runtime.Edit", "runtime.MultiEdit", "runtime.NotebookEdit", "runtime.Write"}
@@ -2103,17 +2180,31 @@ def _governance_path_tier(path: Sequence[str]) -> str:
     the target as governance configuration or evidence, never an ordinary
     source edit. An adjacent ``.github/workflows`` pair marks CI definitions —
     code that later runs with repository credentials — as the same
-    control surface.
+    control surface. A final segment naming a dependency manifest or lockfile
+    is a dependency-graph mutation, not an ordinary source edit.
+
+    Segments are compared casefolded: on a case-insensitive filesystem
+    (macOS and Windows defaults) ``.GOVE-ZONE/gate.mode`` resolves to the
+    protected ``.gove-zone/gate.mode``, so an exact comparison would let a
+    respelled path switch the gate into observe mode. On a case-sensitive
+    filesystem this over-approximates — a genuinely distinct ``.GOVE-ZONE``
+    directory is still tiered — which is a deny/escalation, never a false
+    allow.
     """
-    for segment in path:
+    normalized = tuple(segment.casefold() for segment in path)
+    for segment in normalized:
         if segment in _TRUST_ROOT_PATH_SEGMENTS:
             return TIER_TRUST_ROOT
-    for segment in path:
+    for segment in normalized:
         if segment in _CONTROL_SURFACE_PATH_SEGMENTS:
             return TIER_CONTROL_SURFACE
-    for pair in zip(path, path[1:], strict=False):
+    for pair in zip(normalized, normalized[1:], strict=False):
         if pair in _CONTROL_SURFACE_PATH_SEGMENT_PAIRS:
             return TIER_CONTROL_SURFACE
+    if normalized:
+        final = normalized[-1]
+        if final in _DEPENDENCY_MANIFEST_FILENAMES or _REQUIREMENTS_FILENAME_RE.fullmatch(final):
+            return TIER_DEPENDENCY
     return ""
 
 
