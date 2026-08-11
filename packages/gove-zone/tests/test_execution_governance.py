@@ -779,6 +779,47 @@ def test_manager_option_ambiguity_with_an_operator_stays_unclassified() -> None:
 
 
 @pytest.mark.parametrize(
+    ("command", "manager"),
+    [
+        ("npm ${CMD:-install} left-pad", "npm"),
+        ("npm ${CMD:-publish}", "npm"),
+        ("npm $CMD left-pad", "npm"),
+        ("npm i* left-pad", "npm"),
+        ("yarn ${TASK} left-pad", "yarn"),
+    ],
+)
+def test_expandable_subcommand_words_fail_closed_on_the_package_surface(
+    command: str, manager: str
+) -> None:
+    """``npm ${CMD:-install} left-pad`` reaches npm as ``npm install
+    left-pad`` after bash expands the word, so reading the unexpanded token as
+    a decidable bare invoke skipped the lifecycle-enablement record — and
+    ``${CMD:-publish}`` recorded a release publication as a dependency
+    invocation. The manager identity is literal and certain, so the event
+    stays on the package surface with the contract facts intact."""
+    event = classify_command(command, canonical_package_manager="pnpm")
+
+    assert event.action == ACTION_PACKAGE_INVOKE
+    assert event.tier_hint == TIER_DEPENDENCY
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("subcommand-expansion",)
+    assert event.facts["manager"] == manager
+    assert event.facts["manager_contract_applies"] is True
+    assert event.facts["manager_is_canonical"] is (manager == "pnpm")
+
+
+def test_expandable_gh_group_word_fails_closed() -> None:
+    """``gh ${G:-pr} view 1`` expands into a gh group this classifier models
+    token-by-token; the unexpanded spelling must not fall through as a bare
+    decidable invocation of an unmodeled group."""
+    event = classify_command("gh ${G:-pr} view 1")
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("subcommand-expansion",)
+
+
+@pytest.mark.parametrize(
     "command",
     [
         "python -c \"open('.gove-zone/gate.mode','w').write('observe')\"",
@@ -876,7 +917,18 @@ def test_versioned_interpreter_and_launcher_delegation_is_undecidable(
         "pwsh7 -Version",
     ],
 )
-def test_exact_benign_interpreter_probe_remains_decidable(command: str) -> None:
+def test_exact_benign_interpreter_probe_remains_decidable(
+    command: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Grammar positive control. Ambient resolution is simulated as clean
+    (both lookups land on the same system file) because the Windows and
+    versioned probe spellings do not exist on this runner; the resolution
+    channel itself is covered against the real filesystem by the shadowing
+    tests below."""
+    monkeypatch.setattr(
+        "gove_zone.execution.shutil.which", lambda cmd, mode=os.X_OK, path=None: "/bin/sh"
+    )
+
     event = classify_command(command)
 
     assert event.action == ACTION_SHELL_EXEC
@@ -920,8 +972,11 @@ def test_probe_exemption_rejects_inherited_node_preload_environment(command: str
 
 @pytest.mark.parametrize("node_options", [None, "", "   "])
 def test_node_probe_without_preload_environment_stays_decidable(
-    node_options: str | None,
+    node_options: str | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        "gove_zone.execution.shutil.which", lambda cmd, mode=os.X_OK, path=None: "/bin/sh"
+    )
     environ = {"PATH": "/usr/bin:/bin"}
     if node_options is not None:
         environ["NODE_OPTIONS"] = node_options
@@ -961,6 +1016,70 @@ def test_probe_exemption_rejects_path_qualified_executables(command: str) -> Non
     assert event.decidable is False
     assert event.undecidable_reasons == ("untrusted-execution-context",)
     assert event.facts["invoked_by_absolute_path"] is True
+
+
+def test_path_shadowing_interpreter_probe_fails_closed(tmp_path: Path) -> None:
+    """A ``PATH`` entry ahead of the system directories can carry a
+    replacement ``node``: the exact-probe grammar is evidence about the argv,
+    not about which executable bash resolves, so the name-only exemption
+    minted a decidable allow for the replacement implementation."""
+    shadow = tmp_path / "node"
+    shadow.write_text("#!/bin/sh\nnpm install left-pad\n", encoding="utf-8")
+    shadow.chmod(0o755)
+
+    event = classify_command("node --help", environ={"PATH": f"{tmp_path}:/usr/bin:/bin"})
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("ambient-path-resolution",)
+
+
+@pytest.mark.parametrize("key", ["BASH_FUNC_node%%", "BASH_FUNC_node()"])
+def test_exported_function_shadowing_interpreter_probe_fails_closed(key: str) -> None:
+    event = classify_command(
+        "node --help",
+        environ={"PATH": "/usr/bin:/bin", key: "() { npm install left-pad; }"},
+    )
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("exported-function-shadowing",)
+
+
+def test_unresolvable_interpreter_probe_fails_closed() -> None:
+    event = classify_command("node --help", environ={"PATH": "/nonexistent-path-entry"})
+
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("ambient-path-resolution",)
+
+
+def test_probe_with_clean_ambient_resolution_stays_decidable() -> None:
+    """Positive control against the real filesystem: with the system
+    directories resolving first, the bare probe name is the system shell."""
+    event = classify_command("bash --version", environ={"PATH": "/usr/bin:/bin"})
+
+    assert event.decidable is True
+    assert event.undecidable_reasons == ()
+
+
+def test_shadowed_interpreter_probe_requires_a_human_at_the_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gate wiring: the hook path classifies with the inherited environment,
+    so a PATH-shadowed probe surfaces as the fail-closed undecidable ask, not
+    the unclassified allow."""
+    shadow = tmp_path / "node"
+    shadow.write_text("#!/bin/sh\nnpm install left-pad\n", encoding="utf-8")
+    shadow.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ.get('PATH', '')}")
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "node --help")
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["decision"] == "escalate"
 
 
 def test_generic_inline_option_fails_closed_structurally() -> None:
@@ -1919,6 +2038,42 @@ def test_canonical_manager_with_ambiguous_options_still_requires_a_human(
     gateway = make_execution_gateway(tmp_path)
 
     response = decide(gateway, "pnpm --prefix acgi-ai install left-pad")
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["decision"] == "escalate"
+    assert f"RISK_TIER:{TIER_DEPENDENCY}" in event["matched_rules"]
+
+
+def test_expandable_subcommand_does_not_downgrade_the_manager_denial(
+    tmp_path: Path,
+) -> None:
+    """``npm ${CMD:-install} left-pad`` in a pnpm workspace: the expandable
+    word hides which manager verb runs, but npm is certain, so the
+    canonical-manager DENY must not soften into an approvable ask."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "npm ${CMD:-install} left-pad")
+
+    assert permission(response) == "deny"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["tool"] == ACTION_PACKAGE_INVOKE
+    assert event["decision"] == "deny"
+    assert "deny-non-canonical-package-manager" in event["matched_rules"]
+
+
+def test_canonical_manager_with_expandable_subcommand_still_requires_a_human(
+    tmp_path: Path,
+) -> None:
+    """``pnpm ${CMD:-install} left-pad`` with pnpm canonical: undecidable on
+    the dependency tier, so a human is required — the expansion cannot buy the
+    decidable invoke (or skip the lifecycle-enablement record) that the
+    literal spelling would have to earn."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "pnpm ${CMD:-install} left-pad")
 
     assert permission(response) == "ask"
     assert "gove_zone" not in response

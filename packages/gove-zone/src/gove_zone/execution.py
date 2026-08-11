@@ -918,14 +918,29 @@ def _subcommand(binary: str, argv: Sequence[str]) -> tuple[str, str]:
     it is a subcommand this module declared for the binary; anything else is
     returned undecidable (``option-value-ambiguity``, fail-closed) rather than
     silently classified as a bare invoke.
+
+    The fourth guard rejects shell-expandable words in the subcommand
+    position: ``npm ${CMD:-install} left-pad`` reaches npm as ``npm install
+    left-pad`` after bash expands the token, and ``npm ${CMD:-publish}`` is a
+    release publication — but the unexpanded spelling matches neither
+    :data:`_SUBCOMMAND_RE` nor a declared table, so it read as a bare
+    decidable invoke that skipped the lifecycle-enablement and publication
+    surfaces. Pathname expansion is the same channel (an unquoted ``i*`` can
+    expand against the working directory), so glob-bearing words fail closed
+    too (``subcommand-expansion``). shlex strips quotes, so an inert
+    single-quoted spelling is indistinguishable from the active one and is
+    over-approximated: an escalation, never a false allow.
     """
     if binary not in _GRAMMAR_BINARIES:
         return "", ""
     saw_option = False
+    unsafe = _EXPANSION_CHARS | _GLOB_CHARS
     for token in argv[1:]:
         if token.startswith("-"):
             saw_option = True
             continue
+        if unsafe & set(token):
+            return "", "subcommand-expansion"
         if not saw_option:
             return (token, "") if _SUBCOMMAND_RE.match(token) else ("", "")
         if _SUBCOMMAND_RE.match(token) and token in _declared_subcommands(binary):
@@ -1366,9 +1381,10 @@ def classify_command(
 
     ``environ`` is the environment the executing shell inherits (defaults to
     this process's, which the hook shares with the host tool). It is consulted
-    only to validate that a bare :data:`_PLAIN_EXECUTABLES` name actually
-    resolves to the system implementation; see
-    :func:`_ambient_resolution_reason`.
+    to validate that a bare :data:`_PLAIN_EXECUTABLES` name or an exact
+    interpreter probe actually resolves to the system implementation (see
+    :func:`_ambient_resolution_reason`) and to detect injected-execution
+    channels such as ``NODE_OPTIONS`` preloads and ``GH_PAGER`` pagers.
 
     Decides on the argv prefix only. Never matches substrings of the command
     text: ``git commit -m "fix team dashboard"`` is a git mutation, not an
@@ -1497,6 +1513,17 @@ def classify_command(
         if probe_preload_reason:
             reasons.append(probe_preload_reason)
             exact_probe = False
+    if exact_probe:
+        # The probe grammar is evidence only about the argv, not about WHICH
+        # executable runs: bash resolves the bare word through functions and
+        # PATH first, so an exported function or a PATH-shadowing executable
+        # named `node` receives this allow while running arbitrary code. The
+        # ambient resolution must provably reach the system implementation,
+        # exactly as for _PLAIN_EXECUTABLES.
+        probe_resolution_reason = _ambient_resolution_reason(argv[0], resolved_environ)
+        if probe_resolution_reason:
+            reasons.append(probe_resolution_reason)
+            exact_probe = False
     if not reasons and interpreter_family == "shell" and not exact_probe:
         # The real program is whatever the shell is handed — inline `-c` text,
         # a script, or stdin — none of which is recoverable from this argv.
@@ -1600,15 +1627,22 @@ def classify_command(
         base_facts["wrapper_options_supported"] = False
 
     if (
-        reasons in (["option-value-ambiguity"], ["untrusted-execution-context"])
+        reasons
+        in (
+            ["option-value-ambiguity"],
+            ["untrusted-execution-context"],
+            ["subcommand-expansion"],
+        )
         and binary in _INSTALL_SUBCOMMANDS
     ):
-        # Two shapes hide HOW the manager runs, but not WHICH manager runs. A
-        # value-taking option this module does not model — `npm --prefix <dir>
-        # install <pkg>` — hides the subcommand. An explicit executable path
-        # or a peeled optionless wrapper — `/usr/bin/npm install <pkg>`,
-        # `env npm install <pkg>` — makes the execution context untrusted. In
-        # both, the manager identity was successfully recovered and no
+        # Three shapes hide HOW the manager runs, but not WHICH manager runs.
+        # A value-taking option this module does not model — `npm --prefix
+        # <dir> install <pkg>` — hides the subcommand. An explicit executable
+        # path or a peeled optionless wrapper — `/usr/bin/npm install <pkg>`,
+        # `env npm install <pkg>` — makes the execution context untrusted. A
+        # shell-expandable subcommand word — `npm ${CMD:-install} <pkg>` —
+        # hides which manager verb runs until bash expands it. In
+        # all of them, the manager identity was successfully recovered and no
         # operator, substitution, or delegation reason accompanies it, so this
         # is a single invocation of that manager. Returning the generic
         # undecidable shell event here would drop the contract facts and let
