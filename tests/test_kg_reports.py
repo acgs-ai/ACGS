@@ -237,6 +237,24 @@ def test_catalog_q5_and_q13_ignore_test_edges_to_deleted_targets():
         assert f"coalesce({match.group(1)}.present, true)" in query
 
 
+def test_working_tree_queries_exclude_files_recorded_as_absent():
+    """REGRESSION. build_spine() deliberately keeps tracked=true for an
+    unstaged deletion and records present=false, so tracked-only filtering
+    published deleted sources as ungated code (Q2), hotspots (Q5 and both
+    generated report queries), orphan docs (Q8), and semantic blind spots
+    (Q10). Every query whose subject is the working tree must require a live
+    file; coalesce keeps graphs from older extractions readable."""
+    for query in (
+        reports.HOTSPOT_Q,
+        reports.CONTROL_PLANE_Q,
+        _catalog_query(2),
+        _catalog_query(5),
+        _catalog_query(8),
+        _catalog_query(10),
+    ):
+        assert "coalesce(f.present, true)" in query, query
+
+
 def test_catalog_q14_traverses_every_advertised_structural_edge():
     """REGRESSION. Q14's heading (and the README) advertise a blast radius
     over every structural edge, but the allowlist held six relationship types:

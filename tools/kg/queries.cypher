@@ -24,8 +24,11 @@ RETURN w.name AS workflow, g.events AS gating_events,
        w.path_filters_pull_request AS pull_request_filters, w.jobs AS jobs;
 
 // --- Q2. Ungated source: code with no path-filtered PR workflow ------------
+// tracked alone is not "live": build_spine() keeps tracked=true for an
+// unstaged deletion and records present=false. A deleted file cannot be
+// edited, so it has no business in working-tree findings (same in Q5/Q8/Q10).
 MATCH (f:File)
-WHERE f.tracked AND NOT f.is_test
+WHERE f.tracked AND coalesce(f.present, true) AND NOT f.is_test
   AND f.language IN ['Python', 'TypeScript', 'JavaScript']
   AND NOT EXISTS {
     MATCH (:Workflow)-[g:GATES]->(f)
@@ -69,7 +72,7 @@ ORDER BY joint_commits DESC LIMIT 20;
 // keeps TESTED_BY edges to deleted test files (present=false); only a live
 // target counts as test evidence, matching the generated reports.
 MATCH (f:File)
-WHERE f.tracked AND NOT f.is_test AND f.hotspot > 0.05
+WHERE f.tracked AND coalesce(f.present, true) AND NOT f.is_test AND f.hotspot > 0.05
   AND f.language IN ['Python', 'TypeScript']
   AND NOT EXISTS {
     MATCH (f)-[:TESTED_BY]->(tt)
@@ -119,7 +122,8 @@ ORDER BY length(p) DESC;
 
 // --- Q8. Orphan documentation: no inbound in-repo reference ---------------
 MATCH (f:File)
-WHERE f.tracked AND f.ext = '.md' AND NOT (:File)-[:LINKS_TO]->(f)
+WHERE f.tracked AND coalesce(f.present, true)
+  AND f.ext = '.md' AND NOT (:File)-[:LINKS_TO]->(f)
   AND NOT f.key IN ['README.md', 'CLAUDE.md', 'AGENTS.md']
 RETURN f.package AS package, count(*) AS orphan_docs,
        collect(f.key)[0..6] AS examples
@@ -138,7 +142,7 @@ ORDER BY imports DESC LIMIT 20;
 // `language <> 'Other'` also admitted Markdown/JSON/YAML/TOML/lock files,
 // which dominate a checkout without a semantic snapshot.
 MATCH (f:File)
-WHERE f.tracked AND NOT f.ua_covered
+WHERE f.tracked AND coalesce(f.present, true) AND NOT f.ua_covered
   AND f.language IN ['Python', 'TypeScript', 'JavaScript', 'Rust', 'Shell']
 RETURN f.package AS package, count(*) AS uncovered,
        collect(f.key)[0..6] AS examples

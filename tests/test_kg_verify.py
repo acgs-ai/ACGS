@@ -210,6 +210,16 @@ def test_catalog_q5_ignores_test_edges_to_deleted_targets():
     assert f"coalesce({match.group(1)}.present, true)" in q5
 
 
+def test_catalog_q5_excludes_absent_hotspot_subjects():
+    """REGRESSION. tracked stays true for an unstaged deletion (build_spine
+    records present=false), so the tracked-only filter reported a deleted
+    source as a live hotspot. The subject file itself must be live, exactly
+    like the queries.cypher catalog and the generated reports."""
+    q5 = dict(verify.CATALOG)["Q5 hotspots with no test edge"]
+
+    assert "coalesce(f.present, true)" in q5
+
+
 def test_catalog_queries_are_distinct():
     queries = [q for _, q in verify.CATALOG]
 
