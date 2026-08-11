@@ -191,9 +191,7 @@ def test_ua_ref_returns_none_for_unmappable_types():
     assert extract.ua_ref("unknown", {}, {}) is None
 
 
-def test_build_semantic_records_filesystem_presence_for_snapshot_only_paths(
-    tmp_path, monkeypatch
-):
+def test_build_semantic_records_filesystem_presence_for_snapshot_only_paths(tmp_path, monkeypatch):
     """REGRESSION. A semantic snapshot predating a file deletion minted a File
     node with present=True for a path that is neither tracked nor on disk, so
     a control citing deleted source could still be reported as implemented."""
@@ -286,9 +284,7 @@ def test_semantic_snapshot_props_marks_dirty_analyzed_files_as_stale(tmp_path, m
     layer stale; dirt the graph never analyzed must not."""
     graph = tmp_path / "knowledge-graph.json"
     graph.write_text(
-        json.dumps(
-            {"nodes": [{"id": "n1", "type": "file", "filePath": "src/a.py"}], "edges": []}
-        )
+        json.dumps({"nodes": [{"id": "n1", "type": "file", "filePath": "src/a.py"}], "edges": []})
     )
     monkeypatch.setattr(extract, "UA_GRAPH", graph)
     meta = tmp_path / "meta.json"
@@ -304,9 +300,7 @@ def test_semantic_snapshot_props_marks_dirty_analyzed_files_as_stale(tmp_path, m
     assert covered["semantic_dirty_paths"] == ["src/a.py"]
 
 
-def test_semantic_snapshot_props_marks_uncovered_dirty_tracked_code_as_stale(
-    tmp_path, monkeypatch
-):
+def test_semantic_snapshot_props_marks_uncovered_dirty_tracked_code_as_stale(tmp_path, monkeypatch):
     """REGRESSION. Staleness only intersected dirty paths with paths already
     in the snapshot, so a staged new file (or the destination of `git mv`)
     was dirty but absent from `analyzed` and the layer still published
@@ -315,9 +309,7 @@ def test_semantic_snapshot_props_marks_uncovered_dirty_tracked_code_as_stale(
     type that lacks semantic coverage must mark the layer stale."""
     graph = tmp_path / "knowledge-graph.json"
     graph.write_text(
-        json.dumps(
-            {"nodes": [{"id": "n1", "type": "file", "filePath": "src/a.py"}], "edges": []}
-        )
+        json.dumps({"nodes": [{"id": "n1", "type": "file", "filePath": "src/a.py"}], "edges": []})
     )
     monkeypatch.setattr(extract, "UA_GRAPH", graph)
     meta = tmp_path / "meta.json"
@@ -340,9 +332,7 @@ def test_semantic_snapshot_props_ignores_uncovered_dirt_the_analyzer_never_proce
     says nothing about the semantic layer's currency."""
     graph = tmp_path / "knowledge-graph.json"
     graph.write_text(
-        json.dumps(
-            {"nodes": [{"id": "n1", "type": "file", "filePath": "src/a.py"}], "edges": []}
-        )
+        json.dumps({"nodes": [{"id": "n1", "type": "file", "filePath": "src/a.py"}], "edges": []})
     )
     monkeypatch.setattr(extract, "UA_GRAPH", graph)
     meta = tmp_path / "meta.json"
@@ -394,17 +384,11 @@ def test_semantic_snapshot_props_treats_a_dirty_gitlink_as_invalidating_descenda
     monkeypatch.setattr(extract, "UA_META", meta)
     tracked = ["src/a.py", "packages/acgs-control-plane"]
 
-    dirty_gitlink = extract.semantic_snapshot_props(
-        "abc", ["packages/acgs-control-plane"], tracked
-    )
-    name_prefix_only = extract.semantic_snapshot_props(
-        "abc", ["packages/acgs-control"], tracked
-    )
+    dirty_gitlink = extract.semantic_snapshot_props("abc", ["packages/acgs-control-plane"], tracked)
+    name_prefix_only = extract.semantic_snapshot_props("abc", ["packages/acgs-control"], tracked)
 
     assert dirty_gitlink["semantic_layer_is_stale"] is True
-    assert dirty_gitlink["semantic_dirty_paths"] == [
-        "packages/acgs-control-plane/src/app.py"
-    ]
+    assert dirty_gitlink["semantic_dirty_paths"] == ["packages/acgs-control-plane/src/app.py"]
     assert dirty_gitlink["semantic_uncovered_paths"] == []
     assert name_prefix_only["semantic_layer_is_stale"] is False
     assert name_prefix_only["semantic_dirty_paths"] == []
@@ -475,9 +459,7 @@ def test_path_filters_are_evaluated_in_order_with_the_last_match_winning():
     assert extract.match_path_filters("unrelated.py", filters) is False
 
 
-def test_build_workflows_applies_negative_filters_when_minting_gates_edges(
-    tmp_path, monkeypatch
-):
+def test_build_workflows_applies_negative_filters_when_minting_gates_edges(tmp_path, monkeypatch):
     pytest.importorskip("yaml")
     monkeypatch.setattr(extract, "ROOT", tmp_path)
     wf_dir = tmp_path / ".github" / "workflows"
@@ -507,9 +489,7 @@ def test_build_workflows_applies_negative_filters_when_minting_gates_edges(
     ) not in extract.G.rels
 
 
-def test_build_workflows_preserves_the_triggering_event_on_each_gates_edge(
-    tmp_path, monkeypatch
-):
+def test_build_workflows_preserves_the_triggering_event_on_each_gates_edge(tmp_path, monkeypatch):
     """REGRESSION. Push and pull_request filter lists were collapsed with
     any(), so a deploy workflow whose push filter matches ordinary source
     paths was reported as PR coverage for those paths."""
@@ -534,9 +514,7 @@ def test_build_workflows_preserves_the_triggering_event_on_each_gates_edge(
 
     extract.build_workflows(["packages/analyzer/main.py", "deploy/chart.yaml"])
 
-    push_gate = extract.G.rels[
-        ("GATES", "Workflow", "deploy", "File", "packages/analyzer/main.py")
-    ]
+    push_gate = extract.G.rels[("GATES", "Workflow", "deploy", "File", "packages/analyzer/main.py")]
     pr_gate = extract.G.rels[("GATES", "Workflow", "deploy", "File", "deploy/chart.yaml")]
     assert push_gate["props"]["events"] == ["push"]
     assert pr_gate["props"]["events"] == ["pull_request"]
@@ -1301,9 +1279,7 @@ def test_collect_dirty_paths_tolerates_a_failing_submodule_status(monkeypatch):
 # --------------------------------------------------------------------------- #
 # Topology
 # --------------------------------------------------------------------------- #
-def test_build_topology_assigns_a_gitlink_file_to_its_own_submodule_package(
-    tmp_path, monkeypatch
-):
+def test_build_topology_assigns_a_gitlink_file_to_its_own_submodule_package(tmp_path, monkeypatch):
     """REGRESSION. A submodule gitlink's File key equals the package path with
     no trailing segment, so the prefix-only predicate assigned every gitlink —
     and its pointer-change history — to the workspace root package."""
@@ -1319,8 +1295,7 @@ def test_build_topology_assigns_a_gitlink_file_to_its_own_submodule_package(
     extract.build_topology([])
 
     assert (
-        extract.G.nodes[("File", "packages/acgs-lite")]["props"]["package"]
-        == "packages/acgs-lite"
+        extract.G.nodes[("File", "packages/acgs-lite")]["props"]["package"] == "packages/acgs-lite"
     )
     assert (
         "IN_PACKAGE",
@@ -1342,9 +1317,7 @@ def test_hash_marker_is_imported_from_the_gate():
     assert extract.HASH_MARKER is verify_constitutional_hashes.MARKER_RE
 
 
-def test_build_sealed_accepts_the_gate_marker_syntax_including_uppercase_hex(
-    tmp_path, monkeypatch
-):
+def test_build_sealed_accepts_the_gate_marker_syntax_including_uppercase_hex(tmp_path, monkeypatch):
     """REGRESSION. A local lowercase-only regex recorded files the real
     constitutional-hash gate accepts — uppercase markers are pinned valid by
     tests/test_verify_constitutional_hashes.py — as unsealed, so Q3 and the

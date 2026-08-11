@@ -491,6 +491,7 @@ def build_history(commits: list[dict]) -> None:
                     pair_counts[(a, b)] += 1
 
     now = datetime.now(UTC).timestamp()
+
     # Normalize over the population that actually receives hotspot scores:
     # a deleted historical path with the largest churn has no live File node,
     # and letting it set the denominator scaled every live file down until
@@ -1023,7 +1024,7 @@ def build_adrs() -> None:
 
 def build_doc_links() -> None:
     n = 0
-    for (lbl, key), slot in list(G.nodes.items()):
+    for (lbl, key), _slot in list(G.nodes.items()):
         if lbl != "File" or not key.endswith((".md", ".mdx")):
             continue
         f = ROOT / key
@@ -1152,7 +1153,7 @@ def build_controls() -> None:
                             locations.append((ln, method))
                         if method != "path":
                             by_basename += 1
-                for framework, cid in hits:
+                for _framework, cid in hits:
                     for tgt, locations in evidence.items():
                         slot = G.rel("EVIDENCED_BY", "Control", cid, "File", tgt)
                         if slot is None:
@@ -1171,9 +1172,7 @@ def build_controls() -> None:
                                 cites.append(cite)
                                 evidences += 1
                             rank = METHOD_RANK.get(method, len(METHOD_RANK))
-                            seen = METHOD_RANK.get(
-                                props.get("resolved_by"), len(METHOD_RANK) + 1
-                            )
+                            seen = METHOD_RANK.get(props.get("resolved_by"), len(METHOD_RANK) + 1)
                             if rank < seen:
                                 props["cited_in"] = rel
                                 props["resolved_by"] = method
@@ -1217,9 +1216,7 @@ def glob_to_regex(g: str) -> re.Pattern:
 
 def compile_path_filters(patterns: list[str]) -> list[tuple[re.Pattern, bool]]:
     """Compile a workflow `paths` list, keeping `!` exclusions and their order."""
-    return [
-        (glob_to_regex(p[1:] if p.startswith("!") else p), p.startswith("!")) for p in patterns
-    ]
+    return [(glob_to_regex(p[1:] if p.startswith("!") else p), p.startswith("!")) for p in patterns]
 
 
 def match_path_filters(path: str, filters: list[tuple[re.Pattern, bool]]) -> bool:
@@ -1313,7 +1310,7 @@ def build_workflows(files: list[str]) -> None:
                 G.rel("GATES", "Workflow", wkey, "File", path, events=events)
                 gates += 1
     log(
-        f"E5. workflows: {sum(1 for (l, _) in G.nodes if l == 'Workflow')} workflows, "
+        f"E5. workflows: {sum(1 for (label, _) in G.nodes if label == 'Workflow')} workflows, "
         f"{gates} GATES edges"
     )
 
@@ -1432,9 +1429,7 @@ def semantic_snapshot_props(
     # invalidating both itself and its analyzed descendants.
     dirty_exact = {p.rstrip("/") for p in dirty}
     dirty_prefixes = tuple(f"{p}/" for p in dirty_exact)
-    dirty_analyzed = sorted(
-        p for p in analyzed if p in dirty_exact or p.startswith(dirty_prefixes)
-    )
+    dirty_analyzed = sorted(p for p in analyzed if p in dirty_exact or p.startswith(dirty_prefixes))
     analyzed_exts = {os.path.splitext(p)[1].lower() for p in analyzed}
     dirty_uncovered = sorted(
         p

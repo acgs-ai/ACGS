@@ -45,8 +45,7 @@ SEALED_ABSENT_Q = (
 # which is a broken join, not a declared absence. Aggregated so zero Snapshot
 # nodes still yield one row; the snapshot-count check reports that case.
 SEMANTIC_DECLARED_Q = (
-    "MATCH (s:Snapshot) "
-    "RETURN sum(CASE WHEN s.semantic_layer_loaded THEN 1 ELSE 0 END) AS loaded"
+    "MATCH (s:Snapshot) RETURN sum(CASE WHEN s.semantic_layer_loaded THEN 1 ELSE 0 END) AS loaded"
 )
 
 CHECKS = [
@@ -170,7 +169,8 @@ def main() -> int:
                 missing = sorted(REQUIRED_CONSTRAINTS - {row.get("name") for row in rows})
                 if missing:
                     failures.append(
-                        "missing required constraints: " + ", ".join(missing)
+                        "missing required constraints: "
+                        + ", ".join(missing)
                         + ": schema.cypher was not (fully) applied, so later "
                         "loads can create duplicate nodes"
                     )
@@ -200,9 +200,7 @@ def main() -> int:
                         # (fresh clone: .understand-anything/ is ignored) and
                         # the Snapshot declares the layer absent. That is a
                         # declared absence, not a broken path-key join.
-                        print(
-                            "    (no semantic snapshot loaded: join threshold not applicable)"
-                        )
+                        print("    (no semantic snapshot loaded: join threshold not applicable)")
                 elif r["joined_both"] < 0.25 * r["files"]:
                     failures.append(
                         f"join health: only {r['joined_both']}/{r['files']} files carry "

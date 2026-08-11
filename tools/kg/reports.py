@@ -59,11 +59,11 @@ def test_evidence_state(rec: dict) -> str:
 def governance_coverage(rec: dict) -> str:
     bits = []
     if rec["gates"]:
-        bits.append(f"CI×{rec['gates']}")
+        bits.append(f"CI\u00d7{rec['gates']}")
     if rec["sealed"]:
         bits.append("sealed")
     if rec["adrs"]:
-        bits.append(f"ADR×{rec['adrs']}")
+        bits.append(f"ADR\u00d7{rec['adrs']}")
     return ", ".join(bits) if bits else "none observed"
 
 
@@ -285,8 +285,7 @@ def main() -> int:
     cp_unanalyzed = len(cplane) - cp_analyzed
     if cp_analyzed:
         cp_semantic_claim = (
-            f"the semantic snapshot covers {cp_analyzed} of these "
-            f"{len(cplane)} focus-area paths"
+            f"the semantic snapshot covers {cp_analyzed} of these {len(cplane)} focus-area paths"
         )
         cp_claim_bullet = (
             f"- {cp_unanalyzed} of the {len(cplane)} rows above are `not analyzed —\n"
@@ -326,8 +325,8 @@ Test-evidence has **three** states, not two:
 | `no test edge (analyzed)` | Analyzed, no `TESTED_BY` edge found. A lead, not a verdict — `TESTED_BY` undercounts barrel and dynamic imports |
 | `not analyzed — outside semantic snapshot` | The summariser never saw this file. **Nothing at all is known** about its test coverage from this graph |
 
-Governance coverage lists observed controls: `CI×N` path-filtered pull-request
-workflows gating the file, `sealed` for a constitutional-hash marker, `ADR×N` for ADRs
+Governance coverage lists observed controls: `CI\u00d7N` path-filtered pull-request
+workflows gating the file, `sealed` for a constitutional-hash marker, `ADR\u00d7N` for ADRs
 citing it. `none observed` means no such edge exists — not that the file is
 ungoverned by other means.
 
@@ -380,20 +379,22 @@ Requested focus area. This submodule is **not** initialized by
   submodules checked out: `git submodule update --init`, regenerate
   `.understand-anything/knowledge-graph.json` with the understand-anything
   analyzer, then `cd tools/kg && make reload`.
-"""
+"""  # noqa: E501
 
     # ---------------- Report 2: compliance evidence tiers ----------------
     MAX_SCOPE = 2
     _meaning = {
         "path": "explicit repo-relative path in the citation — unambiguous",
-        "basename-docscope": "bare filename, disambiguated by a full path the same document names elsewhere",
+        "basename-docscope": (
+            "bare filename, disambiguated by a full path the same document names elsewhere"
+        ),
         "basename": "bare filename, unique across the workspace by luck",
     }
     resolution_rows = [
         [m, n, _meaning.get(m, "unknown")]
         for m, n in sorted(resolutions.items(), key=lambda kv: (-kv[1], kv[0]))
     ]
-    enum_note = snap.get('enumeration_scopes_skipped', 'an unrecorded number of')
+    enum_note = snap.get("enumeration_scopes_skipped", "an unrecorded number of")
 
     by_fw: dict[str, dict] = {}
     detail_rows: list[list[str]] = []
@@ -550,7 +551,7 @@ listed" becomes a false implementation claim.
    refreshing the semantic snapshot: re-analysis can mint `TESTED_BY` edges for
    tests and sources that already existed, promoting a control from tier B to
    tier C without any code, test, or attestation being added.
-"""
+"""  # noqa: E501
 
     (OUT_DIR / "cross-repo-hotspot-report.md").write_text(r1)
     (OUT_DIR / "compliance-evidence-tiers.md").write_text(r2)

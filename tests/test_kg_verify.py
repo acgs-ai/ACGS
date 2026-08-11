@@ -189,7 +189,7 @@ def test_an_unconstrained_database_fails(run_verify, capsys):
 def test_extra_constraints_beyond_the_schema_still_pass(run_verify):
     """The gate requires coverage of schema.cypher, not exact equality: an
     operator adding an extra local constraint is not a verification failure."""
-    present = tuple(sorted(verify.REQUIRED_CONSTRAINTS)) + ("operator_extra",)
+    present = (*sorted(verify.REQUIRED_CONSTRAINTS), "operator_extra")
 
     assert run_verify(HEALTHY_JOIN, constraint_names=present)[0] == 0
 
