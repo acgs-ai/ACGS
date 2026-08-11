@@ -463,6 +463,70 @@ def attack_n_concurrent_evidence_recovery(base: Path) -> str:
     return "racing recoveries serialized ⇒ one record per COMMIT, gate green"
 
 
+def attack_o_symlinked_evidence_projection(base: Path) -> str:
+    """Swap evidence_graph.jsonl for a symlink: the emitter must refuse to
+    read or write through it — otherwise signed evidence records would be
+    appended into an arbitrary file outside the governed store — and the
+    request must be rejected BEFORE any effect."""
+    sb = IntegrationSandbox.build(base)
+    setup = sb.gateway.request_mutation(
+        sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 2\n"
+    )
+    _expect(setup.status == APPLIED, f"setup failed: {setup.status}: {setup.reason}")
+    external = base / "outside-evidence.jsonl"
+    external.write_bytes(sb.evidence.path.read_bytes())
+    before_external = external.read_bytes()
+    sb.evidence.path.unlink()
+    sb.evidence.path.symlink_to(external)
+    target = sb.kernel.repo / "src/module_a.py"
+    before = target.read_bytes()
+    res = sb.gateway.request_mutation(
+        sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 3\n"
+    )
+    _expect(res.status == GW_REJECTED, f"expected REJECTED, got {res.status}: {res.reason}")
+    _expect("evidence projection" in res.reason, res.reason)
+    _expect(target.read_bytes() == before, "side effect ran despite a symlinked projection")
+    _expect(
+        external.read_bytes() == before_external,
+        "evidence bytes were written through the symlink into an external file",
+    )
+    gate = sb.gate()
+    _expect(not gate.passed, "CI gate passed over a symlinked evidence projection")
+    return "symlinked evidence projection ⇒ request rejected before effect, gate fails closed"
+
+
+def attack_p_gateway_prestate_symlink_swap(base: Path) -> str:
+    """Swap a path component to a symlink between the gateway's containment
+    check and its pre-state read: the read must be pinned and no-follow (the
+    same fd-anchored capture the engine uses), so the gateway can never hash
+    — and thereby leak — the content of a file outside the repository."""
+    sb = IntegrationSandbox.build(base)
+    outside = base / "outside"
+    outside.mkdir()
+    (outside / "module_a.py").write_bytes(b"SECRET = True\n")
+    src = sb.kernel.repo / "src"
+    real_next_tick = sb.gateway._next_tick
+    fired: list[bool] = []
+
+    def swapping_next_tick() -> int:
+        tick = real_next_tick()
+        if not fired:
+            # Race the window between the resolve()-based containment check
+            # and the pre-state read.
+            fired.append(True)
+            src.rename(sb.kernel.repo / "src-moved")
+            src.symlink_to(outside, target_is_directory=True)
+        return tick
+
+    sb.gateway._next_tick = swapping_next_tick  # type: ignore[method-assign]
+    res = sb.gateway.request_mutation(
+        sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 9\n"
+    )
+    _expect(res.status == GW_REJECTED, f"expected REJECTED, got {res.status}: {res.reason}")
+    _expect("cannot read pre-state" in res.reason, res.reason)
+    return "pre-state read is pinned and no-follow ⇒ symlink swap rejected, nothing hashed outside"
+
+
 INTEGRATION_CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     (
         "integrated happy path: adapter → receipt → effect → evidence → gate",
@@ -491,6 +555,14 @@ INTEGRATION_CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     (
         "ATTACK N: concurrent evidence recovery duplicates records",
         attack_n_concurrent_evidence_recovery,
+    ),
+    (
+        "ATTACK O: evidence projection swapped for a symlink",
+        attack_o_symlinked_evidence_projection,
+    ),
+    (
+        "ATTACK P: pre-state read through a swapped-in symlink",
+        attack_p_gateway_prestate_symlink_swap,
     ),
     ("compatibility: full kernel suite re-run", check_kernel_suite_compatibility),
 ]

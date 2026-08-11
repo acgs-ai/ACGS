@@ -8,6 +8,14 @@ Appends tamper-evident lifecycle events to the validator registry:
                 their window remain verifiable).
     revoke    — end the validator's authority at a given instant.
 
+    prepare-rotation — stage an ed25519 -> HMAC rotation: mints (or reuses)
+                the successor HMAC key in the keystore and prints the exact
+                rotation payload the predecessor ed25519 holder must sign.
+                Needed because the HMAC key fingerprint is part of the signed
+                payload, so the payload cannot exist before the key does; the
+                holder signs offline, then `rotate --rotation-authorization`
+                reuses the staged key. Idempotent.
+
 Registration is NOT available here: enrolling a validator requires
 evidence-backed appointment provenance and goes through the 6-gate
 onboarding CLI (onboard_validator.py, EXTERNAL_VALIDATOR_ONBOARDING_V1).
@@ -88,6 +96,67 @@ def _write_key(keystore: Path, key_id: str) -> str:
     return sha256_hex(key)
 
 
+def _stage_key(keystore: Path, key_id: str) -> str:
+    """Mint the successor HMAC key, or reuse an already-staged one.
+
+    Idempotent on purpose: prepare-rotation may be re-run (or a rotate may be
+    retried after a refused attempt) and must keep returning the SAME
+    fingerprint, because the predecessor's offline signature covers it."""
+    if "/" in key_id or "\\" in key_id or ".." in key_id:
+        raise ValueError(f"unsafe key_id: {key_id!r}")
+    p = keystore / key_id
+    if p.is_file():
+        return sha256_hex(p.read_bytes())
+    return _write_key(keystore, key_id)
+
+
+def _key_events(mine: list[dict]) -> list[dict]:
+    return [e for e in mine if e.get("event") in ("REGISTER", "ROTATE")]
+
+
+def _rotation_guard_error(current: list[dict], key_id: str, instant: str) -> str | None:
+    """Shared write-time guards for rotate and prepare-rotation, so a staged
+    payload is always one that rotate will actually accept.
+
+    The predecessor is selected as the LAST APPENDED key event, so the new
+    rotation's instant must be strictly later than every existing key event's
+    instant. An out-of-order instant (e.g. an August rotation appended after
+    a September one) would make the CLI sign with a predecessor that is not
+    the key current at that instant: the command would report ROTATED while
+    rotations_authenticated() (which sorts by instant) rejects the whole
+    history at read time.
+
+    A successor key id must be NEW for this validator, for every algorithm.
+    HMAC rotations were only refused incidentally (keystore O_EXCL); an
+    ed25519 rotation reusing an existing key_id with a new public key would
+    be appended, and then _key_windows() treats the later event as current
+    while _key_event_of() resolves the FIRST event with that id — so
+    attestations verify against the retired key and the "successfully
+    rotated" validator is unusable."""
+    new_instant = _parse_z(instant)
+    prior_instants = [
+        _parse_z(e.get("effective_from") if e.get("event") == "REGISTER" else e.get("instant"))
+        for e in current
+    ]
+    if any(i is None for i in prior_instants):
+        return (
+            "an existing key event carries an unparseable instant — "
+            "cannot establish the key current at the rotation instant"
+        )
+    if prior_instants and new_instant <= max(prior_instants):
+        return (
+            "non-monotonic rotation instant — it must be strictly "
+            "later than every existing key event for this validator "
+            f"(latest: {max(prior_instants).strftime('%Y-%m-%dT%H:%M:%SZ')})"
+        )
+    if any(e.get("key_id") == key_id for e in current):
+        return (
+            f"key_id {key_id!r} already appears in this "
+            "validator's key history — a rotation must introduce a new key id"
+        )
+    return None
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="Validator registry administration.")
     ap.add_argument("--registry", default=str(HERE / VALIDATOR_REGISTRY_NAME))
@@ -119,6 +188,18 @@ def main(argv: list[str]) -> int:
             "signed automatically from the keystore."
         ),
     )
+
+    prep = sub.add_parser(
+        "prepare-rotation",
+        help=(
+            "stage an ed25519 -> hmac-sha256 rotation: mint (or reuse) the "
+            "successor HMAC key and print the rotation payload the current "
+            "ed25519 key holder must sign for --rotation-authorization"
+        ),
+    )
+    prep.add_argument("--validator-id", required=True)
+    prep.add_argument("--key-id", required=True, help="NEW key id")
+    prep.add_argument("--instant", required=True, help="rotation instant, ISO-8601 Z")
 
     rev = sub.add_parser("revoke")
     rev.add_argument("--validator-id", required=True)
@@ -157,52 +238,76 @@ def _admin(args: argparse.Namespace, registry: Path, keystore: Path) -> int:
         print("REFUSED: --instant must be an ISO-8601 Z instant", file=sys.stderr)
         return 3
 
+    if args.cmd == "prepare-rotation":
+        current = _key_events(mine)
+        pred = current[-1] if current else None
+        if pred is None:
+            print("REFUSED: no current key to authorize a rotation", file=sys.stderr)
+            return 3
+        if pred.get("key_algorithm", HMAC_SHA256) != ED25519:
+            print(
+                "REFUSED: prepare-rotation is only for ed25519 predecessors — "
+                "HMAC predecessors are signed automatically by `rotate`",
+                file=sys.stderr,
+            )
+            return 3
+        guard = _rotation_guard_error(current, args.key_id, args.instant)
+        if guard is not None:
+            print(f"REFUSED: {guard}", file=sys.stderr)
+            return 3
+        try:
+            fingerprint = _stage_key(keystore, args.key_id)
+        except ValueError as exc:
+            print(f"REFUSED: {exc}", file=sys.stderr)
+            return 3
+        event = {
+            "schema": EVENT_SCHEMA,
+            "event": "ROTATE",
+            "validator_id": args.validator_id,
+            "key_id": args.key_id,
+            "key_algorithm": HMAC_SHA256,
+            "instant": args.instant,
+            "key_fingerprint": fingerprint,
+        }
+        print(
+            f"STAGED successor key {args.key_id} (fingerprint={fingerprint}); "
+            "sign the payload below with the current ed25519 key and pass the "
+            "signature to `rotate --rotation-authorization`:",
+            file=sys.stderr,
+        )
+        print(rotation_payload(event))
+        return 0
+
     if args.cmd == "rotate":
+        # Freshly minted (never staged) successor keys must not survive a
+        # refusal: the keystore's O_EXCL discipline would turn every retry
+        # with the same --key-id into a spurious duplicate. Keys staged by
+        # prepare-rotation are deliberately durable — the predecessor's
+        # offline signature covers their fingerprint, so deleting one on a
+        # refused attempt would make the already-signed payload unusable.
+        minted_key_path: Path | None = None
+
+        def _refuse(msg: str) -> int:
+            if minted_key_path is not None:
+                minted_key_path.unlink(missing_ok=True)
+            print(f"REFUSED: {msg}", file=sys.stderr)
+            return 3
+
         # A rotation must not silently downgrade the validator's signature
         # scheme: without --algorithm the successor key keeps the algorithm of
         # the validator's current (latest) key instead of defaulting to HMAC.
-        current = [e for e in mine if e.get("event") in ("REGISTER", "ROTATE")]
-        # The predecessor is selected as the LAST APPENDED key event, so the
-        # new rotation's instant must be strictly later than every existing
-        # key event's instant. An out-of-order instant (e.g. an August
-        # rotation appended after a September one) would make the CLI sign
-        # with a predecessor that is not the key current at that instant:
-        # this command would report ROTATED while rotations_authenticated()
-        # (which sorts by instant) rejects the whole history at read time.
-        new_instant = _parse_z(args.instant)
-        prior_instants = [
-            _parse_z(e.get("effective_from") if e.get("event") == "REGISTER" else e.get("instant"))
-            for e in current
-        ]
-        if any(i is None for i in prior_instants):
-            print(
-                "REFUSED: an existing key event carries an unparseable instant — "
-                "cannot establish the key current at the rotation instant",
-                file=sys.stderr,
-            )
-            return 3
-        if prior_instants and new_instant <= max(prior_instants):
-            print(
-                "REFUSED: non-monotonic rotation instant — it must be strictly "
-                "later than every existing key event for this validator "
-                f"(latest: {max(prior_instants).strftime('%Y-%m-%dT%H:%M:%SZ')})",
-                file=sys.stderr,
-            )
-            return 3
-        # A successor key id must be NEW for this validator, for every
-        # algorithm. HMAC rotations were only refused incidentally (keystore
-        # O_EXCL); an ed25519 rotation reusing an existing key_id with a new
-        # public key would be appended, and then _key_windows() treats the
-        # later event as current while _key_event_of() resolves the FIRST
-        # event with that id — so attestations verify against the retired
-        # key and the "successfully rotated" validator is unusable.
-        if any(e.get("key_id") == args.key_id for e in current):
-            print(
-                f"REFUSED: key_id {args.key_id!r} already appears in this "
-                "validator's key history — a rotation must introduce a new key id",
-                file=sys.stderr,
-            )
-            return 3
+        current = _key_events(mine)
+        # A rotation must be authorized by the key it retires: verification
+        # refuses any ROTATE without a predecessor signature
+        # (`unauthenticated_rotation`), so an attacker who can append registry
+        # lines cannot rotate a trusted validator onto a key they hold.
+        pred = current[-1] if current else None
+        if pred is None:
+            return _refuse("no current key to authorize this rotation")
+        pred_is_ed25519 = pred.get("key_algorithm", HMAC_SHA256) == ED25519
+        guard = _rotation_guard_error(current, args.key_id, args.instant)
+        if guard is not None:
+            return _refuse(guard)
         inferred = current[-1].get("key_algorithm", HMAC_SHA256) if current else HMAC_SHA256
         algorithm = args.algorithm or inferred
         event = {
@@ -215,42 +320,35 @@ def _admin(args: argparse.Namespace, registry: Path, keystore: Path) -> int:
         }
         if algorithm == ED25519:
             if not args.public_key:
-                print(
-                    "REFUSED: rotating an ed25519 validator requires --public-key "
-                    "(raw hex); pass --algorithm hmac-sha256 to downgrade explicitly",
-                    file=sys.stderr,
+                return _refuse(
+                    "rotating an ed25519 validator requires --public-key "
+                    "(raw hex); pass --algorithm hmac-sha256 to downgrade explicitly"
                 )
-                return 3
             try:
                 pub = bytes.fromhex(args.public_key)
             except ValueError:
                 pub = b""
             if len(pub) != 32:
-                print("REFUSED: --public-key must be 32 raw ed25519 bytes as hex", file=sys.stderr)
-                return 3
+                return _refuse("--public-key must be 32 raw ed25519 bytes as hex")
             event["public_key"] = pub.hex()
             event["key_fingerprint"] = sha256_hex(pub)
         else:
             if args.public_key:
-                print(
-                    "REFUSED: --public-key is only valid with --algorithm ed25519",
-                    file=sys.stderr,
-                )
-                return 3
-            try:
-                event["key_fingerprint"] = _write_key(keystore, args.key_id)
-            except ValueError as exc:
-                print(f"REFUSED: {exc}", file=sys.stderr)
-                return 3
+                return _refuse("--public-key is only valid with --algorithm ed25519")
+            successor_path = keystore / args.key_id
+            if pred_is_ed25519 and successor_path.is_file():
+                # An ed25519 -> HMAC rotation is only signable if the successor
+                # key (whose fingerprint is inside the signed payload) exists
+                # BEFORE the holder signs: reuse the key staged by
+                # prepare-rotation instead of minting a conflicting fresh one.
+                event["key_fingerprint"] = sha256_hex(successor_path.read_bytes())
+            else:
+                try:
+                    event["key_fingerprint"] = _write_key(keystore, args.key_id)
+                except ValueError as exc:
+                    return _refuse(str(exc))
+                minted_key_path = successor_path
 
-        # A rotation must be authorized by the key it retires: verification
-        # refuses any ROTATE without a predecessor signature
-        # (`unauthenticated_rotation`), so an attacker who can append registry
-        # lines cannot rotate a trusted validator onto a key they hold.
-        pred = current[-1] if current else None
-        if pred is None:
-            print("REFUSED: no current key to authorize this rotation", file=sys.stderr)
-            return 3
         # A SUPPLIED authorization is verified against the predecessor key
         # BEFORE it is appended: copying an arbitrary string into the registry
         # would produce a chain-valid ROTATE that every later verification
@@ -258,64 +356,52 @@ def _admin(args: argparse.Namespace, registry: Path, keystore: Path) -> int:
         # validator's whole history at read time instead of failing loudly
         # here at write time.
         payload = rotation_payload(event)
-        if pred.get("key_algorithm", HMAC_SHA256) == ED25519:
+        if pred_is_ed25519:
             if not args.rotation_authorization:
-                print(
-                    "REFUSED: rotating away from an ed25519 key requires "
+                return _refuse(
+                    "rotating away from an ed25519 key requires "
                     "--rotation-authorization (signature by the current key over "
                     "the rotation payload; the private key never leaves the "
-                    "validator)",
-                    file=sys.stderr,
+                    "validator)"
                 )
-                return 3
             pk = pred.get("public_key")
             try:
                 pred_pub = bytes.fromhex(pk) if isinstance(pk, str) else b""
             except ValueError:
                 pred_pub = b""
             if len(pred_pub) != 32 or sha256_hex(pred_pub) != pred.get("key_fingerprint"):
-                print(
-                    "REFUSED: predecessor ed25519 public key is missing or does "
-                    "not match its registered fingerprint",
-                    file=sys.stderr,
+                return _refuse(
+                    "predecessor ed25519 public key is missing or does "
+                    "not match its registered fingerprint"
                 )
-                return 3
             if not _ed25519.verify(pred_pub, payload, args.rotation_authorization):
-                print(
-                    "REFUSED: --rotation-authorization does not verify against "
-                    "the predecessor key over this rotation payload",
-                    file=sys.stderr,
+                return _refuse(
+                    "--rotation-authorization does not verify against "
+                    "the predecessor key over this rotation payload"
                 )
-                return 3
             event["rotation_authorization"] = args.rotation_authorization
         else:
             pred_key_path = keystore / str(pred.get("key_id"))
             if args.rotation_authorization:
                 if not pred_key_path.is_file():
-                    print(
-                        "REFUSED: predecessor key not in keystore — cannot "
-                        "verify the supplied rotation authorization",
-                        file=sys.stderr,
+                    return _refuse(
+                        "predecessor key not in keystore — cannot "
+                        "verify the supplied rotation authorization"
                     )
-                    return 3
                 pred_key = pred_key_path.read_bytes()
                 if sha256_hex(pred_key) != pred.get("key_fingerprint") or not hmac_verify(
                     pred_key, payload, args.rotation_authorization
                 ):
-                    print(
-                        "REFUSED: --rotation-authorization does not verify against "
-                        "the predecessor key over this rotation payload",
-                        file=sys.stderr,
+                    return _refuse(
+                        "--rotation-authorization does not verify against "
+                        "the predecessor key over this rotation payload"
                     )
-                    return 3
                 event["rotation_authorization"] = args.rotation_authorization
             else:
                 if not pred_key_path.is_file():
-                    print(
-                        "REFUSED: predecessor key not in keystore — cannot authorize this rotation",
-                        file=sys.stderr,
+                    return _refuse(
+                        "predecessor key not in keystore — cannot authorize this rotation"
                     )
-                    return 3
                 # Sign only with the key the registry actually registered: a
                 # corrupted or swapped keystore file would produce a ROTATE
                 # that rotations_authenticated() rejects at read time, silently
@@ -323,18 +409,11 @@ def _admin(args: argparse.Namespace, registry: Path, keystore: Path) -> int:
                 # reports success.
                 pred_key = pred_key_path.read_bytes()
                 if sha256_hex(pred_key) != pred.get("key_fingerprint"):
-                    if algorithm != ED25519:
-                        # Remove the successor key minted above so a retry
-                        # with the same --key-id (after the keystore is
-                        # repaired) is not refused as a duplicate.
-                        (keystore / args.key_id).unlink(missing_ok=True)
-                    print(
-                        "REFUSED: keystore predecessor key does not match its "
+                    return _refuse(
+                        "keystore predecessor key does not match its "
                         "registered fingerprint — signing with it would append "
-                        "an unauthenticated rotation",
-                        file=sys.stderr,
+                        "an unauthenticated rotation"
                     )
-                    return 3
                 event["rotation_authorization"] = hmac_sign(pred_key, payload)
         _append(registry, event)
         print(

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import fcntl
 import json
+import os
+import stat
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -150,9 +152,38 @@ class EvidenceEmitter:
         signature = hmac_sign(_evidence_key(root), evidence_id)
         return {**body, "evidence_id": evidence_id, "signature": signature}
 
+    def _open_no_follow(self, flags: int) -> int:
+        """Open the evidence file relative to a pinned parent-directory fd,
+        refusing symlinks (O_NOFOLLOW) and non-regular files.
+
+        The evidence path is attacker-adjacent state: if the projection file
+        is swapped for a symlink, a plain ``open(path)`` would follow it and
+        write signed evidence records into (or read forged ones from) an
+        arbitrary file outside the governed store. Raises OSError on any
+        identity failure; callers fail closed.
+        """
+        parent_fd = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            fd = os.open(self.path.name, flags | os.O_NOFOLLOW, 0o644, dir_fd=parent_fd)
+        finally:
+            os.close(parent_fd)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError(f"evidence file is not a regular file: {self.path}")
+        except OSError:
+            os.close(fd)
+            raise
+        return fd
+
     def _append(self, record: dict[str, Any]) -> None:
-        with self.path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, sort_keys=True) + "\n")
+        fd = self._open_no_follow(os.O_WRONLY | os.O_APPEND | os.O_CREAT)
+        try:
+            data = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+            view = memoryview(data)
+            while view:
+                view = view[os.write(fd, view) :]
+        finally:
+            os.close(fd)
 
     @staticmethod
     def verify_record(root: GovernanceRoot, record: dict[str, Any]) -> bool:
@@ -170,14 +201,19 @@ class EvidenceEmitter:
     # -- reading ----------------------------------------------------------
 
     def records(self) -> list[dict[str, Any]]:
-        if not self.path.exists():
+        try:
+            fd = self._open_no_follow(os.O_RDONLY)
+        except FileNotFoundError:
             return []
+        try:
+            raw = os.pread(fd, os.fstat(fd).st_size, 0)
+        finally:
+            os.close(fd)
         out: list[dict[str, Any]] = []
-        with self.path.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if line:
-                    out.append(json.loads(line))
+        for raw_line in raw.splitlines():
+            line = raw_line.strip()
+            if line:
+                out.append(json.loads(line.decode("utf-8")))
         return out
 
     @staticmethod

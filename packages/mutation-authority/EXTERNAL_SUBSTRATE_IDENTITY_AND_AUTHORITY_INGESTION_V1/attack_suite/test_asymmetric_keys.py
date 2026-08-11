@@ -420,6 +420,85 @@ def test_cli_rotation_rejects_reused_key_id(tmp_path):
     assert ok, reason
 
 
+def test_cli_prepare_rotation_makes_hmac_downgrade_signable(tmp_path, capsys):
+    # An ed25519 -> HMAC downgrade was previously unsignable: the successor
+    # HMAC key — whose fingerprint sits INSIDE the signed rotation payload —
+    # was minted only during `rotate`, so the holder could never sign the
+    # payload in advance, and every refused attempt stranded the freshly
+    # minted key (keystore O_EXCL turned each retry into a duplicate).
+    # prepare-rotation stages the key idempotently and prints the exact
+    # payload the predecessor signs offline; rotate then reuses the staged key.
+    import validator_admin as VA
+
+    trust = ed_trust(tmp_path)
+    base = ["--registry", str(trust["registry"]), "--keystore", str(trust["keystore"])]
+    prep = [
+        *base,
+        "prepare-rotation",
+        "--validator-id",
+        ED_VALIDATOR,
+        "--key-id",
+        "hmac-k2",
+        "--instant",
+        "2026-09-01T00:00:00Z",
+    ]
+    assert VA.main(prep) == 0
+    payload = capsys.readouterr().out.strip()
+    staged = trust["keystore"] / "hmac-k2"
+    assert staged.is_file()
+    key_bytes = staged.read_bytes()
+    # Idempotent: re-running stages the SAME key and prints the SAME payload.
+    assert VA.main(prep) == 0
+    assert capsys.readouterr().out.strip() == payload
+    assert staged.read_bytes() == key_bytes
+
+    rotate = [
+        *base,
+        "rotate",
+        "--validator-id",
+        ED_VALIDATOR,
+        "--key-id",
+        "hmac-k2",
+        "--algorithm",
+        "hmac-sha256",
+        "--instant",
+        "2026-09-01T00:00:00Z",
+    ]
+    # A refused attempt (garbage authorization) must NOT strand the staged
+    # key: the already-signed payload covers its fingerprint, so it survives.
+    assert VA.main([*rotate, "--rotation-authorization", "deadbeef"]) == 3
+    assert staged.read_bytes() == key_bytes
+    # The holder signs the staged payload offline; the rotation succeeds and
+    # reuses the staged key (fingerprint matches what was signed).
+    authorization = _ed25519.sign(trust["priv"], payload)
+    assert VA.main([*rotate, "--rotation-authorization", authorization]) == 0
+    events = load_validator_events(trust["registry"])
+    rot = events[-1]
+    assert rot["event"] == "ROTATE"
+    assert rot["key_algorithm"] == "hmac-sha256"
+    assert rot["key_fingerprint"] == sha256_hex(key_bytes)
+    assert rot["rotation_authorization"] == authorization
+    assert rotation_payload(rot) == payload
+    # prepare-rotation is only for ed25519 predecessors: with the validator
+    # now on an HMAC key, staging is refused (rotate signs automatically).
+    assert (
+        VA.main(
+            [
+                *base,
+                "prepare-rotation",
+                "--validator-id",
+                ED_VALIDATOR,
+                "--key-id",
+                "hmac-k3",
+                "--instant",
+                "2026-10-01T00:00:00Z",
+            ]
+        )
+        == 3
+    )
+    assert not (trust["keystore"] / "hmac-k3").exists()
+
+
 def test_unauthorized_ed25519_rotation_fails_closed(tmp_path):
     # Attacker appends a chain-valid ROTATE naming a keypair they generated:
     # no signature by the retired key -> nothing the validator "signs" after

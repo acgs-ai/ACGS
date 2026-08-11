@@ -1181,6 +1181,102 @@ def check_concurrent_decisions_serialized(base: Path) -> str:
     return "racing decisions serialized ⇒ one ALLOW receipt, one in-flight DENY"
 
 
+def attack_w_inflated_clock_conflict_check(base: Path) -> str:
+    """The open-receipt conflict check must use the VERIFIED ledger clock,
+    not the raw caller `now`: an inflated `now` would make every live receipt
+    look expired to open_receipts_for(), minting a SECOND simultaneously
+    valid receipt for the same resource with a different post-state."""
+    sb = Sandbox.build(base)
+    resource = "src/module_a.py"
+    first = sb.engine.decide(sb.intent("agent-alpha", resource, new_content=b"A = 1\n"), sb.tick())
+    _expect(first.decision == ALLOW, f"setup ALLOW failed: {first.reason}")
+    assert first.receipt is not None
+    # Attacker inflates the caller clock far past the first receipt's expiry.
+    second = sb.engine.decide(
+        sb.intent("agent-beta", resource, new_content=b"B = 2\n"), 999_999_999
+    )
+    _expect(
+        second.decision == DENY and "in flight" in second.reason,
+        f"inflated caller clock bypassed the conflict check: {second.decision} {second.reason}",
+    )
+    # The first (legitimate) receipt is still live and committable.
+    result = sb.binder.commit(first.receipt, b"A = 1\n", sb.tick())
+    _expect(result.status == ACCEPTED, f"victim receipt no longer committable: {result.reason}")
+    return "inflated caller clock cannot expire a live receipt out of the conflict check"
+
+
+def check_concurrent_commits_single_use(base: Path) -> str:
+    """Two commits racing on the SAME receipt must serialize on the ledger
+    transaction: the consumed-receipt check, the filesystem effect, and the
+    COMMIT append are one atomic sequence, so exactly one commit is ACCEPTED
+    and exactly one COMMIT event exists — never a concurrent double-spend."""
+    sb = Sandbox.build(base)
+    resource = "src/module_a.py"
+    content = b"VALUE = 42\n"
+    decision = sb.engine.decide(sb.intent("agent-alpha", resource, new_content=content), sb.tick())
+    _expect(decision.decision == ALLOW, f"setup ALLOW failed: {decision.reason}")
+    receipt = decision.receipt
+    assert receipt is not None
+    now = sb.tick()
+    start = threading.Barrier(2)
+    results: list = [None, None]
+    errors: list[Exception] = []
+
+    def racer(k: int) -> None:
+        # A separate ledger/binder instance per racer, as two processes would have.
+        ledger = AuditLedger(sb.ledger.path, anchor_path=sb.ledger.anchor_path)
+        binder = EffectBinder(sb.root, ledger, sb.repo)
+        start.wait()
+        try:
+            results[k] = binder.commit(receipt, content, now)
+        except Exception as exc:  # surfaced below as a check failure
+            errors.append(exc)
+
+    threads = [threading.Thread(target=racer, args=(k,)) for k in (0, 1)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    _expect(not errors, f"concurrent commit raised: {errors}")
+    statuses = sorted(r.status for r in results if r is not None)
+    _expect(statuses == [ACCEPTED, REJECTED], f"expected one ACCEPTED and one REJECTED: {statuses}")
+    loser = next(r for r in results if r.status == REJECTED)
+    _expect("already consumed" in loser.reason, loser.reason)
+    sb.ledger.verify_chain()
+    commits = [
+        e
+        for e in sb.ledger.events()
+        if e.type == "COMMIT" and e.payload.get("receipt_id") == receipt.receipt_id
+    ]
+    _expect(len(commits) == 1, f"receipt consumed {len(commits)} times (double-spend)")
+    return "racing commits of one receipt serialized ⇒ one ACCEPTED, one replay REJECTED"
+
+
+def attack_x_ledger_symlink_swap(base: Path) -> str:
+    """Swap the ledger file for a symlink between operations: the writer must
+    refuse to follow it (the verified object and the appended object must be
+    the same file), never extend a chain through a link into a file outside
+    the governed store."""
+    sb = Sandbox.build(base)
+    sb.governed_mutation("agent-alpha", "src/module_a.py", b"VALUE = 2\n")
+    external = base / "outside-ledger.jsonl"
+    external.write_bytes(sb.ledger.path.read_bytes())
+    before = external.read_bytes()
+    sb.ledger.path.unlink()
+    sb.ledger.path.symlink_to(external)
+    try:
+        sb.engine.decide(sb.intent("agent-alpha", "src/module_a.py"), sb.tick())
+    except LedgerIntegrityError:
+        pass
+    else:
+        raise CheckFailure("ledger writer followed a symlinked ledger file")
+    _expect(
+        external.read_bytes() == before,
+        "symlinked ledger redirected an append into a file outside the governed store",
+    )
+    return "symlinked ledger ⇒ writer fails closed, no bytes written through the link"
+
+
 CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     ("happy-path: intent → decision → receipt → effect → audit", check_happy_path),
     ("deterministic verifier", check_deterministic_verifier),
@@ -1245,6 +1341,12 @@ CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     ),
     ("concurrent ledger appends are serialized", check_concurrent_ledger_appends_serialized),
     ("concurrent decisions on one resource are serialized", check_concurrent_decisions_serialized),
+    (
+        "ATTACK W: inflated caller clock at the conflict check",
+        attack_w_inflated_clock_conflict_check,
+    ),
+    ("concurrent commits of one receipt are single-use", check_concurrent_commits_single_use),
+    ("ATTACK X: ledger swapped for a symlink", attack_x_ledger_symlink_swap),
 ]
 
 

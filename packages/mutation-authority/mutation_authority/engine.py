@@ -193,8 +193,14 @@ class DecisionEngine:
                     deny_reason = "CREATE on a resource that already exists"
                 elif intent.operation in ("UPDATE", "DELETE") and secured_hash == ABSENT:
                     deny_reason = f"{intent.operation} on a resource that does not exist"
-                # 9. Concurrency: exactly one live receipt per resource.
-                elif self.ledger.open_receipts_for(resource, now):
+                # 9. Concurrency: exactly one live receipt per resource. The
+                #    expiry comparison must use the VERIFIED ledger-derived
+                #    tick, never the raw caller `now`: an inflated caller
+                #    clock would make every open receipt look expired here and
+                #    mint a second simultaneously valid receipt for a
+                #    different post-state (issuance clamps the same way, so
+                #    the two clocks stay consistent).
+                elif self.ledger.open_receipts_for(resource, self._verified_tick(now)):
                     deny_reason = "conflicting mutation in flight for this resource"
 
                 if deny_reason is None:
@@ -301,6 +307,24 @@ class DecisionEngine:
         #    swap could redirect outside the repository.
         return None
 
+    def _verified_tick(self, now: int) -> int:
+        """Clamp a caller-supplied clock against the verified ledger clock.
+
+        `now` is a caller argument. Trusted GENESIS/COMMIT timestamps (COMMIT
+        times are themselves clamp-gated at effect time) and the event count
+        (which advances exactly one per appended event) bound the next
+        legitimate tick, so an honest caller's `now` passes through unchanged
+        while an inflated one is pinned to the chain. Used for BOTH receipt
+        issuance and the open-receipt conflict check, so the two can never
+        disagree about which receipts are live.
+        """
+        events = list(self.ledger.events())
+        chain_now = max(
+            (e.timestamp for e in events if e.type in (EVENT_GENESIS, EVENT_COMMIT)),
+            default=0,
+        )
+        return min(now, max(chain_now, len(events)) + 1)
+
     def _task_authorized(self, task_reference: str, actor: str) -> bool:
         for pattern, actors in self.root.task_authorities().items():
             if fnmatchcase(task_reference, pattern):
@@ -348,17 +372,8 @@ class DecisionEngine:
             # past its intended lifetime, or left unconsumed to block every
             # other mutation on the resource (open_receipts_for) until the
             # far-future expiry. Clamp the issuance tick against the VERIFIED
-            # ledger clock: trusted GENESIS/COMMIT timestamps (COMMIT times
-            # are themselves clamp-gated at effect time) and the event count
-            # (which advances exactly one per appended event) bound the next
-            # legitimate tick, so an honest caller's `now` passes through
-            # unchanged while an inflated one is pinned to the chain.
-            events = list(self.ledger.events())
-            chain_now = max(
-                (e.timestamp for e in events if e.type in (EVENT_GENESIS, EVENT_COMMIT)),
-                default=0,
-            )
-            issue_tick = min(now, max(chain_now, len(events)) + 1)
+            # ledger clock (same clamp the conflict check uses).
+            issue_tick = self._verified_tick(now)
             body = {
                 "schema": MUTATION_RECEIPT_SCHEMA,
                 "receipt_id": hash_obj({"intent": intent_hash, "decision": decision_hash}),

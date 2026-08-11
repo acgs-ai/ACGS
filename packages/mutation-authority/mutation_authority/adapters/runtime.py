@@ -20,9 +20,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..canonical import ABSENT, hash_file, hash_obj, sha256_hex
+from ..canonical import ABSENT, hash_obj, sha256_hex
 from ..effect import ACCEPTED, EffectBinder
-from ..engine import ALLOW, DecisionEngine, _normalized
+from ..engine import ALLOW, DecisionEngine, _capture_parent_precondition, _normalized
 from ..evidence_emitter import EvidenceEmitter
 from ..intent import OPERATIONS, MutationIntent, SignedIntent
 from ..ledger import AuditLedger
@@ -121,10 +121,17 @@ class MutationGateway:
                 f"evidence projection unreadable or malformed — refusing to mutate: {exc}",
             )
 
-        # 2. Build + sign the intent (CAS read of current pre-state).
+        # 2. Build + sign the intent (CAS read of current pre-state). Use the
+        #    same pinned, no-follow, fd-anchored read as the decision engine:
+        #    a plain `hash_file(repo_dir / resource)` follows symlinks, so a
+        #    component swapped to a link between the containment check above
+        #    and this read would let the gateway hash — and thereby leak the
+        #    pre-state existence/content of — a file outside the repository.
         now = self._next_tick()
         try:
-            expected_pre_hash = hash_file(self.repo_dir / resource)
+            _binding, expected_pre_hash, _mode = _capture_parent_precondition(
+                self.repo_dir, resource
+            )
         except OSError as exc:
             return GatewayResult(REJECTED, f"cannot read pre-state of {resource}: {exc}")
         intent = MutationIntent(

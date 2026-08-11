@@ -281,6 +281,23 @@ class EffectBinder:
         new_content: bytes | None,
         now: int,
     ) -> CommitResult:
+        # The whole commit is one ledger transaction: the consumed-receipt
+        # check (step 3) reads ledger state that the COMMIT append below
+        # extends, so two concurrent commits of the same receipt must not
+        # both observe "not yet consumed", both apply the filesystem effect,
+        # and both append COMMIT events — that would break the single-use
+        # guarantee (concurrent replay). Holding the ledger write lock from
+        # the consumption check through the append makes check + effect +
+        # record atomic across threads and processes.
+        with self.ledger.transaction():
+            return self._commit_locked(receipt, new_content, now)
+
+    def _commit_locked(
+        self,
+        receipt: MutationDecisionReceipt,
+        new_content: bytes | None,
+        now: int,
+    ) -> CommitResult:
         # Fail closed on any governance-layer tamper.
         self.root.verify_integrity()
         self.ledger.verify_chain()

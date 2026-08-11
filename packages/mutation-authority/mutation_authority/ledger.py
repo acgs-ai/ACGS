@@ -12,6 +12,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import stat
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -84,6 +85,14 @@ class AuditLedger:
         # second flock on a fresh fd would deadlock against our own lock).
         self._tx_guard = threading.RLock()
         self._tx_depth = 0
+        # File descriptor pinned to the ledger for the duration of a locked
+        # transaction, plus the thread that owns it. Every read and write
+        # inside the transaction goes through this ONE descriptor, so the
+        # object that was verified is byte-for-byte the object appended to —
+        # reopening by pathname between verify and append would let a
+        # symlink/rename swap redirect the append to an unverified file.
+        self._pinned_fd: int | None = None
+        self._tx_owner: int | None = None
 
     # -- construction -----------------------------------------------------
 
@@ -145,11 +154,56 @@ class AuditLedger:
             lock_path.parent.mkdir(parents=True, exist_ok=True)
             with lock_path.open("a", encoding="utf-8") as fh:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                self._pin_ledger_fd()
                 self._tx_depth = 1
+                self._tx_owner = threading.get_ident()
                 try:
                     yield
                 finally:
                     self._tx_depth = 0
+                    self._tx_owner = None
+                    if self._pinned_fd is not None:
+                        os.close(self._pinned_fd)
+                        self._pinned_fd = None
+
+    def _pin_ledger_fd(self) -> None:
+        """Open and identity-check the ledger ONCE per locked transaction.
+
+        The open is anchored to the parent directory fd and refuses to follow
+        a symlink (O_NOFOLLOW) or accept a non-regular file, so a swapped-in
+        link cannot redirect subsequent verified reads or appends to a file
+        outside the governed store. A missing ledger is legal only for the
+        genesis append, which creates it exclusively in _append_locked.
+        """
+        parent_fd = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            try:
+                fd = os.open(self.path.name, os.O_RDWR | os.O_NOFOLLOW, dir_fd=parent_fd)
+            except FileNotFoundError:
+                self._pinned_fd = None
+                return
+            except OSError as exc:
+                raise LedgerIntegrityError(f"ledger is not a verified regular file: {exc}") from exc
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                os.close(fd)
+                raise LedgerIntegrityError("ledger is not a verified regular file")
+            self._pinned_fd = fd
+        finally:
+            os.close(parent_fd)
+
+    def _read_raw(self) -> bytes:
+        """Raw ledger bytes: through the pinned fd inside a transaction the
+        calling thread owns (so verify and append see the same object), by
+        pathname otherwise (plain reads outside any write sequence)."""
+        if self._tx_depth and self._tx_owner == threading.get_ident():
+            if self._pinned_fd is None:
+                return b""
+            size = os.fstat(self._pinned_fd).st_size
+            return os.pread(self._pinned_fd, size, 0)
+        try:
+            return self.path.read_bytes()
+        except FileNotFoundError:
+            return b""
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -183,11 +237,28 @@ class AuditLedger:
             "prev_event_hash": prev_hash,
         }
         event = LedgerEvent(**body, event_hash=hash_obj(body))
-        prior_size = self.path.stat().st_size if self.path.exists() else 0
-        with self.path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(event.to_dict(), sort_keys=True) + "\n")
-            fh.flush()
-            os.fsync(fh.fileno())
+        if self._pinned_fd is None:
+            # Genesis append: the ledger does not exist yet. Create it
+            # exclusively (O_EXCL) and without following links (O_NOFOLLOW)
+            # so a pre-planted symlink at the ledger path cannot redirect
+            # the new chain outside the governed store.
+            try:
+                self._pinned_fd = os.open(
+                    self.path, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644
+                )
+            except OSError as exc:
+                raise LedgerIntegrityError(f"cannot create ledger: {exc}") from exc
+        fd = self._pinned_fd
+        prior_size = os.fstat(fd).st_size
+        # Append through the SAME pinned descriptor the tail read used —
+        # reopening by pathname here would reintroduce the verify/append
+        # swap window this transaction exists to close.
+        data = (json.dumps(event.to_dict(), sort_keys=True) + "\n").encode("utf-8")
+        os.lseek(fd, 0, os.SEEK_END)
+        view = memoryview(data)
+        while view:
+            view = view[os.write(fd, view) :]
+        os.fsync(fd)
         try:
             self._write_anchor(count=len(events) + 1, head_hash=event.event_hash)
         except Exception:
@@ -195,8 +266,8 @@ class AuditLedger:
             # without an advanced anchor would make every subsequent verify
             # fail (or worse, mask a truncation). Roll the append back and
             # surface the failure instead of leaving the two out of sync.
-            with self.path.open("rb+") as fh:
-                fh.truncate(prior_size)
+            os.ftruncate(fd, prior_size)
+            os.fsync(fd)
             raise
         return event
 
@@ -210,14 +281,14 @@ class AuditLedger:
             events = list(self.events())
             if not events or events[-1].event_hash != event.event_hash:
                 raise LedgerIntegrityError("cannot roll back ledger: appended event is not head")
-            lines = self.path.read_bytes().splitlines(keepends=True)
+            if self._pinned_fd is None:
+                raise LedgerIntegrityError("cannot roll back ledger: ledger file missing")
+            lines = self._read_raw().splitlines(keepends=True)
             if len(lines) != len(events):
                 raise LedgerIntegrityError("cannot roll back ledger: event framing changed")
             prior_size = sum(len(line) for line in lines[:-1])
-            with self.path.open("rb+") as fh:
-                fh.truncate(prior_size)
-                fh.flush()
-                os.fsync(fh.fileno())
+            os.ftruncate(self._pinned_fd, prior_size)
+            os.fsync(self._pinned_fd)
             prior = events[-2] if len(events) > 1 else None
             self._write_anchor(
                 count=len(events) - 1,
@@ -235,22 +306,19 @@ class AuditLedger:
     # -- read + verify ----------------------------------------------------
 
     def events(self) -> Iterator[LedgerEvent]:
-        if not self.path.exists():
-            return
-        with self.path.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                data = json.loads(line)
-                yield LedgerEvent(
-                    seq=data["seq"],
-                    type=data["type"],
-                    timestamp=data["timestamp"],
-                    payload=data["payload"],
-                    prev_event_hash=data["prev_event_hash"],
-                    event_hash=data["event_hash"],
-                )
+        for raw_line in self._read_raw().splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            data = json.loads(line.decode("utf-8"))
+            yield LedgerEvent(
+                seq=data["seq"],
+                type=data["type"],
+                timestamp=data["timestamp"],
+                payload=data["payload"],
+                prev_event_hash=data["prev_event_hash"],
+                event_hash=data["event_hash"],
+            )
 
     def verify_chain(self) -> None:
         """Recompute every event hash and every chain link.

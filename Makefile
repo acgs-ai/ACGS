@@ -112,7 +112,7 @@ test-py:
 	  (cd $$pkg && $(UV) run python -m pytest --import-mode=importlib) || exit $$?; \
 	done; \
 	echo "==> test packages/mutation-authority"; \
-	(cd packages/mutation-authority && $(UV) run --with cryptography python -m pytest tests integration_tests EXTERNAL_SUBSTRATE_IDENTITY_AND_AUTHORITY_INGESTION_V1/attack_suite --import-mode=importlib) || exit $$?
+	(cd packages/mutation-authority && $(UV) run --with cryptography --with jsonschema python -m pytest tests integration_tests EXTERNAL_SUBSTRATE_IDENTITY_AND_AUTHORITY_INGESTION_V1/attack_suite --import-mode=importlib) || exit $$?
 
 lint-py:
 	@set -e; \
