@@ -15,6 +15,7 @@ directory and does not inspect the current host or invoke Docker.
 
 ```bash
 python3 artifact_replay.py --verify-shipped
+python3 table16_metrics.py --verify
 python3 release_manifest.py --verify
 python3 -m pytest tests -q
 python3 render_pdf.py
@@ -41,8 +42,11 @@ python3 root_equivalence.py \
 ```
 
 Run it only on a disposable host. The probe bind-mounts a temporary host
-directory and changes file content, ownership, and mode. Its result records the
-exact mutation and cleanup paths, operations, return codes, and removal status.
+directory and changes file content, ownership, and mode. Newly executed probes
+record the exact mutation and cleanup paths, operations, return codes, outcomes,
+and removal status. The shipped registry contains a
+historical active result that predates this metadata and is explicitly labeled
+`HISTORICAL_RESULT`; it does not claim recorded per-command active evidence.
 Without both flags, Docker execution is unavailable and cannot satisfy surface
 coverage.
 

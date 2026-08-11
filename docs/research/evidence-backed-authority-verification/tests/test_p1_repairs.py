@@ -7,6 +7,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 PACKAGE = HERE.parent
@@ -17,6 +19,7 @@ import exclusivity_model as model  # noqa: E402
 import privilege_context  # noqa: E402
 import release_manifest  # noqa: E402
 import root_equivalence  # noqa: E402
+import table16_metrics  # noqa: E402
 
 
 def load(name: str) -> dict:
@@ -135,33 +138,109 @@ class TestPureReplay(unittest.TestCase):
         with self.assertRaises(ValueError):
             root_equivalence.docker_rootful(active=True)
 
-    def test_active_result_carries_mutation_metadata(self):
-        original = root_equivalence._docker_rootful_active
-        root_equivalence._docker_rootful_active = lambda: {
-            "classification": "ROOT_EQUIVALENT",
-            "targets": {"A_arbitrary_host_write": True},
-            "evidence": {
-                "active_probe": {
-                    "mutations": [{"path": "/tmp/probe/f", "operation": "write"}],
-                    "cleanup": [
-                        {
-                            "path": "/tmp/probe",
-                            "operation": "rmtree",
-                            "returncode": 0,
-                            "removed": True,
-                        }
-                    ],
-                }
-            },
-        }
-        try:
+    def test_active_helper_failure_is_error(self):
+        completed = subprocess.CompletedProcess(["docker", "info"], 127, "", "docker info failed")
+        with (
+            mock.patch.object(root_equivalence.os.path, "exists", return_value=True),
+            mock.patch.object(root_equivalence.os, "access", return_value=True),
+            mock.patch.object(root_equivalence, "_run", return_value=completed),
+        ):
             result = root_equivalence.docker_rootful(active=True, acknowledge_disposable=True)
-        finally:
-            root_equivalence._docker_rootful_active = original
+        self.assertEqual(result["classification"], root_equivalence.UNKNOWN)
+        self.assertEqual(result["probe"]["status"], "ERROR")
+        self.assertFalse(result["probe"]["cleanup_complete"])
+
+    def test_active_not_present_is_not_success(self):
+        with mock.patch.object(root_equivalence.os.path, "exists", return_value=False):
+            result = root_equivalence.docker_rootful(active=True, acknowledge_disposable=True)
+        self.assertEqual(result["classification"], root_equivalence.NOT_PRESENT)
+        self.assertEqual(result["probe"]["status"], "NOT_PRESENT")
+        self.assertFalse(result["probe"]["cleanup_complete"])
+
+    def test_real_active_helper_records_complete_mutation_metadata(self):
+        real_exists = root_equivalence.os.path.exists
+        real_access = root_equivalence.os.access
+        real_stat = root_equivalence.os.stat
+        runs = [
+            subprocess.CompletedProcess([], 0, "/var/lib/docker|[]\n", ""),
+            subprocess.CompletedProcess([], 0, "test:image\n", ""),
+            subprocess.CompletedProcess([], 0, "0\n0 0 4294967295\ndone\n", ""),
+            subprocess.CompletedProcess([], 0, "", ""),
+        ]
+
+        def exists(path):
+            if str(path) in ("/var/run/docker.sock", "/run/docker.sock"):
+                return str(path) == "/var/run/docker.sock"
+            return real_exists(path)
+
+        def access(path, mode):
+            if str(path) == "/var/run/docker.sock":
+                return True
+            return real_access(path, mode)
+
+        def stat(path):
+            if str(path).startswith("/tmp/cspa3-rootprobe-") and str(path).endswith("/f"):
+                return SimpleNamespace(st_size=10, st_uid=4242)
+            return real_stat(path)
+
+        with (
+            mock.patch.object(root_equivalence.os.path, "exists", side_effect=exists),
+            mock.patch.object(root_equivalence.os, "access", side_effect=access),
+            mock.patch.object(root_equivalence.os, "stat", side_effect=stat),
+            mock.patch.object(root_equivalence, "_run", side_effect=runs),
+        ):
+            result = root_equivalence.docker_rootful(active=True, acknowledge_disposable=True)
+
         self.assertEqual(result["probe"]["status"], "SUCCESS")
-        self.assertEqual(result["probe"]["probe_class"], "ACTIVE_MUTATION")
-        self.assertTrue(result["evidence"]["active_probe"]["mutations"])
-        self.assertTrue(result["evidence"]["active_probe"]["cleanup"])
+        self.assertTrue(result["probe"]["cleanup_complete"])
+        evidence = result["evidence"]["active_probe"]
+        mutation_command = evidence["mutation_command"]
+        self.assertTrue(mutation_command["argv"])
+        self.assertEqual(mutation_command["returncode"], 0)
+        self.assertEqual(mutation_command["outcome"], "COMMAND_SUCCEEDED")
+        self.assertEqual(len(evidence["mutations"]), 3)
+        self.assertTrue(
+            all(
+                isinstance(item["command_returncode"], int) and item["outcome"]
+                for item in evidence["mutations"]
+            )
+        )
+        cleanup_command = evidence["cleanup_command"]
+        self.assertTrue(cleanup_command["argv"])
+        self.assertEqual(cleanup_command["returncode"], 0)
+        self.assertEqual(cleanup_command["outcome"], "COMMAND_SUCCEEDED")
+        self.assertEqual(evidence["cleanup_status"], "REMOVED")
+        self.assertEqual(len(evidence["cleanup"]), 3)
+        self.assertTrue(
+            all(
+                isinstance(item["command_returncode"], int) and item["outcome"]
+                for item in evidence["cleanup"][:2]
+            )
+        )
+        self.assertEqual(evidence["cleanup"][2]["action_returncode"], 0)
+        self.assertEqual(evidence["cleanup"][2]["outcome"], "REMOVED")
+        self.assertTrue(evidence["cleanup"][2]["removed"])
+
+    def test_historical_docker_result_does_not_claim_active_metadata(self):
+        docker = load("ROOT_EQUIVALENCE_REGISTRY.json")["mechanisms"]["docker_rootful"]
+        self.assertEqual(docker["probe"]["status"], "HISTORICAL_RESULT")
+        self.assertFalse(docker["probe"]["active_evidence_recorded"])
+        self.assertNotIn("active_probe", docker["evidence"])
+
+    def test_manifest_bound_paths_are_pseudonymized(self):
+        for name in ("CUTOVER_GATE.json", "ROOT_EQUIVALENCE_REGISTRY.json"):
+            text = (PACKAGE / name).read_text(encoding="utf-8")
+            self.assertNotIn("/home/martin", text)
+            self.assertNotIn("/tmp/claude", text)
+            self.assertNotIn('"martin"', text)
+
+
+class TestTable16Metrics(unittest.TestCase):
+    def test_every_published_number_matches_recomputation(self):
+        ok, errors = table16_metrics.verify_paper()
+        self.assertTrue(ok, errors)
+        for name in table16_metrics.RUNTIME_FILES:
+            self.assertTrue((PACKAGE / name).is_file(), name)
 
 
 class TestReleaseManifest(unittest.TestCase):

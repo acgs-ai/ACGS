@@ -22,6 +22,7 @@ import tempfile
 from pathlib import Path
 
 import markdown
+import table16_metrics
 import weasyprint
 
 HERE = Path(__file__).resolve().parent
@@ -36,6 +37,10 @@ actual = {
 }
 if lock.get("versions") != actual:
     raise SystemExit(f"renderer version mismatch: expected {lock['versions']}, got {actual}")
+
+metrics_ok, metric_errors = table16_metrics.verify_paper()
+if not metrics_ok:
+    raise SystemExit("Table 16 is stale:\n" + "\n".join(metric_errors))
 
 src = (HERE / "paper.md").read_text(encoding="utf-8")
 

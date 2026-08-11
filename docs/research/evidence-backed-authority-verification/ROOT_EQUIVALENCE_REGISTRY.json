@@ -200,6 +200,13 @@
     },
     "docker_rootful": {
       "classification": "ROOT_EQUIVALENT",
+      "probe": {
+        "active_evidence_recorded": false,
+        "classification_observed": "ROOT_EQUIVALENT",
+        "probe_class": "HISTORICAL_ACTIVE_RESULT",
+        "reason": "The historical artifact records observed targets but predates per-command mutation and cleanup metadata.",
+        "status": "HISTORICAL_RESULT"
+      },
       "evidence": {
         "container_uid_map": [
           "         0          0 4294967295"
@@ -393,7 +400,7 @@
     "systemd_units": {
       "classification": "PRESENT_NON_ESCALATING",
       "evidence": {
-        "user_unit_dir": "/home/martin/.config/systemd/user",
+        "user_unit_dir": "/home/<agent-user>/.config/systemd/user",
         "user_unit_dir_exists": true,
         "writable_system_unit_dirs": []
       },

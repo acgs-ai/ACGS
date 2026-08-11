@@ -5,7 +5,7 @@
       "EXPECTED_CREDENTIAL.json": "1de7dc9905e290a84ac7dd2bb3acdfa7a2d16968062bc5136c771cfe8972a695",
       "PRIVILEGE_GRAPH.json": "020caf79669eb2cabbb0a36906d20776624cb9e818f8c2d8b290fbc1520a6bae",
       "PRIVILEGE_TOPOLOGY_FINAL.json": "661d2eaa4860805fd14887e2ad6933f833d33b5ee5d14ce43864ab2377a5e0b2",
-      "ROOT_EQUIVALENCE_REGISTRY.json": "319cb7c27981c50749f8f8a556109d237253764d864ff0430733908b4b6e0263",
+      "ROOT_EQUIVALENCE_REGISTRY.json": "a69b0882e493aecb4a9360e24859acddc5055b688e41841f459472762c21e590",
       "SURFACE_REGISTRY.json": "f6dc7afed6275b20f285e8bbdc6c7018b588667833c0f38b41ce03fb14147a7e",
       "attack_results.json": "aeb0d947a44c17c05af86fe03b0c1bb3bbaf1eb59fb47c1aeff076820be74a8b"
     },
@@ -425,7 +425,7 @@
     "verdict": "BLOCKED_ROOT_EQUIVALENCE"
   },
   "docker_invoked": false,
-  "evidence_digest": "abd0c33e0348c4f00d9ae5fa8cb2da8eecc47481a29a742f9ddd6e32e6363c1d",
+  "evidence_digest": "957e7887b1a2f661ff5861749e2a433694c7ba307d227104ac375c6f31f65667",
   "host_probe_performed": false,
   "mode": "PURE_ARTIFACT_REPLAY",
   "schema": "authority-artifact-replay/v1",

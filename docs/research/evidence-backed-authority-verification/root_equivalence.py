@@ -73,8 +73,9 @@ def _docker_rootful_active() -> dict:
     writable = os.access(socket, os.W_OK)
     info = _run(["docker", "info", "--format", "{{.DockerRootDir}}|{{json .SecurityOptions}}"])
     if not writable or info.returncode != 0:
+        classification = UNKNOWN if writable and info.returncode != 0 else PRESENT_NON_ESCALATING
         return {
-            "classification": PRESENT_NON_ESCALATING if writable else NOT_PRESENT,
+            "classification": classification,
             "evidence": {
                 "socket": socket,
                 "writable": writable,
@@ -100,39 +101,51 @@ def _docker_rootful_active() -> dict:
     if image:
         base = _probe_dir()
         target = os.path.join(base, "f")
+        mutation_command = [
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--user",
+            "0:0",
+            "--security-opt",
+            "label=disable",
+            "--entrypoint",
+            "sh",
+            "-v",
+            f"{base}:/mnt",
+            image,
+            "-c",
+            "set -e; id -u; cat /proc/self/uid_map; echo root-write > /mnt/f; "
+            "chown 4242:4242 /mnt/f; chmod 0600 /mnt/f; echo done",
+        ]
         evidence["active_probe"] = {
             "probe_class": "ACTIVE_MUTATION",
             "disposable_host_warning": (
                 "Run only on a disposable host: this probe bind-mounts a host "
                 "directory and changes file bytes, ownership, and mode."
             ),
-            "mutations": [
-                {"path": target, "operation": "write root-write"},
-                {"path": target, "operation": "chown 4242:4242"},
-                {"path": target, "operation": "chmod 0600"},
-            ],
+            "setup": {
+                "path": target,
+                "operation": "create temporary host file with original bytes",
+                "returncode": 0,
+                "outcome": "CREATED",
+            },
+            "mutation_command": {
+                "argv": mutation_command,
+                "returncode": None,
+                "outcome": "PENDING",
+            },
+            "mutations": [],
             "cleanup": [],
         }
-        result = _run(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "--network",
-                "none",
-                "--user",
-                "0:0",
-                "--security-opt",
-                "label=disable",
-                "--entrypoint",
-                "sh",
-                "-v",
-                f"{base}:/mnt",
-                image,
-                "-c",
-                "id -u; cat /proc/self/uid_map; echo root-write > /mnt/f; "
-                "chown 4242:4242 /mnt/f; chmod 0600 /mnt/f; echo done",
-            ]
+        result = _run(mutation_command)
+        evidence["active_probe"]["mutation_command"].update(
+            {
+                "returncode": result.returncode,
+                "outcome": ("COMMAND_SUCCEEDED" if result.returncode == 0 else "COMMAND_FAILED"),
+            }
         )
         # stat and read are separate questions. The container chmods the file
         # 0600 under a foreign uid, so the agent can stat it but not read it --
@@ -162,42 +175,77 @@ def _docker_rootful_active() -> dict:
         targets["F_mount_defeats_dac"] = targets["A_arbitrary_host_write"]
         evidence["host_file_uid_after"] = st.st_uid if st else None
         evidence["host_file_content_after"] = content
+        evidence["active_probe"]["mutations"] = [
+            {
+                "path": target,
+                "operation": "write root-write",
+                "command_returncode": result.returncode,
+                "outcome": ("OBSERVED" if targets["A_arbitrary_host_write"] else "NOT_OBSERVED"),
+            },
+            {
+                "path": target,
+                "operation": "chown 4242:4242",
+                "command_returncode": result.returncode,
+                "outcome": ("OBSERVED" if targets["B_arbitrary_host_chown"] else "NOT_OBSERVED"),
+            },
+            {
+                "path": target,
+                "operation": "chmod 0600",
+                "command_returncode": result.returncode,
+                "outcome": ("COMMAND_SUCCEEDED" if result.returncode == 0 else "COMMAND_FAILED"),
+            },
+        ]
         # A file now owned by 4242 cannot be removed by the agent; the same
         # instrument has to hand it back.
-        cleanup = _run(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "--network",
-                "none",
-                "--user",
-                "0:0",
-                "--security-opt",
-                "label=disable",
-                "--entrypoint",
-                "sh",
-                "-v",
-                f"{base}:/mnt",
-                image,
-                "-c",
-                f"rm -f /mnt/f; chown {os.getuid()}:{os.getgid()} /mnt",
-            ]
-        )
+        cleanup_command = [
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--user",
+            "0:0",
+            "--security-opt",
+            "label=disable",
+            "--entrypoint",
+            "sh",
+            "-v",
+            f"{base}:/mnt",
+            image,
+            "-c",
+            f"set -e; rm -f /mnt/f; chown {os.getuid()}:{os.getgid()} /mnt",
+        ]
+        cleanup = _run(cleanup_command)
         shutil.rmtree(base, ignore_errors=True)
+        removed = not os.path.exists(base)
+        cleanup_status = "REMOVED" if cleanup.returncode == 0 and removed else "FAILED"
+        evidence["active_probe"]["cleanup_command"] = {
+            "argv": cleanup_command,
+            "returncode": cleanup.returncode,
+            "outcome": ("COMMAND_SUCCEEDED" if cleanup.returncode == 0 else "COMMAND_FAILED"),
+        }
         evidence["active_probe"]["cleanup"] = [
             {
                 "path": target,
                 "operation": "rm -f",
-                "returncode": cleanup.returncode,
+                "command_returncode": cleanup.returncode,
+                "outcome": ("COMMAND_SUCCEEDED" if cleanup.returncode == 0 else "COMMAND_FAILED"),
             },
             {
                 "path": base,
-                "operation": f"chown {os.getuid()}:{os.getgid()} then rmtree",
-                "returncode": cleanup.returncode,
-                "removed": not os.path.exists(base),
+                "operation": f"chown {os.getuid()}:{os.getgid()}",
+                "command_returncode": cleanup.returncode,
+                "outcome": ("COMMAND_SUCCEEDED" if cleanup.returncode == 0 else "COMMAND_FAILED"),
+            },
+            {
+                "path": base,
+                "operation": "rmtree",
+                "action_returncode": 0 if removed else 1,
+                "outcome": cleanup_status,
+                "removed": removed,
             },
         ]
+        evidence["active_probe"]["cleanup_status"] = cleanup_status
     classification = ROOT_EQUIVALENT if targets.get("B_arbitrary_host_chown") else UNKNOWN
     return {
         "classification": classification,
@@ -229,11 +277,26 @@ def docker_rootful(*, active: bool = False, acknowledge_disposable: bool = False
     if not acknowledge_disposable:
         raise ValueError("--active-docker-probe requires --ack-disposable-host")
     result = _docker_rootful_active()
+    classification = result.get("classification")
+    active_evidence = result.get("evidence", {}).get("active_probe")
+    cleanup_complete = (
+        isinstance(active_evidence, dict) and active_evidence.get("cleanup_status") == "REMOVED"
+    )
+    if classification == NOT_PRESENT:
+        status = "NOT_PRESENT"
+    elif classification == PRESENT_NON_ESCALATING:
+        status = "SUCCESS"
+    elif classification == ROOT_EQUIVALENT and cleanup_complete:
+        status = "SUCCESS"
+    else:
+        status = "ERROR"
     result.setdefault("probe", {})
     result["probe"].update(
         {
             "probe_class": "ACTIVE_MUTATION",
-            "status": "SUCCESS",
+            "status": status,
+            "classification_observed": classification,
+            "cleanup_complete": cleanup_complete,
             "disposable_host_warning": warning,
         }
     )

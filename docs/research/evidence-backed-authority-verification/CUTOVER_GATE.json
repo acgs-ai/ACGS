@@ -134,7 +134,7 @@
      "total": 57,
      "unknown": 0
     },
-    "path": "/home/martin/Downloads/traj_procurement_guideline_20260609 (2)/governance_trajectories/CANONICAL_STATE_PROMOTION_AUTHORITY_V3/PRIVILEGE_TOPOLOGY_FINAL.json",
+    "path": "<evidence-root>/PRIVILEGE_TOPOLOGY_FINAL.json",
     "root_equivalent_paths": [
      "container_runtimes:docker_rootful_socket",
      "groups:membership_docker"
@@ -164,7 +164,7 @@
    "detail": {
     "kernel_credential_contains_docker_gid": true,
     "roster": [
-     "martin"
+     "<agent-user>"
     ]
    },
    "state": "BLOCKED"

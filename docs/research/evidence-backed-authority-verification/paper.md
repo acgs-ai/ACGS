@@ -1597,6 +1597,7 @@ The shipped result is reproducible without host inspection or mutation:
 
 ```bash
 python3 artifact_replay.py --verify-shipped
+python3 table16_metrics.py --verify
 python3 release_manifest.py --verify
 python3 -m pytest tests -q
 python3 render_pdf.py
@@ -1609,7 +1610,10 @@ verdict solely from the artifacts in this directory. It does not import the
 host-probe driver or invoke Docker. The Docker experiment is separately
 classified `ACTIVE_MUTATION` and requires both
 `--active-docker-probe --ack-disposable-host`; it is suitable only for a
-disposable host and records its exact mutations and cleanup.
+disposable host. Newly executed probes record exact mutation and cleanup
+commands, return codes, outcomes, and removal status. The shipped registry's
+older result is explicitly labeled `HISTORICAL_RESULT` because it predates that
+per-command metadata and does not claim to contain it.
 
 Canonical artifacts are `REPLAY_RESULT.json`,
 `PRIVILEGE_TOPOLOGY_FINAL.json`, `ROOT_EQUIVALENCE_REGISTRY.json`,
@@ -1653,17 +1657,17 @@ reproduced in §13.3.
 | Distinct digests over those runs | `3` | `run_history.jsonl` | `evidence_digest` |
 | Final four runs identical | `True` | `run_history.jsonl` | last four `evidence_digest` |
 | Evidence digest | `ab4ae6bcb450971214b4e4e6a34be75147653826400ccd09c5e3786415e1c9ac` | `verification_result.json` | `evidence_digest` |
-| Verifier lines of Python | `6788` | `working tree` | collectors, model, verifier, gates, tests |
-| ...of which tests | `1028` | `working tree` | tests/*.py |
-| Runtime lines under verification | `1580` | `working tree` | the V3 system itself, excluded from the figure above |
+| Shipped non-runtime Python lines | `8941` | `working tree` | all shipped Python except the four runtime-subject files |
+| ...of which tests | `1311` | `working tree` | tests/*.py |
+| Runtime subject Python lines | `931` | `working tree` | container_launch.py, deployment.py, v3_authority.py, v3_client.py |
 
 Two rows deserve comment. `Runs recorded` counts every recorded run, not only
 the four that satisfy condition 18; the three distinct digests across those runs
 are the pre-correction digest, the post-`filecaps` digest, and the current one,
-which is why the repeatability count was reset twice (§12.3). `Verifier lines of
-Python` deliberately excludes the 1,580 lines of the V3 runtime *being*
-verified: counting the subject of the measurement inside the size of the
-measuring apparatus would overstate the latter.
+which is why the repeatability count was reset twice (§12.3). The three source
+counts are recomputed by `table16_metrics.py`. The non-runtime figure excludes
+exactly the four shipped runtime-subject files named in the table; tests are
+reported as a subset rather than added again.
 
 ---
 
