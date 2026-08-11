@@ -1198,6 +1198,48 @@ def test_disabled_gh_web_helper_is_allowed_and_receipted(tmp_path: Path, command
 
 
 @pytest.mark.parametrize(
+    "command",
+    [
+        "gh pr view 123 ${OPT:---web}",
+        'gh issue view 7 "$OPT"',
+        "gh repo view owner/name -q$FIELD",
+        "gh pr view 123 -*",
+    ],
+)
+def test_gh_reads_with_expandable_argv_fail_closed(command: str) -> None:
+    """gh (pflag) parses options anywhere before ``--``, so a token the shell
+    expands can synthesize a helper flag after classification:
+    ``gh pr view 123 ${OPT:---web}`` expands to ``--web`` and launches an
+    attacker-controlled browser helper despite passing every literal-token
+    option check."""
+    event = classify_command(command)
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("gh-argv-expansion",)
+
+
+def test_gh_read_expansion_after_double_dash_stays_positional() -> None:
+    """Positive control: pflag treats every token after a bare ``--`` as
+    positional no matter what it expands to, so a post-``--`` expansion
+    cannot synthesize an option and the read stays decidable."""
+    event = classify_command("gh pr view 123 -- $OPT")
+
+    assert event.decidable is True
+    assert event.tier_hint == TIER_READ_ONLY
+
+
+def test_gate_escalates_gh_read_with_expandable_argv(tmp_path: Path) -> None:
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "gh pr view 123 ${OPT:---web}")
+
+    assert permission(response) == "ask"
+    event = audit_events(tmp_path)[-1]
+    assert event["decision"] == "escalate"
+
+
+@pytest.mark.parametrize(
     ("command", "environ"),
     [
         ("gh pr view 123", {"GH_PAGER": "/tmp/attacker-pager"}),

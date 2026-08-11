@@ -1105,6 +1105,26 @@ def _gh_external_helper_reason(argv: Sequence[str], subcommand: str, operation: 
     return ""
 
 
+def _gh_argv_expansion_present(argv: Sequence[str]) -> bool:
+    """Whether an option-position gh token carries an unexpanded shell word.
+
+    gh (pflag) parses options anywhere before ``--``, so a token the shell
+    expands can synthesize an option this classifier never saw:
+    ``gh pr view 123 ${OPT:---web}`` passes every literal-token check while
+    bash expands the final token to ``--web`` and gh launches a browser
+    helper. Pathname expansion is the same channel (an unquoted ``-*``
+    matches a file literally named ``--web``), so glob-bearing tokens fail
+    closed too. shlex strips quotes, so an inert single-quoted spelling
+    (``'$field'``) is indistinguishable from the active one and is
+    over-approximated: an escalation, never a false allow. Tokens after a
+    bare ``--`` are positional to pflag regardless of what they expand to,
+    so they stay decidable.
+    """
+    active_argv = argv[: argv.index("--")] if "--" in argv else argv
+    unsafe = _EXPANSION_CHARS | _GLOB_CHARS
+    return any(unsafe & set(token) for token in active_argv[1:])
+
+
 def _gh_pager_external_context(environ: Mapping[str, str]) -> bool:
     """Whether an inherited pager makes a gh read able to run a program.
 
@@ -1743,6 +1763,11 @@ def classify_command(
             )
         if operation and operation in _GH_REMOTE_READ_ONLY.get(subcommand, frozenset()):
             helper_reason = _gh_external_helper_reason(argv, subcommand, operation)
+            if not helper_reason and _gh_argv_expansion_present(argv):
+                # A literal-token option check is only sound on literal
+                # tokens: an expansion in an option position can synthesize
+                # `--web` (or any other flag) after classification.
+                helper_reason = "gh-argv-expansion"
             if not helper_reason and _gh_pager_external_context(resolved_environ):
                 # A modeled read (`gh pr view`) still pipes stdout through the
                 # configured pager, so an inherited GH_PAGER/PAGER is a program
