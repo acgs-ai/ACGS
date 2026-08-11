@@ -17,7 +17,7 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
-from .canonical import ABSENT, sha256_hex
+from .canonical import ABSENT, sha256_hex, state_mode_suffix
 from .engine import SECURE_CREATE_MODE, _verify_chain_root_binding
 from .ledger import EVENT_COMMIT, EVENT_GENESIS, AuditLedger
 from .receipt import MutationDecisionReceipt
@@ -145,7 +145,7 @@ def _read_state_at(parent_fd: int, name: str) -> tuple[bytes | None, str, int]:
                 break
             chunks.append(chunk)
         data = b"".join(chunks)
-        digest = sha256_hex(data) + (":exec" if st.st_mode & 0o111 else "")
+        digest = sha256_hex(data) + state_mode_suffix(st.st_mode)
         return data, digest, stat.S_IMODE(st.st_mode)
     finally:
         os.close(fd)
@@ -205,7 +205,6 @@ def _atomic_create_at(parent_fd: int, name: str, content: bytes, mode: int) -> N
             dst_dir_fd=parent_fd,
             follow_symlinks=False,
         )
-        os.unlink(tmp_name, dir_fd=parent_fd)
     except Exception:
         try:
             os.unlink(tmp_name, dir_fd=parent_fd)
@@ -214,6 +213,25 @@ def _atomic_create_at(parent_fd: int, name: str, content: bytes, mode: int) -> N
         raise
     finally:
         os.close(fd)
+    # The link above PUBLISHED the target. From here on, a failure must not
+    # propagate as an ordinary OSError: the caller maps that to REJECTED,
+    # which would leave the published target on disk as an unaudited side
+    # effect. If the temporary cannot be removed, unpublish the target and
+    # re-raise; if even unpublishing fails, escalate loudly.
+    try:
+        os.unlink(tmp_name, dir_fd=parent_fd)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        try:
+            os.unlink(name, dir_fd=parent_fd)
+        except FileNotFoundError:
+            pass
+        except OSError as rollback_exc:
+            raise EffectRecordingError(
+                "CREATE temporary cleanup failed and the published target could not be unpublished"
+            ) from rollback_exc
+        raise exc
 
 
 def _parent_matches_path(parent_fd: int, parent_path: Path) -> bool:
@@ -340,7 +358,7 @@ class EffectBinder:
         requested_state_hash = (
             ABSENT
             if new_content is None
-            else sha256_hex(new_content) + (":exec" if receipt.expected_state_mode & 0o111 else "")
+            else sha256_hex(new_content) + state_mode_suffix(receipt.expected_state_mode)
         )
         if requested_state_hash != receipt.expected_state_hash:
             return CommitResult(REJECTED, "requested content is not authorized by receipt")

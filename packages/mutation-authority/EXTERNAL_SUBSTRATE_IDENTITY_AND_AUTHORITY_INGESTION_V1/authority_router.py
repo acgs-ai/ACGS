@@ -19,7 +19,9 @@ merely IDENTITY_EVIDENCED. Authority without matching scope is insufficient
 
 from __future__ import annotations
 
+import os
 import re
+import stat
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -126,19 +128,31 @@ def source_artifact_intact(record: dict[str, Any], artifact_dir: Path) -> bool:
     artifact bytes under `<artifact_dir>/<source_digest>`; routing eligibility
     re-verifies them here, so a source document altered or removed after
     ingestion stops routing (fail closed) instead of surviving as an
-    unverifiable digest string."""
+    unverifiable digest string.
+
+    The artifact is opened through a pinned, non-followed store directory
+    descriptor and verified to be a regular file on the OPEN descriptor: a
+    symlink swapped in at the store path or at the artifact entry can never
+    satisfy this check with bytes outside the retention store."""
     digest = record.get("source_digest")
     if not isinstance(digest, str) or not digest.strip():
         return False
     if "/" in digest or "\\" in digest or ".." in digest:
         return False
-    artifact = artifact_dir / digest
-    if not artifact.is_file():
-        return False
     try:
-        return source_digest_matches(record, artifact.read_bytes())
+        dir_fd = os.open(artifact_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     except OSError:
         return False
+    try:
+        fd = os.open(digest, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+        with os.fdopen(fd, "rb") as fh:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                return False
+            return source_digest_matches(record, fh.read())
+    except OSError:
+        return False
+    finally:
+        os.close(dir_fd)
 
 
 def _parse_z(s: Any) -> datetime | None:

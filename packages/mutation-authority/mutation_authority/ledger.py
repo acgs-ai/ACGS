@@ -158,10 +158,8 @@ class AuditLedger:
                 finally:
                     self._tx_depth -= 1
                 return
-            lock_path = self.path.with_name(self.path.name + ".lock")
-            lock_path.parent.mkdir(parents=True, exist_ok=True)
-            with lock_path.open("a", encoding="utf-8") as fh:
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            lock_fd = self._acquire_write_lock_fd()
+            try:
                 self._pin_ledger_fd()
                 self._tx_depth = 1
                 self._tx_owner = threading.get_ident()
@@ -176,6 +174,56 @@ class AuditLedger:
                     if self._pinned_parent_fd is not None:
                         os.close(self._pinned_parent_fd)
                         self._pinned_parent_fd = None
+            finally:
+                os.close(lock_fd)
+
+    def _acquire_write_lock_fd(self) -> int:
+        """flock a verified regular sidecar lock file and return its fd.
+
+        The sidecar must be opened without following symlinks and its
+        directory entry re-verified AFTER the flock is granted: a plain
+        `open("a")` would follow an attacker-planted symlink (two writers
+        could then flock different inodes and both believe they hold the
+        exclusive lock), and an unlink-and-recreate between open and flock
+        detaches the locked inode from the entry the next writer opens."""
+        lock_name = self.path.name + ".lock"
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        parent_fd = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for _ in range(64):
+                try:
+                    fd = os.open(
+                        lock_name,
+                        os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW,
+                        0o644,
+                        dir_fd=parent_fd,
+                    )
+                except OSError as exc:
+                    raise LedgerIntegrityError(
+                        f"ledger lock is not a verified regular file: {exc}"
+                    ) from exc
+                acquired = False
+                try:
+                    pinned = os.fstat(fd)
+                    if not stat.S_ISREG(pinned.st_mode):
+                        raise LedgerIntegrityError("ledger lock is not a verified regular file")
+                    fcntl.flock(fd, fcntl.LOCK_EX)
+                    try:
+                        named = os.stat(lock_name, dir_fd=parent_fd, follow_symlinks=False)
+                    except FileNotFoundError:
+                        continue  # entry vanished after our open; retry
+                    if (named.st_dev, named.st_ino) != (pinned.st_dev, pinned.st_ino):
+                        continue  # entry replaced after our open; retry
+                    acquired = True
+                    return fd
+                finally:
+                    if not acquired:
+                        os.close(fd)
+            raise LedgerIntegrityError(
+                "ledger lock file kept changing while acquiring the write lock"
+            )
+        finally:
+            os.close(parent_fd)
 
     def _pin_ledger_fd(self) -> None:
         """Open and identity-check the ledger ONCE per locked transaction.

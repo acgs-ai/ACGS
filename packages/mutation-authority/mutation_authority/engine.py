@@ -19,7 +19,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
-from .canonical import ABSENT, hash_obj, hmac_verify, sha256_hex
+from .canonical import ABSENT, hash_obj, hmac_verify, sha256_hex, state_mode_suffix
 from .intent import OPERATIONS, SignedIntent
 from .ledger import EVENT_COMMIT, EVENT_DECISION, EVENT_GENESIS, AuditLedger, LedgerIntegrityError
 from .receipt import MUTATION_RECEIPT_SCHEMA, MutationDecisionReceipt
@@ -108,9 +108,7 @@ def _capture_parent_precondition(repo_dir: Path, resource: str) -> tuple[dict[st
                 if not chunk:
                     break
                 chunks.append(chunk)
-            digest = sha256_hex(b"".join(chunks))
-            if target_stat.st_mode & 0o111:
-                digest += ":exec"
+            digest = sha256_hex(b"".join(chunks)) + state_mode_suffix(target_stat.st_mode)
             return binding, digest, stat.S_IMODE(target_stat.st_mode)
         finally:
             os.close(target_fd)
@@ -212,8 +210,8 @@ class DecisionEngine:
                         else 0
                     )
                     expected_state_hash = intent.expected_post_hash
-                    if expected_state_hash != ABSENT and expected_mode & 0o111:
-                        expected_state_hash += ":exec"
+                    if expected_state_hash != ABSENT:
+                        expected_state_hash += state_mode_suffix(expected_mode)
                     parent_precondition.update(
                         {
                             "expected_state_hash": expected_state_hash,

@@ -24,7 +24,7 @@ from .canonical import hash_file, sha256_hex
 from .effect import ACCEPTED, REJECTED, EffectBinder, EffectRecordingError
 from .engine import ALLOW, DENY, DecisionEngine
 from .intent import MutationIntent, SignedIntent
-from .ledger import AuditLedger, LedgerIntegrityError
+from .ledger import EVENT_COMMIT, AuditLedger, LedgerIntegrityError
 from .receipt import MutationDecisionReceipt, ReceiptFormatError
 from .root import GovernanceRoot, RootIntegrityError
 from .state import ABSENT, RepositoryScanError, repository_violations
@@ -84,6 +84,9 @@ class Sandbox:
             path = repo / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
+            # Pin the canonical suffix-free mode so the plain-content baseline
+            # below stays valid regardless of the ambient process umask.
+            path.chmod(0o644)
 
         root = GovernanceRoot.initialize(
             root_dir=repo / "governance",
@@ -1323,6 +1326,134 @@ def attack_y_ledger_rename_detach(base: Path) -> str:
     return "renamed-away ledger ⇒ accept-time revalidation fails closed, append rolled back"
 
 
+def attack_z_ledger_lock_symlink_swap(base: Path) -> str:
+    """Swap the ledger's sidecar lock file for a symlink to an external file:
+    the writer must refuse to lock through it. Two writers locking different
+    inodes (the symlink target vs a later recreated lock) would both believe
+    they hold the exclusive write lock."""
+    sb = Sandbox.build(base)
+    sb.governed_mutation("agent-alpha", "src/module_a.py", b"VALUE = 2\n")
+    lock_path = sb.ledger.path.with_name(sb.ledger.path.name + ".lock")
+    external = base / "outside-lock-target"
+    external.write_bytes(b"")
+    if lock_path.exists() or lock_path.is_symlink():
+        lock_path.unlink()
+    lock_path.symlink_to(external)
+    try:
+        sb.ledger.append("DECISION", {"decision": "DENY", "reason": "lock swap"}, sb.tick())
+    except LedgerIntegrityError:
+        pass
+    else:
+        raise CheckFailure("ledger writer acquired the write lock through a symlinked sidecar")
+    _expect(
+        external.read_bytes() == b"",
+        "bytes flowed through the symlinked sidecar lock",
+    )
+    lock_path.unlink()
+    sb.ledger.append("DECISION", {"decision": "DENY", "reason": "after restore"}, sb.tick())
+    sb.ledger.verify_chain()
+    return "symlinked sidecar lock ⇒ writer fails closed; restored lock ⇒ append succeeds"
+
+
+def attack_aa_create_cleanup_failure_unpublishes(base: Path) -> str:
+    """Make the CREATE temporary's post-publication cleanup unlink fail: the
+    commit must unpublish the already-linked target before returning REJECTED,
+    never leave the new file on disk as an unaudited side effect."""
+    sb = Sandbox.build(base)
+    resource = "src/new_module.py"
+    content = b"CREATED = 1\n"
+    decision = sb.engine.decide(
+        sb.intent("agent-alpha", resource, operation="CREATE", new_content=content),
+        sb.tick(),
+    )
+    _expect(
+        decision.decision == ALLOW and decision.receipt is not None,
+        f"expected ALLOW for governed CREATE, got {decision.decision}: {decision.reason}",
+    )
+    real_unlink = os.unlink
+
+    def failing_unlink(path, *args, **kwargs):  # type: ignore[no-untyped-def]
+        name = os.fspath(path)
+        if ".mutation-authority." in name and name.endswith(".tmp"):
+            raise PermissionError("simulated temporary cleanup failure")
+        return real_unlink(path, *args, **kwargs)
+
+    with patch.object(effect_module.os, "unlink", failing_unlink):
+        result = sb.binder.commit(decision.receipt, content, sb.tick())
+    _expect(
+        result.status == REJECTED,
+        f"expected REJECTED when cleanup fails, got {result.status}: {result.reason}",
+    )
+    _expect(
+        hash_file(sb.repo / resource) == ABSENT,
+        "REJECTED CREATE left the published target on disk (unaudited side effect)",
+    )
+    _expect(
+        all(event.type != EVENT_COMMIT for event in sb.ledger.events()),
+        "a COMMIT event was recorded for a REJECTED CREATE",
+    )
+    sb.ledger.verify_chain()
+    for leftover in (sb.repo / "src").glob(".*.mutation-authority.*.tmp"):
+        leftover.unlink()
+    _expect(
+        repository_violations(sb.ledger, sb.repo, sb.root.governed_prefixes()) == [],
+        "repository diverged after a fully rolled-back CREATE",
+    )
+    return "cleanup failure after publication ⇒ target unpublished, REJECTED, no COMMIT"
+
+
+def attack_ab_mode_only_mutation_detected(base: Path) -> str:
+    """chmod a governed file world-writable without changing a byte: the scan
+    must flag it and the engine must refuse to launder it into an approval."""
+    sb = Sandbox.build(base)
+    resource = "src/module_a.py"
+    path = sb.repo / resource
+    path.chmod(0o666)
+    violations = repository_violations(sb.ledger, sb.repo, sb.root.governed_prefixes())
+    _expect(
+        violations != [],
+        "byte-identical chmod 0666 was invisible to the repository scan",
+    )
+    decision = sb.engine.decide(sb.intent("agent-alpha", resource), sb.tick())
+    _expect(
+        decision.decision == DENY and "diverged" in decision.reason,
+        f"engine did not DENY a mode-diverged resource: {decision.reason}",
+    )
+    path.chmod(0o644)
+    _expect(
+        repository_violations(sb.ledger, sb.repo, sb.root.governed_prefixes()) == [],
+        "restored canonical mode still reported violations",
+    )
+    return "chmod 0666 without byte change ⇒ scan violation + DENY; restore ⇒ clean"
+
+
+def attack_ac_hash_file_symlink_swap_after_lstat(base: Path) -> str:
+    """Swap a regular file for a symlink to byte-identical content after the
+    lstat classification: hash_file must never return the plain content digest
+    (the open is O_NOFOLLOW and re-classified on the descriptor)."""
+    base.mkdir(parents=True, exist_ok=True)
+    payload = b"same bytes\n"
+    target = base / "outside.txt"
+    target.write_bytes(payload)
+    governed = base / "governed.txt"
+    governed.write_bytes(payload)
+    governed.chmod(0o644)
+    stale_stat = governed.lstat()
+    governed.unlink()
+    governed.symlink_to(target)
+    with patch.object(Path, "lstat", lambda self: stale_stat):
+        digest = hash_file(governed)
+    _expect(
+        digest != sha256_hex(payload),
+        "lstat/read race laundered a symlink into a plain content digest",
+    )
+    _expect(
+        digest.endswith(":symlink"),
+        f"swapped-in symlink was not classified as a symlink: {digest!r}",
+    )
+    return "symlink swapped in after lstat ⇒ classified :symlink, never a plain digest"
+
+
 CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     ("happy-path: intent → decision → receipt → effect → audit", check_happy_path),
     ("deterministic verifier", check_deterministic_verifier),
@@ -1394,6 +1525,19 @@ CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     ("concurrent commits of one receipt are single-use", check_concurrent_commits_single_use),
     ("ATTACK X: ledger swapped for a symlink", attack_x_ledger_symlink_swap),
     ("ATTACK Y: ledger renamed away mid-transaction", attack_y_ledger_rename_detach),
+    ("ATTACK Z: ledger sidecar lock swapped for a symlink", attack_z_ledger_lock_symlink_swap),
+    (
+        "ATTACK AA: CREATE cleanup failure unpublishes the target",
+        attack_aa_create_cleanup_failure_unpublishes,
+    ),
+    (
+        "ATTACK AB: mode-only mutation (chmod without byte change)",
+        attack_ab_mode_only_mutation_detected,
+    ),
+    (
+        "ATTACK AC: symlink swapped in after lstat classification",
+        attack_ac_hash_file_symlink_swap_after_lstat,
+    ),
 ]
 
 

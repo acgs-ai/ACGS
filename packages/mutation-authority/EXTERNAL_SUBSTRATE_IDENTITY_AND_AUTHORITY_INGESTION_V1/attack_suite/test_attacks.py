@@ -1433,3 +1433,29 @@ def test_onboard_requires_evaluation_instant(tmp_path, capsys):
     # evaluation) and legitimately needs no instant.
     assert OB.main([*base, "--emit-binding"]) == 0
     assert not reg.exists()
+
+
+def test_attack_artifact_store_symlink_swap_rejected(tmp_path):
+    """A retained artifact entry — or the store directory itself — swapped for
+    a symlink to byte-identical content outside the retention store must not
+    verify: the artifact is opened through a pinned, non-followed store fd."""
+    from authority_router import source_artifact_intact
+
+    record = _evidence()
+    store = tmp_path / "artifacts"
+    store.mkdir()
+    entry = store / FIXTURE_DIGEST
+    entry.write_bytes(FIXTURE_DOC)
+    assert source_artifact_intact(record, store) is True
+
+    external = tmp_path / "outside-copy"
+    external.write_bytes(FIXTURE_DOC)
+    entry.unlink()
+    entry.symlink_to(external)
+    assert source_artifact_intact(record, store) is False
+
+    entry.unlink()
+    entry.write_bytes(FIXTURE_DOC)
+    linked_store = tmp_path / "linked-store"
+    linked_store.symlink_to(store)
+    assert source_artifact_intact(record, linked_store) is False
