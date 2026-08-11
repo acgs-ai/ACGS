@@ -4,9 +4,8 @@ The loader never runs in CI, so nothing else pins its behaviour. Three things
 here are easy to break silently: the schema splitter (prose comments in
 ``schema.cypher`` legitimately contain ``;``, so comments must be stripped
 *before* splitting), the label grouping that turns extra labels into a
-``SET n:`X``` suffix, and the wipe drain loop — which must run by DEFAULT,
-because MERGE/SET never remove stale graph data. A stub driver stands in for
-Neo4j; no live service is required.
+``SET n:`X``` suffix, and the explicitly requested wipe drain loop.
+A stub driver stands in for Neo4j; no live service is required.
 """
 
 from __future__ import annotations
@@ -165,19 +164,28 @@ def test_wipe_drains_until_the_delete_batch_returns_zero(run_load):
     assert "LIMIT 20000" in deletes[0]
 
 
-def test_a_default_load_wipes_the_existing_graph_first(run_load):
-    """REGRESSION. MERGE and SET += only add or update: a default (flagless)
-    reload after moving to another commit left the previous Snapshot node
-    alongside the new one — while reports.py assumes exactly one — and
-    retained deleted files and obsolete governance edges indefinitely.
-    Replacement must be the default, not an opt-in."""
-    _, driver, _ = run_load(_graph(), wipe_counts=[42, 0])
+def test_a_flagless_load_never_wipes_the_existing_graph(run_load, capsys):
+    """An ordinary load must never imply a graph-wide delete."""
+    _, driver, _ = run_load(_graph())
 
-    deletes = [q for q, _ in driver.sessions[0].calls if "DETACH DELETE" in q]
-    assert len(deletes) == 2
+    assert not any("DETACH DELETE" in q for q, _ in driver.sessions[0].calls)
+    assert "WARNING: additive load" in capsys.readouterr().err
 
 
-def test_no_wipe_opts_out_of_the_default_replacement(run_load):
+def test_a_custom_shared_database_is_not_wiped_without_the_explicit_flag(run_load):
+    _, driver, _ = run_load(
+        _graph(),
+        "--uri",
+        "bolt://shared.internal:7687",
+        "--database",
+        "shared",
+    )
+
+    assert driver.sessions[0].database == "shared"
+    assert not any("DETACH DELETE" in q for q, _ in driver.sessions[0].calls)
+
+
+def test_no_wipe_remains_an_additive_compatibility_alias(run_load):
     _, driver, _ = run_load(_graph(), "--no-wipe")
 
     assert not any("DETACH DELETE" in q for q, _ in driver.sessions[0].calls)
@@ -202,6 +210,7 @@ def test_connection_settings_come_from_the_environment(run_load, monkeypatch):
     assert captured["uri"] == "bolt://graph.internal:7687"
     assert captured["auth"] == ("grapher", "from-env")
     assert driver.sessions[0].database == "kg"
+    assert not any("DETACH DELETE" in q for q, _ in driver.sessions[0].calls)
 
 
 def test_explicit_flags_override_the_environment(run_load, monkeypatch):

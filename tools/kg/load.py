@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Load tools/kg/build/graph.json into Neo4j via batched UNWIND ... MERGE.
 
-Replacement is the default: the existing graph is wiped first (constraints
-are kept), because MERGE/SET only ever add or update — an incremental reload
-after moving commits would keep the previous Snapshot node (reports.py
-assumes exactly one), deleted files, and obsolete governance edges forever.
-Pass --no-wipe only when the previous graph is known to be a subset.
+Loads are additive by default. Pass --wipe to explicitly replace the existing
+graph first (constraints are kept). MERGE/SET only add or update, so a
+flagless load can retain the previous Snapshot node (reports.py assumes
+exactly one), deleted files, and obsolete governance edges.
 
     uv run --no-project --with neo4j python tools/kg/load.py
 """
@@ -44,10 +43,9 @@ def main() -> int:
     ap.add_argument(
         "--wipe",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="delete all nodes first (the default: MERGE never removes stale "
-        "data, so an incremental reload retains the previous Snapshot, "
-        "deleted files and obsolete edges; pass --no-wipe to merge additively)",
+        default=False,
+        help="explicitly delete all nodes before loading; without this flag, "
+        "MERGE adds or updates data and may retain stale nodes and edges",
     )
     args = ap.parse_args()
 
@@ -83,7 +81,10 @@ def main() -> int:
                 total += deleted
             log(f"wiped {total} nodes")
         else:
-            log("--no-wipe: merging additively; stale nodes/edges from a previous load persist")
+            log(
+                "WARNING: additive load; stale nodes/edges from a previous load may persist. "
+                "Use --wipe only for an explicit full replacement"
+            )
 
         groups: dict[tuple, list[dict]] = defaultdict(list)
         for n in nodes:
