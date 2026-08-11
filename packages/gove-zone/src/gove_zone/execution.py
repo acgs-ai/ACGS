@@ -174,6 +174,19 @@ _OPERATOR_CHARS = frozenset("();<>|&")
 # than classify the unexpanded spelling.
 _EXPANSION_CHARS = frozenset("$`")
 
+# Characters that trigger pathname expansion (globbing) inside a word. Bash
+# expands an executable word carrying an unquoted glob *before* command
+# lookup: with npm installed at ``/opt/node/bin/npm``,
+# ``/opt/node/bin/n?m install left-pad`` executes npm while the classifier
+# would record the binary as ``n?m`` and mint an allowed ``env.shell.exec`` —
+# bypassing the canonical-manager denial exactly as a parameter expansion
+# would. The expansion is not emulated (it depends on the host filesystem),
+# so a glob-bearing executable word fails closed as undecidable. shlex strips
+# quotes, so a quoted literal (``'n?m' install``) — and the ``[`` test
+# builtin — are over-approximated as expansions: an escalation, never a
+# false allow.
+_GLOB_CHARS = frozenset("*?[")
+
 # Leading tokens that wrap another command rather than being the command.
 # These pass their remaining arguments through as an argv — the wrapped
 # command's structure is preserved — which is why peeling them is sound.
@@ -214,6 +227,43 @@ _SHELL_INTERPRETERS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "fish", "cs
 #: option is returned undecidable (fail-closed). A bare script run
 #: (``node server.js``) stays a decidable plain exec, like ``python app.py``.
 _INLINE_INTERPRETERS = frozenset({"node", "nodejs", "deno", "ruby", "perl", "php", "lua", "luajit"})
+
+#: Utilities that execute a *nested command* given as operands. ``xargs npm
+#: install left-pad``, ``timeout 60 npm install left-pad``, and ``watch 'npm
+#: install left-pad'`` all run the governed manager while the outer binary
+#: classified as an allowed ``env.shell.exec`` — bypassing the
+#: canonical-manager denial and the dependency escalation exactly as shell
+#: delegation did. Unlike the :data:`_WRAPPERS`, these are not plain argv
+#: pass-throughs: each has its own operand grammar (durations, replacement
+#: strings, intervals, trace options) that would have to be modeled to
+#: recover the nested argv, so every invocation is returned undecidable
+#: (fail-closed) rather than peeled on a guess.
+_COMMAND_LAUNCHERS = frozenset(
+    {
+        "xargs",
+        "timeout",
+        "watch",
+        "parallel",
+        "setsid",
+        "stdbuf",
+        "ionice",
+        "chrt",
+        "taskset",
+        "flock",
+        "strace",
+        "ltrace",
+        "script",
+    }
+)
+
+#: ``find`` primaries that execute a nested command once per matched path
+#: (``find /tmp -maxdepth 0 -exec npm install left-pad \;``). A find without
+#: one of these reads the filesystem like any other unclassified binary and
+#: stays a decidable plain exec; with one present the nested argv is embedded
+#: mid-expression and is not recovered — the invocation fails closed. shlex
+#: strips quotes, so a quoted pattern spelling a primary (``-name '-exec'``)
+#: is over-approximated: an escalation, never a false allow.
+_FIND_EXEC_PRIMARIES = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
 
 _INSTALL_SUBCOMMANDS: Mapping[str, frozenset[str]] = {
     "npm": frozenset({"install", "i", "ci", "add", "update", "up"}),
@@ -458,6 +508,28 @@ _GIT_READ_ONLY = frozenset(
 #: Matched on the exact option name (``--output`` / ``--output=<file>``), never
 #: on a prefix, so ``--output-indicator-new=<char>`` stays untouched.
 _GIT_OUTPUT_REDIRECT_OPTIONS = frozenset({"--output", "--output-directory"})
+
+#: Options that make an otherwise read-only git subcommand execute a helper
+#: program: ``--ext-diff`` runs the configured external diff command and
+#: ``--textconv`` runs configured textconv filters (both documented in
+#: ``git help log`` / ``git help diff``). The helper itself is declared by
+#: repository or host configuration this classifier never reads, so the
+#: read-only claim the tier assignment rests on is false whenever one of
+#: these appears — fail closed.
+_GIT_HELPER_ENABLE_OPTIONS = frozenset({"--ext-diff", "--textconv"})
+
+#: ``-c`` / ``--config-env`` key prefixes that cannot change *what* git
+#: executes. Git configuration is itself a command-execution surface:
+#: ``diff.external``, ``diff.<driver>.command``, ``core.pager``,
+#: ``core.editor``, ``core.sshCommand``, ``credential.helper``,
+#: ``filter.<name>.clean``, ``pager.<cmd>``, ... all name programs git will
+#: run, and the dangerous-key set is open-ended. Keys are therefore
+#: **allowlisted, not blocklisted**: identity and display keys are inert;
+#: any other key on the command line is returned undecidable (fail-closed)
+#: rather than trusted on a guess about its semantics. ``git -c
+#: diff.external='touch /tmp/poc' diff`` executed the helper while riding
+#: the read-only branch when only ``alias.*`` was rejected.
+_GIT_INERT_CONFIG_PREFIXES = ("user.", "author.", "committer.", "color.", "advice.")
 
 #: git global options that consume the *following* token as their value when
 #: not written in ``--option=value`` form. ``git -h`` explicitly permits these
@@ -809,6 +881,23 @@ def _git_config_key(value: str) -> str:
     return value.split("=", 1)[0].strip().lower()
 
 
+def _git_config_undecidable_reason(value: str) -> str:
+    """The fail-closed reason for a ``-c`` / ``--config-env`` value, or ``""``.
+
+    ``alias.*`` keeps its own marker — the config defines the very subcommand
+    about to run. Every other key is accepted only when its prefix is on the
+    inert allowlist: git config keys routinely name programs git executes
+    (``diff.external``, ``core.pager``, ``credential.helper``, ...), and that
+    key space is open-ended, so an unrecognized key is not guessed at.
+    """
+    key = _git_config_key(value)
+    if key.startswith("alias."):
+        return "git-alias-config"
+    if not key.startswith(_GIT_INERT_CONFIG_PREFIXES):
+        return "git-config-override"
+    return ""
+
+
 def _git_subcommand(argv: Sequence[str]) -> tuple[str, str]:
     """``(subcommand, undecidable_reason)`` for a git argv.
 
@@ -824,8 +913,13 @@ def _git_subcommand(argv: Sequence[str]) -> tuple[str, str]:
     key) defines the very subcommand about to run: ``git -c alias.st='!rm -rf'
     st`` would otherwise classify on ``st``, a token whose meaning the command
     line itself just rewrote. Any alias-defining config is therefore returned
-    undecidable (``git-alias-config``). Benign ``-c`` keys (``user.name=x``)
-    are still skipped.
+    undecidable (``git-alias-config``). Other keys are accepted only from the
+    inert allowlist (:data:`_GIT_INERT_CONFIG_PREFIXES`): ``git -c
+    diff.external='touch /tmp/poc' diff`` executes the helper on a read-only
+    subcommand, and the set of command-executing config keys is open-ended,
+    so a non-inert key is returned undecidable (``git-config-override``)
+    rather than skipped on a guess. Inert keys (``user.name=x``) are still
+    skipped.
     """
     index = 1
     while index < len(argv):
@@ -835,15 +929,19 @@ def _git_subcommand(argv: Sequence[str]) -> tuple[str, str]:
         if token.startswith("--") and "=" in token:
             option, value = token.split("=", 1)
             if option in _GIT_VALUE_GLOBAL_OPTIONS or option in _GIT_FLAG_GLOBAL_OPTIONS:
-                if option in ("-c", "--config-env") and _git_config_key(value).startswith("alias."):
-                    return "", "git-alias-config"
+                if option in ("-c", "--config-env"):
+                    config_reason = _git_config_undecidable_reason(value)
+                    if config_reason:
+                        return "", config_reason
                 index += 1
                 continue
             return "", "unrecognized-git-global-option"
         if token in _GIT_VALUE_GLOBAL_OPTIONS:
             value = argv[index + 1] if index + 1 < len(argv) else ""
-            if token in ("-c", "--config-env") and _git_config_key(value).startswith("alias."):
-                return "", "git-alias-config"
+            if token in ("-c", "--config-env"):
+                config_reason = _git_config_undecidable_reason(value)
+                if config_reason:
+                    return "", config_reason
             index += 2
             continue
         if token in _GIT_FLAG_GLOBAL_OPTIONS:
@@ -853,8 +951,8 @@ def _git_subcommand(argv: Sequence[str]) -> tuple[str, str]:
     return "", ""
 
 
-def _git_output_redirect_option(argv: Sequence[str]) -> str:
-    """The first output-redirecting option token on a git argv, or ``""``.
+def _git_option_present(argv: Sequence[str], options: frozenset[str]) -> str:
+    """The first token on a git argv whose option name is in *options*, or ``""``.
 
     A bare ``--`` ends option parsing for git: everything after it is a
     pathspec, so a file literally named ``--output`` is an argument there,
@@ -867,7 +965,7 @@ def _git_output_redirect_option(argv: Sequence[str]) -> str:
             break
         if not token.startswith("-"):
             continue
-        if token.split("=", 1)[0] in _GIT_OUTPUT_REDIRECT_OPTIONS:
+        if token.split("=", 1)[0] in options:
             return token
     return ""
 
@@ -1064,6 +1162,14 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
         # (`'$PM' install`) is over-approximated as an expansion: an
         # escalation, never a false allow.
         reasons.append("executable-word-expansion")
+    if _GLOB_CHARS & set(argv[0]):
+        # `/opt/node/bin/n?m install left-pad`: bash performs pathname
+        # expansion on the executable word before command lookup, so the
+        # token this classifier sees (`n?m`) is not the binary that will run
+        # (`npm`). Resolving the glob would require the host filesystem, so
+        # the event fails closed as undecidable instead of classifying the
+        # unexpanded spelling.
+        reasons.append("executable-word-glob")
     if binary in _SHELL_EVAL_BUILTINS:
         # `eval` combines its arguments and executes them as a new shell
         # command line; `source`/`.` run file contents in the current shell.
@@ -1082,6 +1188,17 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
         # inline program text this classifier never tokenizes. A bare script
         # run carries no options and stays a decidable plain exec.
         reasons.append("inline-interpreter-option")
+    if binary in _COMMAND_LAUNCHERS:
+        # `xargs npm install left-pad` / `timeout 60 npm install left-pad`:
+        # the outer utility executes a nested command whose argv is embedded
+        # in an operand grammar this classifier does not model, so the outer
+        # binary must not mint an allow for whatever the nested command does.
+        reasons.append("command-launcher-delegation")
+    if binary == "find" and any(token in _FIND_EXEC_PRIMARIES for token in argv[1:]):
+        # `find ... -exec <command> \;` runs the embedded command per matched
+        # path; without the marker the governed nested argv rode an allowed
+        # `env.shell.exec` for the outer find.
+        reasons.append("find-exec-delegation")
     if _PYTHON_BINARY_RE.match(binary):
         # `python -m pip install x` IS `pip install x`; leaving it unrecovered
         # would make the interpreter an alias for every governed manager.
@@ -1322,7 +1439,7 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
                 facts={**base_facts, "subcommand": subcommand},
                 command_sha256=digest,
             )
-        if not mutating and _git_output_redirect_option(argv):
+        if not mutating and _git_option_present(argv, _GIT_OUTPUT_REDIRECT_OPTIONS):
             # `git log --output=<file>` writes the file git would otherwise
             # print to stdout, so the "read-only" claim the tier assignment
             # rests on is false and the destination path is not governed
@@ -1335,6 +1452,23 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
                 tier_hint=TIER_UNCLASSIFIED,
                 decidable=False,
                 undecidable_reasons=("git-output-redirection",),
+                facts={**base_facts, "subcommand": subcommand},
+                command_sha256=digest,
+            )
+        if not mutating and _git_option_present(argv, _GIT_HELPER_ENABLE_OPTIONS):
+            # `git log --ext-diff` runs the configured external diff command
+            # and `--textconv` runs configured textconv filters: the helper
+            # is arbitrary code declared by configuration this classifier
+            # never reads, so the read-only claim is false. Fail closed
+            # rather than mint an allow receipt for helper execution dressed
+            # as an inspection command.
+            return ExecutionEvent(
+                action=ACTION_SHELL_EXEC,
+                binary=binary,
+                argv_prefix=argv_prefix,
+                tier_hint=TIER_UNCLASSIFIED,
+                decidable=False,
+                undecidable_reasons=("git-helper-option",),
                 facts={**base_facts, "subcommand": subcommand},
                 command_sha256=digest,
             )

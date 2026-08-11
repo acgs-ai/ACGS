@@ -276,6 +276,30 @@ def test_executable_word_expansions_are_undecidable(command: str) -> None:
     assert "executable-word-expansion" in event.undecidable_reasons
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/opt/node/bin/n?m install left-pad",
+        "n*m install left-pad",
+        "/opt/*/bin/npm install left-pad",
+        "sudo /opt/node/bin/n?m install left-pad",
+        "/opt/node/bin/[n]pm install left-pad",
+    ],
+)
+def test_glob_bearing_executable_words_are_undecidable(command: str) -> None:
+    """bash performs pathname expansion on the executable word before command
+    lookup: with npm at ``/opt/node/bin/npm``, ``/opt/node/bin/n?m install
+    left-pad`` executes npm while the classifier records ``n?m`` and minted an
+    allowed ``env.shell.exec`` — bypassing the non-canonical-manager denial.
+    The glob is not resolvable without the host filesystem, so it must fail
+    closed on its own marker."""
+    event = classify_command(command, canonical_package_manager="pnpm")
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert "executable-word-glob" in event.undecidable_reasons
+
+
 def test_assignment_expansion_is_not_peeled_as_an_env_prefix() -> None:
     """``${PM:=npm}`` contains ``=`` but is an executable word, not an
     assignment: bash performs the assignment only for a valid identifier name.
@@ -524,6 +548,63 @@ def test_shell_eval_builtins_are_undecidable(command: str, builtin: str) -> None
     assert "shell-eval-builtin" in event.undecidable_reasons
 
 
+@pytest.mark.parametrize(
+    ("command", "launcher"),
+    [
+        ("xargs npm install left-pad", "xargs"),
+        ("timeout 60 npm install left-pad", "timeout"),
+        ("watch 'npm install left-pad'", "watch"),
+        ("stdbuf -oL npm install left-pad", "stdbuf"),
+        ("flock /tmp/lock npm install left-pad", "flock"),
+        ("sudo xargs npm install left-pad", "xargs"),
+    ],
+)
+def test_command_launchers_are_undecidable(command: str, launcher: str) -> None:
+    """``xargs npm install left-pad`` and ``timeout 60 npm install left-pad``
+    execute the governed manager while the outer utility classified as an
+    allowed ``env.shell.exec`` — bypassing the non-canonical-manager denial
+    exactly as shell delegation did. The nested argv is embedded in an operand
+    grammar this classifier does not model, so it must fail closed."""
+    event = classify_command(command, canonical_package_manager="pnpm")
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.binary == launcher
+    assert event.decidable is False
+    assert "command-launcher-delegation" in event.undecidable_reasons
+
+
+def test_find_exec_delegation_is_undecidable() -> None:
+    """``find /tmp -maxdepth 0 -exec npm install left-pad \\;`` runs the
+    embedded command once per matched path; the outer ``find`` must not mint
+    an allow for it. The escaped ``\\;`` terminator is data (no operator
+    marker), so only the delegation marker fires."""
+    event = classify_command("find /tmp -maxdepth 0 -exec npm install left-pad \\;")
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.binary == "find"
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("find-exec-delegation",)
+    assert event.facts["operator_present"] is False
+
+
+@pytest.mark.parametrize("primary", ["-execdir", "-ok", "-okdir"])
+def test_every_find_exec_primary_fails_closed(primary: str) -> None:
+    event = classify_command(f"find . {primary} npm install left-pad \\;")
+
+    assert event.decidable is False
+    assert "find-exec-delegation" in event.undecidable_reasons
+
+
+def test_find_without_exec_primaries_stays_decidable() -> None:
+    """Positive control: a find that only reads the filesystem classifies like
+    any other unclassified binary."""
+    event = classify_command("find . -name '*.py' -type f")
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is True
+    assert event.tier_hint == TIER_UNCLASSIFIED
+
+
 def test_value_taking_manager_options_preserve_the_contract_facts() -> None:
     """``npm --prefix acgi-ai install left-pad``: the unmodeled ``--prefix``
     value makes the *subcommand* ambiguous, but the *manager* is certain.
@@ -684,6 +765,72 @@ def test_git_alias_defining_config_is_undecidable(command: str) -> None:
     assert event.undecidable_reasons == ("git-alias-config",)
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git -c diff.external='touch /tmp/poc' diff",
+        "git -c diff.sensitive.command='touch /tmp/poc' diff",
+        "git -c core.pager='touch /tmp/poc' log",
+        "git --config-env=credential.helper=PAYLOAD status",
+        "git -c core.sshCommand='touch /tmp/poc' ls-remote origin",
+    ],
+)
+def test_git_non_inert_config_overrides_are_undecidable(command: str) -> None:
+    """``git -c diff.external='touch /tmp/poc' diff`` executes the helper while
+    riding the read-only branch: git config keys routinely name programs git
+    runs, and that key space is open-ended, so keys are allowlisted — a
+    non-inert key fails closed instead of being skipped on a guess."""
+    event = classify_command(command)
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("git-config-override",)
+
+
+def test_git_inert_config_keys_are_still_skipped() -> None:
+    """Positive control: identity keys cannot change what git executes, so
+    ``-c user.email=...`` must not over-trigger the config marker."""
+    event = classify_command("git -c user.email=a@b.example -c color.ui=false commit -m msg")
+
+    assert event.action == ACTION_GIT_MUTATE
+    assert event.decidable is True
+    assert event.facts["subcommand"] == "commit"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git diff --ext-diff",
+        "git log --ext-diff -1",
+        "git log -p --ext-diff",
+        "git diff --textconv HEAD~1",
+        "git cat-file --textconv HEAD:file",
+    ],
+)
+def test_git_helper_enabling_options_on_read_only_subcommands_are_undecidable(
+    command: str,
+) -> None:
+    """``--ext-diff`` runs the configured external diff command and
+    ``--textconv`` runs configured textconv filters — arbitrary code declared
+    by configuration this classifier never reads — so the read-only claim is
+    false and the command must fail closed."""
+    event = classify_command(command)
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("git-helper-option",)
+    assert event.tier_hint == TIER_UNCLASSIFIED
+
+
+def test_git_pathspec_named_like_helper_option_stays_read_only() -> None:
+    """Positive control: after ``--`` everything is a pathspec, so a file
+    literally named ``--ext-diff`` is data, not a helper toggle."""
+    event = classify_command("git log -- --ext-diff")
+
+    assert event.decidable is True
+    assert event.tier_hint == TIER_READ_ONLY
+
+
 def test_unknown_git_subcommand_is_not_presumed_read_only() -> None:
     """``git st`` may be a user-defined alias expanding to anything; a
     subcommand in neither the mutating nor the read-only table fails closed."""
@@ -810,7 +957,7 @@ def test_standalone_quoted_operator_arguments_stay_git_mutations(command: str) -
     "command",
     [
         "grep -F '|' file.txt",
-        "find . -name '*.py' -exec grep x {} \\;",
+        "printf ';'",
     ],
 )
 def test_quoted_or_escaped_operator_tokens_are_data(command: str) -> None:
@@ -1322,6 +1469,12 @@ def test_artifact_generation_requires_a_human_at_the_gate(tmp_path: Path) -> Non
         "$'npm' install left-pad",
         "corepack completion",
         "corepack --version",
+        "/opt/node/bin/n?m install left-pad",
+        "git -c diff.external='touch /tmp/poc' diff",
+        "git log --ext-diff",
+        "xargs npm install left-pad",
+        "timeout 60 npm install left-pad",
+        "find /tmp -maxdepth 0 -exec npm install left-pad \\;",
     ],
 )
 def test_classifier_refusals_fail_closed_to_a_human_at_the_gate(
