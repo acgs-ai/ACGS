@@ -401,7 +401,17 @@ Requested focus area. This submodule is **not** initialized by
     for c in controls:
         fw = c["framework"]
         acc = by_fw.setdefault(
-            fw, {"A": 0, "B": 0, "C": 0, "D": 0, "cfg_only": 0, "doc_only": 0, "none": 0}
+            fw,
+            {
+                "A": 0,
+                "B": 0,
+                "C": 0,
+                "D": 0,
+                "cfg_only": 0,
+                "cfg_and_doc": 0,
+                "doc_only": 0,
+                "none": 0,
+            },
         )
         ev = [e for e in c["ev"] if e.get("key")]
         code_ev = [e for e in ev if (e["ext"] or "") in CODE_EXT]
@@ -424,7 +434,13 @@ Requested focus area. This submodule is **not** initialized by
             # Config-only evidence is not a document and not source: it stays
             # below tier B (source code remains required for "implemented")
             # but is classified as what it is, not mislabelled a document.
-            if cfg_ev:
+            # A control citing both configuration AND documentation is a
+            # mixed case counted on its own: folding it into "config-only"
+            # overstated a category the summary declares mutually exclusive.
+            if cfg_ev and doc_ev:
+                acc["cfg_and_doc"] += 1
+                tier = "A referenced (evidence targets are configuration and documents)"
+            elif cfg_ev:
                 acc["cfg_only"] += 1
                 tier = "A referenced (evidence target is configuration)"
             else:
@@ -453,6 +469,7 @@ Requested focus area. This submodule is **not** initialized by
             v["C"],
             "UNKNOWN",
             v["cfg_only"],
+            v["cfg_and_doc"],
             v["doc_only"],
             v["none"],
         ]
@@ -477,7 +494,7 @@ framework requirement is satisfied.
 | **C tested** | That source file also carries a test edge | B, and the target has `(:File)-[:TESTED_BY]->()` |
 | **D externally verified** | Independent third-party attestation | **UNKNOWN for every control.** No artifact in this repository records external verification, so this tier cannot be computed and is never inferred |
 
-Three failure modes are reported explicitly rather than being folded into a tier:
+Four failure modes are reported explicitly rather than being folded into a tier:
 
 - **evidence target is a document** — the control cites another `.md`, not an
   implementation. Counting these as "implemented" is the single easiest way to
@@ -485,6 +502,9 @@ Three failure modes are reported explicitly rather than being folded into a tier
 - **evidence target is configuration**: the control cites only configuration
   (`{"`, `".join(sorted(CONFIG_EXT))}`). Real evidence of *something*, but not
   source code, so it stays below tier B and is not mislabelled a document.
+- **evidence targets are configuration and documents** — the control cites
+  both, and neither is source code. Counted on its own so "config-only" and
+  "doc-only" stay mutually exclusive and match the per-control detail counts.
 - **no evidence target** — cited in prose with no resolvable file reference.
 
 ## Per-framework summary
@@ -498,6 +518,7 @@ Three failure modes are reported explicitly rather than being folded into a tier
                 "C tested",
                 "D externally verified",
                 "cited, config-only evidence",
+                "cited, config+doc evidence",
                 "cited, doc-only evidence",
                 "cited, no evidence",
             ],

@@ -359,6 +359,34 @@ def test_config_only_evidence_is_labelled_configuration_not_document(run_reports
     assert "B implemented" not in detail
 
 
+def test_mixed_config_and_document_evidence_is_not_counted_as_config_only(run_reports):
+    """REGRESSION. A control citing both configuration and documentation (but
+    no source) incremented cfg_only and was labelled "evidence target is
+    configuration" merely because cfg_ev was nonempty, while the summary
+    column explicitly calls that category "config-only evidence". The mixed
+    case must be counted on its own so the mutually exclusive columns match
+    the per-control detail counts."""
+    _, _, tiers, _ = run_reports(
+        controls=[
+            _control(
+                "SOC 2 CC7.2",
+                [_ev(".github/workflows/ci.yml", ".yml"), _ev("docs/other.md", ".md")],
+                framework="SOC 2",
+            )
+        ]
+    )
+
+    assert (
+        "| SOC 2 CC7.2 | SOC 2 | A referenced (evidence targets are configuration and documents) |"
+    ) in tiers
+    summary = tiers.split("## Per-framework summary")[1].split("## Per-control detail")[0]
+    # A=1, B=0, C=0, D UNKNOWN, config-only=0, config+doc=1, doc-only=0, none=0
+    assert "| SOC 2 | 1 | 0 | 0 | UNKNOWN | 0 | 1 | 0 | 0 |" in summary
+    detail = tiers.split("## Per-control detail")[1]
+    assert "evidence target is configuration)" not in detail
+    assert "B implemented" not in detail
+
+
 def test_evidence_rows_without_a_key_are_discarded(run_reports):
     """An OPTIONAL MATCH that found nothing yields a null-keyed collect entry;
     treating it as evidence would invent a citation."""
@@ -399,8 +427,8 @@ def test_per_framework_summary_counts_each_tier(run_reports):
 
     summary = tiers.split("## Per-framework summary")[1].split("## Per-control detail")[0]
     # A=5, B implemented=2, C tested=1, D UNKNOWN,
-    # config-only=1, doc-only=1, no evidence=1
-    assert "| EU AI Act | 5 | 2 | 1 | UNKNOWN | 1 | 1 | 1 |" in summary
+    # config-only=1, config+doc=0, doc-only=1, no evidence=1
+    assert "| EU AI Act | 5 | 2 | 1 | UNKNOWN | 1 | 0 | 1 | 1 |" in summary
 
 
 def test_detail_rows_are_sorted_by_framework_then_control(run_reports):

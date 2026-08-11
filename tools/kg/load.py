@@ -61,6 +61,34 @@ def main() -> int:
     data = json.loads(Path(args.graph).read_text())
     nodes, rels = data["nodes"], data["rels"]
 
+    # The relationship loader MATCHes both endpoints before MERGE, so Cypher
+    # silently discards a row whose endpoint is absent — a dangling rel after
+    # an extractor-schema change, or a hand-built --graph override — while
+    # the counters still claim it loaded and the loader exits 0. A partially
+    # linked graph published as success is false governance evidence, so
+    # endpoint identities are prevalidated against the input nodes and the
+    # whole load is refused before connecting or wiping anything.
+    node_keys = {(n["label"], n["key"]) for n in nodes}
+    dangling = [
+        r
+        for r in rels
+        if (r["src_label"], r["src"]) not in node_keys
+        or (r["dst_label"], r["dst"]) not in node_keys
+    ]
+    if dangling:
+        for r in dangling[:10]:
+            log(
+                "ERROR: dangling relationship "
+                f"(:{r['src_label']} {{key: {r['src']!r}}})-[:{r['type']}]->"
+                f"(:{r['dst_label']} {{key: {r['dst']!r}}}): "
+                "one or both endpoints are not in the input graph"
+            )
+        log(
+            f"ERROR: {len(dangling)} dangling relationship(s): the MATCH clauses "
+            "would silently drop them and claim a full load; refusing"
+        )
+        return 1
+
     driver = GraphDatabase.driver(args.uri, auth=(args.user, args.password))
     driver.verify_connectivity()
 

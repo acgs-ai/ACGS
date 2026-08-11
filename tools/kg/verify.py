@@ -14,18 +14,24 @@ import os
 import re
 from pathlib import Path
 
-# The uniqueness constraints schema.cypher declares, derived from the file
-# itself so the two cannot drift. If `SHOW CONSTRAINTS` is missing any of
-# them — schema.cypher was never applied, or a constraint was dropped —
-# later loads can mint duplicate nodes and fan out relationships, so the
-# shape check must be a hard gate, not informational output.
-REQUIRED_CONSTRAINTS = frozenset(
-    re.findall(
-        r"^CREATE CONSTRAINT (\w+) IF NOT EXISTS",
+# The uniqueness constraints schema.cypher declares — name, label, AND
+# property — derived from the file itself so the two cannot drift. If `SHOW
+# CONSTRAINTS` is missing any name, schema.cypher was never applied or a
+# constraint was dropped; if a name exists but on the wrong label/property
+# tuple, `IF NOT EXISTS` will never replace it, so the apply step "succeeds"
+# while duplicate nodes remain possible. Either way later loads can mint
+# duplicates and fan out relationships, so the shape check must be a hard
+# gate, not informational output.
+REQUIRED_CONSTRAINT_SCHEMAS: dict[str, tuple[str, str]] = {
+    name: (label, prop)
+    for name, label, prop in re.findall(
+        r"^CREATE CONSTRAINT (\w+) IF NOT EXISTS "
+        r"FOR \(\w+:(\w+)\) REQUIRE \w+\.(\w+) IS UNIQUE",
         (Path(__file__).resolve().parent / "schema.cypher").read_text(),
         re.M,
     )
-)
+}
+REQUIRED_CONSTRAINTS = frozenset(REQUIRED_CONSTRAINT_SCHEMAS)
 
 # "Code evidence" means source code. Keep in lockstep with CODE_EXT in
 # reports.py and the Q6/Q6b filters in queries.cypher.
@@ -174,6 +180,26 @@ def main() -> int:
                         + ": schema.cypher was not (fully) applied, so later "
                         "loads can create duplicate nodes"
                     )
+                # Names alone cannot prove the schema was applied: a
+                # same-named constraint on the wrong label or property (e.g.
+                # file_key on :X(key) instead of :File(key)) is never
+                # replaced by schema.cypher's IF NOT EXISTS, so duplicate
+                # nodes stay possible while the name check passes.
+                by_name = {row.get("name"): row for row in rows}
+                for name, (label, prop) in sorted(REQUIRED_CONSTRAINT_SCHEMAS.items()):
+                    row = by_name.get(name)
+                    if row is None:
+                        continue  # already reported as missing above
+                    on = list(row.get("on") or [])
+                    props = list(row.get("props") or [])
+                    if on != [label] or props != [prop]:
+                        failures.append(
+                            f"constraint {name} exists on "
+                            f":{':'.join(on) or '?'}({', '.join(props) or '?'}) "
+                            f"but schema.cypher requires :{label}({prop}): "
+                            "IF NOT EXISTS will not replace it, so duplicate "
+                            f"{label} nodes remain possible"
+                        )
             if title == "snapshot" and len(rows) != 1:
                 # An otherwise healthy graph with no (or several) Snapshot
                 # nodes has no provenance, and reports.py crashes on

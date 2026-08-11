@@ -205,6 +205,18 @@ def build_spine() -> list[str]:
     the submodule boundary and every submodule-scoped fact silently vanishes.
     """
     tracked = [p for p in run("git", "ls-files").splitlines() if p]
+    # Gitlink entries (mode 160000) are directories in the working tree, so
+    # testing them with Path.is_file() recorded every initialized submodule
+    # pointer as present=false; file_is_live() then rejected it and
+    # build_history() silently dropped its aggregate pointer-change
+    # statistics even though build_topology() assigns the gitlink and its
+    # history to the submodule package. Detect gitlink mode from the index
+    # and test directory existence for those paths instead.
+    gitlinks = {
+        line.split("\t", 1)[1]
+        for line in run("git", "ls-files", "-s").splitlines()
+        if line.startswith("160000 ") and "\t" in line
+    }
     submodule_paths: set[str] = set()
     for sm in initialized_submodules():
         sub = subprocess.run(
@@ -235,7 +247,9 @@ def build_spine() -> list[str]:
             # still lists a tracked file whose unstaged deletion removed it
             # from disk, and recording it as present would let file_is_live()
             # keep resolving citations to it as live Tier B evidence.
-            present=(ROOT / path).is_file(),
+            # A gitlink's checkout is a directory, never a regular file.
+            present=((ROOT / path).is_dir() if path in gitlinks else (ROOT / path).is_file()),
+            is_gitlink=path in gitlinks,
             is_test=is_test_path(path),
             ua_covered=False,
             sealed=False,
@@ -1109,7 +1123,13 @@ def build_controls() -> None:
     by_basename = 0
     for rel in sorted(docs):
         f = ROOT / rel
-        if not f.is_file():
+        # The mapping document is itself provenance: a doc removed from the
+        # index but left on disk (tracked=false, present=true) will not exist
+        # in a checkout, so scanning it would publish and tier controls
+        # sourced from a document the repository does not ship. The source
+        # must be live and tracked, exactly like the evidence targets it
+        # cites through file_is_live() in resolve_token().
+        if not f.is_file() or not file_is_live(rel):
             continue
         # Scope evidence to the paragraph (a table row is its own paragraph),
         # so a control claim binds only to code cited near it.
@@ -1266,7 +1286,20 @@ def build_workflows(files: list[str]) -> None:
             if isinstance(cfg, dict) and cfg.get("paths"):
                 filters_by_event[ev] = [str(g) for g in cfg["paths"]]
         globs = sorted({g for fl in filters_by_event.values() for g in fl})
-        jobs = sorted((doc.get("jobs") or {}).keys())
+        job_cfgs = doc.get("jobs") or {}
+        jobs = sorted(job_cfgs.keys())
+        # A job-level `if:` can skip the job even when the trigger paths
+        # match (tests-root.yml skips its sole job on fork PRs), so a
+        # workflow whose every job is conditional does not necessarily
+        # execute for a matching change. The conditions are recorded and the
+        # GATES edges marked so Q1/Q2 and the reports can separate
+        # guaranteed coverage from coverage that depends on the run context.
+        conditional_jobs = sorted(
+            name
+            for name, cfg in job_cfgs.items()
+            if isinstance(cfg, dict) and cfg.get("if") is not None
+        )
+        all_jobs_conditional = bool(jobs) and len(conditional_jobs) == len(jobs)
         wkey = doc.get("name") or f.stem
         # path_filters is a sorted union kept for cross-event overviews; it
         # loses both event association and pattern order, so each event's
@@ -1286,6 +1319,8 @@ def build_workflows(files: list[str]) -> None:
             jobs=jobs,
             job_count=len(jobs),
             path_filtered=bool(globs),
+            conditional_jobs=conditional_jobs,
+            all_jobs_conditional=all_jobs_conditional,
             **per_event,
         )
         G.rel("DEFINED_IN", "Workflow", wkey, "File", rel)
@@ -1307,7 +1342,15 @@ def build_workflows(files: list[str]) -> None:
                 ev for ev, filters in compiled.items() if match_path_filters(path, filters)
             )
             if events:
-                G.rel("GATES", "Workflow", wkey, "File", path, events=events)
+                G.rel(
+                    "GATES",
+                    "Workflow",
+                    wkey,
+                    "File",
+                    path,
+                    events=events,
+                    conditional=all_jobs_conditional,
+                )
                 gates += 1
     log(
         f"E5. workflows: {sum(1 for (label, _) in G.nodes if label == 'Workflow')} workflows, "

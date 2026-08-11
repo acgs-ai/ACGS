@@ -180,6 +180,53 @@ def test_a_non_positive_batch_size_is_rejected_before_touching_the_database(
     assert "driver" not in captured  # never connected, so nothing was wiped
 
 
+def test_a_dangling_relationship_is_refused_before_touching_the_database(
+    tmp_path, monkeypatch, capsys
+):
+    """REGRESSION. The relationship loader's MATCH clauses silently discard a
+    row whose endpoint is absent — a dangling rel after an extractor-schema
+    change, or a hand-built --graph override — while the counter still added
+    the full batch and the loader exited 0 claiming the relationship loaded.
+    A partially linked graph must never be published as a successful load."""
+    graph_path = tmp_path / "graph.json"
+    graph_path.write_text(
+        json.dumps(_graph(nodes=[_node("a.py")], rels=[_rel("IMPORTS", "a.py", "ghost.py")]))
+    )
+    captured = fake_neo4j(monkeypatch, lambda query: [])
+    monkeypatch.setattr(sys, "argv", ["load.py", "--graph", str(graph_path), "--wipe"])
+
+    code = load.main()
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "dangling relationship" in err
+    assert "ghost.py" in err
+    assert "driver" not in captured  # never connected, so nothing was wiped
+
+
+def test_a_relationship_whose_endpoint_label_mismatches_is_dangling(tmp_path, monkeypatch, capsys):
+    """Endpoint identity is (label, key), exactly what the MATCH clauses use:
+    a rel naming the right key under the wrong label would also be silently
+    dropped by Cypher."""
+    graph_path = tmp_path / "graph.json"
+    graph_path.write_text(
+        json.dumps(
+            _graph(
+                nodes=[_node("a.py"), _node("b.py")],
+                rels=[_rel("GATES", "a.py", "b.py", src_label="Workflow")],
+            )
+        )
+    )
+    captured = fake_neo4j(monkeypatch, lambda query: [])
+    monkeypatch.setattr(sys, "argv", ["load.py", "--graph", str(graph_path)])
+
+    code = load.main()
+
+    assert code == 1
+    assert "1 dangling relationship(s)" in capsys.readouterr().err
+    assert "driver" not in captured
+
+
 def test_wipe_drains_until_the_delete_batch_returns_zero(run_load):
     _, driver, _ = run_load(_graph(), "--wipe", wipe_counts=[20000, 137, 0])
 

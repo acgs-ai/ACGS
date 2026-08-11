@@ -167,6 +167,43 @@ def test_build_spine_marks_an_unstaged_tracked_deletion_as_absent(tmp_path, monk
     assert extract.G.nodes[("File", "gone.py")]["props"]["present"] is False
 
 
+def test_build_spine_records_an_initialized_gitlink_as_present(tmp_path, monkeypatch):
+    """REGRESSION. A gitlink's checkout is a directory, so Path.is_file()
+    recorded every initialized submodule pointer as present=false;
+    file_is_live() then rejected it and build_history() silently dropped its
+    aggregate pointer-change statistics even though build_topology()
+    explicitly assigns the gitlink and its history to the submodule package.
+    Gitlink mode (160000) must be detected from the index and presence tested
+    as a directory."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+
+    def fake_run(*args):
+        if args == ("git", "ls-files", "-s"):
+            return (
+                "100644 aaaa 0\tlive.py\n"
+                "160000 bbbb 0\tpackages/swarm\n"
+                "160000 cccc 0\tpackages/removed\n"
+            )
+        return "live.py\npackages/swarm\npackages/removed\n"
+
+    monkeypatch.setattr(extract, "run", fake_run)
+    monkeypatch.setattr(extract, "initialized_submodules", lambda: [])
+    (tmp_path / "live.py").write_text("x = 1\n")
+    (tmp_path / "packages" / "swarm").mkdir(parents=True)
+
+    extract.build_spine()
+
+    gitlink = extract.G.nodes[("File", "packages/swarm")]["props"]
+    assert gitlink["is_gitlink"] is True
+    assert gitlink["present"] is True
+    assert extract.file_is_live("packages/swarm") is True
+    # Presence is still derived, never assumed: a gitlink whose directory was
+    # removed from the working tree stays absent.
+    assert extract.G.nodes[("File", "packages/removed")]["props"]["present"] is False
+    # Ordinary files keep the regular-file test.
+    assert extract.G.nodes[("File", "live.py")]["props"]["is_gitlink"] is False
+
+
 # --------------------------------------------------------------------------- #
 # Semantic-layer reference mapping
 # --------------------------------------------------------------------------- #
@@ -598,6 +635,71 @@ def test_build_workflows_does_not_gate_submodule_internal_paths(tmp_path, monkey
         "File",
         "packages/swarm/src/main.py",
     ) not in extract.G.rels
+
+
+def test_build_workflows_marks_coverage_conditional_when_every_job_carries_an_if(
+    tmp_path, monkeypatch
+):
+    """REGRESSION. A job-level `if:` can skip the job even when the trigger
+    paths match (tests-root.yml skips its sole job on fork PRs), yet only the
+    trigger paths were inspected, so the GATES edge was indistinguishable from
+    unconditional coverage and Q1/Q2 and the generated report counted matching
+    fork changes as executed PR gating."""
+    pytest.importorskip("yaml")
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "tests.yml").write_text(
+        "name: tests\n"
+        "on:\n"
+        "  pull_request:\n"
+        "    paths:\n"
+        "      - 'src/**'\n"
+        "jobs:\n"
+        "  test:\n"
+        "    if: github.event.pull_request.head.repo.full_name == github.repository\n"
+        "    steps: []\n"
+    )
+    _files(".github/workflows/tests.yml", "src/main.py")
+
+    extract.build_workflows(["src/main.py"])
+
+    props = extract.G.nodes[("Workflow", "tests")]["props"]
+    assert props["conditional_jobs"] == ["test"]
+    assert props["all_jobs_conditional"] is True
+    gate = extract.G.rels[("GATES", "Workflow", "tests", "File", "src/main.py")]
+    assert gate["props"]["conditional"] is True
+
+
+def test_build_workflows_keeps_gates_unconditional_while_any_job_always_runs(tmp_path, monkeypatch):
+    """One unconditional job is enough for the workflow to gate every matching
+    change; only the fully conditional case may be marked."""
+    pytest.importorskip("yaml")
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "ci.yml").write_text(
+        "name: ci\n"
+        "on:\n"
+        "  pull_request:\n"
+        "    paths:\n"
+        "      - 'src/**'\n"
+        "jobs:\n"
+        "  lint:\n"
+        "    steps: []\n"
+        "  test:\n"
+        "    if: github.event_name == 'pull_request'\n"
+        "    steps: []\n"
+    )
+    _files(".github/workflows/ci.yml", "src/main.py")
+
+    extract.build_workflows(["src/main.py"])
+
+    props = extract.G.nodes[("Workflow", "ci")]["props"]
+    assert props["conditional_jobs"] == ["test"]
+    assert props["all_jobs_conditional"] is False
+    gate = extract.G.rels[("GATES", "Workflow", "ci", "File", "src/main.py")]
+    assert gate["props"]["conditional"] is False
 
 
 # --------------------------------------------------------------------------- #
@@ -1741,6 +1843,32 @@ def test_build_controls_ignores_documents_without_a_mapping_hint(tmp_path, monke
     extract.build_controls()
 
     assert not any(label == "Control" for label, _ in extract.G.nodes)
+
+
+def test_build_controls_ignores_an_untracked_mapping_document(tmp_path, monkeypatch):
+    """REGRESSION. Evidence *targets* were filtered through file_is_live(),
+    but the mapping document itself never was: a doc removed from the index
+    yet retained by the semantic snapshot (tracked=false, present=true) was
+    still scanned, minting MAPS_TO and attaching its citations to tracked
+    code, so the compliance report published and tiered controls sourced from
+    a document that will not exist in a checkout."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    doc = tmp_path / "docs" / "compliance-mapping.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text("| Art. 12(1) | implemented in `packages/gove-zone/audit.py` |\n")
+    extract.G.node(
+        "File",
+        "docs/compliance-mapping.md",
+        path="docs/compliance-mapping.md",
+        tracked=False,
+        present=True,
+    )
+    _files("packages/gove-zone/audit.py")
+
+    extract.build_controls()
+
+    assert not any(label == "Control" for label, _ in extract.G.nodes)
+    assert not any(key[0] in ("MAPS_TO", "EVIDENCED_BY") for key in extract.G.rels)
 
 
 def test_build_controls_never_binds_a_document_as_its_own_evidence(tmp_path, monkeypatch):

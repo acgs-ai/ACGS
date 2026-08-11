@@ -36,6 +36,7 @@ def run_verify(monkeypatch):
         snapshot_rows: int = 1,
         semantic_declared_loaded: bool = False,
         constraint_names: tuple[str, ...] | None = None,
+        constraint_rows: list[dict] | None = None,
         argv: tuple[str, ...] = (),
     ):
         catalog_queries = [q for _, q in verify.CATALOG]
@@ -46,9 +47,15 @@ def run_verify(monkeypatch):
             else list(constraint_names)
         )
 
+        def _row(name: str) -> dict:
+            label, prop = verify.REQUIRED_CONSTRAINT_SCHEMAS.get(name, ("X", "key"))
+            return {"name": name, "on": [label], "props": [prop]}
+
         def responder(query: str) -> list[dict]:
             if query.startswith("SHOW CONSTRAINTS"):
-                return [{"name": n, "on": ["X"], "props": ["key"]} for n in constraints]
+                if constraint_rows is not None:
+                    return list(constraint_rows)
+                return [_row(n) for n in constraints]
             if query.startswith("MATCH (f:File) RETURN count(*) AS files"):
                 return [join_row]
             if query == verify.SEALED_ABSENT_Q:
@@ -201,6 +208,42 @@ def test_required_constraints_are_derived_from_the_schema_file():
     assert "file_key" in verify.REQUIRED_CONSTRAINTS
     assert "snapshot_key" in verify.REQUIRED_CONSTRAINTS
     assert len(verify.REQUIRED_CONSTRAINTS) >= 10
+    assert verify.REQUIRED_CONSTRAINT_SCHEMAS["file_key"] == ("File", "key")
+    assert verify.REQUIRED_CONSTRAINT_SCHEMAS["snapshot_key"] == ("Snapshot", "key")
+
+
+def test_a_required_constraint_on_the_wrong_label_fails(run_verify, capsys):
+    """REGRESSION. The constraints gate compared names only, so an operator
+    database where `file_key` was declared on :X(key) instead of :File(key)
+    still said VERIFY: PASS. schema.cypher's IF NOT EXISTS never replaces a
+    same-named constraint, so duplicate File nodes stayed possible while the
+    apply step "succeeded". The (label, property) tuple must match too."""
+    rows = [
+        {"name": n, "on": [label], "props": [prop]}
+        for n, (label, prop) in sorted(verify.REQUIRED_CONSTRAINT_SCHEMAS.items())
+        if n != "file_key"
+    ] + [{"name": "file_key", "on": ["X"], "props": ["key"]}]
+    code, _ = run_verify(HEALTHY_JOIN, constraint_rows=rows)
+
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "FAIL: constraint file_key exists on :X(key) " in out
+    assert "schema.cypher requires :File(key)" in out
+
+
+def test_a_required_constraint_on_the_wrong_property_fails(run_verify, capsys):
+    """Same gate, other half of the tuple: the right label constraining the
+    wrong property (:File(path) instead of :File(key)) does not protect the
+    join spine either."""
+    rows = [
+        {"name": n, "on": [label], "props": [prop]}
+        for n, (label, prop) in sorted(verify.REQUIRED_CONSTRAINT_SCHEMAS.items())
+        if n != "file_key"
+    ] + [{"name": "file_key", "on": ["File"], "props": ["path"]}]
+    code, _ = run_verify(HEALTHY_JOIN, constraint_rows=rows)
+
+    assert code == 1
+    assert "constraint file_key exists on :File(path)" in capsys.readouterr().out
 
 
 def test_absent_marker_lock_entries_satisfy_the_sealed_check(run_verify, capsys):
