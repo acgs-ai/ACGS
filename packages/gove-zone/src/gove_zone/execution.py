@@ -1577,6 +1577,26 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
             command_sha256=digest,
         )
 
+    if binary == "gh":
+        # Reached only for a top-level group outside `release` (handled by the
+        # publish table above) and the declared remote groups. These are not
+        # presumed harmless: `gh extension install` downloads and installs
+        # executable code (release artifacts or cloned scripts), `gh workflow
+        # run` / `gh run rerun` trigger remote CI with repository credentials,
+        # `gh secret set` mutates remote secrets, and future groups may do
+        # anything. An authenticated CLI group this table does not model must
+        # not fall through to the unclassified allow tier.
+        return ExecutionEvent(
+            action=ACTION_SHELL_EXEC,
+            binary=binary,
+            argv_prefix=argv_prefix,
+            tier_hint=TIER_UNCLASSIFIED,
+            decidable=False,
+            undecidable_reasons=("unmodeled-gh-group",),
+            facts={**base_facts, "subcommand": subcommand},
+            command_sha256=digest,
+        )
+
     if binary == "git":
         mutating = subcommand in _GIT_MUTATING
         if subcommand and not mutating and subcommand not in _GIT_READ_ONLY:
@@ -2058,6 +2078,16 @@ _TRUST_ROOT_PATH_SEGMENTS = frozenset({".gove-zone"})
 #: the checkout-resident control surface of this gate.
 _CONTROL_SURFACE_PATH_SEGMENTS = frozenset({".claude", ".codex"})
 
+#: Adjacent segment pairs marking control-surface directories that a single
+#: segment cannot identify. ``.github/workflows`` files define CI jobs that
+#: later run with repository credentials, so replacing CI logic is a
+#: control-surface mutation, not an ordinary source edit — while the rest of
+#: ``.github`` (issue templates, CODEOWNERS-adjacent docs) stays on the source
+#: tier.
+_CONTROL_SURFACE_PATH_SEGMENT_PAIRS: frozenset[tuple[str, str]] = frozenset(
+    {(".github", "workflows")}
+)
+
 #: Host-runtime file-mutation surfaces the governance-path rules apply to.
 _FILE_MUTATION_TOOLS = frozenset(
     {"runtime.Edit", "runtime.MultiEdit", "runtime.NotebookEdit", "runtime.Write"}
@@ -2071,13 +2101,18 @@ def _governance_path_tier(path: Sequence[str]) -> str:
     or ``~``-anchored, and a prefix rule would miss all but one spelling. A
     ``.gove-zone`` or ``.claude`` segment anywhere in the normalized path marks
     the target as governance configuration or evidence, never an ordinary
-    source edit.
+    source edit. An adjacent ``.github/workflows`` pair marks CI definitions —
+    code that later runs with repository credentials — as the same
+    control surface.
     """
     for segment in path:
         if segment in _TRUST_ROOT_PATH_SEGMENTS:
             return TIER_TRUST_ROOT
     for segment in path:
         if segment in _CONTROL_SURFACE_PATH_SEGMENTS:
+            return TIER_CONTROL_SURFACE
+    for pair in zip(path, path[1:], strict=False):
+        if pair in _CONTROL_SURFACE_PATH_SEGMENT_PAIRS:
             return TIER_CONTROL_SURFACE
     return ""
 
@@ -2275,7 +2310,9 @@ def verify_execution_chain(
     * ``unattributed`` — records carrying a fallback actor. These are audit
       records, not authorizations.
     * ``unconditional_allow`` — an ``env.*`` decision with no ``matched_rules``
-      is not traceable to a policy and is reported.
+      is not traceable to a policy and is reported. Matched by namespace, not
+      by the current action tuple, so an execution surface added or misspelled
+      without a tier assignment is still validated.
     * ``legacy_observer_path`` — records whose ``matched_rules`` is an
       ``action_kind:*`` marker. Every one of these came from the retired
       ``_ObserverPolicy``, which returned ``ALLOW`` unconditionally, so the
@@ -2284,10 +2321,12 @@ def verify_execution_chain(
       substring-matched orchestration kinds — the count is the pre-cutover
       boundary, and it must never grow after cutover.
     * ``malformed_matched_rules`` — a present ``matched_rules`` that is not a
-      list of rule identifiers. A JSON string like ``"RISK_TIER:default"`` is a
-      ``Sequence`` of characters: iterated naively it matches no predicate
-      while staying nonempty, silently passing every check above. The invalid
-      shape is reported instead of being reinterpreted.
+      list of string rule identifiers. A JSON string like
+      ``"RISK_TIER:default"`` is a ``Sequence`` of characters: iterated naively
+      it matches no predicate while staying nonempty, silently passing every
+      check above. A list with non-string members (``[{}]``, ``[null]``,
+      ``[1]``) has the same failure shape once stringified. The invalid shape
+      is reported instead of being reinterpreted.
 
     Returns a report dict; ``ok`` is ``True`` only when every enabled check is
     clean.
@@ -2312,13 +2351,18 @@ def verify_execution_chain(
         matched = event.get("matched_rules")
         # A str/bytes value IS a Sequence: iterating it yields characters that
         # match no predicate while keeping the list nonempty, so a string like
-        # "RISK_TIER:default" would silently pass every check. Only a real
-        # list-like of rule identifiers is trusted; any other present shape is
+        # "RISK_TIER:default" would silently pass every check. And a list of
+        # non-string members ([{}], [null], [1]) stringifies to entries that
+        # match no predicate while keeping the list nonempty, silently passing
+        # the unconditional-allow check. Only a list-like whose every member is
+        # a string rule identifier is trusted; any other present shape is
         # reported as malformed rather than reinterpreted.
-        matched_valid = isinstance(matched, Sequence) and not isinstance(
-            matched, (str, bytes, bytearray)
+        matched_valid = (
+            isinstance(matched, Sequence)
+            and not isinstance(matched, (str, bytes, bytearray))
+            and all(isinstance(member, str) for member in matched)
         )
-        matched_list = [str(m) for m in matched] if matched_valid else []
+        matched_list = list(matched) if matched_valid else []
         anchor = {
             "event_id": event.get("event_id", ""),
             "tool": tool,
@@ -2334,7 +2378,12 @@ def verify_execution_chain(
             findings["unassigned_tier"].append(anchor)
         if require_attributed and actor in fallbacks:
             findings["unattributed"].append(anchor)
-        if tool in EXECUTION_ACTIONS:
+        # Namespace-based on purpose: limiting this to the current
+        # EXECUTION_ACTIONS tuple would blind the verifier to exactly the
+        # records that most need it — an execution surface added (or misspelled)
+        # without a tier assignment. Any `env.*` decision is an execution
+        # record.
+        if tool.startswith("env."):
             execution_records += 1
             if not matched_list:
                 findings["unconditional_allow"].append(anchor)

@@ -1065,6 +1065,42 @@ def test_undeclared_gh_surface_fails_closed(command: str, reason: str) -> None:
     assert event.undecidable_reasons == (reason,)
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "gh extension install owner/gh-pwn",
+        "gh workflow run deploy.yml",
+        "gh secret set TOKEN",
+        "gh run rerun 12345",
+        "gh alias set co 'pr checkout'",
+        "gh auth logout",
+        "gh",
+    ],
+)
+def test_unmodeled_gh_groups_fail_closed(command: str) -> None:
+    """``gh extension install`` downloads and installs executable code, and
+    ``gh workflow run`` / ``gh secret set`` / ``gh run rerun`` mutate remote CI
+    state with repository credentials. A top-level group the tables above do
+    not model previously fell through to a decidable unclassified allow."""
+    event = classify_command(command)
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("unmodeled-gh-group",)
+
+
+def test_unmodeled_gh_group_requires_a_human_at_the_gate(tmp_path: Path) -> None:
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "gh extension install owner/gh-pwn")
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["decision"] == "escalate"
+    assert "escalate-undecidable-shell" in event["matched_rules"]
+
+
 def test_unrecognized_python_option_is_undecidable_not_guessed() -> None:
     """An undeclared interpreter option may consume the next token, so nothing
     after it can be trusted — including whether ``-m pip`` is a module run."""
@@ -2179,15 +2215,83 @@ def test_control_surface_path_writes_require_a_human(tmp_path: Path, file_path: 
     assert "escalate-control-surface-path-mutation" in event["matched_rules"]
 
 
+@pytest.mark.parametrize(
+    "file_path",
+    [
+        ".github/workflows/release.yml",
+        "/workspace/checkout/.github/workflows/ci.yml",
+        ".github/workflows/nested/reusable.yml",
+    ],
+)
+def test_workflow_file_writes_require_a_human(tmp_path: Path, file_path: str) -> None:
+    """A permitted edit to ``.github/workflows`` replaces CI logic that later
+    runs with repository credentials. It previously matched neither segment
+    set and evaluated as an ordinary source-tier allow."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = governed_write(gateway, file_path)
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert "escalate-control-surface-path-mutation" in event["matched_rules"]
+
+
+def governed_notebook_edit(gateway: UniversalGateway, notebook_path: str) -> dict[str, Any]:
+    return gateway.handle_claude_hook(
+        {
+            "tool_name": "NotebookEdit",
+            "tool_input": {"notebook_path": notebook_path, "new_source": "observe"},
+        },
+        actor="operator-a",
+        call_factory=make_execution_call_factory("pnpm"),
+    )
+
+
+def test_notebook_edit_of_trust_root_path_is_denied(tmp_path: Path) -> None:
+    """``NotebookEdit`` delivers its target as ``notebook_path``, which the
+    normalizer previously did not extract — the call carried an empty path, so
+    a notebook under ``.gove-zone`` evaluated as an allowed source edit."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = governed_notebook_edit(gateway, ".gove-zone/gate.ipynb")
+
+    assert permission(response) == "deny"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["tool"] == "runtime.NotebookEdit"
+    assert "deny-trust-root-path-mutation" in event["matched_rules"]
+
+
+def test_notebook_edit_of_control_surface_path_requires_a_human(tmp_path: Path) -> None:
+    gateway = make_execution_gateway(tmp_path)
+
+    response = governed_notebook_edit(gateway, ".claude/scratch.ipynb")
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert "escalate-control-surface-path-mutation" in event["matched_rules"]
+
+
+def test_ordinary_notebook_edits_stay_on_the_source_tier(tmp_path: Path) -> None:
+    gateway = make_execution_gateway(tmp_path)
+
+    response = governed_notebook_edit(gateway, "notebooks/analysis.ipynb")
+
+    assert permission(response) == "allow"
+    assert response["gove_zone"]["receipts"]
+
+
 def test_ordinary_source_writes_stay_on_the_source_tier(tmp_path: Path) -> None:
     """Positive control: the path rule is scoped to governance paths, not a
     blanket restriction on file mutation."""
     gateway = make_execution_gateway(tmp_path)
 
-    response = governed_write(gateway, "src/app.py")
-
-    assert permission(response) == "allow"
-    assert response["gove_zone"]["receipts"]
+    for file_path in ("src/app.py", ".github/ISSUE_TEMPLATE/bug.md"):
+        response = governed_write(gateway, file_path)
+        assert permission(response) == "allow"
+        assert response["gove_zone"]["receipts"]
 
 
 def test_batch_wrapped_install_is_still_classified(tmp_path: Path) -> None:
@@ -2652,6 +2756,53 @@ def test_verifier_rejects_non_sequence_matched_rules() -> None:
 
     assert report["ok"] is False
     assert report["counts"]["malformed_matched_rules"] == 1
+
+
+@pytest.mark.parametrize("value", [[{}], [None], [1], ["RISK_TIER:source", 1]])
+def test_verifier_rejects_non_string_matched_rule_members(value: list[Any]) -> None:
+    """A list whose members are not strings stringifies to entries that match
+    no predicate while keeping the list nonempty — an ALLOW execution event
+    carrying ``[{}]`` previously returned ``ok: true``. Every member must be a
+    string rule identifier before the field is trusted."""
+    report = verify_execution_chain(
+        [
+            {
+                "event_id": "ev_members",
+                "tool": ACTION_SHELL_EXEC,
+                "actor": "operator-a",
+                "decision": "allow",
+                "matched_rules": value,
+            }
+        ]
+    )
+
+    assert report["ok"] is False
+    assert report["counts"]["malformed_matched_rules"] == 1
+    # The invalid members never counted as rules: the execution record has no
+    # traceable rule and is reported as such.
+    assert report["counts"]["unconditional_allow"] == 1
+
+
+def test_verifier_audits_unknown_env_actions_as_execution_records() -> None:
+    """A newly added, misspelled, or malicious execution action must not fall
+    outside the verifier: ``env.package.remove`` with an ALLOW and no
+    ``matched_rules`` previously escaped the exact-membership tuple and the
+    chain verified ``ok: true``. Any ``env.*`` decision is an execution
+    record."""
+    report = verify_execution_chain(
+        [
+            {
+                "event_id": "ev_unknown_env",
+                "tool": "env.package.remove",
+                "actor": "operator-a",
+                "decision": "allow",
+            }
+        ]
+    )
+
+    assert report["ok"] is False
+    assert report["execution_records"] == 1
+    assert report["counts"]["unconditional_allow"] == 1
 
 
 def test_verifier_does_not_flag_an_absent_matched_rules_as_malformed() -> None:

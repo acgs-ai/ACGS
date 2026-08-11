@@ -507,7 +507,11 @@ def _runtime_context_from_payload(
 
 
 def _path_from_tool_input(tool_input: dict[str, Any]) -> tuple[str, ...]:
-    for key in ("file_path", "path"):
+    # ``notebook_path`` is the standard NotebookEdit target key. Missing it
+    # would leave the call with an empty path, so a notebook under a protected
+    # segment (``.gove-zone``, ``.claude``) would evaluate as an ordinary
+    # source edit instead of receiving its governance path tier.
+    for key in ("file_path", "path", "notebook_path"):
         value = tool_input.get(key)
         if isinstance(value, str) and value:
             return normalize_path_context(value)
