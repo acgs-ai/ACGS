@@ -41,9 +41,15 @@ class GovernedTool(BaseTool):  # type: ignore[misc]
         self._original_tool = tool
         self._agent = agent
 
-        # Register the original execution function in the agent (and sandbox)
-        # LangChain tools execute synchronous tool runs via `_run`
-        self._agent.register_tool(self.name, self._original_tool._run)
+        # Register the original execution function in the agent (and sandbox).
+        # Execution goes through the tool's public `run` entry point: calling
+        # the private `_run` directly broke on langchain-core versions that
+        # inject a required keyword-only `config` into `_run`, so the governed
+        # dispatch raised TypeError instead of running the approved tool.
+        def _execute_original(**kwargs: Any) -> Any:
+            return tool.run(kwargs)
+
+        self._agent.register_tool(self.name, _execute_original)
 
     def _run(self, *args: Any, **kwargs: Any) -> Any:
         """Enforces policy check, auditing, and sandboxed execution of the tool."""
