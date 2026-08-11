@@ -11,13 +11,15 @@ decision_hash.
 
 from __future__ import annotations
 
+import os
 import posixpath
+import stat
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
-from .canonical import ABSENT, hash_file, hash_obj, hmac_verify
+from .canonical import ABSENT, hash_file, hash_obj, hmac_verify, sha256_hex
 from .intent import OPERATIONS, SignedIntent
 from .ledger import EVENT_DECISION, AuditLedger, LedgerIntegrityError
 from .receipt import MutationDecisionReceipt
@@ -60,6 +62,62 @@ def _normalized(resource_path: str) -> str | None:
     return norm
 
 
+def _capture_parent_precondition(repo_dir: Path, resource: str) -> tuple[dict[str, Any], str]:
+    """Pin the nearest existing parent ancestor and hash state through its fd."""
+    parts = Path(resource).parts
+    if not parts or any(part in ("", ".", "..") for part in parts):
+        raise OSError("resource path is not canonical")
+    fd = os.open(repo_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    traversed: list[str] = []
+    parent_missing = False
+    try:
+        for part in parts[:-1]:
+            try:
+                child = os.open(
+                    part,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=fd,
+                )
+            except FileNotFoundError:
+                parent_missing = True
+                break
+            os.close(fd)
+            fd = child
+            traversed.append(part)
+
+        ancestor = os.fstat(fd)
+        binding: dict[str, Any] = {
+            "path": "/".join(traversed),
+            "device": ancestor.st_dev,
+            "inode": ancestor.st_ino,
+        }
+        if parent_missing:
+            return binding, ABSENT
+
+        try:
+            target_fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+        except FileNotFoundError:
+            return binding, ABSENT
+        try:
+            target_stat = os.fstat(target_fd)
+            if not stat.S_ISREG(target_stat.st_mode):
+                raise OSError("resource is not a regular file")
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(target_fd, 1024 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            digest = sha256_hex(b"".join(chunks))
+            if target_stat.st_mode & 0o111:
+                digest += ":exec"
+            return binding, digest
+        finally:
+            os.close(target_fd)
+    finally:
+        os.close(fd)
+
+
 class DecisionEngine:
     def __init__(self, root: GovernanceRoot, ledger: AuditLedger, repo_dir: Path):
         self.root = root
@@ -76,9 +134,40 @@ class DecisionEngine:
         intent_hash = intent.intent_hash()
 
         deny_reason = self._first_violation(signed, now)
+        parent_precondition: dict[str, Any] | None = None
+        if deny_reason is None:
+            resource = _normalized(intent.resource_path)
+            assert resource is not None
+            try:
+                parent_precondition, secured_hash = _capture_parent_precondition(
+                    self.repo_dir, resource
+                )
+            except OSError:
+                deny_reason = "resource parent/state could not be securely pinned"
+            else:
+                authorized = self.ledger.authorized_state(resource)
+                if secured_hash != authorized:
+                    deny_reason = (
+                        "resource state diverged from audit chain "
+                        "(unauthorized out-of-band mutation detected)"
+                    )
+                elif intent.expected_pre_hash != secured_hash:
+                    deny_reason = "expected_pre_hash does not match current resource state"
+                elif intent.operation == "CREATE" and secured_hash != ABSENT:
+                    deny_reason = "CREATE on a resource that already exists"
+                elif intent.operation in ("UPDATE", "DELETE") and secured_hash == ABSENT:
+                    deny_reason = f"{intent.operation} on a resource that does not exist"
+
         if deny_reason is not None:
             return self._record(DENY, deny_reason, intent_hash, intent, now)
-        return self._record(ALLOW, "all checks passed", intent_hash, intent, now)
+        return self._record(
+            ALLOW,
+            "all checks passed",
+            intent_hash,
+            intent,
+            now,
+            parent_precondition=parent_precondition,
+        )
 
     # -- checks (fixed order, first violation wins) -----------------------
 
@@ -181,6 +270,8 @@ class DecisionEngine:
         intent_hash: str,
         intent: Any,
         now: int,
+        *,
+        parent_precondition: dict[str, Any] | None = None,
     ) -> Decision:
         decision_body = {
             "decision": decision,
@@ -188,6 +279,7 @@ class DecisionEngine:
             "intent_hash": intent_hash,
             "chain_head": self.ledger.head_hash(),
             "timestamp": now,
+            "parent_precondition": parent_precondition,
         }
         decision_hash = hash_obj(decision_body)
 
@@ -203,6 +295,7 @@ class DecisionEngine:
         if decision == ALLOW:
             resource = _normalized(intent.resource_path)
             assert resource is not None  # already validated
+            assert parent_precondition is not None
             body = {
                 "receipt_id": hash_obj({"intent": intent_hash, "decision": decision_hash}),
                 "intent_hash": intent_hash,
@@ -214,6 +307,9 @@ class DecisionEngine:
                 "issued_at": now,
                 "expiry": now + self.root.receipt_ttl(),
                 "previous_state_hash": intent.expected_pre_hash,
+                "parent_ancestor_path": parent_precondition["path"],
+                "parent_ancestor_device": parent_precondition["device"],
+                "parent_ancestor_inode": parent_precondition["inode"],
             }
             receipt = MutationDecisionReceipt.issue(body, self.root.root_key())
             payload["receipt"] = receipt.to_dict()

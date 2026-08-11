@@ -410,17 +410,21 @@ def check_ledger_root_binding(base: Path) -> str:
 
 
 def attack_forged_receipt(base: Path) -> str:
-    """Receipt fabricated (or altered) without the root key."""
+    """Receipt fields, including the parent identity, are root-signed."""
     sb = Sandbox.build(base)
     decision = sb.engine.decide(sb.intent("agent-alpha", "src/module_a.py"), sb.tick())
     assert decision.receipt is not None
-    forged = MutationDecisionReceipt.from_dict(
-        {**decision.receipt.to_dict(), "resource": "src/verify_readiness.py"}
-    )
-    result = sb.binder.commit(forged, b"pwn\n", sb.tick())
-    _expect(result.status == REJECTED, "forged receipt was accepted")
-    _expect("signature invalid" in result.reason, result.reason)
-    return "altered receipt fails root-key signature check ⇒ REJECTED"
+    for receipt_field, value in (
+        ("resource", "src/verify_readiness.py"),
+        ("parent_ancestor_inode", decision.receipt.parent_ancestor_inode + 1),
+    ):
+        forged = MutationDecisionReceipt.from_dict(
+            {**decision.receipt.to_dict(), receipt_field: value}
+        )
+        result = sb.binder.commit(forged, b"pwn\n", sb.tick())
+        _expect(result.status == REJECTED, f"forged {receipt_field} was accepted")
+        _expect("signature invalid" in result.reason, result.reason)
+    return "altered resource or parent identity fails root-key signature check ⇒ REJECTED"
 
 
 def attack_j_symlink_escape(base: Path) -> str:
@@ -445,7 +449,6 @@ def attack_j_symlink_escape(base: Path) -> str:
     (sb.repo / "src" / "sub2").symlink_to(outside)
     result = sb.binder.commit(decision2.receipt, b"leak\n", sb.tick())
     _expect(result.status == REJECTED, "post-approval symlink escape was committed")
-    _expect("outside the governed repository" in result.reason, result.reason)
     _expect(not (outside / "leak.txt").exists(), "bytes escaped the governed repository")
     return "symlink escape DENIED at decide time and REJECTED at effect time"
 
@@ -606,13 +609,7 @@ def attack_p_temp_symlink_race(base: Path) -> str:
 
 
 def attack_pre_state_path_swap(base: Path) -> str:
-    """A tree swap at the old hash-to-pin boundary must fail closed.
-
-    The open hook runs at the first effect-time filesystem boundary. The
-    implementation must already have pinned the original parent before the
-    hook exchanges the lexical tree, so the replacement tree cannot inherit
-    authorization merely by presenting identical approved bytes.
-    """
+    """A byte-identical parent replacement after receipt mint must be rejected."""
     sb = Sandbox.build(base)
     resource = "src/module_a.py"
     original_src = sb.repo / "src"
@@ -625,22 +622,11 @@ def attack_pre_state_path_swap(base: Path) -> str:
     moved_src = sb.base / "original-src"
     decision = sb.engine.decide(sb.intent("agent-alpha", resource), sb.tick())
     assert decision.receipt is not None
-    real_open = effect_module._open_parent_dir
-    swapped = False
 
-    def pin_then_swap(repo_dir: Path, requested_resource: str) -> tuple[int, str]:
-        nonlocal swapped
-        parent_fd, name = real_open(repo_dir, requested_resource)
-        if not swapped:
-            swapped = True
-            original_src.rename(moved_src)
-            replacement_src.rename(original_src)
-        return parent_fd, name
+    original_src.rename(moved_src)
+    replacement_src.rename(original_src)
+    result = sb.binder.commit(decision.receipt, b"attacker-controlled\n", sb.tick())
 
-    with patch("mutation_authority.effect._open_parent_dir", side_effect=pin_then_swap):
-        result = sb.binder.commit(decision.receipt, b"attacker-controlled\n", sb.tick())
-
-    _expect(swapped, "deterministic pre-state tree swap did not run")
     _expect(result.status == REJECTED, "replacement tree inherited authorization")
     _expect(
         moved_src.joinpath("module_a.py").read_bytes() == original_bytes,
@@ -655,7 +641,56 @@ def attack_pre_state_path_swap(base: Path) -> str:
         "pre-state tree swap left a COMMIT",
     )
     sb.ledger.verify_chain()
-    return "pre-state tree swap rejected; original/replacement unchanged and no COMMIT"
+    return "post-mint parent replacement rejected; both trees unchanged and no COMMIT"
+
+
+def attack_post_open_parent_swap(base: Path) -> str:
+    """A replacement after the signed ancestor is pinned must be rejected."""
+    sb = Sandbox.build(base)
+    resource = "src/module_a.py"
+    original_src = sb.repo / "src"
+    original_bytes = (original_src / "module_a.py").read_bytes()
+    replacement_src = sb.base / "replacement-src"
+    replacement_src.mkdir()
+    replacement_target = replacement_src / "module_a.py"
+    replacement_target.write_bytes(original_bytes)
+    replacement_before = replacement_target.read_bytes()
+    moved_src = sb.base / "original-src"
+    decision = sb.engine.decide(sb.intent("agent-alpha", resource), sb.tick())
+    assert decision.receipt is not None
+    real_open = effect_module._open_bound_ancestor
+    swapped = False
+
+    def open_then_swap(
+        repo_dir: Path, receipt: MutationDecisionReceipt
+    ) -> tuple[int, str, tuple[str, ...]]:
+        nonlocal swapped
+        opened = real_open(repo_dir, receipt)
+        if not swapped:
+            swapped = True
+            original_src.rename(moved_src)
+            replacement_src.rename(original_src)
+        return opened
+
+    with patch("mutation_authority.effect._open_bound_ancestor", side_effect=open_then_swap):
+        result = sb.binder.commit(decision.receipt, b"attacker-controlled\n", sb.tick())
+
+    _expect(swapped, "deterministic post-open tree swap did not run")
+    _expect(result.status == REJECTED, "post-open replacement inherited authorization")
+    _expect(
+        moved_src.joinpath("module_a.py").read_bytes() == original_bytes,
+        "pinned original tree changed",
+    )
+    _expect(
+        original_src.joinpath("module_a.py").read_bytes() == replacement_before,
+        "replacement lexical tree changed",
+    )
+    _expect(
+        decision.receipt.receipt_id not in sb.ledger.committed_receipt_ids(),
+        "post-open tree swap left a COMMIT",
+    )
+    sb.ledger.verify_chain()
+    return "post-open parent replacement rejected; both trees unchanged and no COMMIT"
 
 
 def attack_q_parent_rename_during_effect(base: Path) -> str:
@@ -766,6 +801,58 @@ def attack_r_parent_rename_at_audit_append(base: Path) -> str:
     return "append-boundary rename rewound effect and COMMIT; external content unchanged"
 
 
+def check_nested_create_uses_bound_ancestor(base: Path) -> str:
+    """Nested CREATE is pinned to its nearest existing ancestor and rolls back."""
+    success = Sandbox.build(base / "success")
+    resource = "src/nested/deep/private.py"
+    decision = success.engine.decide(
+        success.intent("agent-alpha", resource, operation="CREATE"), success.tick()
+    )
+    assert decision.receipt is not None
+    src_stat = (success.repo / "src").stat()
+    _expect(
+        decision.receipt.parent_ancestor_path == "src",
+        "nested CREATE did not bind the nearest existing ancestor",
+    )
+    _expect(
+        (
+            decision.receipt.parent_ancestor_device,
+            decision.receipt.parent_ancestor_inode,
+        )
+        == (src_stat.st_dev, src_stat.st_ino),
+        "nested CREATE receipt ancestor identity is not the approved src directory",
+    )
+    result = success.binder.commit(decision.receipt, b"SECRET = True\n", success.tick())
+    _expect(result.status == ACCEPTED, f"nested CREATE failed: {result.reason}")
+    _expect(
+        (success.repo / resource).read_bytes() == b"SECRET = True\n",
+        "nested CREATE content mismatch",
+    )
+
+    rollback = Sandbox.build(base / "rollback")
+    rollback_decision = rollback.engine.decide(
+        rollback.intent("agent-alpha", resource, operation="CREATE"), rollback.tick()
+    )
+    assert rollback_decision.receipt is not None
+    with patch.object(rollback.ledger, "append", side_effect=OSError("disk full")):
+        try:
+            rollback.binder.commit(rollback_decision.receipt, b"SECRET = True\n", rollback.tick())
+        except EffectRecordingError:
+            pass
+        else:
+            raise CheckFailure("unrecordable nested CREATE did not fail loudly")
+    _expect(
+        not (rollback.repo / "src" / "nested").exists(),
+        "nested CREATE rollback left target or parent directories",
+    )
+    _expect(
+        rollback_decision.receipt.receipt_id not in rollback.ledger.committed_receipt_ids(),
+        "nested CREATE rollback left a COMMIT",
+    )
+    rollback.ledger.verify_chain()
+    return "nested CREATE used signed ancestor and rolled back target plus parents"
+
+
 def check_create_respects_restrictive_umask(base: Path) -> str:
     """CREATE must derive its mode from the caller's restrictive umask."""
     sb = Sandbox.build(base)
@@ -854,9 +941,14 @@ CHECKS: list[tuple[str, Callable[[Path], str]]] = [
         attack_o_in_memory_root_mutation,
     ),
     ("ATTACK M: effect-time temporary symlink race", attack_p_temp_symlink_race),
-    ("ATTACK M2: pre-state pathname tree swap", attack_pre_state_path_swap),
+    ("ATTACK M2: post-mint parent replacement", attack_pre_state_path_swap),
+    ("ATTACK M3: post-open parent replacement", attack_post_open_parent_swap),
     ("ATTACK N: ancestor rename during effect", attack_q_parent_rename_during_effect),
     ("ATTACK O: ancestor rename at audit append", attack_r_parent_rename_at_audit_append),
+    (
+        "nested CREATE uses signed ancestor and transactional rollback",
+        check_nested_create_uses_bound_ancestor,
+    ),
     ("CREATE respects restrictive umask", check_create_respects_restrictive_umask),
     ("ledger is bound to its governance root", check_ledger_root_binding),
     ("unanchored ledger construction is refused", check_unanchored_ledger_refused),

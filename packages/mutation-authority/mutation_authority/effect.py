@@ -35,21 +35,100 @@ class EffectRecordingError(Exception):
     """
 
 
-def _open_parent_dir(repo_dir: Path, resource: str) -> tuple[int, str]:
-    """Open the resource parent without following any directory symlink."""
-    parts = Path(resource).parts
-    if not parts or any(part in ("", ".", "..") for part in parts):
+def _open_bound_ancestor(
+    repo_dir: Path, receipt: MutationDecisionReceipt
+) -> tuple[int, str, tuple[str, ...]]:
+    """Open and verify the exact ancestor identity signed into the receipt."""
+    resource_parts = Path(receipt.resource).parts
+    if not resource_parts or any(part in ("", ".", "..") for part in resource_parts):
         raise OSError("resource path is not a canonical relative path")
+    ancestor_parts = (
+        Path(receipt.parent_ancestor_path).parts if receipt.parent_ancestor_path else ()
+    )
+    parent_parts = resource_parts[:-1]
+    if (
+        any(part in ("", ".", "..") for part in ancestor_parts)
+        or len(ancestor_parts) > len(parent_parts)
+        or tuple(parent_parts[: len(ancestor_parts)]) != tuple(ancestor_parts)
+    ):
+        raise OSError("receipt ancestor path is not a parent of the resource")
+
     fd = os.open(repo_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        for part in parts[:-1]:
+        for part in ancestor_parts:
             child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             os.close(fd)
             fd = child
-        return fd, parts[-1]
+        pinned = os.fstat(fd)
+        if (pinned.st_dev, pinned.st_ino) != (
+            receipt.parent_ancestor_device,
+            receipt.parent_ancestor_inode,
+        ):
+            raise OSError("receipt ancestor identity changed")
+        return fd, resource_parts[-1], tuple(parent_parts[len(ancestor_parts) :])
     except Exception:
         os.close(fd)
         raise
+
+
+def _create_missing_parents(
+    ancestor_fd: int, missing_parts: tuple[str, ...]
+) -> tuple[int, list[tuple[int, str]]]:
+    """Create receipt-authorized missing parents through the pinned ancestor."""
+    current_fd = os.dup(ancestor_fd)
+    created: list[tuple[int, str]] = []
+    try:
+        for part in missing_parts:
+            parent_ref = os.dup(current_fd)
+            made_directory = False
+            try:
+                os.mkdir(part, mode=0o755, dir_fd=current_fd)
+                made_directory = True
+                child = os.open(
+                    part,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=current_fd,
+                )
+            except Exception:
+                if made_directory:
+                    os.rmdir(part, dir_fd=current_fd)
+                os.close(parent_ref)
+                raise
+            created.append((parent_ref, part))
+            os.close(current_fd)
+            current_fd = child
+        return current_fd, created
+    except Exception:
+        os.close(current_fd)
+        _remove_created_parents(created)
+        raise
+
+
+def _remove_created_parents(created: list[tuple[int, str]]) -> None:
+    """Remove newly created empty parents in reverse order and close refs."""
+    first_error: OSError | None = None
+    for parent_fd, name in reversed(created):
+        try:
+            os.rmdir(name, dir_fd=parent_fd)
+        except OSError as exc:
+            first_error = first_error or exc
+        finally:
+            os.close(parent_fd)
+    created.clear()
+    if first_error is not None:
+        raise first_error
+
+
+def _close_created_parent_refs(created: list[tuple[int, str]]) -> None:
+    for parent_fd, _name in created:
+        os.close(parent_fd)
+    created.clear()
+
+
+def _default_create_mode() -> int:
+    current_umask = os.umask(0)
+    os.umask(current_umask)
+    return 0o666 & ~current_umask
 
 
 def _read_state_at(parent_fd: int, name: str) -> tuple[bytes | None, str, int]:
@@ -59,9 +138,7 @@ def _read_state_at(parent_fd: int, name: str) -> tuple[bytes | None, str, int]:
     except FileNotFoundError:
         # CREATE follows the process umask just like an ordinary 0666 file;
         # never widen a restrictive caller policy to a fixed 0644.
-        current_umask = os.umask(0)
-        os.umask(current_umask)
-        return None, ABSENT, 0o666 & ~current_umask
+        return None, ABSENT, _default_create_mode()
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
@@ -108,6 +185,42 @@ def _atomic_replace_at(parent_fd: int, name: str, content: bytes, mode: int) -> 
         os.close(fd)
 
 
+def _atomic_create_at(parent_fd: int, name: str, content: bytes, mode: int) -> None:
+    """Publish a fully written CREATE without replacing a concurrent target."""
+    tmp_name = f".{name}.mutation-authority.{secrets.token_hex(16)}.tmp"
+    fd = os.open(
+        tmp_name,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        mode,
+        dir_fd=parent_fd,
+    )
+    try:
+        view = memoryview(content)
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                raise OSError("short write to mutation temporary file")
+            view = view[written:]
+        os.fchmod(fd, mode)
+        os.fsync(fd)
+        os.link(
+            tmp_name,
+            name,
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        os.unlink(tmp_name, dir_fd=parent_fd)
+    except Exception:
+        try:
+            os.unlink(tmp_name, dir_fd=parent_fd)
+        except FileNotFoundError:
+            pass
+        raise
+    finally:
+        os.close(fd)
+
+
 def _parent_matches_path(parent_fd: int, parent_path: Path) -> bool:
     """Return whether the pinned directory is still the authorized path."""
     try:
@@ -130,6 +243,27 @@ def _rollback_at(parent_fd: int, name: str, prior_bytes: bytes | None, prior_mod
             pass
     else:
         _atomic_replace_at(parent_fd, name, prior_bytes, prior_mode)
+
+
+def _rollback_transaction(
+    parent_fd: int,
+    target_name: str,
+    prior_bytes: bytes | None,
+    prior_mode: int,
+    created_parents: list[tuple[int, str]],
+) -> None:
+    """Restore the target and remove directories created by this attempt."""
+    first_error: OSError | None = None
+    try:
+        _rollback_at(parent_fd, target_name, prior_bytes, prior_mode)
+    except OSError as exc:
+        first_error = exc
+    try:
+        _remove_created_parents(created_parents)
+    except OSError as exc:
+        first_error = first_error or exc
+    if first_error is not None:
+        raise first_error
 
 
 @dataclass(frozen=True)
@@ -192,21 +326,23 @@ class EffectBinder:
         if receipt.operation != "DELETE" and new_content is None:
             return CommitResult(REJECTED, f"{receipt.operation} requires new content")
 
-        # 6. Pin the authorized lexical parent before any effect-time path
-        #    resolution or state read. Every before/after hash, mutation,
-        #    rollback, and parent identity check below uses this same directory
-        #    fd; no pathname read can authorize an operation on a later tree.
+        # 6. Open the signed ancestor and require the exact device/inode
+        #    captured by the decision engine before reading or creating state.
         try:
-            parent_fd, target_name = _open_parent_dir(self.repo_dir, receipt.resource)
+            ancestor_fd, target_name, missing_parents = _open_bound_ancestor(self.repo_dir, receipt)
         except OSError:
-            return CommitResult(
-                REJECTED,
-                "resource parent is not a verified directory or resolves outside "
-                "the governed repository",
-            )
+            return CommitResult(REJECTED, "receipt parent ancestor identity changed")
+
+        parent_fd: int | None = None
+        created_parents: list[tuple[int, str]] = []
         try:
             repo_root = self.repo_dir.resolve()
             lexical = Path(os.path.normpath(repo_root / receipt.resource))
+            ancestor_path = (
+                repo_root / receipt.parent_ancestor_path
+                if receipt.parent_ancestor_path
+                else repo_root
+            )
             try:
                 rel = lexical.relative_to(repo_root).as_posix()
             except ValueError:
@@ -217,13 +353,26 @@ class EffectBinder:
             for prefix in self.root.protected_prefixes():
                 if rel == prefix or rel.startswith(prefix.rstrip("/") + "/"):
                     return CommitResult(REJECTED, "resource resolves into a protected prefix")
+            if not _parent_matches_path(ancestor_fd, ancestor_path):
+                return CommitResult(REJECTED, "receipt parent ancestor path changed")
 
-            try:
+            if missing_parents:
+                if receipt.operation != "CREATE":
+                    return CommitResult(REJECTED, "non-CREATE receipt has missing parent state")
+                prior_bytes, before_hash, prior_mode = (
+                    None,
+                    ABSENT,
+                    _default_create_mode(),
+                )
+            else:
+                parent_fd = os.dup(ancestor_fd)
                 if not _parent_matches_path(parent_fd, lexical.parent):
                     return CommitResult(REJECTED, "resource parent changed at effect time")
-                prior_bytes, before_hash, prior_mode = _read_state_at(parent_fd, target_name)
-            except OSError:
-                return CommitResult(REJECTED, "resource is not a verified regular file")
+                try:
+                    prior_bytes, before_hash, prior_mode = _read_state_at(parent_fd, target_name)
+                except OSError:
+                    return CommitResult(REJECTED, "resource is not a verified regular file")
+
             if before_hash != receipt.previous_state_hash:
                 return CommitResult(
                     REJECTED,
@@ -231,6 +380,30 @@ class EffectBinder:
                     before_hash=before_hash,
                 )
 
+            if missing_parents:
+                if not _parent_matches_path(ancestor_fd, ancestor_path):
+                    return CommitResult(REJECTED, "receipt parent ancestor changed before CREATE")
+                try:
+                    parent_fd, created_parents = _create_missing_parents(
+                        ancestor_fd, missing_parents
+                    )
+                except OSError:
+                    return CommitResult(
+                        REJECTED, "receipt-authorized parent directories could not be created"
+                    )
+                if not _parent_matches_path(parent_fd, lexical.parent):
+                    _remove_created_parents(created_parents)
+                    return CommitResult(REJECTED, "created resource parent path changed")
+                try:
+                    prior_bytes, current_hash, prior_mode = _read_state_at(parent_fd, target_name)
+                except OSError:
+                    _remove_created_parents(created_parents)
+                    return CommitResult(REJECTED, "CREATE target state could not be verified")
+                if current_hash != ABSENT:
+                    _remove_created_parents(created_parents)
+                    return CommitResult(REJECTED, "CREATE target appeared after approval")
+
+            assert parent_fd is not None
             # 7. Apply the effect atomically. Snapshot the prior bytes and metadata
             #    so an unrecordable effect can be rolled back completely.
             if receipt.operation == "DELETE":
@@ -239,31 +412,48 @@ class EffectBinder:
             else:
                 assert new_content is not None
                 try:
-                    _atomic_replace_at(parent_fd, target_name, new_content, prior_mode)
+                    if receipt.operation == "CREATE":
+                        _atomic_create_at(parent_fd, target_name, new_content, prior_mode)
+                    else:
+                        _atomic_replace_at(parent_fd, target_name, new_content, prior_mode)
                 except OSError:
+                    _remove_created_parents(created_parents)
                     return CommitResult(
                         REJECTED, "secure temporary effect file could not be created"
                     )
                 try:
                     _after_bytes, after_hash, _after_mode = _read_state_at(parent_fd, target_name)
                 except OSError:
-                    _rollback_at(parent_fd, target_name, prior_bytes, prior_mode)
+                    _rollback_transaction(
+                        parent_fd,
+                        target_name,
+                        prior_bytes,
+                        prior_mode,
+                        created_parents,
+                    )
                     return CommitResult(REJECTED, "effect after-state could not be verified")
 
-            # A validated ancestor can be renamed/replaced while the pinned fd
-            # remains usable. Revalidate immediately before recording COMMIT;
-            # rollback only through the pinned fd if the lexical path changed.
-            if not _parent_matches_path(parent_fd, lexical.parent):
+            # Retain both the signed ancestor and final parent pins through the
+            # mutation and audit append boundaries.
+            if not _parent_matches_path(ancestor_fd, ancestor_path) or not _parent_matches_path(
+                parent_fd, lexical.parent
+            ):
                 try:
-                    _rollback_at(parent_fd, target_name, prior_bytes, prior_mode)
+                    _rollback_transaction(
+                        parent_fd,
+                        target_name,
+                        prior_bytes,
+                        prior_mode,
+                        created_parents,
+                    )
                 except OSError as exc:
                     raise EffectRecordingError(
-                        "resource parent changed and rollback through the pinned directory failed"
+                        "resource ancestor changed and rollback through pinned fds failed"
                     ) from exc
-                return CommitResult(REJECTED, "resource parent changed during effect")
+                return CommitResult(REJECTED, "resource ancestor changed during effect")
 
             # 8. Bind the effect into the audit chain. If the append fails, the
-            #    effect must not persist: roll the file back and fail loudly.
+            #    effect and any newly created parent directories are rolled back.
             try:
                 commit_event = self.ledger.append(
                     EVENT_COMMIT,
@@ -278,26 +468,41 @@ class EffectBinder:
                     effective_now,
                 )
             except Exception as exc:
-                _rollback_at(parent_fd, target_name, prior_bytes, prior_mode)
+                _rollback_transaction(
+                    parent_fd,
+                    target_name,
+                    prior_bytes,
+                    prior_mode,
+                    created_parents,
+                )
                 raise EffectRecordingError(
                     "effect could not be bound to the audit chain; filesystem change rolled back"
                 ) from exc
 
-            # append() is an attacker-observable boundary. If the authorized
-            # ancestor was exchanged while COMMIT was being recorded, rewind
-            # both sides of the transaction before returning to the caller.
-            if not _parent_matches_path(parent_fd, lexical.parent):
+            if not _parent_matches_path(ancestor_fd, ancestor_path) or not _parent_matches_path(
+                parent_fd, lexical.parent
+            ):
                 try:
-                    _rollback_at(parent_fd, target_name, prior_bytes, prior_mode)
+                    _rollback_transaction(
+                        parent_fd,
+                        target_name,
+                        prior_bytes,
+                        prior_mode,
+                        created_parents,
+                    )
                     self.ledger.rollback_last(commit_event)
                 except Exception as exc:
                     raise EffectRecordingError(
-                        "resource parent changed at audit append and the effect "
+                        "resource ancestor changed at audit append and the effect "
                         "transaction could not be rolled back"
                     ) from exc
-                return CommitResult(REJECTED, "resource parent changed during audit append")
+                return CommitResult(REJECTED, "resource ancestor changed during audit append")
+
+            _close_created_parent_refs(created_parents)
         finally:
-            os.close(parent_fd)
+            if parent_fd is not None:
+                os.close(parent_fd)
+            os.close(ancestor_fd)
         return CommitResult(
             ACCEPTED, "effect bound", before_hash=before_hash, after_hash=after_hash
         )

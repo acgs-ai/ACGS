@@ -25,6 +25,9 @@ class MutationDecisionReceipt:
     issued_at: int  # logical clock tick
     expiry: int  # last logical tick at which the receipt may be committed
     previous_state_hash: str
+    parent_ancestor_path: str
+    parent_ancestor_device: int
+    parent_ancestor_inode: int
     signature: str  # HMAC(root_key, hash of all fields above)
 
     def body(self) -> dict[str, Any]:
@@ -39,6 +42,9 @@ class MutationDecisionReceipt:
             "issued_at": self.issued_at,
             "expiry": self.expiry,
             "previous_state_hash": self.previous_state_hash,
+            "parent_ancestor_path": self.parent_ancestor_path,
+            "parent_ancestor_device": self.parent_ancestor_device,
+            "parent_ancestor_inode": self.parent_ancestor_inode,
         }
 
     def to_dict(self) -> dict[str, Any]:
