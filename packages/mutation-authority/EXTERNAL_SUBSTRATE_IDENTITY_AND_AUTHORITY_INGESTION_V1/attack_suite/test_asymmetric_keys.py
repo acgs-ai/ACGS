@@ -1,0 +1,259 @@
+"""ASYMMETRIC_VALIDATOR_KEYS_V1 — Ed25519 dual-mode verification suite.
+
+HMAC compatibility remains (the entire existing suite runs in HMAC mode);
+this suite proves the Ed25519 lane: valid signatures route, wrong keys /
+altered payloads / wrong validator ids / revoked keys fail closed, rotated
+key history stays auditable, and mode confusion (HMAC key, Ed25519 claim)
+is refused.
+
+Skips cleanly when the optional `cryptography` backend is absent — in which
+case every Ed25519 verification in the package fails closed by construction.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+PKG = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PKG))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import _ed25519  # noqa: E402
+from _canonical import sha256_hex  # noqa: E402
+from authority_lifecycle import ACTIVE, attestation_binding  # noqa: E402
+from test_attacks import INSTANT, _evidence, build_fixture_substrate  # noqa: E402
+from test_onboarding_attacks import _compute  # noqa: E402
+from validator_trust import (  # noqa: E402
+    ED25519,
+    EVENT_SCHEMA,
+    GENESIS,
+    INVALIDATED,
+    attestation_payload_v2,
+    event_binding,
+    load_validator_events,
+    verify_attestation_trust,
+)
+
+pytestmark = pytest.mark.skipif(
+    not _ed25519.AVAILABLE, reason="optional cryptography backend not installed"
+)
+
+ED_VALIDATOR = "[FIXTURE] vld-ed"
+ED_KEY_ID = "ed-k1"
+
+# --------------------------------------------------------------------------- #
+# Fixtures
+# --------------------------------------------------------------------------- #
+
+
+def ed_trust(tmp_path):
+    """Registry with one Ed25519 validator; public key IN the registry event,
+    so verification needs no keystore access (third-party verifiable)."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    priv, pub = _ed25519.generate()
+    (tmp_path / "edks").mkdir(exist_ok=True)  # keystore unused for ed25519 verify
+    ev = {
+        "schema": EVENT_SCHEMA,
+        "event": "REGISTER",
+        "validator_id": ED_VALIDATOR,
+        "validator_identity": "[FIXTURE] Ed Validator",
+        "authorized_classes": ["COUNSEL_OR_RIGHTS_AUTHORITY", "DATA_CONTROLLER"],
+        "appointment_authority": "[FIXTURE] General Counsel",
+        "key_id": ED_KEY_ID,
+        "key_algorithm": ED25519,
+        "key_fingerprint": sha256_hex(pub),
+        "public_key": pub.hex(),
+        "effective_from": "2026-01-01T00:00:00Z",
+        "effective_until": None,
+        "prev_event_binding": GENESIS,
+    }
+    ev["event_binding"] = event_binding(ev)
+    reg = tmp_path / "ed_vreg.jsonl"
+    reg.write_text(json.dumps(ev, sort_keys=True) + "\n", encoding="utf-8")
+    return {
+        "registry": reg,
+        "keystore": tmp_path / "edks",
+        "priv": priv,
+        "pub": pub,
+        "validator_id": ED_VALIDATOR,
+    }
+
+
+def _ed_evidence(trust, *, validated_at="2026-08-10T11:00:00Z", key_id=ED_KEY_ID, priv=None):
+    """A controller evidence record attested with an Ed25519 signature over the
+    complete v2 payload (validator id, key fingerprint, attestation content,
+    evidence identity, timestamp, validation class)."""
+    ev = dict(_evidence(authority_type="DATA_CONTROLLER"))
+    ev["issuer_or_appointing_party"] = "[FIXTURE] Board"
+    att = {
+        "validator_identity": "[FIXTURE] Ed Validator",
+        "validation_method": "[FIXTURE] reviewed artifact",
+        "validated_at": validated_at,
+        "record_binding": attestation_binding(ev),
+        "validator_id": trust["validator_id"],
+        "key_id": key_id,
+        "signature_algorithm": ED25519,
+        "key_fingerprint": sha256_hex(trust["pub"]),
+    }
+    att["attestation_signature"] = _ed25519.sign(
+        priv or trust["priv"], attestation_payload_v2(ev, att)
+    )
+    ev["validation"] = att
+    ev["ingestion_receipt"] = "r-fixture"
+    return ev
+
+
+def _trusted(ev, trust):
+    return verify_attestation_trust(
+        ev,
+        ev["validation"],
+        events=load_validator_events(trust["registry"]),
+        keystore_dir=trust["keystore"],
+    )
+
+
+def _append(trust, event):
+    events = load_validator_events(trust["registry"])
+    event = dict(event)
+    event["prev_event_binding"] = events[-1]["event_binding"]
+    event["event_binding"] = event_binding(event)
+    with trust["registry"].open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event, sort_keys=True) + "\n")
+
+
+@pytest.fixture
+def substrate(tmp_path):
+    return build_fixture_substrate(tmp_path)
+
+
+# --------------------------------------------------------------------------- #
+# Required Ed25519 tests
+# --------------------------------------------------------------------------- #
+
+
+def test_valid_ed25519_signature_routes(substrate, tmp_path):
+    trust = ed_trust(tmp_path)
+    ev = _ed_evidence(trust)
+    ok, reason = _trusted(ev, trust)
+    assert ok, reason
+    st = _compute(substrate, tmp_path, [ev], trust=trust)
+    assert st["report"]["lifecycle_distribution"][ACTIVE] == 1
+    assert st["report"]["ready_to_send"] == 2  # fixture controller pair
+    assert all(st["invariants"].values())
+
+
+def test_wrong_key_fails(tmp_path):
+    trust = ed_trust(tmp_path)
+    other_priv, _other_pub = _ed25519.generate()
+    ev = _ed_evidence(trust, priv=other_priv)  # signed by the wrong key
+    ok, reason = _trusted(ev, trust)
+    assert not ok and reason == "attestation_signature_invalid"
+
+
+def test_altered_payload_fails(substrate, tmp_path):
+    trust = ed_trust(tmp_path)
+    for field, value in (
+        ("validation_method", "[TAMPERED] other method"),
+        ("validated_at", "2026-08-09T11:00:00Z"),
+        ("disposition", "REJECTED"),
+        ("key_fingerprint", "0" * 64),
+    ):
+        ev = _ed_evidence(trust)
+        ev["validation"][field] = value
+        ok, _reason = _trusted(ev, trust)
+        assert not ok, field
+    # And the evidence side of the binding: a record altered after signing
+    # (evidence identity is inside the v2 payload) never routes.
+    ev = _ed_evidence(trust)
+    ev["source_digest"] = "b" * 64
+    st = _compute(substrate, tmp_path, [ev], trust=trust)
+    assert st["report"]["ready_to_send"] == 0
+
+
+def test_wrong_validator_id_fails(tmp_path):
+    trust = ed_trust(tmp_path)
+    ev = _ed_evidence(trust)
+    ev["validation"]["validator_id"] = "[FORGED] someone-else"
+    ok, reason = _trusted(ev, trust)
+    assert not ok and reason in ("unknown_validator", "attestation_signature_invalid")
+
+
+def test_revoked_key_fails(tmp_path):
+    trust = ed_trust(tmp_path)
+    _append(
+        trust,
+        {
+            "schema": EVENT_SCHEMA,
+            "event": "REVOKE",
+            "validator_id": ED_VALIDATOR,
+            "instant": "2026-08-01T00:00:00Z",
+        },
+    )
+    ev = _ed_evidence(trust)  # validated_at 2026-08-10, after revocation
+    ok, reason = _trusted(ev, trust)
+    assert not ok and reason == "validator_authority_invalid_at_attestation"
+
+
+def test_rotated_key_history_remains_auditable(tmp_path):
+    trust = ed_trust(tmp_path)
+    priv2, pub2 = _ed25519.generate()
+    _append(
+        trust,
+        {
+            "schema": EVENT_SCHEMA,
+            "event": "ROTATE",
+            "validator_id": ED_VALIDATOR,
+            "key_id": "ed-k2",
+            "key_algorithm": ED25519,
+            "key_fingerprint": sha256_hex(pub2),
+            "public_key": pub2.hex(),
+            "instant": "2026-09-01T00:00:00Z",
+        },
+    )
+    # An attestation signed with ed-k1 INSIDE its window stays verifiable
+    # forever — rotation does not orphan history.
+    old = _ed_evidence(trust, validated_at="2026-08-10T11:00:00Z")
+    ok, reason = _trusted(old, trust)
+    assert ok, reason
+    # The same old key AFTER rotation is refused.
+    stale = _ed_evidence(trust, validated_at="2026-09-15T00:00:00Z")
+    ok, reason = _trusted(stale, trust)
+    assert not ok and reason == "key_not_current_at_attestation"
+    # The successor key signs post-rotation attestations.
+    trust2 = dict(trust, priv=priv2, pub=pub2)
+    fresh = _ed_evidence(trust2, validated_at="2026-09-15T00:00:00Z", key_id="ed-k2")
+    ok, reason = _trusted(fresh, trust2)
+    assert ok, reason
+
+
+def test_algorithm_mode_confusion_refused(tmp_path):
+    # An attestation claiming ed25519 against an HMAC-registered key (or vice
+    # versa) is refused before any signature math runs.
+    from test_onboarding_attacks import _attested, fixture_trust
+
+    hmac_trust = fixture_trust(tmp_path)
+    ev = _attested(_evidence())
+    ev["validation"]["signature_algorithm"] = ED25519
+    ok, reason = verify_attestation_trust(
+        ev,
+        ev["validation"],
+        events=load_validator_events(hmac_trust["registry"]),
+        keystore_dir=hmac_trust["keystore"],
+    )
+    assert not ok and reason == "signature_algorithm_mismatch"
+    from validator_trust import DEFAULT_POLICY, derive_governed_state
+
+    state = derive_governed_state(
+        ev,
+        instant=INSTANT,
+        superseded_ids=set(),
+        in_registry=True,
+        events=load_validator_events(hmac_trust["registry"]),
+        keystore_dir=hmac_trust["keystore"],
+        policy=dict(DEFAULT_POLICY),
+    )
+    assert state == INVALIDATED

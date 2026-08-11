@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "acgs_validator_appointment/v1",
+  "description": "EXTERNAL_VALIDATOR_ONBOARDING_V1: an evidence-backed appointment of a real human validator by a real external authority. Software never creates appointment facts — every field is transcribed from real appointment artifacts, and appointment_evidence digests bind the record to those artifacts' bytes. Registration into the validator registry is refused without a valid appointment.",
+  "type": "object",
+  "required": [
+    "validator_appointment_id",
+    "validator_id",
+    "subject_identity",
+    "organization",
+    "authorized_classes",
+    "jurisdiction",
+    "appointment_authority",
+    "effective_from",
+    "revocation_conditions",
+    "appointment_evidence",
+    "key_binding"
+  ],
+  "properties": {
+    "validator_appointment_id": { "type": "string", "pattern": "^VA-[A-Za-z0-9_.:-]+$" },
+    "validator_id": { "type": "string", "minLength": 1, "description": "The registry validator id this appointment authorizes. A REGISTER event for any other id cannot claim this appointment (copied-identity defense)." },
+    "subject_identity": { "type": "string", "minLength": 1, "description": "The real person being appointed — transcribed from the artifact, never invented." },
+    "organization": { "type": "string", "minLength": 1, "description": "The organization/person binding (firm, employer, chambers)." },
+    "authorized_classes": {
+      "type": "array",
+      "items": { "enum": ["DATA_CONTROLLER", "COUNSEL_OR_RIGHTS_AUTHORITY"] },
+      "minItems": 1,
+      "description": "The evidence classes the appointment actually grants. A REGISTER event may carry a subset, never a superset (scope-expansion defense)."
+    },
+    "jurisdiction": { "type": "string", "minLength": 1 },
+    "appointment_authority": { "type": "string", "minLength": 1, "description": "Who appointed this validator. MUST differ from subject_identity and validator_id — self-appointment is rejected structurally." },
+    "effective_from": { "type": "string", "description": "ISO-8601 Z." },
+    "effective_until": { "type": ["string", "null"], "description": "ISO-8601 Z or null (open)." },
+    "revocation_conditions": { "type": "string", "minLength": 1, "description": "Under what conditions the appointment ends early, quoted from the artifact." },
+    "appointment_evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["source_type", "source_reference", "source_digest"],
+        "properties": {
+          "source_type": { "type": "string", "minLength": 1 },
+          "source_reference": { "type": "string", "minLength": 1 },
+          "source_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256 of the real appointment artifact's bytes. Onboarding verifies each digest against a supplied document; a mismatch is forged evidence." }
+        }
+      }
+    },
+    "key_binding": {
+      "type": "object",
+      "required": ["key_id", "key_algorithm", "key_fingerprint", "key_ownership_proof"],
+      "properties": {
+        "key_id": { "type": "string", "minLength": 1 },
+        "key_algorithm": { "enum": ["hmac-sha256", "ed25519"] },
+        "key_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256 of the key material (HMAC: secret bytes; Ed25519: raw public key bytes)." },
+        "public_key": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "description": "Ed25519 only: raw public key, hex." },
+        "key_ownership_proof": { "type": "string", "minLength": 1, "description": "Signature over canonical({appointment_binding, key_id}) with the bound key — proves the appointee controls the key (key-substitution defense)." }
+      }
+    }
+  }
+}

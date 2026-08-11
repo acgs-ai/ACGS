@@ -1,0 +1,616 @@
+"""VALIDATOR_TRUST_GOVERNANCE_V1 — who may validate, and whether that trust holds.
+
+The onboarding layer (REAL_AUTHORITY_EVIDENCE_ONBOARDING_V1) made a human
+validation attestation the gate between DISCOVERED and routable. This layer
+governs the validator behind that attestation:
+
+  * a validator must be REGISTERED (identity, authorized evidence classes,
+    appointment authority, effective period, signing key fingerprint);
+  * the attestation must be SIGNED with the validator's key that was current
+    at `validated_at`, and the validator's authority must have been valid at
+    that instant;
+  * registry events are tamper-evident (`event_binding`), keys live in a
+    local keystore (gitignored) and are checked against the registered
+    fingerprint;
+  * conflicting or doubted validations derive CONFLICTED / INVALIDATED /
+    REQUIRES_REVIEW — derived states, never stored, never manually writable.
+
+Fail-closed root: an EMPTY validator registry trusts nobody, so an attested
+record with no establishable validator authorization derives INVALIDATED and
+never routes. Production ships with an empty registry and no validator keys —
+no validator identity is ever invented by software.
+
+Trust-domain note (threat model §): signatures are HMAC-SHA256 with locally
+held keys, so verification requires keystore access — this binds the *local
+operator* trust domain, like the receipt keystore. Third-party verifiability
+would need asymmetric keys (Ed25519); recorded as a known blocker, not
+papered over.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import _ed25519
+from _canonical import canonical_json, hash_obj, hmac_verify, sha256_hex
+from authority_lifecycle import (
+    ACTIVE,
+    DISCOVERED,
+    INGESTED,
+    LIFECYCLE_STATES,
+    REVOKED,
+    SUPERSEDED,
+    VALIDATED,
+    OnboardingError,
+    attestation_binding,
+    has_valid_attestation,
+    validate_onboarding_record,
+)
+from authority_router import in_effect
+
+# Governed states added on top of the onboarding lifecycle. Derived only.
+INVALIDATED = "INVALIDATED"
+CONFLICTED = "CONFLICTED"
+REQUIRES_REVIEW = "REQUIRES_REVIEW"
+GOVERNED_STATES = (*LIFECYCLE_STATES, INVALIDATED, CONFLICTED, REQUIRES_REVIEW)
+
+VALIDATOR_REGISTRY_NAME = "validator_registry.jsonl"
+VALIDATOR_KEYSTORE_NAME = ".validator_keystore"
+POLICY_NAME = "revalidation_policy.json"
+
+EVENT_SCHEMA = "acgs_validator_registry_event/v1"
+EVENTS = ("REGISTER", "ROTATE", "REVOKE")
+DISPOSITIONS = ("APPROVED", "REJECTED")
+GENESIS = "GENESIS"
+
+# Signature algorithms (ASYMMETRIC_VALIDATOR_KEYS_V1 dual mode). HMAC is the
+# compatibility mode (keystore-bound, local trust domain); Ed25519 uses the
+# public key recorded in the registry event, so third parties can verify.
+HMAC_SHA256 = "hmac-sha256"
+ED25519 = "ed25519"
+KEY_ALGORITHMS = (HMAC_SHA256, ED25519)
+
+# Attestation fields the trust layer requires beyond the onboarding base set.
+_TRUST_FIELDS = ("validator_id", "key_id", "attestation_signature")
+
+DEFAULT_POLICY: dict[str, Any] = {
+    "max_age_days": None,  # no age constraint unless the operator sets one
+    "minimum_epoch": 0,
+    "require_freshness_fields": False,
+}
+
+
+class ValidatorTrustError(ValueError):
+    """Validator registry / trust material invalid — fail closed."""
+
+
+# --------------------------------------------------------------------------- #
+# Instants
+# --------------------------------------------------------------------------- #
+
+
+def _parse_z(instant: Any) -> datetime | None:
+    """Strict UTC instant (…Z). Anything else is not comparable — fail closed."""
+    if not isinstance(instant, str):
+        return None
+    try:
+        return datetime.strptime(instant, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return None
+
+
+# --------------------------------------------------------------------------- #
+# Validator registry (append-only JSONL, tamper-evident events)
+# --------------------------------------------------------------------------- #
+
+
+def event_binding(event: dict[str, Any]) -> str:
+    """Digest over the event content (everything but the binding itself).
+    `prev_event_binding` is part of the content, so the chain link is signed."""
+    return hash_obj({k: v for k, v in event.items() if k != "event_binding"})
+
+
+def chain_intact(events: list[dict[str, Any]]) -> bool:
+    """The registry is a hash chain: each event's `prev_event_binding` must
+    equal the previous event's binding (GENESIS for the first) and each
+    binding must match its own content. Detects in-place edits, insertion,
+    deletion, and reordering anywhere in recorded history (registry rollback
+    by mid-history excision). Tail truncation is NOT detectable from the file
+    alone — external anchoring is a custody control (see
+    VALIDATOR_REGISTRY_CUSTODY_THREAT_MODEL_V1.md)."""
+    prev = GENESIS
+    for e in events:
+        if e.get("prev_event_binding") != prev:
+            return False
+        if e.get("event_binding") != event_binding(e):
+            return False
+        prev = e["event_binding"]
+    return True
+
+
+def load_validator_events(path: Path) -> list[dict[str, Any]] | None:
+    """Load the registry. Missing file -> [] (nobody trusted). A malformed
+    line -> None (registry tainted; every trust check must fail)."""
+    if not path.is_file():
+        return []
+    events: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(obj, dict):
+            return None
+        events.append(obj)
+    return events
+
+
+def _events_for(events: list[dict[str, Any]], validator_id: str) -> list[dict[str, Any]]:
+    return [e for e in events if e.get("validator_id") == validator_id]
+
+
+def _events_intact(evts: list[dict[str, Any]]) -> bool:
+    """Every event for this validator must carry an intact binding — a tampered
+    registry line makes the validator unverifiable (fail closed)."""
+    for e in evts:
+        if e.get("event") not in EVENTS:
+            return False
+        if e.get("event_binding") != event_binding(e):
+            return False
+    return True
+
+
+def _register_event(evts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for e in evts:
+        if e.get("event") == "REGISTER":
+            return e
+    return None
+
+
+def authority_valid_at(evts: list[dict[str, Any]], at: str) -> bool:
+    """Was the validator's authority valid at instant `at`? Registered, inside
+    the registered effective period, and not revoked at or before `at`."""
+    at_dt = _parse_z(at)
+    reg = _register_event(evts)
+    if at_dt is None or reg is None:
+        return False
+    frm = _parse_z(reg.get("effective_from"))
+    if frm is None or at_dt < frm:
+        return False
+    until = reg.get("effective_until")
+    if until is not None:
+        until_dt = _parse_z(until)
+        if until_dt is None or at_dt >= until_dt:
+            return False
+    for e in evts:
+        if e.get("event") == "REVOKE":
+            rev = _parse_z(e.get("instant"))
+            if rev is None or rev <= at_dt:
+                return False
+    return True
+
+
+def _key_windows(evts: list[dict[str, Any]]) -> list[tuple[str, datetime, datetime | None]]:
+    """(key_id, start, end) signing windows. REGISTER's key starts at
+    effective_from; each ROTATE starts its key at the rotation instant and ends
+    the previous key's window. A REVOKE ends the final window."""
+    keyed = []
+    for e in evts:
+        if e.get("event") == "REGISTER":
+            start = _parse_z(e.get("effective_from"))
+        elif e.get("event") == "ROTATE":
+            start = _parse_z(e.get("instant"))
+        else:
+            continue
+        if start is None or not e.get("key_id"):
+            return []  # malformed chronology — no key is ever current
+        keyed.append((e["key_id"], start, e))
+    keyed.sort(key=lambda t: t[1])
+    windows: list[tuple[str, datetime, datetime | None]] = []
+    for i, (kid, start, _e) in enumerate(keyed):
+        end = keyed[i + 1][1] if i + 1 < len(keyed) else None
+        windows.append((kid, start, end))
+    revoke = min(
+        (d for e in evts if e.get("event") == "REVOKE" if (d := _parse_z(e.get("instant")))),
+        default=None,
+    )
+    if revoke is not None:
+        windows = [
+            (kid, start, min(end, revoke) if end else revoke)
+            for kid, start, end in windows
+            if start < revoke
+        ]
+    return windows
+
+
+def key_valid_at(evts: list[dict[str, Any]], key_id: str, at: str) -> bool:
+    at_dt = _parse_z(at)
+    if at_dt is None:
+        return False
+    for kid, start, end in _key_windows(evts):
+        if kid == key_id and start <= at_dt and (end is None or at_dt < end):
+            return True
+    return False
+
+
+def _key_event_of(evts: list[dict[str, Any]], key_id: str) -> dict[str, Any] | None:
+    for e in evts:
+        if e.get("event") in ("REGISTER", "ROTATE") and e.get("key_id") == key_id:
+            return e
+    return None
+
+
+def key_fingerprint_of(evts: list[dict[str, Any]], key_id: str) -> str | None:
+    e = _key_event_of(evts, key_id)
+    fp = None if e is None else e.get("key_fingerprint")
+    return fp if isinstance(fp, str) else None
+
+
+def key_algorithm_of(evts: list[dict[str, Any]], key_id: str) -> str:
+    e = _key_event_of(evts, key_id)
+    return (e or {}).get("key_algorithm", HMAC_SHA256)
+
+
+def public_key_of(evts: list[dict[str, Any]], key_id: str) -> str | None:
+    e = _key_event_of(evts, key_id)
+    pk = None if e is None else e.get("public_key")
+    return pk if isinstance(pk, str) else None
+
+
+def revoked_after(evts: list[dict[str, Any]], validated_at: str) -> bool:
+    """True if the validator was revoked AFTER this attestation was made — the
+    attestation was valid when issued, but the trust behind it is now in doubt
+    (derives REQUIRES_REVIEW, not silent continuation)."""
+    v_dt = _parse_z(validated_at)
+    if v_dt is None:
+        return True
+    for e in evts:
+        if e.get("event") == "REVOKE":
+            rev = _parse_z(e.get("instant"))
+            if rev is None or rev > v_dt:
+                return True
+    return False
+
+
+# --------------------------------------------------------------------------- #
+# Attestation signature
+# --------------------------------------------------------------------------- #
+
+
+def attestation_payload(att: dict[str, Any]) -> str:
+    """Canonical signed content of an attestation. Every semantic field is
+    inside the signature, so altering ANY of them after signing invalidates it."""
+    return canonical_json(
+        {
+            "confirmed_period": att.get("confirmed_period"),
+            "confirmed_scope_digest": att.get("confirmed_scope_digest"),
+            "disposition": att.get("disposition", "APPROVED"),
+            "key_id": att.get("key_id"),
+            "record_binding": att.get("record_binding"),
+            "validated_at": att.get("validated_at"),
+            "validation_method": att.get("validation_method"),
+            "validator_id": att.get("validator_id"),
+            "validator_identity": att.get("validator_identity"),
+        }
+    )
+
+
+def attestation_payload_v2(record: dict[str, Any], att: dict[str, Any]) -> str:
+    """Ed25519 signed content (ASYMMETRIC_VALIDATOR_KEYS_V1): the complete
+    semantic attestation payload plus explicit bindings to the evidence
+    identity, its source-document digest, the validation class, and the key
+    fingerprint. Altering any bound element invalidates the signature."""
+    return canonical_json(
+        {
+            "authority_evidence_id": record.get("authority_evidence_id"),
+            "confirmed_period": att.get("confirmed_period"),
+            "confirmed_scope_digest": att.get("confirmed_scope_digest"),
+            "disposition": att.get("disposition", "APPROVED"),
+            "evidence_source_digest": record.get("source_digest"),
+            "key_fingerprint": att.get("key_fingerprint"),
+            "key_id": att.get("key_id"),
+            "record_binding": att.get("record_binding"),
+            "signature_algorithm": ED25519,
+            "validated_at": att.get("validated_at"),
+            "validation_class": record.get("authority_type"),
+            "validation_method": att.get("validation_method"),
+            "validator_id": att.get("validator_id"),
+            "validator_identity": att.get("validator_identity"),
+        }
+    )
+
+
+def _load_key(keystore_dir: Path, key_id: str) -> bytes | None:
+    """Key bytes for key_id, or None. key_id is used as a file name — reject
+    anything that could traverse out of the keystore."""
+    if not key_id or "/" in key_id or "\\" in key_id or ".." in key_id:
+        return None
+    p = keystore_dir / key_id
+    if not p.is_file():
+        return None
+    data = p.read_bytes()
+    return data if len(data) >= 16 else None
+
+
+def verify_attestation_trust(
+    record: dict[str, Any],
+    att: dict[str, Any],
+    *,
+    events: list[dict[str, Any]] | None,
+    keystore_dir: Path,
+) -> tuple[bool, str]:
+    """Full trust verification of one attestation. Every check fails closed.
+
+    Order: metadata completeness -> record binding -> registry integrity ->
+    registration + class authorization -> authority valid at validated_at ->
+    key current at validated_at -> key fingerprint -> signature.
+    """
+    if events is None:
+        return False, "validator_registry_unreadable"
+    if not chain_intact(events):
+        return False, "validator_registry_chain_broken"
+    if not isinstance(att, dict):
+        return False, "attestation_not_an_object"
+    base = ("validator_identity", "validation_method", "validated_at", "record_binding")
+    for f in (*base, *_TRUST_FIELDS):
+        v = att.get(f)
+        if not isinstance(v, str) or not v.strip():
+            return False, f"partial_validator_metadata:{f}"
+    if att.get("disposition", "APPROVED") not in DISPOSITIONS:
+        return False, "unknown_disposition"
+    if att["record_binding"] != attestation_binding(record):
+        return False, "record_binding_mismatch"
+    if _parse_z(att["validated_at"]) is None:
+        return False, "validated_at_not_utc"
+
+    evts = _events_for(events, att["validator_id"])
+    if not evts:
+        return False, "unknown_validator"
+    if not _events_intact(evts):
+        return False, "validator_registry_tampered"
+    reg = _register_event(evts)
+    if reg is None:
+        return False, "validator_never_registered"
+    classes = reg.get("authorized_classes")
+    if not isinstance(classes, list) or record.get("authority_type") not in classes:
+        return False, "unauthorized_validator_class"
+    if not authority_valid_at(evts, att["validated_at"]):
+        return False, "validator_authority_invalid_at_attestation"
+    if not key_valid_at(evts, att["key_id"], att["validated_at"]):
+        return False, "key_not_current_at_attestation"
+
+    fp = key_fingerprint_of(evts, att["key_id"])
+    if fp is None:
+        return False, "validator_key_unavailable"
+    alg = key_algorithm_of(evts, att["key_id"])
+    if att.get("signature_algorithm", HMAC_SHA256) != alg:
+        return False, "signature_algorithm_mismatch"
+
+    if alg == ED25519:
+        pub_hex = public_key_of(evts, att["key_id"])
+        try:
+            pub = bytes.fromhex(pub_hex) if pub_hex else None
+        except ValueError:
+            pub = None
+        if pub is None:
+            return False, "validator_key_unavailable"
+        if sha256_hex(pub) != fp:
+            return False, "key_fingerprint_mismatch"
+        if att.get("key_fingerprint") != fp:
+            return False, "key_fingerprint_unbound"
+        if not _ed25519.verify(
+            pub, attestation_payload_v2(record, att), att["attestation_signature"]
+        ):
+            return False, "attestation_signature_invalid"
+        return True, "trusted"
+
+    # HMAC compatibility mode (legacy): keystore-bound, local trust domain.
+    key = _load_key(keystore_dir, att["key_id"])
+    if key is None:
+        return False, "validator_key_unavailable"
+    if sha256_hex(key) != fp:
+        return False, "key_fingerprint_mismatch"
+    if not hmac_verify(key, attestation_payload(att), att["attestation_signature"]):
+        return False, "attestation_signature_invalid"
+    return True, "trusted"
+
+
+# --------------------------------------------------------------------------- #
+# Freshness / revalidation policy
+# --------------------------------------------------------------------------- #
+
+
+def load_policy(path: Path) -> dict[str, Any] | None:
+    """Load the revalidation policy. Missing file -> defaults (freshness is an
+    operator opt-in). Malformed file -> None (every record REQUIRES_REVIEW)."""
+    if not path.is_file():
+        return dict(DEFAULT_POLICY)
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+    policy = dict(DEFAULT_POLICY)
+    policy.update({k: obj[k] for k in DEFAULT_POLICY if k in obj})
+    if policy["max_age_days"] is not None and not isinstance(policy["max_age_days"], int):
+        return None
+    if not isinstance(policy["minimum_epoch"], int):
+        return None
+    return policy
+
+
+def is_stale(
+    record: dict[str, Any],
+    atts: list[dict[str, Any]],
+    instant: str | None,
+    policy: dict[str, Any] | None,
+) -> bool:
+    """ACTIVE-eligible record demoted to REQUIRES_REVIEW when its verification
+    is no longer fresh under the policy. Evidence is never deleted — staleness
+    is a derived doubt, cured by revalidation, not by data loss."""
+    if policy is None:
+        return True  # malformed policy: nothing counts as fresh
+    epoch = record.get("verification_epoch")
+    last = record.get("last_verified_at")
+    if policy["require_freshness_fields"] and (epoch is None or last is None):
+        return True
+    if policy["minimum_epoch"] > 0:
+        if not isinstance(epoch, int) or epoch < policy["minimum_epoch"]:
+            return True
+    max_age = policy["max_age_days"]
+    if max_age is not None and instant is not None:
+        now = _parse_z(instant)
+        basis = last
+        if basis is None:
+            # fall back to the newest attestation instant
+            stamps = sorted(a.get("validated_at", "") for a in atts)
+            basis = stamps[-1] if stamps else None
+        basis_dt = _parse_z(basis)
+        if now is None or basis_dt is None:
+            return True
+        if (now - basis_dt).days > max_age:
+            return True
+    return False
+
+
+# --------------------------------------------------------------------------- #
+# Governed lifecycle derivation
+# --------------------------------------------------------------------------- #
+
+
+def _attestations(record: dict[str, Any]) -> list[dict[str, Any]]:
+    """The primary `validation` block plus any `co_validations`. The primary is
+    required (intrinsic gate); co-validations enable multi-validator review."""
+    atts = [record.get("validation")]
+    co = record.get("co_validations")
+    if isinstance(co, list):
+        atts.extend(co)
+    return [a for a in atts if a is not None]
+
+
+def derive_governed_state(
+    record: dict[str, Any],
+    *,
+    instant: str | None,
+    superseded_ids: set[str],
+    in_registry: bool,
+    events: list[dict[str, Any]] | None,
+    keystore_dir: Path,
+    policy: dict[str, Any] | None,
+) -> str:
+    """Trust-governed lifecycle state. Extends (never bypasses) the onboarding
+    derivation: everything the intrinsic layer refuses, this layer refuses too,
+    and it additionally derives INVALIDATED / CONFLICTED / REQUIRES_REVIEW.
+
+    Precedence (fail-closed): REVOKED > SUPERSEDED > DISCOVERED (no/broken
+    primary attestation) > INVALIDATED (untrustworthy attestation) >
+    CONFLICTED > registry/temporal gates > REQUIRES_REVIEW > ACTIVE.
+    """
+    if record.get("revoked_at"):
+        return REVOKED
+    if record.get("authority_evidence_id") in superseded_ids:
+        return SUPERSEDED
+    if not has_valid_attestation(record):
+        return DISCOVERED  # missing/malformed/binding-broken primary attestation
+
+    atts = _attestations(record)
+    for att in atts:
+        ok, _reason = verify_attestation_trust(
+            record, att, events=events, keystore_dir=keystore_dir
+        )
+        if not ok:
+            return INVALIDATED
+
+    dispositions = {a.get("disposition", "APPROVED") for a in atts}
+    if dispositions == {"REJECTED"}:
+        return INVALIDATED  # validators affirmatively rejected the evidence
+    if len(dispositions) > 1:
+        return CONFLICTED
+    scope_digest = hash_obj(record.get("authority_scope"))
+    for a in atts:
+        confirmed = a.get("confirmed_scope_digest")
+        if confirmed is not None and confirmed != scope_digest:
+            return CONFLICTED  # validator confirmed a different scope
+        period = a.get("confirmed_period")
+        if period is not None and period != {
+            "from": record.get("effective_from"),
+            "until": record.get("effective_until"),
+        }:
+            return CONFLICTED  # validator confirmed a different validity period
+
+    if not in_registry or not record.get("ingestion_receipt"):
+        return VALIDATED
+    if not in_effect(record, instant):
+        return INGESTED
+    if any(
+        revoked_after(_events_for(events or [], a["validator_id"]), a["validated_at"]) for a in atts
+    ):
+        return REQUIRES_REVIEW
+    if is_stale(record, atts, instant, policy):
+        return REQUIRES_REVIEW
+    return ACTIVE
+
+
+def governed_active_records(
+    records: list[dict[str, Any]],
+    instant: str | None,
+    *,
+    events: list[dict[str, Any]] | None,
+    keystore_dir: Path,
+    policy: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Routing-eligible subset under validator trust governance: governed-ACTIVE
+    only. INVALIDATED, CONFLICTED, and REQUIRES_REVIEW never route."""
+    sids = {r.get("supersedes") for r in records if r.get("supersedes")}
+    out = []
+    for r in records:
+        try:
+            validate_onboarding_record(r)
+        except OnboardingError:
+            continue
+        state = derive_governed_state(
+            r,
+            instant=instant,
+            superseded_ids=sids,
+            in_registry=True,
+            events=events,
+            keystore_dir=keystore_dir,
+            policy=policy,
+        )
+        if state == ACTIVE:
+            out.append(r)
+    return out
+
+
+def governed_lifecycle_distribution(
+    records: list[dict[str, Any]],
+    instant: str | None,
+    *,
+    events: list[dict[str, Any]] | None,
+    keystore_dir: Path,
+    policy: dict[str, Any] | None,
+) -> dict[str, int]:
+    sids = {r.get("supersedes") for r in records if r.get("supersedes")}
+    dist = dict.fromkeys(GOVERNED_STATES, 0)
+    for r in records:
+        try:
+            validate_onboarding_record(r)
+        except OnboardingError:
+            continue
+        state = derive_governed_state(
+            r,
+            instant=instant,
+            superseded_ids=sids,
+            in_registry=True,
+            events=events,
+            keystore_dir=keystore_dir,
+            policy=policy,
+        )
+        dist[state] += 1
+    return dist

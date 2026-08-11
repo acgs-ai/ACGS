@@ -1,0 +1,12 @@
+# Runtime state — never committed.
+.authority_keystore
+.validator_keystore/
+.claude/
+.mcp.json
+.omc/
+.benchmarks/
+*.staged.json
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/

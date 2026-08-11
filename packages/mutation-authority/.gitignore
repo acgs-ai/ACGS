@@ -1,0 +1,9 @@
+# Session/agent runtime state and sandbox mounts — never committed.
+.claude/
+.mcp.json
+.omc/
+.benchmarks/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/

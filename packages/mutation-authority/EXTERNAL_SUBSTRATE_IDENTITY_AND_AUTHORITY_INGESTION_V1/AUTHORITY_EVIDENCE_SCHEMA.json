@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "acgs_authority_evidence/v1",
+  "title": "External authority evidence record",
+  "description": "One externally sourced record establishing a real authority identity (a data controller, or a counsel / rights authority). Recording a record does NOT assert that any commercial right exists, nor that the request it may unblock is answerable — it records only that a named authority, evidenced by a real source document, exists for a stated scope. rights_assertion on the substrate stays null regardless.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "authority_evidence_id",
+    "authority_type",
+    "subject_identity",
+    "authority_scope",
+    "source_type",
+    "source_reference",
+    "source_digest",
+    "effective_from",
+    "verification_state"
+  ],
+  "properties": {
+    "authority_evidence_id": {"type": "string", "pattern": "^AE-[A-Za-z0-9_.:-]+$"},
+    "authority_type": {"enum": ["DATA_CONTROLLER", "COUNSEL_OR_RIGHTS_AUTHORITY"]},
+    "subject_identity": {"type": "string", "minLength": 1, "description": "The evidenced identity — never a provider label, brand, or filename."},
+    "legal_entity": {"type": ["string", "null"]},
+    "authority_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asset_ids", "requirement_ids"],
+      "properties": {
+        "asset_ids": {"oneOf": [{"const": "ALL"}, {"type": "array", "items": {"type": "string"}}]},
+        "requirement_ids": {"oneOf": [{"const": "ALL"}, {"type": "array", "items": {"type": "string"}}]},
+        "basis": {"type": ["string", "null"]}
+      },
+      "description": "The exact assets and requirement dimensions this authority covers. A counsel record does not cover assets/requirements outside this scope (invariant I5)."
+    },
+    "source_type": {
+      "type": "string",
+      "description": "The class of evidence document, e.g. SIGNED_APPOINTMENT, ENGAGEMENT_LETTER, CORPORATE_GOVERNANCE_RECORD, VERIFIED_INTERNAL_LEGAL_DESIGNATION, SIGNED_AUTHORITY_STATEMENT. The software does not adjudicate sufficiency; it records what was supplied."
+    },
+    "source_reference": {"type": "string", "minLength": 1, "description": "Locator of the real source document (path/id). Never fabricated."},
+    "source_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256 of the actual source document bytes. A document altered after ingestion no longer matches (attack 11)."},
+    "effective_from": {"type": "string", "description": "ISO-8601 instant the authority takes effect."},
+    "effective_until": {"type": ["string", "null"], "description": "ISO-8601 expiry, or null for open-ended. After this instant the record fails closed (I12)."},
+    "issuer_or_appointing_party": {"type": ["string", "null"]},
+    "verification_state": {
+      "enum": ["IDENTITY_EVIDENCED", "AUTHORITY_EVIDENCED"],
+      "description": "IDENTITY_EVIDENCED = the identity is known but authority is not established (not routable, invariant I2). AUTHORITY_EVIDENCED = authority is established for the scope."
+    },
+    "verification_method": {"type": ["string", "null"]},
+    "ingested_by": {"type": ["string", "null"]},
+    "ingestion_receipt": {"type": ["string", "null"], "description": "receipt_id minted at ingestion."},
+    "supersedes": {"type": ["string", "null"], "description": "authority_evidence_id this record replaces."},
+    "revoked_at": {"type": ["string", "null"], "description": "ISO-8601 revocation instant; a revoked record fails closed (I12)."},
+    "notes": {"type": ["string", "null"]},
+    "jurisdiction": {"type": ["string", "null"], "description": "REQUIRED for COUNSEL_OR_RIGHTS_AUTHORITY: the jurisdiction the counsel identity is admitted/authorized in, quoted from the appointment artifact."},
+    "appointment_authority": {"type": ["string", "null"], "description": "REQUIRED for COUNSEL_OR_RIGHTS_AUTHORITY: who appointed/engaged this counsel, quoted from the artifact — never inferred."},
+    "verification_metadata": {"type": ["object", "null"], "description": "REQUIRED for COUNSEL_OR_RIGHTS_AUTHORITY: how the identity/appointment was verified (e.g. bar registry lookup reference, countersignature check). Free-form object recorded verbatim from the verification performed."},
+    "validation": {"$ref": "#/definitions/attestation"},
+    "co_validations": {
+      "type": ["array", "null"],
+      "items": {"$ref": "#/definitions/attestation"},
+      "description": "Additional validators' attestations of the SAME record content. All must be trust-verified; contradictory dispositions, confirmed scopes, or confirmed periods derive CONFLICTED (never routable)."
+    },
+    "last_verified_at": {"type": ["string", "null"], "description": "ISO-8601 Z instant of the most recent revalidation. Consumed by the revalidation policy (freshness); staleness derives REQUIRES_REVIEW, never deletion."},
+    "verification_epoch": {"type": ["integer", "null"], "description": "Monotonic revalidation epoch. A record verified in an epoch below the policy minimum derives REQUIRES_REVIEW."}
+  },
+  "definitions": {
+    "attestation": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["validator_identity", "validation_method", "validated_at", "record_binding", "validator_id", "key_id", "attestation_signature"],
+      "properties": {
+        "validator_identity": {"type": "string", "minLength": 1, "description": "The human/legal validator who judged the artifact to constitute real authority. The software NEVER writes this block."},
+        "validation_method": {"type": "string", "minLength": 1},
+        "validated_at": {"type": "string", "description": "ISO-8601 Z instant of the validation. The validator's registered authority and signing key must both have been valid at this instant."},
+        "record_binding": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256 over the identity-bearing record content at validation time (see authority_lifecycle.attestation_binding). A record changed after validation no longer matches — it drops to DISCOVERED and cannot route (identity-drift fail-closed)."},
+        "validator_id": {"type": "string", "minLength": 1, "description": "VALIDATOR_TRUST_GOVERNANCE_V1: the registered validator id. Unregistered, unauthorized-class, expired, or revoked-at-attestation validators derive INVALIDATED."},
+        "key_id": {"type": "string", "minLength": 1, "description": "The validator signing key current at validated_at (registry key window). A rotated-out key fails closed."},
+        "attestation_signature": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "HMAC-SHA256 over the canonical attestation payload (validator_trust.attestation_payload) with the validator's key. Altering ANY attestation field after signing invalidates it."},
+        "disposition": {"enum": ["APPROVED", "REJECTED"], "description": "Default APPROVED. All-REJECTED derives INVALIDATED; mixed dispositions derive CONFLICTED."},
+        "confirmed_scope_digest": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "description": "Optional: hash_obj of the authority_scope the validator confirmed. A mismatch with the record scope derives CONFLICTED."},
+        "confirmed_period": {"type": ["object", "null"], "description": "Optional: {from, until} the validator confirmed. A mismatch with the record's effective period derives CONFLICTED."}
+      },
+      "description": "A human validation attestation, cryptographically bound to the record content (record_binding) and to a registered validator (signature). Absent = DISCOVERED. Untrusted = INVALIDATED. Lifecycle state itself is derived, never stored."
+    }
+  }
+}
