@@ -2236,10 +2236,10 @@ def _casefolded_path_spellings(path: Path) -> tuple[str, ...]:
     return tuple(spellings)
 
 
-def _protected_evidence_targets(
+def _protected_trust_root_targets(
     audit_path: str | Path | None, ledger_path: str | Path | None
 ) -> frozenset[str]:
-    """Casefolded spellings of the configured audit-chain and ledger files.
+    """Casefolded spellings of the gate-mode, audit-chain, and ledger files.
 
     :func:`_governance_path_tier` protects the default ``.gove-zone`` directory
     by segment name, but ``GOVE_ZONE_AUDIT_PATH`` — or the public ``audit_path``
@@ -2249,34 +2249,46 @@ def _protected_evidence_targets(
     the decision was appended to it. Defaults mirror
     :func:`build_execution_gateway` exactly, so the files the gateway writes
     are the files this protects.
+
+    The gate-mode file (:func:`gove_zone.integration.resolve_gate_mode_path`)
+    is protected by the same exact-target rule: its spellings include the
+    symlink-resolved form, so when ``.gove-zone`` is itself a symlink the
+    write that reaches the real file through the resolved location (a
+    spelling carrying no protected segment) still lands on the trust-root
+    tier.
     """
-    from gove_zone.integration import resolve_audit_path
+    from gove_zone.integration import resolve_audit_path, resolve_gate_mode_path
 
     resolved_audit = Path(audit_path) if audit_path is not None else resolve_audit_path()
     resolved_ledger = (
         Path(ledger_path) if ledger_path is not None else resolved_audit.parent / "ledger.jsonl"
     )
     targets: set[str] = set()
-    for evidence in (resolved_audit, resolved_ledger):
-        targets.update(_casefolded_path_spellings(evidence))
+    for protected in (resolve_gate_mode_path(), resolved_audit, resolved_ledger):
+        targets.update(_casefolded_path_spellings(protected))
     return frozenset(targets)
 
 
-def _mutation_targets_evidence(child: Mapping[str, Any], evidence_targets: frozenset[str]) -> bool:
-    """True when a file-mutation payload names a configured evidence file."""
-    if not evidence_targets:
-        return False
+def _mutation_target(child: Mapping[str, Any]) -> str | None:
+    """The raw file-mutation target a hook payload names, or ``None``."""
     try:
         _name, tool_input = tool_name_and_input(dict(child))
     except Exception:  # noqa: BLE001 - an unreadable payload has no readable target
-        return False
+        return None
     for key in _FILE_MUTATION_TARGET_KEYS:
         value = tool_input.get(key)
         if isinstance(value, str) and value:
-            return any(
-                spelling in evidence_targets for spelling in _casefolded_path_spellings(Path(value))
-            )
-    return False
+            return value
+    return None
+
+
+def _mutation_targets_trust_root(target: str, trust_root_targets: frozenset[str]) -> bool:
+    """True when a file-mutation target names a protected trust-root file."""
+    if not trust_root_targets:
+        return False
+    return any(
+        spelling in trust_root_targets for spelling in _casefolded_path_spellings(Path(target))
+    )
 
 
 def _governance_path_tier(path: Sequence[str]) -> str:
@@ -2313,6 +2325,41 @@ def _governance_path_tier(path: Sequence[str]) -> str:
         final = normalized[-1]
         if final in _DEPENDENCY_MANIFEST_FILENAMES or _REQUIREMENTS_FILENAME_RE.fullmatch(final):
             return TIER_DEPENDENCY
+    return ""
+
+
+#: Governance path tiers ordered strictest-first. A mutation is judged by the
+#: strictest tier any spelling of its target reaches, literal or
+#: symlink-resolved, so an alias cannot select a weaker tier.
+_GOVERNANCE_PATH_TIERS_STRICTEST_FIRST = (
+    TIER_TRUST_ROOT,
+    TIER_CONTROL_SURFACE,
+    TIER_DEPENDENCY,
+)
+
+
+def _strictest_governance_tier(*tiers: str) -> str:
+    for tier in _GOVERNANCE_PATH_TIERS_STRICTEST_FIRST:
+        if tier in tiers:
+            return tier
+    return ""
+
+
+def _resolved_governance_path_tier(target: str) -> str:
+    """Governance tier of a mutation target after symlink resolution.
+
+    :func:`_governance_path_tier` judges the segments the payload spelled, but
+    the host write follows directory symlinks: with ``mode-link ->
+    .gove-zone`` in the checkout, a ``Write`` to ``mode-link/gate.mode``
+    carries no protected segment yet replaces the real gate-mode file.
+    :meth:`~pathlib.Path.resolve` anchors a relative spelling to the working
+    directory (as the host tool does), normalizes ``..``, and follows
+    symlinks, so the segments judged here are the segments of the file
+    actually written. An unresolvable spelling (symlink loop, permission
+    error) contributes no tier; the literal-segment tier still applies.
+    """
+    with contextlib.suppress(OSError, RuntimeError):
+        return _governance_path_tier(Path(target).expanduser().resolve().parts)
     return ""
 
 
@@ -2372,9 +2419,15 @@ def execution_tool_calls_from_hook_payload(
     carries the trust-root path tier even when the file lives outside a
     ``.gove-zone`` directory: the chain that records a decision must not be
     rewritable by the call it judged.
+
+    File-mutation targets are tiered by their symlink-resolved segments as
+    well as their literal ones (strictest tier wins), and the resolved
+    gate-mode file is protected by exact target alongside the evidence files:
+    a directory symlink such as ``mode-link -> .gove-zone`` must not let a
+    write reach the real gate-mode file under a source-tier allow.
     """
     context = {str(k): v for k, v in dict(run_context or {}).items()}
-    evidence_targets: frozenset[str] | None = None
+    trust_root_targets: frozenset[str] | None = None
     calls: list[ToolCall] = []
     for child in individual_tool_payloads(dict(payload)):
         call = tool_call_from_hook_payload(child, action_kind=action_kind, actor=actor)
@@ -2445,15 +2498,25 @@ def execution_tool_calls_from_hook_payload(
 
         extra: dict[str, Any] = {}
         if call.name in _FILE_MUTATION_TOOLS:
+            target = _mutation_target(child)
             governance_tier = _governance_path_tier(call.path)
-            if governance_tier != TIER_TRUST_ROOT:
+            if governance_tier != TIER_TRUST_ROOT and target is not None:
+                # The host write follows directory symlinks, so the target is
+                # tiered by its resolved segments too and the strictest tier
+                # wins: a `mode-link -> .gove-zone` alias must not hide the
+                # trust root behind an unprotected literal spelling.
+                governance_tier = _strictest_governance_tier(
+                    governance_tier, _resolved_governance_path_tier(target)
+                )
+            if governance_tier != TIER_TRUST_ROOT and target is not None:
                 # GOVE_ZONE_AUDIT_PATH (or explicit audit_path/ledger_path
                 # arguments) may place the evidence outside any `.gove-zone`
-                # directory; a mutation naming that exact configured file must
-                # hit the same trust-root deny as the default chain location.
-                if evidence_targets is None:
-                    evidence_targets = _protected_evidence_targets(audit_path, ledger_path)
-                if _mutation_targets_evidence(child, evidence_targets):
+                # directory; a mutation naming that exact configured file, or
+                # the resolved gate-mode file, must hit the same trust-root
+                # deny as the default chain location.
+                if trust_root_targets is None:
+                    trust_root_targets = _protected_trust_root_targets(audit_path, ledger_path)
+                if _mutation_targets_trust_root(target, trust_root_targets):
                     governance_tier = TIER_TRUST_ROOT
             if governance_tier:
                 # Fail-closed path rule input: a Write to the gate-mode file,

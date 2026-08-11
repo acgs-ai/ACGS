@@ -2578,6 +2578,83 @@ def test_control_surface_paths_are_matched_case_insensitively(
     assert "escalate-control-surface-path-mutation" in event["matched_rules"]
 
 
+def test_writes_through_a_directory_symlink_to_the_trust_root_are_denied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With ``mode-link -> .gove-zone`` in the checkout, a governed ``Write``
+    to ``mode-link/gate.mode`` spelled no protected segment, so the segment
+    rule assigned the ordinary source tier, so the host write followed the
+    symlink and replaced the real gate-mode file, switching the gate into
+    observe mode and withholding every later deny/ask verdict."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".gove-zone").mkdir()
+    (tmp_path / "mode-link").symlink_to(tmp_path / ".gove-zone", target_is_directory=True)
+    gateway = make_execution_gateway(tmp_path)
+
+    response = governed_write(gateway, "mode-link/gate.mode")
+
+    assert permission(response) == "deny"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["tool"] == "runtime.Write"
+    assert "deny-trust-root-path-mutation" in event["matched_rules"]
+
+
+def test_writes_through_a_directory_symlink_to_the_control_surface_require_a_human(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / "cfg-link").symlink_to(tmp_path / ".claude", target_is_directory=True)
+    gateway = make_execution_gateway(tmp_path)
+
+    response = governed_write(gateway, "cfg-link/settings.json")
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert "escalate-control-surface-path-mutation" in event["matched_rules"]
+
+
+def test_the_resolved_gate_mode_file_is_protected_by_exact_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When ``.gove-zone`` is itself a symlink to a directory elsewhere, a
+    write naming the real location spells no protected segment and resolves to
+    none, but it is the exact file ``current_gate_mode`` reads, so it must
+    carry the trust-root tier by resolved target, not the source-tier allow."""
+    real = tmp_path / "real-config"
+    real.mkdir()
+    (tmp_path / ".gove-zone").symlink_to(real, target_is_directory=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+
+    (call,) = execution_tool_calls_from_hook_payload(
+        {"tool_name": "Write", "tool_input": {"file_path": str(real / "gate.mode")}},
+        action_kind="PreToolUse",
+        actor="operator-a",
+    )
+
+    assert call.args["governance_path_tier"] == "trust-root"
+    assert call.state["governance_path_tier"] == "trust-root"
+
+
+def test_symlinks_to_ordinary_directories_stay_on_the_source_tier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Positive control: symlink resolution assigns tiers, it does not turn
+    every symlinked write into a governance mutation."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src-link").symlink_to(tmp_path / "src", target_is_directory=True)
+    gateway = make_execution_gateway(tmp_path)
+
+    response = governed_write(gateway, "src-link/app.py")
+
+    assert permission(response) == "allow"
+    assert response["gove_zone"]["receipts"]
+
+
 @pytest.mark.parametrize(
     "file_path",
     [
