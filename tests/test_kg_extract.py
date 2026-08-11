@@ -873,6 +873,19 @@ def test_build_workflows_skips_workflow_files_that_are_not_live(tmp_path, monkey
     assert not any(key[0] == "GATES" for key in extract.G.rels)
 
 
+def test_build_workflows_fails_hard_when_pyyaml_is_unavailable(monkeypatch):
+    """REGRESSION. When PyYAML was missing (extract.py run directly instead of
+    through the Makefile's `uv --with pyyaml` wrapper), build_workflows logged
+    a skip and returned, so extraction exited 0 and published a graph with no
+    Workflow/GATES layer. Q1/Q2 and the generated reports then read the
+    missing layer as zero path-filtered CI coverage instead of unknown
+    coverage."""
+    monkeypatch.setitem(sys.modules, "yaml", None)  # `import yaml` -> ImportError
+
+    with pytest.raises(RuntimeError, match="pyyaml"):
+        extract.build_workflows([])
+
+
 # --------------------------------------------------------------------------- #
 # Compliance control ids
 # --------------------------------------------------------------------------- #

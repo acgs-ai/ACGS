@@ -1384,8 +1384,15 @@ def build_workflows(files: list[str]) -> None:
     try:
         import yaml
     except ImportError:
-        log("E5. workflows: pyyaml unavailable — skipped")
-        return
+        # Skipping here let extraction exit 0 and publish a graph with no
+        # Workflow/GATES layer, which Q1/Q2 and the generated reports read
+        # as zero path-filtered CI coverage rather than unknown coverage.
+        raise RuntimeError(
+            "pyyaml is unavailable: workflow parsing would be skipped and the "
+            "graph published without its Workflow/GATES layer, turning unknown "
+            "CI coverage into apparent zero coverage; run extraction via "
+            "`make extract` (uv run --with pyyaml)"
+        ) from None
     wf_dir = ROOT / ".github" / "workflows"
     if not wf_dir.is_dir():
         return
