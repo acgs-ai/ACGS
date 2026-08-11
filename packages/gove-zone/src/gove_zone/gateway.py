@@ -1075,14 +1075,26 @@ class UniversalGateway:
 
         decided: list[tuple[Any, str, str]] = []  # (record, audit_hash, previous_audit_hash)
         for call in calls:
-            previous_audit_hash = self._audit.last_hash()
+            # Source previous_audit_hash from the append result, NOT a separate
+            # pre-read: ``append`` computes ``previous_hash`` under the store's
+            # exclusive lock against the real in-chain predecessor, so the
+            # receipt's chain-linkage claim stays accurate even when another
+            # writer advances the head between decisions (a lock-free
+            # ``last_hash()`` pre-read could be superseded before the locked
+            # write and record a stale anchor).
             try:
-                record, audit_hash = self._kernel_for(actor).evaluate_and_record(call)
+                audited = self._kernel_for(actor).evaluate_and_append(call)
             except GoveZoneError as exc:
                 return _hook_response(
                     action_kind, "deny", f"governance decision unavailable: {type(exc).__name__}"
                 )
-            decided.append((record, audit_hash, previous_audit_hash))
+            decided.append(
+                (
+                    audited.record,
+                    audited.audit_hash,
+                    str(audited.append_result.get("previous_hash", "")),
+                )
+            )
 
         denied = [record for record, _, _ in decided if record.decision is Decision.DENY]
         if denied:

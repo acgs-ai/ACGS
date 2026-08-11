@@ -53,11 +53,18 @@ What this module deliberately does NOT claim
 * **This module is not a ``PATH`` shim.** It sees what a runtime hook shows it.
   A manager invoked from an interactive terminal is not observed at all — the
   named residual of ADV9.
+* **Build-system targets are structurally opaque.** ``make dist`` or
+  ``make package`` may generate artifacts, but a Makefile target name carries
+  no declared meaning this classifier could recover; such commands remain
+  :data:`ACTION_SHELL_EXEC`. Only package managers with a declared artifact
+  grammar (``npm pack``, ``cargo package``, ``poetry build``, …) reach
+  :data:`ACTION_ARTIFACT_GENERATE` — a named residual, not a claim of coverage.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import os
 import re
@@ -205,6 +212,21 @@ _PUBLISH_SUBCOMMANDS: Mapping[str, frozenset[str]] = {
     "gh": frozenset({"release"}),
 }
 
+#: Managers whose declared grammar includes an artifact-generation subcommand.
+#: These route to :data:`ACTION_ARTIFACT_GENERATE` (control-surface tier): a
+#: generated artifact is one ``publish`` away from release. Build-system targets
+#: (``make dist``) are structurally opaque and deliberately absent — see the
+#: module docstring's "does NOT claim" section.
+_ARTIFACT_SUBCOMMANDS: Mapping[str, frozenset[str]] = {
+    "npm": frozenset({"pack"}),
+    "pnpm": frozenset({"pack"}),
+    "yarn": frozenset({"pack"}),
+    "cargo": frozenset({"package"}),
+    "poetry": frozenset({"build"}),
+    "uv": frozenset({"build"}),
+    "gem": frozenset({"build"}),
+}
+
 _GIT_MUTATING = frozenset(
     {
         "add",
@@ -240,6 +262,51 @@ _GIT_MUTATING = frozenset(
 #: escalate rather than record — they are the control surface of the repository.
 _GIT_CONTROL_SURFACE = frozenset(
     {"push", "reset", "rebase", "filter-branch", "update-ref", "clean", "tag"}
+)
+
+#: git subcommands known to read repository state without mutating it. A git
+#: subcommand in neither this set nor :data:`_GIT_MUTATING` is **not** presumed
+#: read-only: it may be a user-defined alias expanding to anything, or a
+#: mutating subcommand this table simply does not enumerate, so the command is
+#: returned undecidable (fail-closed) instead.
+_GIT_READ_ONLY = frozenset(
+    {
+        "annotate",
+        "blame",
+        "cat-file",
+        "check-attr",
+        "check-ignore",
+        "cherry",
+        "count-objects",
+        "describe",
+        "diff",
+        "diff-files",
+        "diff-index",
+        "diff-tree",
+        "for-each-ref",
+        "fsck",
+        "grep",
+        "help",
+        "log",
+        "ls-files",
+        "ls-remote",
+        "ls-tree",
+        "merge-base",
+        "name-rev",
+        "range-diff",
+        "rev-list",
+        "rev-parse",
+        "shortlog",
+        "show",
+        "show-branch",
+        "show-ref",
+        "status",
+        "var",
+        "verify-commit",
+        "verify-tag",
+        "version",
+        "whatchanged",
+    }
 )
 
 #: git global options that consume the *following* token as their value when
@@ -288,11 +355,45 @@ _GIT_FLAG_GLOBAL_OPTIONS = frozenset(
 
 #: Binaries whose second-position token has declared meaning. Everything else is
 #: read as a bare binary — see :func:`_subcommand`.
-_GRAMMAR_BINARIES: frozenset[str] = frozenset({"git", *_INSTALL_SUBCOMMANDS, *_PUBLISH_SUBCOMMANDS})
+_GRAMMAR_BINARIES: frozenset[str] = frozenset(
+    {"git", *_INSTALL_SUBCOMMANDS, *_PUBLISH_SUBCOMMANDS, *_ARTIFACT_SUBCOMMANDS}
+)
 
 #: A subcommand is a lowercase word. A secret, a path, or an option value is
 #: essentially never one.
 _SUBCOMMAND_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+
+#: A python interpreter binary: ``python``, ``python3``, ``python3.12``.
+_PYTHON_BINARY_RE = re.compile(r"^python(\d+(\.\d+)*)?$")
+
+#: python interpreter options known to take no value.
+_PYTHON_FLAG_OPTIONS = frozenset(
+    {
+        "-b",
+        "-B",
+        "-d",
+        "-E",
+        "-h",
+        "--help",
+        "-i",
+        "-I",
+        "-O",
+        "-OO",
+        "-P",
+        "-q",
+        "-s",
+        "-S",
+        "-u",
+        "-v",
+        "-V",
+        "--version",
+        "-x",
+    }
+)
+
+#: python interpreter options that consume the *following* token as their value
+#: when the value is not attached (``-W ignore`` vs ``-Wignore``).
+_PYTHON_VALUE_OPTIONS = frozenset({"-W", "-X", "--check-hash-based-pycs"})
 
 
 @dataclasses.dataclass(frozen=True)
@@ -324,6 +425,7 @@ class ExecutionEvent:
     decidable: bool
     undecidable_reasons: tuple[str, ...] = ()
     facts: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+    command_sha256: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "argv_prefix", tuple(str(t) for t in self.argv_prefix))
@@ -339,11 +441,19 @@ class ExecutionEvent:
         secrets, and the receipt would then be an exfiltration channel. The argv
         prefix — binary plus leading non-option tokens — is what the decision was
         actually taken on, and is what a verifier needs to re-derive it.
+
+        ``command_sha256`` binds the receipt to the *complete* command text
+        without disclosing it: ``npm install left-pad`` and
+        ``npm install malware`` share an argv prefix but not a digest, so a
+        receipt cannot be presented as authorization for a different command
+        with the same prefix. A verifier holding the plaintext can recompute
+        the digest; one who does not learns nothing from it.
         """
         return {
             "action": self.action,
             "binary": self.binary,
             "argv_prefix": list(self.argv_prefix),
+            "command_sha256": self.command_sha256,
             "decidable": self.decidable,
             "undecidable_reasons": list(self.undecidable_reasons),
             "facts": dict(self.facts),
@@ -389,12 +499,21 @@ def _strip_wrappers(argv: Sequence[str]) -> tuple[list[str], list[str], bool]:
     return rest, wrappers, False
 
 
-def _subcommand(binary: str, argv: Sequence[str]) -> str:
-    """The declared subcommand for *binary*, or ``""``.
+def _declared_subcommands(binary: str) -> frozenset[str]:
+    """Every subcommand this module declares meaning for on *binary*."""
+    return (
+        _INSTALL_SUBCOMMANDS.get(binary, frozenset())
+        | _PUBLISH_SUBCOMMANDS.get(binary, frozenset())
+        | _ARTIFACT_SUBCOMMANDS.get(binary, frozenset())
+    )
 
-    Two guards, both necessary. Only binaries with a **declared subcommand
+
+def _subcommand(binary: str, argv: Sequence[str]) -> tuple[str, str]:
+    """``(subcommand, undecidable_reason)`` for *binary*'s argv.
+
+    Three guards, all necessary. Only binaries with a **declared subcommand
     grammar** are read at all — an arbitrary program has no second-position
-    meaning to recover. And the token must look like a subcommand
+    meaning to recover. The token must look like a subcommand
     (:data:`_SUBCOMMAND_RE`) before it is accepted.
 
     Without the second guard this function returns the *value* of a
@@ -402,14 +521,35 @@ def _subcommand(binary: str, argv: Sequence[str]) -> str:
     the bearer token, which then lands in ``argv_prefix`` and is hashed into a
     receipt. The receipt would become an exfiltration channel. A subcommand
     always matches the pattern; a secret essentially never does.
+
+    The third guard covers option *values* that happen to look like
+    subcommands: option grammars per binary are not modeled here, so once an
+    option token has been skipped, the next word may be that option's value
+    rather than a subcommand — ``gh --repo owner/name release create`` must not
+    read ``release`` out of position, but neither may ``owner/name`` be trusted
+    as "not a subcommand". After a skipped option, a word is accepted only if
+    it is a subcommand this module declared for the binary; anything else is
+    returned undecidable (``option-value-ambiguity``, fail-closed) rather than
+    silently classified as a bare invoke.
     """
     if binary not in _GRAMMAR_BINARIES:
-        return ""
+        return "", ""
+    saw_option = False
     for token in argv[1:]:
         if token.startswith("-"):
+            saw_option = True
             continue
-        return token if _SUBCOMMAND_RE.match(token) else ""
-    return ""
+        if not saw_option:
+            return (token, "") if _SUBCOMMAND_RE.match(token) else ("", "")
+        if _SUBCOMMAND_RE.match(token) and token in _declared_subcommands(binary):
+            return token, ""
+        return "", "option-value-ambiguity"
+    return "", ""
+
+
+def _git_config_key(value: str) -> str:
+    """The config key of a ``name=value`` / ``name=envvar`` option value."""
+    return value.split("=", 1)[0].strip().lower()
 
 
 def _git_subcommand(argv: Sequence[str]) -> tuple[str, str]:
@@ -422,19 +562,31 @@ def _git_subcommand(argv: Sequence[str]) -> tuple[str, str]:
     Values of the declared global options are skipped; an option in neither
     table is not guessed at, and the command is returned undecidable
     (fail-closed) rather than classified on an unparsed prefix.
+
+    ``-c alias.<name>=<command>`` (and ``--config-env`` naming an ``alias.*``
+    key) defines the very subcommand about to run: ``git -c alias.st='!rm -rf'
+    st`` would otherwise classify on ``st``, a token whose meaning the command
+    line itself just rewrote. Any alias-defining config is therefore returned
+    undecidable (``git-alias-config``). Benign ``-c`` keys (``user.name=x``)
+    are still skipped.
     """
     index = 1
     while index < len(argv):
         token = argv[index]
         if not token.startswith("-"):
-            return (token if _SUBCOMMAND_RE.match(token) else "", "")
+            return (token, "") if _SUBCOMMAND_RE.match(token) else ("", "non-subcommand-token")
         if token.startswith("--") and "=" in token:
-            option = token.split("=", 1)[0]
+            option, value = token.split("=", 1)
             if option in _GIT_VALUE_GLOBAL_OPTIONS or option in _GIT_FLAG_GLOBAL_OPTIONS:
+                if option in ("-c", "--config-env") and _git_config_key(value).startswith("alias."):
+                    return "", "git-alias-config"
                 index += 1
                 continue
             return "", "unrecognized-git-global-option"
         if token in _GIT_VALUE_GLOBAL_OPTIONS:
+            value = argv[index + 1] if index + 1 < len(argv) else ""
+            if token in ("-c", "--config-env") and _git_config_key(value).startswith("alias."):
+                return "", "git-alias-config"
             index += 2
             continue
         if token in _GIT_FLAG_GLOBAL_OPTIONS:
@@ -442,6 +594,43 @@ def _git_subcommand(argv: Sequence[str]) -> tuple[str, str]:
             continue
         return "", "unrecognized-git-global-option"
     return "", ""
+
+
+def _python_module_argv(argv: Sequence[str]) -> tuple[list[str] | None, str]:
+    """``(module_argv, undecidable_reason)`` for a python interpreter argv.
+
+    ``python -m pip install x`` executes pip exactly as ``pip install x``
+    would; not recovering the module would leave an interpreter-shaped alias
+    for every governed manager. Returns the argv *after* ``-m`` (module name
+    first) when a module is invoked, ``(None, "")`` for a plain script /
+    ``-c`` / stdin run, and ``(None, "unrecognized-python-option")`` when an
+    interpreter option this table does not declare appears before the program —
+    an unknown option may consume the next token, so nothing after it can be
+    trusted (fail-closed).
+    """
+    index = 1
+    while index < len(argv):
+        token = argv[index]
+        if token == "-m":
+            if index + 1 < len(argv):
+                return list(argv[index + 1 :]), ""
+            return None, "unrecognized-python-option"
+        if token == "-c" or token == "-" or not token.startswith("-"):
+            # An inline program, stdin program, or script path: no module to
+            # recover; the command classifies as a plain interpreter exec.
+            return None, ""
+        if token in _PYTHON_VALUE_OPTIONS:
+            index += 2
+            continue
+        if token in _PYTHON_FLAG_OPTIONS:
+            index += 1
+            continue
+        if len(token) > 2 and token[:2] in ("-W", "-X"):
+            # Attached value forms: -Wignore, -Xdev.
+            index += 1
+            continue
+        return None, "unrecognized-python-option"
+    return None, ""
 
 
 def declared_package_manager(root: str | Path | None = None) -> str:
@@ -484,6 +673,7 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
     harmless command cannot buy an allow the direct invocation would not get.
     """
     text = command if isinstance(command, str) else ""
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     reasons: list[str] = []
 
     try:
@@ -501,6 +691,7 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
             decidable=False,
             undecidable_reasons=("unparseable-command",),
             facts={"operator_present": False},
+            command_sha256=digest,
         )
 
     operators = [t for t in tokens if t and set(t) <= _OPERATOR_CHARS]
@@ -508,6 +699,13 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
         reasons.append("shell-operator")
     if any("`" in t for t in tokens):
         reasons.append("command-substitution")
+    # An unquoted literal newline (or carriage return) separates commands just
+    # like `;` does, but shlex consumes it as whitespace and emits no operator
+    # token for it. A newline that survives inside a token was quoted — an
+    # argument, not a separator — so only the raw-vs-token difference counts.
+    raw_newlines = text.count("\n") + text.count("\r")
+    if raw_newlines > sum(t.count("\n") + t.count("\r") for t in tokens):
+        reasons.append("newline-separator")
 
     words = [t for t in tokens if not (t and set(t) <= _OPERATOR_CHARS)]
     argv, wrappers, unsupported_wrapper_options = _strip_wrappers(words)
@@ -522,23 +720,39 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
             decidable=False,
             undecidable_reasons=tuple(reasons or ["empty-command"]),
             facts={"operator_present": bool(operators)},
+            command_sha256=digest,
         )
 
     binary = Path(argv[0]).name
+    invoked_by_absolute_path = argv[0] != binary
+    interpreter = ""
+    if _PYTHON_BINARY_RE.match(binary):
+        # `python -m pip install x` IS `pip install x`; leaving it unrecovered
+        # would make the interpreter an alias for every governed manager.
+        module_argv, python_reason = _python_module_argv(argv)
+        if python_reason:
+            reasons.append(python_reason)
+        elif module_argv is not None and module_argv[0] in _GRAMMAR_BINARIES:
+            interpreter = binary
+            argv = module_argv
+            binary = argv[0]
+
     if binary == "git":
-        subcommand, git_reason = _git_subcommand(argv)
-        if git_reason:
-            reasons.append(git_reason)
+        subcommand, sub_reason = _git_subcommand(argv)
     else:
-        subcommand = _subcommand(binary, argv)
+        subcommand, sub_reason = _subcommand(binary, argv)
+    if sub_reason:
+        reasons.append(sub_reason)
     argv_prefix = (binary, subcommand) if subcommand else (binary,)
     flags = frozenset(t for t in argv[1:] if t.startswith("-"))
 
     base_facts: dict[str, Any] = {
         "operator_present": bool(operators),
-        "invoked_by_absolute_path": argv[0] != binary,
+        "invoked_by_absolute_path": invoked_by_absolute_path,
         "wrapped": bool(wrappers),
     }
+    if interpreter:
+        base_facts["interpreter"] = interpreter
     if unsupported_wrapper_options:
         base_facts["wrapper_options_supported"] = False
 
@@ -553,6 +767,7 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
             decidable=False,
             undecidable_reasons=tuple(reasons),
             facts=base_facts,
+            command_sha256=digest,
         )
 
     publish_subs = _PUBLISH_SUBCOMMANDS.get(binary, frozenset())
@@ -564,10 +779,38 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
             tier_hint=TIER_PUBLICATION,
             decidable=True,
             facts={**base_facts, "publisher": binary, "subcommand": subcommand},
+            command_sha256=digest,
+        )
+
+    artifact_subs = _ARTIFACT_SUBCOMMANDS.get(binary, frozenset())
+    if subcommand and subcommand in artifact_subs:
+        return ExecutionEvent(
+            action=ACTION_ARTIFACT_GENERATE,
+            binary=binary,
+            argv_prefix=argv_prefix,
+            tier_hint=TIER_CONTROL_SURFACE,
+            decidable=True,
+            facts={**base_facts, "builder": binary, "subcommand": subcommand},
+            command_sha256=digest,
         )
 
     if binary == "git":
         mutating = subcommand in _GIT_MUTATING
+        if subcommand and not mutating and subcommand not in _GIT_READ_ONLY:
+            # Not a subcommand this table declares. It may be a user-defined
+            # alias — potentially defined by config outside this command line —
+            # so its effect is not recoverable structurally. Fail closed rather
+            # than presume read-only.
+            return ExecutionEvent(
+                action=ACTION_SHELL_EXEC,
+                binary=binary,
+                argv_prefix=argv_prefix,
+                tier_hint=TIER_UNCLASSIFIED,
+                decidable=False,
+                undecidable_reasons=("unknown-git-subcommand",),
+                facts={**base_facts, "subcommand": subcommand},
+                command_sha256=digest,
+            )
         return ExecutionEvent(
             action=ACTION_GIT_MUTATE if mutating else ACTION_SHELL_EXEC,
             binary=binary,
@@ -579,6 +822,7 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
                 "subcommand": subcommand,
                 "git_control_surface": subcommand in _GIT_CONTROL_SURFACE,
             },
+            command_sha256=digest,
         )
 
     runner_ecosystem = _PACKAGE_RUNNERS.get(binary)
@@ -603,6 +847,7 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
                 "manager_contract_applies": in_contract,
                 "scripts_disabled": bool(flags & _IGNORE_SCRIPTS_FLAGS),
             },
+            command_sha256=digest,
         )
 
     install_subs = _INSTALL_SUBCOMMANDS.get(binary)
@@ -630,6 +875,7 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
             tier_hint=TIER_DEPENDENCY,
             decidable=True,
             facts=facts,
+            command_sha256=digest,
         )
 
     return ExecutionEvent(
@@ -639,6 +885,7 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
         tier_hint=TIER_UNCLASSIFIED,
         decidable=True,
         facts={**base_facts, "subcommand": subcommand},
+        command_sha256=digest,
     )
 
 
