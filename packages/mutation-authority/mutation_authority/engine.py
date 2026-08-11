@@ -19,7 +19,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
-from .canonical import ABSENT, hash_file, hash_obj, hmac_verify, sha256_hex
+from .canonical import ABSENT, hash_obj, hmac_verify, sha256_hex
 from .intent import OPERATIONS, SignedIntent
 from .ledger import EVENT_COMMIT, EVENT_DECISION, EVENT_GENESIS, AuditLedger, LedgerIntegrityError
 from .receipt import MUTATION_RECEIPT_SCHEMA, MutationDecisionReceipt
@@ -118,10 +118,13 @@ def _capture_parent_precondition(repo_dir: Path, resource: str) -> tuple[dict[st
         os.close(fd)
 
 
-def _default_create_mode() -> int:
-    current_umask = os.umask(0)
-    os.umask(current_umask)
-    return 0o666 & ~current_umask
+# Fixed secure mode signed into CREATE receipts. A configured constant, not
+# a umask probe: reading the umask requires os.umask(0), which briefly widens
+# file creation for every other thread in an embedding process (a repeatedly
+# requested CREATE turns that into a raceable window), and a umask-derived
+# mode would also make the receipt-signed expected_state_mode depend on
+# ambient process state. Owner-only read/write never widens any caller policy.
+SECURE_CREATE_MODE = 0o600
 
 
 def _valid_content_hash(value: Any) -> bool:
@@ -159,6 +162,13 @@ class DecisionEngine:
             except OSError:
                 deny_reason = "resource parent/state could not be securely pinned"
             else:
+                # 8. Pre-state binding: the pinned state must match BOTH the
+                #    ledger-derived authorized state (detects out-of-band
+                #    mutation — Attack A is not launderable) and the intent's
+                #    expected_pre_hash. This is the ONLY pre-state read: it
+                #    goes through the pinned ancestor fd, so a parent swapped
+                #    to a symlink after the containment resolve() cannot make
+                #    the engine read (or allocate) a file outside the repo.
                 authorized = self.ledger.authorized_state(resource)
                 if secured_hash != authorized:
                     deny_reason = (
@@ -171,10 +181,13 @@ class DecisionEngine:
                     deny_reason = "CREATE on a resource that already exists"
                 elif intent.operation in ("UPDATE", "DELETE") and secured_hash == ABSENT:
                     deny_reason = f"{intent.operation} on a resource that does not exist"
+                # 9. Concurrency: exactly one live receipt per resource.
+                elif self.ledger.open_receipts_for(resource, now):
+                    deny_reason = "conflicting mutation in flight for this resource"
 
                 if deny_reason is None:
                     expected_mode = (
-                        _default_create_mode()
+                        SECURE_CREATE_MODE
                         if intent.operation == "CREATE"
                         else secured_mode
                         if intent.operation == "UPDATE"
@@ -269,27 +282,11 @@ class DecisionEngine:
         if not self._task_authorized(intent.task_reference, intent.actor_identity):
             return "task_reference does not authorize this actor"
 
-        # 8. Pre-state binding: disk must match BOTH the ledger-derived
-        #    authorized state (detects out-of-band mutation — Attack A is
-        #    not launderable) and the intent's expected_pre_hash.
-        disk_hash = hash_file(self.repo_dir / resource)
-        authorized = self.ledger.authorized_state(resource)
-        if disk_hash != authorized:
-            return (
-                "resource state diverged from audit chain "
-                "(unauthorized out-of-band mutation detected)"
-            )
-        if intent.expected_pre_hash != disk_hash:
-            return "expected_pre_hash does not match current resource state"
-        if intent.operation == "CREATE" and disk_hash != ABSENT:
-            return "CREATE on a resource that already exists"
-        if intent.operation in ("UPDATE", "DELETE") and disk_hash == ABSENT:
-            return f"{intent.operation} on a resource that does not exist"
-
-        # 9. Concurrency: exactly one live receipt per resource.
-        if self.ledger.open_receipts_for(resource, now):
-            return "conflicting mutation in flight for this resource"
-
+        # 8-9. Pre-state binding and concurrency run in decide(), AFTER the
+        #    pinned-fd capture: every disk read for these checks must go
+        #    through _capture_parent_precondition (O_NOFOLLOW, dir_fd), never
+        #    through a pathname re-open that a concurrent parent-to-symlink
+        #    swap could redirect outside the repository.
         return None
 
     def _task_authorized(self, task_reference: str, actor: str) -> bool:

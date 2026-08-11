@@ -27,6 +27,7 @@ from _canonical import hash_obj, hmac_sign, sha256_hex  # noqa: E402
 from authority_lifecycle import (  # noqa: E402
     ACTIVE,
     DISCOVERED,
+    REVOKED,
     SUPERSEDED,
     VALIDATED,
     OnboardingError,
@@ -52,6 +53,7 @@ from validator_trust import (  # noqa: E402
     INVALIDATED,
     REQUIRES_REVIEW,
     attestation_payload,
+    chain_intact,
     derive_governed_state,
     event_binding,
     governed_active_records,
@@ -82,6 +84,26 @@ def _authorized_rotation(event: dict, predecessor_key: bytes = FIX_KEY) -> dict:
     event = dict(event)
     event["rotation_authorization"] = hmac_sign(predecessor_key, rotation_payload(event))
     return event
+
+
+def _with_co_validation(ev: dict, co: dict) -> dict:
+    """Attach a co-validation and re-bind/re-sign EVERY attestation over the
+    complete validation set: attestation_binding commits to `co_validations`,
+    so changing the set demands re-validation by all attesters."""
+    ev = dict(ev)
+    co = dict(co, validator_id=FIX_VALIDATOR, key_id=FIX_KEY_ID)
+    ev["co_validations"] = [co]
+    binding = attestation_binding(ev)  # excludes binding-derived fields
+    co["record_binding"] = binding
+    ev["co_validations"] = [_sign_att(co)]
+    primary = {
+        k: v
+        for k, v in ev["validation"].items()
+        if k not in ("record_binding", "attestation_signature")
+    }
+    primary["record_binding"] = binding
+    ev["validation"] = _sign_att(primary)
+    return ev
 
 
 _DEFAULT = object()  # sentinel so policy=None (malformed) can be passed through
@@ -204,17 +226,15 @@ def test_vt5_altered_validation_after_signing_invalidated(tmp_path):
 def test_vt6_conflicting_validators_conflicted(substrate, tmp_path):
     # Two trust-valid attestations with contradictory dispositions.
     trust = fixture_trust(tmp_path)
-    ev = _attested(_evidence())
-    rejecting = _sign_att(
+    ev = _with_co_validation(
+        _attested(_evidence()),
         {
             "validator_identity": "[FIXTURE] Legal Validator",
             "validation_method": "[FIXTURE] independent second review",
             "validated_at": "2026-08-10T11:30:00Z",
-            "record_binding": attestation_binding(ev),
             "disposition": "REJECTED",
-        }
+        },
     )
-    ev["co_validations"] = [rejecting]
     assert _gstate(ev, trust) == CONFLICTED
     st = _compute(substrate, tmp_path, [ev], trust=trust)
     assert st["report"]["ready_to_send"] == 0
@@ -456,6 +476,83 @@ def test_vt13_supersession_requires_verified_ingestion_receipt(tmp_path):
     )
     assert dist2[SUPERSEDED] == 1
     assert dist2[ACTIVE] == 1
+
+
+def test_duplicate_register_bypasses_nothing(tmp_path):
+    # An attacker who can APPEND a chain-linked registry line publishes a
+    # SECOND REGISTER for the existing validator carrying their own key, then
+    # signs a perfect attestation with it. Registration happens exactly once
+    # (onboarding ceremony); a later REGISTER must not open a key window the
+    # rotation-authentication chain never vouched for.
+    trust = fixture_trust(tmp_path)
+    attacker_key = b"q" * 32
+    _append_event(
+        trust,
+        {
+            "schema": EVENT_SCHEMA,
+            "event": "REGISTER",
+            "validator_id": FIX_VALIDATOR,
+            "validator_identity": "[FIXTURE] Legal Validator",
+            "authorized_classes": ["DATA_CONTROLLER", "COUNSEL_OR_RIGHTS_AUTHORITY"],
+            "appointment_authority": "[FIXTURE] General Counsel",
+            "key_id": "vk-dup",
+            "key_fingerprint": sha256_hex(attacker_key),
+            "effective_from": "2026-01-01T00:00:00Z",
+            "effective_until": None,
+            "onboarding": "EXTERNAL_VALIDATOR_ONBOARDING_V1",
+            "appointment_binding": sha256_hex(b"[FIXTURE] appointment binding"),
+            "appointment_evidence_digests": [sha256_hex(b"[FIXTURE] appointment deed")],
+        },
+    )
+    (trust["keystore"] / "vk-dup").write_bytes(attacker_key)
+    events = load_validator_events(trust["registry"])
+    assert events is not None and chain_intact(events)  # the append IS chain-valid
+    ev = _attested(_evidence())
+    att = dict(ev["validation"], key_id="vk-dup")
+    att["attestation_signature"] = hmac_sign(attacker_key, attestation_payload(att))
+    ev["validation"] = att
+    ok, reason = verify_attestation_trust(ev, att, events=events, keystore_dir=trust["keystore"])
+    assert not ok and reason == "duplicate_validator_registration"
+    assert _gstate(ev, trust) == INVALIDATED
+    # The duplicate poisons the WHOLE history: even the original validator's
+    # untouched attestation no longer verifies until the registry is repaired.
+    legit = _attested(_evidence())
+    ok2, reason2 = verify_attestation_trust(
+        legit, legit["validation"], events=events, keystore_dir=trust["keystore"]
+    )
+    assert not ok2 and reason2 == "duplicate_validator_registration"
+    assert _gstate(legit, trust) == INVALIDATED
+
+
+def test_lifecycle_override_registry_edits_fail_closed(substrate, tmp_path):
+    # (a) Stripping the rejecting co-validation must not flip CONFLICTED ->
+    # ACTIVE: the attestation binding commits to the complete validation set,
+    # so the surviving attestations stop verifying once the set changes.
+    trust = fixture_trust(tmp_path)
+    ev = _with_co_validation(
+        _attested(_evidence()),
+        {
+            "validator_identity": "[FIXTURE] Legal Validator",
+            "validation_method": "[FIXTURE] independent second review",
+            "validated_at": "2026-08-10T11:30:00Z",
+            "disposition": "REJECTED",
+        },
+    )
+    assert _gstate(ev, trust) == CONFLICTED
+    stripped = dict(ev)
+    del stripped["co_validations"]
+    assert _gstate(stripped, trust) == DISCOVERED  # never ACTIVE, never routes
+    st = _compute(substrate, tmp_path, [stripped], trust=trust)
+    assert st["report"]["ready_to_send"] == 0
+    assert st["report"]["routable_authority_records"] == 0
+    # (b) Deleting an ATTESTED revocation must not resurrect the record:
+    # revoked_at is inside the attestation binding, so the pre-edit
+    # attestation stops verifying the moment the revocation is stripped.
+    revoked = _attested(_evidence(revoked_at="2026-08-09T00:00:00Z"))
+    assert _gstate(revoked, trust) == REVOKED
+    resurrected = dict(revoked)
+    resurrected["revoked_at"] = None
+    assert _gstate(resurrected, trust) == DISCOVERED  # never ACTIVE
 
 
 # --------------------------------------------------------------------------- #

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .canonical import ABSENT, sha256_hex
-from .engine import _verify_chain_root_binding
+from .engine import SECURE_CREATE_MODE, _verify_chain_root_binding
 from .ledger import EVENT_COMMIT, EVENT_GENESIS, AuditLedger
 from .receipt import MutationDecisionReceipt
 from .root import GovernanceRoot
@@ -125,20 +125,15 @@ def _close_created_parent_refs(created: list[tuple[int, str]]) -> None:
     created.clear()
 
 
-def _default_create_mode() -> int:
-    current_umask = os.umask(0)
-    os.umask(current_umask)
-    return 0o666 & ~current_umask
-
-
 def _read_state_at(parent_fd: int, name: str) -> tuple[bytes | None, str, int]:
     """Read a regular file without following it or reopening its pathname."""
     try:
         fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
     except FileNotFoundError:
-        # CREATE follows the process umask just like an ordinary 0666 file;
-        # never widen a restrictive caller policy to a fixed 0644.
-        return None, ABSENT, _default_create_mode()
+        # Absent state carries the fixed secure CREATE mode. Never probe the
+        # process umask here: os.umask(0) would momentarily widen file
+        # creation for every other thread in an embedding process.
+        return None, ABSENT, SECURE_CREATE_MODE
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):

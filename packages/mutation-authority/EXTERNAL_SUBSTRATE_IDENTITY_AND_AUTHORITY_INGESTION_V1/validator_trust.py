@@ -205,11 +205,26 @@ def _events_intact(evts: list[dict[str, Any]]) -> bool:
     return True
 
 
+def _register_events(evts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [e for e in evts if e.get("event") == "REGISTER"]
+
+
 def _register_event(evts: list[dict[str, Any]]) -> dict[str, Any] | None:
-    for e in evts:
-        if e.get("event") == "REGISTER":
-            return e
-    return None
+    """The validator's REGISTER event, valid only when there is EXACTLY one.
+
+    Registration happens once, through the onboarding ceremony; key
+    succession is ROTATE-only and must be authorized by the key it retires.
+    A second chain-linked REGISTER appended to an existing history would
+    otherwise open a fresh key window under attacker-supplied key material
+    (`_key_windows` treats every REGISTER as a window start and
+    `rotations_authenticated` authenticates only ROTATE events), letting the
+    appender sign attestations checked against the original validator's
+    identity, appointment, and authorized classes. Duplicate registration
+    makes the whole history unverifiable (fail closed)."""
+    registers = _register_events(evts)
+    if len(registers) != 1:
+        return None
+    return registers[0]
 
 
 def _hex64(v: Any) -> bool:
@@ -314,7 +329,10 @@ def authority_valid_at(evts: list[dict[str, Any]], at: str) -> bool:
 def _key_windows(evts: list[dict[str, Any]]) -> list[tuple[str, datetime, datetime | None]]:
     """(key_id, start, end) signing windows. REGISTER's key starts at
     effective_from; each ROTATE starts its key at the rotation instant and ends
-    the previous key's window. A REVOKE ends the final window."""
+    the previous key's window. A REVOKE ends the final window. A duplicate
+    REGISTER is an onboarding bypass, never a key window: no key is current."""
+    if len(_register_events(evts)) > 1:
+        return []
     keyed = []
     for e in evts:
         if e.get("event") == "REGISTER":
@@ -420,7 +438,13 @@ def rotations_authenticated(evts: list[dict[str, Any]], keystore_dir: Path) -> b
     registry file is append-writable, so an unauthenticated ROTATE would let
     anyone who can append a line rotate a trusted validator onto an
     attacker-held key and sign 'trusted' attestations with it. A rotation the
-    predecessor key did not sign authenticates nothing — fail closed."""
+    predecessor key did not sign authenticates nothing — fail closed.
+
+    A duplicate REGISTER never authenticates: only ROTATE carries a
+    predecessor-key authorization, so a second REGISTER would smuggle in an
+    unauthorized key window this function cannot vouch for."""
+    if len(_register_events(evts)) > 1:
+        return False
     keyed: list[tuple[datetime, dict[str, Any]]] = []
     for e in evts:
         if e.get("event") == "REGISTER":
@@ -589,6 +613,11 @@ def verify_attestation_trust(
         return False, "unknown_validator"
     if not _events_intact(evts):
         return False, "validator_registry_tampered"
+    # Exactly one REGISTER per validator history: a second chain-linked
+    # REGISTER would bypass onboarding and open a key window under
+    # attacker-held key material checked against the original identity.
+    if len(_register_events(evts)) > 1:
+        return False, "duplicate_validator_registration"
     reg = _register_event(evts)
     if reg is None:
         return False, "validator_never_registered"

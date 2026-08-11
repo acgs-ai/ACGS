@@ -83,6 +83,17 @@ _COMMERCIAL_CLAIM_FIELDS = (
 )
 
 
+def _attestation_core(att: Any) -> Any:
+    """An attestation's binding-safe content: everything except the fields
+    that are derived FROM the binding (`record_binding`) or computed over it
+    (`attestation_signature`). Excluding them keeps `attestation_binding`
+    non-circular while still committing to who validated, when, how, and with
+    what disposition."""
+    if not isinstance(att, dict):
+        return att
+    return {k: v for k, v in att.items() if k not in ("record_binding", "attestation_signature")}
+
+
 def attestation_binding(record: dict[str, Any]) -> str:
     """The digest a validation attestation must carry in `record_binding`.
 
@@ -96,10 +107,17 @@ def attestation_binding(record: dict[str, Any]) -> str:
 
     Also bound, because they are authorization-bearing and registry-writable:
     `supersedes` (an unsigned supersession claim must not deactivate an
-    established record — adding/altering it demands re-validation) and the
+    established record — adding/altering it demands re-validation), the
     freshness fields `verification_epoch` / `last_verified_at` (the
     revalidation policy trusts them, so a registry writer must not be able to
-    forge freshness without the validator re-signing)."""
+    forge freshness without the validator re-signing), `revoked_at` (a
+    registry writer must not be able to strip an attested revocation and
+    resurrect the record as ACTIVE), and the canonical complete co-validation
+    set (each entry minus its binding-derived fields, see
+    `_attestation_core`): removing a rejecting co-validation would otherwise
+    flip a CONFLICTED record back to ACTIVE while every remaining attestation
+    still verified. Changing the validation set demands re-validation."""
+    co = record.get("co_validations")
     return hash_obj(
         {
             "authority_evidence_id": record.get("authority_evidence_id"),
@@ -113,6 +131,8 @@ def attestation_binding(record: dict[str, Any]) -> str:
             "supersedes": record.get("supersedes"),
             "verification_epoch": record.get("verification_epoch"),
             "last_verified_at": record.get("last_verified_at"),
+            "revoked_at": record.get("revoked_at"),
+            "co_validations": [_attestation_core(a) for a in co] if isinstance(co, list) else co,
         }
     )
 
@@ -157,8 +177,17 @@ def validate_onboarding_record(record: dict[str, Any]) -> None:
         raise OnboardingError("counsel verification_metadata must be an object")
 
     # An attestation, if present, must be well formed. Absence is allowed here
-    # (the record is simply DISCOVERED); a malformed one is a hard error.
-    if "validation" in record and not has_valid_attestation(record):
+    # (the record is simply DISCOVERED); a malformed one is a hard error —
+    # except on a revoked record: revocation is a post-hoc markdown that
+    # legitimately breaks the attestation binding (revoked_at is bound), and
+    # a revoked record must stay countable as REVOKED instead of turning
+    # structurally invalid. It never routes either way, and stripping the
+    # revocation re-exposes the broken binding (DISCOVERED, fail closed).
+    if (
+        "validation" in record
+        and not record.get("revoked_at")
+        and not has_valid_attestation(record)
+    ):
         raise OnboardingError(
             "validation attestation present but malformed "
             f"(needs {list(_ATTESTATION_FIELDS)} as non-empty strings)"

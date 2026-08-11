@@ -882,7 +882,7 @@ def check_nested_create_uses_bound_ancestor(base: Path) -> str:
 
 
 def check_create_respects_restrictive_umask(base: Path) -> str:
-    """CREATE must bind and preserve the caller's restrictive umask."""
+    """CREATE binds the fixed secure mode; a restrictive umask is never widened."""
     sb = Sandbox.build(base)
     resource = "src/private.py"
     previous_umask = os.umask(0o077)
