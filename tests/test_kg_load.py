@@ -46,7 +46,13 @@ def _rel(rtype: str, src: str, dst: str, src_label="File", dst_label="File", **p
 def run_load(tmp_path, monkeypatch):
     """Run ``load.main()`` against a stub driver; return (exit_code, driver)."""
 
-    def _run(graph: dict, *argv: str, schema: str = "CREATE CONSTRAINT a;\n", wipe_counts=None):
+    def _run(
+        graph: dict,
+        *argv: str,
+        schema: str = "CREATE CONSTRAINT a;\n",
+        wipe_counts=None,
+        fail_on: str | None = None,
+    ):
         graph_path = tmp_path / "graph.json"
         graph_path.write_text(json.dumps(graph))
         schema_path = tmp_path / "schema.cypher"
@@ -56,6 +62,8 @@ def run_load(tmp_path, monkeypatch):
         remaining = list(wipe_counts or [])
 
         def responder(query: str) -> list[dict]:
+            if fail_on and fail_on in query:
+                raise RuntimeError(f"injected failure for {fail_on}")
             if "DETACH DELETE" in query:
                 return [{"c": remaining.pop(0) if remaining else 0}]
             return []
@@ -63,7 +71,10 @@ def run_load(tmp_path, monkeypatch):
         captured = fake_neo4j(monkeypatch, responder)
         monkeypatch.setattr(sys, "argv", ["load.py", "--graph", str(graph_path), *argv])
 
-        code = load.main()
+        try:
+            code: int | RuntimeError = load.main()
+        except RuntimeError as exc:
+            code = exc
         return code, captured["driver"], captured
 
     return _run
@@ -99,6 +110,74 @@ def test_blank_statements_between_semicolons_are_skipped(run_load):
     _, driver, _ = run_load(_graph(), "--no-wipe", schema="CREATE CONSTRAINT a;\n\n;\n")
 
     assert [q for q, _ in driver.sessions[0].calls] == ["CREATE CONSTRAINT a"]
+
+
+def test_schema_is_atomic_and_wipe_nodes_rels_share_one_data_transaction(run_load):
+    graph = _graph(
+        nodes=[_node("a.py"), _node("b.py")],
+        rels=[_rel("IMPORTS", "a.py", "b.py")],
+    )
+
+    code, driver, _ = run_load(graph, "--wipe", wipe_counts=[2, 0])
+
+    assert code == 0
+    session = driver.sessions[0]
+    assert session.autocommit_calls == []
+    assert len(session.transactions) == 2
+    schema_tx, data_tx = session.transactions
+    assert schema_tx.committed is True
+    assert schema_tx.rolled_back is False
+    assert [query for query, _ in schema_tx.calls] == ["CREATE CONSTRAINT a"]
+    assert data_tx.committed is True
+    assert data_tx.rolled_back is False
+    queries = [query for query, _ in data_tx.calls]
+    assert any("DETACH DELETE" in query for query in queries)
+    assert any("MERGE (n:`File`" in query for query in queries)
+    assert any("MERGE (a)-[e:`IMPORTS`]" in query for query in queries)
+
+
+def test_schema_failure_rolls_back_before_the_data_transaction_starts(run_load):
+    result, driver, _ = run_load(
+        _graph(),
+        "--wipe",
+        schema="CREATE CONSTRAINT a; CREATE INDEX b;",
+        fail_on="CREATE INDEX b",
+    )
+
+    assert isinstance(result, RuntimeError)
+    session = driver.sessions[0]
+    assert session.autocommit_calls == []
+    assert len(session.transactions) == 1
+    schema_tx = session.transactions[0]
+    assert schema_tx.committed is False
+    assert schema_tx.rolled_back is True
+    assert [query for query, _ in schema_tx.calls] == ["CREATE CONSTRAINT a", "CREATE INDEX b"]
+    assert not any("DETACH DELETE" in query for query, _ in session.calls)
+
+
+def test_relationship_failure_rolls_back_wipe_and_all_node_batches(run_load):
+    graph = _graph(
+        nodes=[_node("a.py"), _node("b.py")],
+        rels=[_rel("IMPORTS", "a.py", "b.py")],
+    )
+
+    result, driver, _ = run_load(
+        graph,
+        "--wipe",
+        wipe_counts=[2, 0],
+        fail_on="MERGE (a)-[e:`IMPORTS`]",
+    )
+
+    assert isinstance(result, RuntimeError)
+    session = driver.sessions[0]
+    assert session.autocommit_calls == []
+    assert len(session.transactions) == 2
+    schema_tx, data_tx = session.transactions
+    assert schema_tx.committed is True
+    assert data_tx.committed is False
+    assert data_tx.rolled_back is True
+    assert any("DETACH DELETE" in query for query, _ in data_tx.calls)
+    assert any("MERGE (n:`File`" in query for query, _ in data_tx.calls)
 
 
 def test_nodes_are_merged_on_key_and_grouped_by_label(run_load):

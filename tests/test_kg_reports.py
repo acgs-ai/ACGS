@@ -206,10 +206,27 @@ def test_governance_coverage_surfaces_hash_drift_instead_of_sealed():
     assert reports.governance_coverage(healthy) == "sealed"
 
 
-def test_report_queries_return_hash_drift_for_governance_coverage():
-    """Both report queries must ship hash_drift to the formatter, defaulting
-    to false for graphs from older extractions."""
+def test_governance_coverage_reports_a_missing_marker_before_hash_drift():
+    """sealed_source='hash-lock' proves the marker is absent even when an
+    additive load retained stale sealed_hash/hash_drift properties."""
+    row = {
+        "gates": 0,
+        "sealed": True,
+        "missing_marker": True,
+        "sealed_hash": "stale-observed-value",
+        "hash_drift": True,
+        "adrs": 0,
+    }
+
+    assert reports.governance_coverage(row) == "missing marker"
+
+
+def test_report_queries_project_missing_marker_and_hash_drift():
+    """Both report queries must ship the precise missing-marker state and
+    the broader drift flag, defaulting to false for older graphs."""
     for query in (reports.HOTSPOT_Q, reports.CONTROL_PLANE_Q):
+        assert "coalesce(f.sealed_source = 'hash-lock'" in query, query
+        assert "AS missing_marker" in query, query
         assert "coalesce(f.hash_drift" in query, query
 
 
@@ -304,6 +321,16 @@ def test_code_evidence_extensions_cover_every_extractor_source_extension():
     assert source_lists, "queries.cypher lost its source-extension filters"
     for exts in source_lists:
         assert exts == source_exts
+
+
+def test_catalog_q4_requires_both_cochange_endpoints_to_be_live_and_tracked():
+    """A stale CO_CHANGED edge must not publish a package coupling when
+    either endpoint was deleted or removed from the index."""
+    q4 = _catalog_query(4)
+
+    for alias in ("a", "b"):
+        assert f"{alias}.tracked" in q4
+        assert f"coalesce({alias}.present, true)" in q4
 
 
 def test_catalog_q5_and_q13_ignore_test_edges_to_deleted_targets():
@@ -623,6 +650,24 @@ def test_hotspot_rows_carry_the_three_state_evidence_column(run_reports):
     assert "tested (2 edge(s))" in hotspot
     assert "not analyzed — outside semantic snapshot" in hotspot
     assert "1 of these 2 rows are outside the semantic snapshot" in hotspot
+
+
+def test_hotspot_report_renders_missing_marker_instead_of_stale_hash_drift(run_reports):
+    _, hotspot, _, _ = run_reports(
+        hot=[
+            _hot(
+                "docs/pinned-but-unmarked.md",
+                sealed=True,
+                missing_marker=True,
+                sealed_hash="stale-observed-value",
+                hash_drift=True,
+            )
+        ]
+    )
+
+    row = next(line for line in hotspot.splitlines() if "pinned-but-unmarked.md" in line)
+    assert "missing marker" in row
+    assert "hash drift" not in row
 
 
 def test_control_plane_focus_section_counts_test_files_by_the_graphs_classification(run_reports):

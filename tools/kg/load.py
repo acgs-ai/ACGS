@@ -127,6 +127,75 @@ def malformed_rows(
     return errors
 
 
+def schema_statements() -> list[str]:
+    """Schema statements with prose comments removed before splitting."""
+    sql = "\n".join(
+        line
+        for line in SCHEMA.read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("//")
+    )
+    return [statement for raw in sql.split(";") if (statement := raw.strip())]
+
+
+def load_graph_data(
+    tx, nodes: list[dict], rels: list[dict], *, batch_size: int, wipe: bool
+) -> None:
+    """Load one graph inside the caller's explicit data transaction."""
+    if wipe:
+        deleted = 1
+        total = 0
+        while deleted:
+            rec = tx.run(
+                "MATCH (n) WITH n LIMIT 20000 DETACH DELETE n RETURN count(*) AS c"
+            ).single()
+            deleted = rec["c"]
+            total += deleted
+        log(f"wiped {total} nodes")
+    else:
+        log(
+            "WARNING: additive load; stale nodes/edges from a previous load may persist. "
+            "Use --wipe only for an explicit full replacement"
+        )
+
+    groups: dict[tuple, list[dict]] = defaultdict(list)
+    for node in nodes:
+        groups[(node["label"], tuple(node["extra"]))].append(
+            {"key": node["key"], "props": node["props"]}
+        )
+    loaded = 0
+    for (label, extra), rows in sorted(groups.items(), key=lambda item: -len(item[1])):
+        label_set = "".join(f":`{extra_label}`" for extra_label in extra)
+        cypher = f"UNWIND $rows AS r MERGE (n:`{label}` {{key: r.key}}) SET n += r.props" + (
+            f" SET n{label_set}" if label_set else ""
+        )
+        for batch in chunks(rows, batch_size):
+            tx.run(cypher, rows=batch)
+        loaded += len(rows)
+        log(f"  nodes {label}{label_set}: {len(rows)}")
+    log(f"loaded {loaded} nodes")
+
+    groups_by_rel: dict[tuple, list[dict]] = defaultdict(list)
+    for rel in rels:
+        groups_by_rel[(rel["type"], rel["src_label"], rel["dst_label"])].append(
+            {"src": rel["src"], "dst": rel["dst"], "props": rel["props"]}
+        )
+    loaded_rels = 0
+    for (rel_type, src_label, dst_label), rows in sorted(
+        groups_by_rel.items(), key=lambda item: -len(item[1])
+    ):
+        cypher = (
+            f"UNWIND $rows AS r "
+            f"MATCH (a:`{src_label}` {{key: r.src}}) "
+            f"MATCH (b:`{dst_label}` {{key: r.dst}}) "
+            f"MERGE (a)-[e:`{rel_type}`]->(b) SET e += r.props"
+        )
+        for batch in chunks(rows, batch_size):
+            tx.run(cypher, rows=batch)
+        loaded_rels += len(rows)
+        log(f"  rels {src_label}-[:{rel_type}]->{dst_label}: {len(rows)}")
+    log(f"loaded {loaded_rels} relationships")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--uri", default=os.environ.get("NEO4J_URI", "bolt://localhost:7687"))
@@ -227,67 +296,25 @@ def main() -> int:
     driver = GraphDatabase.driver(args.uri, auth=(args.user, args.password))
     driver.verify_connectivity()
 
-    with driver.session(database=args.database) as s:
-        # Strip comment lines BEFORE splitting: prose comments may contain ';'.
-        sql = "\n".join(
-            ln
-            for ln in SCHEMA.read_text().splitlines()
-            if ln.strip() and not ln.lstrip().startswith("//")
-        )
-        for raw in sql.split(";"):
-            stmt = raw.strip()
-            if stmt:
-                s.run(stmt)
+    with driver.session(database=args.database) as session:
+        # Neo4j forbids mixing schema modifications and data writes in one
+        # transaction. Keep the schema atomic in its own explicit transaction;
+        # if it fails, no wipe/data statement has started. Then keep the whole
+        # replacement (wipe plus every node/relationship batch) in one explicit
+        # data transaction so any load failure restores the prior graph.
+        with session.begin_transaction() as schema_tx:
+            for statement in schema_statements():
+                schema_tx.run(statement)
         log("schema applied")
 
-        if args.wipe:
-            deleted = 1
-            total = 0
-            while deleted:
-                rec = s.run(
-                    "MATCH (n) WITH n LIMIT 20000 DETACH DELETE n RETURN count(*) AS c"
-                ).single()
-                deleted = rec["c"]
-                total += deleted
-            log(f"wiped {total} nodes")
-        else:
-            log(
-                "WARNING: additive load; stale nodes/edges from a previous load may persist. "
-                "Use --wipe only for an explicit full replacement"
+        with session.begin_transaction() as data_tx:
+            load_graph_data(
+                data_tx,
+                nodes,
+                rels,
+                batch_size=args.batch,
+                wipe=args.wipe,
             )
-
-        groups: dict[tuple, list[dict]] = defaultdict(list)
-        for n in nodes:
-            groups[(n["label"], tuple(n["extra"]))].append({"key": n["key"], "props": n["props"]})
-        loaded = 0
-        for (label, extra), rows in sorted(groups.items(), key=lambda kv: -len(kv[1])):
-            label_set = "".join(f":`{x}`" for x in extra)
-            cypher = f"UNWIND $rows AS r MERGE (n:`{label}` {{key: r.key}}) SET n += r.props" + (
-                f" SET n{label_set}" if label_set else ""
-            )
-            for batch in chunks(rows, args.batch):
-                s.run(cypher, rows=batch)
-            loaded += len(rows)
-            log(f"  nodes {label}{label_set}: {len(rows)}")
-        log(f"loaded {loaded} nodes")
-
-        rgroups: dict[tuple, list[dict]] = defaultdict(list)
-        for r in rels:
-            rgroups[(r["type"], r["src_label"], r["dst_label"])].append(
-                {"src": r["src"], "dst": r["dst"], "props": r["props"]}
-            )
-        rloaded = 0
-        for (rtype, sl, dl), rows in sorted(rgroups.items(), key=lambda kv: -len(kv[1])):
-            cypher = (
-                f"UNWIND $rows AS r "
-                f"MATCH (a:`{sl}` {{key: r.src}}) MATCH (b:`{dl}` {{key: r.dst}}) "
-                f"MERGE (a)-[e:`{rtype}`]->(b) SET e += r.props"
-            )
-            for batch in chunks(rows, args.batch):
-                s.run(cypher, rows=batch)
-            rloaded += len(rows)
-            log(f"  rels {sl}-[:{rtype}]->{dl}: {len(rows)}")
-        log(f"loaded {rloaded} relationships")
 
     driver.close()
     return 0

@@ -60,16 +60,51 @@ class FakeResult:
         return FakeRecord(self._rows[0]) if self._rows else None
 
 
+class FakeTransaction:
+    """Recording explicit transaction with commit/rollback state."""
+
+    def __init__(self, responder, all_calls: list[tuple[str, dict[str, Any]]]) -> None:
+        self.responder = responder
+        self.all_calls = all_calls
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.committed = False
+        self.rolled_back = False
+
+    def run(self, query: str, **params: Any) -> FakeResult:
+        call = (query, params)
+        self.calls.append(call)
+        self.all_calls.append(call)
+        return FakeResult(self.responder(query))
+
+    def __enter__(self) -> FakeTransaction:
+        return self
+
+    def __exit__(self, exc_type: object, *_exc: object) -> None:
+        if exc_type is None:
+            self.committed = True
+        else:
+            self.rolled_back = True
+
+
 class FakeSession:
     """Records every statement run against it and replays canned rows."""
 
     def __init__(self, responder) -> None:
         self.responder = responder
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.autocommit_calls: list[tuple[str, dict[str, Any]]] = []
+        self.transactions: list[FakeTransaction] = []
 
     def run(self, query: str, **params: Any) -> FakeResult:
-        self.calls.append((query, params))
+        call = (query, params)
+        self.calls.append(call)
+        self.autocommit_calls.append(call)
         return FakeResult(self.responder(query))
+
+    def begin_transaction(self) -> FakeTransaction:
+        transaction = FakeTransaction(self.responder, self.calls)
+        self.transactions.append(transaction)
+        return transaction
 
     def __enter__(self) -> FakeSession:
         return self

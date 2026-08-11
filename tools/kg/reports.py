@@ -66,9 +66,13 @@ def governance_coverage(rec: dict) -> str:
     # `sealed` is defined below as observing a constitutional-hash marker.
     # A pinned file whose working-tree marker was removed (or disagrees with
     # the pin) carries sealed=true AND hash_drift=true; collapsing that to
-    # `sealed` reported the opposite of the observed marker state, so drift
-    # gets its own label instead of inheriting the healthy one.
-    if rec["sealed"]:
+    # `sealed` reported the opposite of the observed marker state. The
+    # extractor's sealed_source='hash-lock' is authoritative for a missing
+    # marker even if an additive load retained a stale sealed_hash property;
+    # render that state before the broader hash-drift label.
+    if rec.get("missing_marker"):
+        bits.append("missing marker")
+    elif rec["sealed"]:
         bits.append("hash drift" if rec.get("hash_drift") else "sealed")
     if rec["adrs"]:
         bits.append(f"ADR\u00d7{rec['adrs']}")
@@ -108,6 +112,7 @@ RETURN f.key AS path,
        coalesce(f.churn, 0) AS churn,
        coalesce(f.ua_covered, false) AS ua_covered,
        coalesce(f.sealed, false) AS sealed,
+       coalesce(f.sealed_source = 'hash-lock', false) AS missing_marker,
        coalesce(f.hash_drift, false) AS hash_drift,
        coalesce(f.in_submodule, false) AS in_submodule,
        test_edges, gates, adrs
@@ -135,6 +140,7 @@ RETURN f.key AS path, coalesce(f.package,'.') AS package,
        coalesce(f.churn,0) AS churn,
        coalesce(f.ua_covered,false) AS ua_covered,
        coalesce(f.sealed,false) AS sealed,
+       coalesce(f.sealed_source = 'hash-lock',false) AS missing_marker,
        coalesce(f.hash_drift,false) AS hash_drift,
        coalesce(f.in_submodule,false) AS in_submodule,
        coalesce(f.is_test,false) AS is_test,
@@ -339,10 +345,10 @@ Test-evidence has **three** states, not two:
 
 Governance coverage lists observed controls: `CI\u00d7N` path-filtered pull-request
 workflows gating the file, `sealed` for an observed constitutional-hash marker
-in agreement with any lock pin, `hash drift` when the hash lock pins the file
-but the working-tree marker is missing or disagrees with the pin, `ADR\u00d7N`
-for ADRs citing it. `none observed` means no such edge exists — not that the
-file is ungoverned by other means.
+in agreement with any lock pin, `missing marker` when `sealed_source='hash-lock'`
+shows that only the pin remains, `hash drift` when an observed marker disagrees
+with the pin, and `ADR\u00d7N` for ADRs citing it. `none observed` means no
+such edge exists — not that the file is ungoverned by other means.
 
 ## Commit-node distribution by repo
 

@@ -431,6 +431,14 @@ def test_catalog_q1_only_proves_unconditional_pull_request_gates():
     assert "'push' IN coalesce(g.events, [])" not in q1
 
 
+def test_catalog_q4_requires_both_cochange_endpoints_to_be_live_and_tracked():
+    q4 = dict(verify.CATALOG)["Q4 cross-package co-change (architecture erosion)"]
+
+    for alias in ("a", "b"):
+        assert f"{alias}.tracked" in q4
+        assert f"coalesce({alias}.present, true)" in q4
+
+
 def test_catalog_q5_ignores_test_edges_to_deleted_targets():
     """REGRESSION. The verifier's Q5 kept the unqualified
     `NOT (f)-[:TESTED_BY]->()` after the report queries were fixed, so a stale

@@ -65,7 +65,9 @@ ORDER BY last_change DESC LIMIT 25;
 // CO_CHANGED is stored one-way on a path-sorted pair, so canonicalise the
 // package pair before aggregating or the same coupling shows up twice.
 MATCH (a:File)-[c:CO_CHANGED]->(b:File)
-WHERE a.package <> b.package AND c.count >= 4
+WHERE a.tracked AND coalesce(a.present, true)
+  AND b.tracked AND coalesce(b.present, true)
+  AND a.package <> b.package AND c.count >= 4
 WITH CASE WHEN a.package < b.package THEN a.package ELSE b.package END AS pkg_a,
      CASE WHEN a.package < b.package THEN b.package ELSE a.package END AS pkg_b, c
 RETURN pkg_a, pkg_b, count(*) AS coupled_pairs,
