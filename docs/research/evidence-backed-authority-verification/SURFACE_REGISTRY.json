@@ -1,0 +1,12 @@
+{
+  "schema": "authority-surface-registry/v1",
+  "surfaces": [
+    {"surface_id": "container_runtimes", "required": true, "discovery_method": "enumerate runtime sockets and daemon reachability"},
+    {"surface_id": "filecaps", "required": true, "discovery_method": "enumerate file capabilities"},
+    {"surface_id": "groups", "required": true, "discovery_method": "enumerate kernel supplementary groups"},
+    {"surface_id": "polkit", "required": true, "discovery_method": "enumerate policy actions and readable rules"},
+    {"surface_id": "setuid", "required": true, "discovery_method": "enumerate setuid-root files"},
+    {"surface_id": "sudo", "required": true, "discovery_method": "inspect non-interactive sudo authorization"},
+    {"surface_id": "systemd", "required": true, "discovery_method": "enumerate writable unit and transient-service routes"}
+  ]
+}

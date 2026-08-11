@@ -1,0 +1,683 @@
+{
+ "analysis_only_paths": [
+  "setuid:/opt/1Password/chrome-sandbox",
+  "setuid:/usr/bin/vmware-user-suid-wrapper",
+  "setuid:/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper"
+ ],
+ "counts": {
+  "analysis_only_no_privilege_needed": 3,
+  "requires_privileged_access": 15,
+  "total": 18
+ },
+ "generated_from": {
+  "counts": {
+   "blocking": 20,
+   "non_root_equivalent": 37,
+   "not_present": 0,
+   "requires_operator_evidence": 18,
+   "root_equivalent": 2,
+   "total": 57,
+   "unknown": 0
+  },
+  "file": "PRIVILEGE_TOPOLOGY_FINAL.json",
+  "measurement_context_fingerprint": "0e528faf49f07c976c9b92a1f8b0906c3bcef59b039497cecab856f5536d7ccb"
+ },
+ "items": [
+  {
+   "blocks_until_answered": true,
+   "commands": [
+    "grep -E '^(auth_unix_rw|unix_sock_group|unix_sock_rw_perms)' /etc/libvirt/libvirtd.conf /etc/libvirt/virtqemud.conf",
+    "pkaction --action-id org.libvirt.unix.manage --verbose",
+    "systemctl is-active libvirtd virtqemud"
+   ],
+   "decision_rule": {
+    "NON_ROOT_EQUIVALENT": "polkit-gated with the agent in no granted group, confirmed by reading the config as root",
+    "ROOT_EQUIVALENT": "auth_unix_rw = 'none' with a socket the agent can write, or a polkit rule granting the agent org.libvirt.unix.manage: an authorised session can attach host block devices"
+   },
+   "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
+   "minimum_artifact": "the libvirt socket authentication mode",
+   "obtainable_by_agent": false,
+   "path": "container_runtimes:libvirt_ro_socket",
+   "policy_inference": "measured: the socket is world-connectable by design, the daemons were inactive, the action's implicit authorisation is auth_admin_keep, and 50-libvirt.rules grants password-free access to group `libvirt` only -- which the agent does not hold. What is NOT known is whether auth_unix_rw is set to 'none', which would bypass polkit entirely. The existence of libvirtd.conf is itself UNDETERMINED, not absent: /etc/libvirt is unsearchable",
+   "privilege_effect": "an authorised libvirt session can attach host block devices to a guest, which is root-equivalent; the socket is world-connectable by design and decides nothing",
+   "privileged_only_evidence": [
+    "/etc/libvirt/* (the directory is 0700 root:root)"
+   ],
+   "readable_evidence": {
+    "action_id": "org.libvirt.unix.manage",
+    "agent_is_admin_identity": false,
+    "implicit": {
+     "implicit active": "auth_admin_keep",
+     "implicit any": "auth_admin_keep",
+     "implicit inactive": "auth_admin_keep"
+    },
+    "polkit_local_rules_listable_by_agent": false
+   },
+   "surface": "container_runtimes"
+  },
+  {
+   "blocks_until_answered": true,
+   "commands": [
+    "grep -E '^(auth_unix_rw|unix_sock_group|unix_sock_rw_perms)' /etc/libvirt/libvirtd.conf /etc/libvirt/virtqemud.conf",
+    "pkaction --action-id org.libvirt.unix.manage --verbose",
+    "systemctl is-active libvirtd virtqemud"
+   ],
+   "decision_rule": {
+    "NON_ROOT_EQUIVALENT": "polkit-gated with the agent in no granted group, confirmed by reading the config as root",
+    "ROOT_EQUIVALENT": "auth_unix_rw = 'none' with a socket the agent can write, or a polkit rule granting the agent org.libvirt.unix.manage: an authorised session can attach host block devices"
+   },
+   "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
+   "minimum_artifact": "the libvirt socket authentication mode",
+   "obtainable_by_agent": false,
+   "path": "container_runtimes:libvirt_socket",
+   "policy_inference": "measured: the socket is world-connectable by design, the daemons were inactive, the action's implicit authorisation is auth_admin_keep, and 50-libvirt.rules grants password-free access to group `libvirt` only -- which the agent does not hold. What is NOT known is whether auth_unix_rw is set to 'none', which would bypass polkit entirely. The existence of libvirtd.conf is itself UNDETERMINED, not absent: /etc/libvirt is unsearchable",
+   "privilege_effect": "an authorised libvirt session can attach host block devices to a guest, which is root-equivalent; the socket is world-connectable by design and decides nothing",
+   "privileged_only_evidence": [
+    "/etc/libvirt/* (the directory is 0700 root:root)"
+   ],
+   "readable_evidence": {
+    "action_id": "org.libvirt.unix.manage",
+    "agent_is_admin_identity": false,
+    "implicit": {
+     "implicit active": "auth_admin_keep",
+     "implicit any": "auth_admin_keep",
+     "implicit inactive": "auth_admin_keep"
+    },
+    "polkit_local_rules_listable_by_agent": false
+   },
+   "surface": "container_runtimes"
+  },
+  {
+   "blocks_until_answered": true,
+   "commands": [
+    "sudo -l -U agent-user",
+    "grep -rn wheel /etc/sudoers /etc/sudoers.d /etc/polkit-1/rules.d"
+   ],
+   "decision_rule": {
+    "NON_ROOT_EQUIVALENT": "the identity is removed from wheel (`gpasswd -d agent-user wheel`), which resolves this path by removal rather than by evidence",
+    "ROOT_EQUIVALENT": "wheel grants a root command via sudoers, or admin authentication is reachable by the agent runtime"
+   },
+   "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
+   "minimum_artifact": "every policy that names `wheel` as an authority",
+   "obtainable_by_agent": false,
+   "path": "groups:membership_wheel",
+   "policy_inference": "wheel is measured to be the polkit AdminIdentity on this host (50-default.rules, world-readable). Whether it is also a sudoers authority is the unreadable half",
+   "privilege_effect": "membership of the polkit administrator group and, on RPM-family hosts, the conventional sudoers group: it is the identity that authenticates privileged actions, not a mechanism of its own",
+   "privileged_only_evidence": [
+    "/etc/sudoers, /etc/sudoers.d",
+    "/etc/polkit-1/rules.d"
+   ],
+   "readable_evidence": {
+    "action_id": "org.freedesktop.policykit.exec",
+    "agent_is_admin_identity": false,
+    "group_roster": null,
+    "implicit": {
+     "implicit active": "auth_admin",
+     "implicit any": "auth_admin",
+     "implicit inactive": "auth_admin"
+    },
+    "polkit_local_rules_listable_by_agent": false
+   },
+   "surface": "groups"
+  },
+  {
+   "blocks_until_answered": true,
+   "commands": [
+    "ls -la /etc/polkit-1/rules.d",
+    "cat /etc/polkit-1/rules.d/*.rules",
+    "pkcheck --action-id <action> --process $$ "
+   ],
+   "decision_rule": {
+    "NON_ROOT_EQUIVALENT": "no local rule grants it, and the agent is removed from every AdminIdentity group",
+    "ROOT_EQUIVALENT": "a local rule returns YES for this action for a group the agent holds, or the operator accepts admin authentication as reachable by the agent runtime"
+   },
+   "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
+   "minimum_artifact": "the local polkit rules that apply to this action",
+   "obtainable_by_agent": false,
+   "path": "polkit:dbus_system_bus",
+   "policy_inference": "the readable half is measured: 50-default.rules sets AdminIdentities to unix-group:wheel and the agent holds wheel, so admin authentication is available to this identity. A local rule returning polkit.Result.YES would remove the password entirely -- that file is the deciding artifact and it is unreadable",
+   "privilege_effect": "the system bus carries privileged RPCs (StartTransientUnit among them); reachability is by design and authority is decided per RPC by polkit",
+   "privileged_only_evidence": [
+    "/etc/polkit-1/rules.d (0750 root:polkitd -- not listable by the agent)"
+   ],
+   "readable_evidence": {
+    "action_id": "org.freedesktop.systemd1.manage-units",
+    "agent_is_admin_identity": false,
+    "implicit": {
+     "implicit active": "auth_admin_keep",
+     "implicit any": "auth_admin",
+     "implicit inactive": "auth_admin"
+    },
+    "polkit_local_rules_listable_by_agent": false
+   },
+   "surface": "polkit"
+  },
+  {
+   "blocks_until_answered": true,
+   "commands": [
+    "ls -la /etc/polkit-1/rules.d",
+    "cat /etc/polkit-1/rules.d/*.rules",
+    "pkcheck --action-id <action> --process $$ "
+   ],
+   "decision_rule": {
+    "NON_ROOT_EQUIVALENT": "no local rule grants it, and the agent is removed from every AdminIdentity group",
+    "ROOT_EQUIVALENT": "a local rule returns YES for this action for a group the agent holds, or the operator accepts admin authentication as reachable by the agent runtime"
+   },
+   "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
+   "minimum_artifact": "the local polkit rules that apply to this action",
+   "obtainable_by_agent": false,
+   "path": "polkit:pkexec",
+   "policy_inference": "the readable half is measured: 50-default.rules sets AdminIdentities to unix-group:wheel and the agent holds wheel, so admin authentication is available to this identity. A local rule returning polkit.Result.YES would remove the password entirely -- that file is the deciding artifact and it is unreadable",
+   "privilege_effect": "runs an arbitrary program as another user, including root",
+   "privileged_only_evidence": [
+    "/etc/polkit-1/rules.d (0750 root:polkitd -- not listable by the agent)"
+   ],
+   "readable_evidence": {
+    "action_id": "org.freedesktop.policykit.exec",
+    "agent_is_admin_identity": false,
+    "implicit": {
+     "implicit active": "auth_admin",
+     "implicit any": "auth_admin",
+     "implicit inactive": "auth_admin"
+    },
+    "polkit_local_rules_listable_by_agent": false
+   },
+   "surface": "polkit"
+  },
+  {
+   "blocks_until_answered": true,
+   "commands": [
+    "rpm -Vf /opt/1Password/chrome-sandbox",
+    "rpm -q --qf '[%{FILENAMES}\\t%{FILEMODES:octal}\\n]' 1password | grep chrome-sandbox"
+   ],
+   "decision_rule": {
+    "NON_ROOT_EQUIVALENT": "the vendor documents the setuid requirement for its sandbox and the bit is intentional",
+    "ROOT_EQUIVALENT": "the setuid bit was not deliberate, or the helper accepts a caller-chosen target"
+   },
+   "discriminator": "the bytes match the package but the package declares mode 100755 while the disk carries setuid: the privilege was granted after packaging and no vendor statement bounds it",
+   "minimum_artifact": "an account of the setuid bit the package does not declare",
+   "obtainable_by_agent": true,
+   "path": "setuid:/opt/1Password/chrome-sandbox",
+   "policy_inference": "the bytes match the package exactly; the package declares mode 100755 and the disk carries 4755, so the privilege was granted after packaging by an installer or an administrator. A digest match attests bytes, not privileges",
+   "privilege_effect": "creates a user/PID namespace for a browser renderer and execs only the target passed by its own zygote; it does not take a caller-chosen command",
+   "privileged_only_evidence": [],
+   "readable_evidence": {
+    "binary_hash": "2015304df43beff0b74409cdc4d858107efcde650d9bc8afb1288041d62cec4b",
+    "capabilities": "none",
+    "expected_hash": "887875dc21801dd0685b3f46ea5d5c24",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/opt/1Password/chrome-sandbox",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "1password-8.12.30-1.x86_64"
+   },
+   "surface": "setuid"
+  },
+  {
+   "blocks_until_answered": true,
+   "commands": [
+    "rpm -Vf <path>",
+    "sha256sum <path>   # as root; the binary is execute-only"
+   ],
+   "decision_rule": {
+    "NON_ROOT_EQUIVALENT": "`rpm -Vf` reports no digest or mode deviation for this path",
+    "ROOT_EQUIVALENT": "the digest differs from the package's, or the file is unpackaged"
+   },
+   "discriminator": "no verified provenance for these bytes (integrity=FILE_UNREADABLE_BY_AGENT), so the design bound cannot be attributed to the binary actually on disk",
+   "minimum_artifact": "provenance for bytes the agent cannot read",
+   "obtainable_by_agent": false,
+   "path": "setuid:/usr/bin/chfn",
+   "policy_inference": "the owning package is known and records a digest, but the agent cannot read the file to compare against it, so the design argument that would bound this helper cannot be attached to the bytes on disk",
+   "privilege_effect": "edits the invoking user's own account record after PAM authentication; it takes no caller-chosen command and writes no caller-chosen path",
+   "privileged_only_evidence": [
+    "the binary's own bytes (mode 4711 / 4750)",
+    "the binary's own bytes (mode 0o4711 -- execute-only for the agent)"
+   ],
+   "readable_evidence": {
+    "binary_hash": null,
+    "capabilities": "none",
+    "expected_hash": "18a46f289e2437330a839ef71e9e1b5e57811c607d889702353a38077cbb1f47",
+    "file": {
+     "exists": true,
+     "mode": "0o4711",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/chfn",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "FILE_UNREADABLE_BY_AGENT",
+    "package_owner": "util-linux-2.41.5-1.fc44.x86_64"
+   },
+   "surface": "setuid"
+  },
+  {
+   "blocks_until_answered": true,
+   "commands": [
+    "rpm -Vf <path>",
+    "sha256sum <path>   # as root; the binary is execute-only"
+   ],
+   "decision_rule": {
+    "NON_ROOT_EQUIVALENT": "`rpm -Vf` reports no digest or mode deviation for this path",
+    "ROOT_EQUIVALENT": "the digest differs from the package's, or the file is unpackaged"
+   },
+   "discriminator": "no verified provenance for these bytes (integrity=FILE_UNREADABLE_BY_AGENT), so the design bound cannot be attributed to the binary actually on disk",
+   "minimum_artifact": "provenance for bytes the agent cannot read",
+   "obtainable_by_agent": false,
+   "path": "setuid:/usr/bin/chsh",
+   "policy_inference": "the owning package is known and records a digest, but the agent cannot read the file to compare against it, so the design argument that would bound this helper cannot be attached to the bytes on disk",
+   "privilege_effect": "edits the invoking user's own account record after PAM authentication; it takes no caller-chosen command and writes no caller-chosen path",
+   "privileged_only_evidence": [
+    "the binary's own bytes (mode 4711 / 4750)",
+    "the binary's own bytes (mode 0o4711 -- execute-only for the agent)"
+   ],
+   "readable_evidence": {
+    "binary_hash": null,
+    "capabilities": "none",
+    "expected_hash": "b2b33675e042afaedc38873d85959ef733e9cc2248f16356bf4665b84bcb905f",
+    "file": {
+     "exists": true,
+     "mode": "0o4711",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/chsh",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "FILE_UNREADABLE_BY_AGENT",
+    "package_owner": "util-linux-2.41.5-1.fc44.x86_64"
+   },
+   "surface": "setuid"
+  },
+  {
+   "blocks_until_answered": true,
+   "commands": [
+    "cat /etc/gshadow",
+    "grep -E '^(docker|wheel):' /etc/gshadow"
+   ],
+   "decision_rule": {
+    "NON_ROOT_EQUIVALENT": "the administrator field of every privileged group is empty or names other principals",
+    "ROOT_EQUIVALENT": "this identity appears in the administrator field of any privileged group"
+   },
+   "discriminator": "the administrator list lives in /etc/gshadow, which is 0000 root and unreadable by the agent",
+   "minimum_artifact": "the group administrator lists in /etc/gshadow",
+   "obtainable_by_agent": false,
+   "path": "setuid:/usr/bin/gpasswd",
+   "policy_inference": "gpasswd lets a group administrator add members. If this identity administers `docker` or `wheel` it can restore a removed root-equivalent path at will, which would make gate 1 reversible by the agent",
+   "privilege_effect": "administers group membership; root-equivalent exactly when the agent administers a privileged group, because adding itself to `docker` or `wheel` re-opens a closed path",
+   "privileged_only_evidence": [
+    "/etc/gshadow (0000 root:root)"
+   ],
+   "readable_evidence": {
+    "binary_hash": "5d7eea7f619c5b7a2b7129d52023e78f8619c206e46c9a3189563e1f95cf5f4e",
+    "capabilities": "none",
+    "expected_hash": "5d7eea7f619c5b7a2b7129d52023e78f8619c206e46c9a3189563e1f95cf5f4e",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/gpasswd",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "shadow-utils-4.19.0-7.fc44.x86_64"
+   },
+   "surface": "setuid"
+  },
+  {
+   "blocks_until_answered": true,
+   "commands": [
+    "ls -la /etc/polkit-1/rules.d",
+    "cat /etc/polkit-1/rules.d/*.rules",
+    "pkcheck --action-id <action> --process $$ "
+   ],
+   "decision_rule": {
+    "NON_ROOT_EQUIVALENT": "no local rule grants it, and the agent is removed from every AdminIdentity group",
+    "ROOT_EQUIVALENT": "a local rule returns YES for this action for a group the agent holds, or the operator accepts admin authentication as reachable by the agent runtime"
+   },
+   "discriminator": "the gate is the authorisation policy, which is unreadable by the agent (/etc/sudoers is 0440 root, /etc/polkit-1/rules.d is 0700 root)",
+   "minimum_artifact": "the local polkit rules that apply to this action",
+   "obtainable_by_agent": false,
+   "path": "setuid:/usr/bin/pkexec",
+   "policy_inference": "the readable half is measured: 50-default.rules sets AdminIdentities to unix-group:wheel and the agent holds wheel, so admin authentication is available to this identity. A local rule returning polkit.Result.YES would remove the password entirely -- that file is the deciding artifact and it is unreadable",
+   "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor",
+   "privileged_only_evidence": [
+    "/etc/polkit-1/rules.d (0750 root:polkitd -- not listable by the agent)"
+   ],
+   "readable_evidence": {
+    "binary_hash": "926bdb901a39b1cc0fb051dea2c789d95f53e1ef13794e923d7469cd6d579d9a",
+    "capabilities": "none",
+    "expected_hash": "926bdb901a39b1cc0fb051dea2c789d95f53e1ef13794e923d7469cd6d579d9a",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/pkexec",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "polkit-127-2.fc44.2.x86_64"
+   },
+   "surface": "setuid"
+  },
+  {
+   "blocks_until_answered": true,
+   "commands": [
+    "cat /etc/pam.d/su",
+    "getent shadow root | cut -d: -f2 | head -c1"
+   ],
+   "decision_rule": {
+    "NON_ROOT_EQUIVALENT": "root login is locked and no PAM rule grants this identity a password-free transition",
+    "ROOT_EQUIVALENT": "pam_wheel with trust, an empty/known root password, or any rule letting this identity authenticate as root"
+   },
+   "discriminator": "the gate is the authorisation policy, which is unreadable by the agent (/etc/sudoers is 0440 root, /etc/polkit-1/rules.d is 0700 root)",
+   "minimum_artifact": "the PAM stack for `su` and the target account's credential state",
+   "obtainable_by_agent": false,
+   "path": "setuid:/usr/bin/su",
+   "policy_inference": "su is setuid root and grants arbitrary root execution on successful authentication; whether this identity can authenticate as root is not measurable read-only",
+   "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor",
+   "privileged_only_evidence": [
+    "/etc/shadow (0000 root:root)"
+   ],
+   "readable_evidence": {
+    "binary_hash": "410973435216008c113693ee29743a4d7c3d232cfbc1013227fc8d0be666f209",
+    "capabilities": "none",
+    "expected_hash": "410973435216008c113693ee29743a4d7c3d232cfbc1013227fc8d0be666f209",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/su",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "util-linux-2.41.5-1.fc44.x86_64"
+   },
+   "surface": "setuid"
+  },
+  {
+   "blocks_until_answered": true,
+   "commands": [
+    "sudo -l -U agent-user",
+    "cat /etc/sudoers",
+    "cat /etc/sudoers.d/*"
+   ],
+   "decision_rule": {
+    "NON_ROOT_EQUIVALENT": "no entry for this identity or any group it holds, verified with `sudo -l -U agent-user` run as root",
+    "ROOT_EQUIVALENT": "any entry granting this identity a command as root, or any NOPASSWD entry, or a command with a documented shell escape"
+   },
+   "discriminator": "the gate is the authorisation policy, which is unreadable by the agent (/etc/sudoers is 0440 root, /etc/polkit-1/rules.d is 0700 root)",
+   "minimum_artifact": "the sudoers policy that applies to this identity",
+   "obtainable_by_agent": false,
+   "path": "setuid:/usr/bin/sudo",
+   "policy_inference": "`sudo -n -l` returned 'a password is required' rather than 'not allowed to run sudo', so an entry matching this identity exists. The commands it grants are not inferable, and a Fedora default of `%wheel ALL=(ALL) ALL` would be root-equivalent",
+   "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor",
+   "privileged_only_evidence": [
+    "/etc/sudoers (0440 root:root)",
+    "/etc/sudoers.d (0750 root:root -- not listable by the agent)",
+    "the binary's own bytes (mode 0o4111 -- execute-only for the agent)"
+   ],
+   "readable_evidence": {
+    "binary_hash": null,
+    "capabilities": "none",
+    "expected_hash": "52d280f4d4411a54afcad91468f765790056c8b388e1074f2324dad3e31846de",
+    "file": {
+     "exists": true,
+     "mode": "0o4111",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/sudo",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "FILE_UNREADABLE_BY_AGENT",
+    "package_owner": "sudo-1.9.17-8.p2.fc44.x86_64"
+   },
+   "surface": "setuid"
+  },
+  {
+   "blocks_until_answered": true,
+   "commands": [
+    "ls -la /etc/security/console.apps",
+    "cat /etc/pam.d/*"
+   ],
+   "decision_rule": {
+    "NON_ROOT_EQUIVALENT": "every entry authenticates, and the package digest verifies",
+    "ROOT_EQUIVALENT": "a console.apps entry runs a root program without authentication"
+   },
+   "discriminator": "the gate is the authorisation policy, which is unreadable by the agent (/etc/sudoers is 0440 root, /etc/polkit-1/rules.d is 0700 root)",
+   "minimum_artifact": "the usermode console.apps configuration",
+   "obtainable_by_agent": false,
+   "path": "setuid:/usr/bin/userhelper",
+   "policy_inference": "userhelper runs configured applications with elevated privilege after PAM authentication; the binary is mode 4711 so the agent cannot even hash it",
+   "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor",
+   "privileged_only_evidence": [
+    "the binary's own bytes (mode 0o4711 -- execute-only for the agent)"
+   ],
+   "readable_evidence": {
+    "binary_hash": null,
+    "capabilities": "none",
+    "expected_hash": "fbb10ea3f210c48e5a9cc623f43d40b1b603beb1ef00a339c2a23e3f7585f6be",
+    "file": {
+     "exists": true,
+     "mode": "0o4711",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/userhelper",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "FILE_UNREADABLE_BY_AGENT",
+    "package_owner": "usermode-1.114-16.fc44.x86_64"
+   },
+   "surface": "setuid"
+  },
+  {
+   "blocks_until_answered": true,
+   "commands": [
+    "rpm -qf <path> && rpm -Vf <path>",
+    "getcap <path>",
+    "strings -a <path> | grep -iE 'exec|system|/bin/sh'"
+   ],
+   "decision_rule": {
+    "NON_ROOT_EQUIVALENT": "the effect is bounded and the bound is named; otherwise remove the setuid bit (`chmod u-s`) and re-run the inventory, which reclassifies it without needing the analysis",
+    "ROOT_EQUIVALENT": "caller input reaches arbitrary exec, arbitrary write, namespace escape, device/mount manipulation or credential change"
+   },
+   "discriminator": "no discriminator is defined for this binary, and an unclassified setuid-root binary is treated as unresolved, never as safe",
+   "minimum_artifact": "a statement of what caller-controlled input reaches the privileged effect",
+   "obtainable_by_agent": true,
+   "path": "setuid:/usr/bin/vmware-user-suid-wrapper",
+   "policy_inference": "no discriminator is defined for this binary, so it is unresolved by construction rather than by any finding against it",
+   "privilege_effect": "setuid-root binary with no measured bound",
+   "privileged_only_evidence": [],
+   "readable_evidence": {
+    "binary_hash": "89905a0051eaaec3f7d62034e6c07fea9d3930645056bfb1c2b9b8489d38454e",
+    "capabilities": "none",
+    "expected_hash": "89905a0051eaaec3f7d62034e6c07fea9d3930645056bfb1c2b9b8489d38454e",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/vmware-user-suid-wrapper",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "open-vm-tools-desktop-13.1.0-2.fc44.x86_64"
+   },
+   "surface": "setuid"
+  },
+  {
+   "blocks_until_answered": true,
+   "commands": [
+    "rpm -Vf <path>",
+    "sha256sum <path>   # as root; the binary is execute-only"
+   ],
+   "decision_rule": {
+    "NON_ROOT_EQUIVALENT": "`rpm -Vf` reports no digest or mode deviation for this path",
+    "ROOT_EQUIVALENT": "the digest differs from the package's, or the file is unpackaged"
+   },
+   "discriminator": "no verified provenance for these bytes (integrity=FILE_UNREADABLE_BY_AGENT), so the design bound cannot be attributed to the binary actually on disk; and neither D-Bus system-service directory is agent-writable",
+   "minimum_artifact": "provenance for bytes the agent cannot read",
+   "obtainable_by_agent": false,
+   "path": "setuid:/usr/libexec/dbus-1/dbus-daemon-launch-helper",
+   "policy_inference": "the owning package is known and records a digest, but the agent cannot read the file to compare against it, so the design argument that would bound this helper cannot be attached to the bytes on disk",
+   "privilege_effect": "launches a system service as the user named in its .service file",
+   "privileged_only_evidence": [
+    "the binary's own bytes (mode 4711 / 4750)",
+    "the binary's own bytes (mode 0o4750 -- execute-only for the agent)"
+   ],
+   "readable_evidence": {
+    "binary_hash": null,
+    "capabilities": "none",
+    "expected_hash": "3276f1f7ce40adbbd7cfa2bc00d62cb53ec1348da4719d9a5d34aa31c7421aef",
+    "file": {
+     "exists": true,
+     "mode": "0o4750",
+     "owner_gid": 81,
+     "owner_uid": 0,
+     "path": "/usr/libexec/dbus-1/dbus-daemon-launch-helper",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "FILE_UNREADABLE_BY_AGENT",
+    "package_owner": "dbus-daemon-1.16.2-1.fc44.x86_64"
+   },
+   "surface": "setuid"
+  },
+  {
+   "blocks_until_answered": true,
+   "commands": [
+    "rpm -qf <path> && rpm -Vf <path>",
+    "getcap <path>",
+    "strings -a <path> | grep -iE 'exec|system|/bin/sh'"
+   ],
+   "decision_rule": {
+    "NON_ROOT_EQUIVALENT": "the effect is bounded and the bound is named; otherwise remove the setuid bit (`chmod u-s`) and re-run the inventory, which reclassifies it without needing the analysis",
+    "ROOT_EQUIVALENT": "caller input reaches arbitrary exec, arbitrary write, namespace escape, device/mount manipulation or credential change"
+   },
+   "discriminator": "no discriminator is defined for this binary, and an unclassified setuid-root binary is treated as unresolved, never as safe",
+   "minimum_artifact": "a statement of what caller-controlled input reaches the privileged effect",
+   "obtainable_by_agent": true,
+   "path": "setuid:/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper",
+   "policy_inference": "no discriminator is defined for this binary, so it is unresolved by construction rather than by any finding against it",
+   "privilege_effect": "setuid-root binary with no measured bound",
+   "privileged_only_evidence": [],
+   "readable_evidence": {
+    "binary_hash": "df25e68200204f4dc88b01697b68bccaa52c386314ad51ae9cd274da9a32fec8",
+    "capabilities": "none",
+    "expected_hash": "df25e68200204f4dc88b01697b68bccaa52c386314ad51ae9cd274da9a32fec8",
+    "file": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper",
+     "setgid": false,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "integrity": "MATCH",
+    "package_owner": "spice-glib-0.42-8.fc44.x86_64"
+   },
+   "surface": "setuid"
+  },
+  {
+   "blocks_until_answered": true,
+   "commands": [
+    "sudo -l -U agent-user",
+    "cat /etc/sudoers",
+    "cat /etc/sudoers.d/*"
+   ],
+   "decision_rule": {
+    "NON_ROOT_EQUIVALENT": "no entry for this identity or any group it holds, verified with `sudo -l -U agent-user` run as root",
+    "ROOT_EQUIVALENT": "any entry granting this identity a command as root, or any NOPASSWD entry, or a command with a documented shell escape"
+   },
+   "discriminator": "`sudo -n -l` distinguishes *no entry* ('not allowed to run sudo') from *an entry behind a password* ('a password is required'). It cannot reveal which commands the entry grants, and /etc/sudoers is 0440 root",
+   "minimum_artifact": "the sudoers policy that applies to this identity",
+   "obtainable_by_agent": false,
+   "path": "sudo:sudo",
+   "policy_inference": "`sudo -n -l` returned 'a password is required' rather than 'not allowed to run sudo', so an entry matching this identity exists. The commands it grants are not inferable, and a Fedora default of `%wheel ALL=(ALL) ALL` would be root-equivalent",
+   "privilege_effect": "arbitrary command execution as uid 0 if the policy grants it",
+   "privileged_only_evidence": [
+    "/etc/sudoers (0440 root:root)",
+    "/etc/sudoers.d (0750 root:root -- not listable by the agent)"
+   ],
+   "readable_evidence": {
+    "interpretation": "an entry exists; its command set is unmeasured. `ALL=(ALL) ALL` would be root-equivalent",
+    "probe": {
+     "argv": [
+      "sudo",
+      "-n",
+      "-l"
+     ],
+     "rc": 1,
+     "stderr": "sudo: a password is required",
+     "stdout": ""
+    },
+    "sudoers_entry_exists_for_agent": true,
+    "sudoers_mode": "0o440",
+    "sudoers_readable_by_agent": false
+   },
+   "surface": "sudo"
+  },
+  {
+   "blocks_until_answered": true,
+   "commands": [
+    "ls -la /etc/polkit-1/rules.d",
+    "cat /etc/polkit-1/rules.d/*.rules",
+    "pkcheck --action-id <action> --process $$ "
+   ],
+   "decision_rule": {
+    "NON_ROOT_EQUIVALENT": "no local rule grants it, and the agent is removed from every AdminIdentity group",
+    "ROOT_EQUIVALENT": "a local rule returns YES for this action for a group the agent holds, or the operator accepts admin authentication as reachable by the agent runtime"
+   },
+   "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
+   "minimum_artifact": "the local polkit rules that apply to this action",
+   "obtainable_by_agent": false,
+   "path": "systemd:systemd_run",
+   "policy_inference": "the readable half is measured: 50-default.rules sets AdminIdentities to unix-group:wheel and the agent holds wheel, so admin authentication is available to this identity. A local rule returning polkit.Result.YES would remove the password entirely -- that file is the deciding artifact and it is unreadable",
+   "privilege_effect": "starts a transient unit under the system manager, which runs as root by default",
+   "privileged_only_evidence": [
+    "/etc/polkit-1/rules.d (0750 root:polkitd -- not listable by the agent)"
+   ],
+   "readable_evidence": {
+    "action_id": "org.freedesktop.systemd1.manage-units",
+    "agent_is_admin_identity": false,
+    "implicit": {
+     "implicit active": "auth_admin_keep",
+     "implicit any": "auth_admin",
+     "implicit inactive": "auth_admin"
+    },
+    "polkit_local_rules_listable_by_agent": false
+   },
+   "surface": "systemd"
+  }
+ ],
+ "mutations_performed": [],
+ "read_only": true,
+ "rule": "an item whose privileged_only_evidence is non-empty cannot be closed by this agent under any circumstances; it retains blocker state. An item with an empty list needs analysis, not privilege, and is still blocking until that analysis is recorded as a measurement in privilege_resolution.py's rule table"
+}
