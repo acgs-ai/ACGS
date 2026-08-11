@@ -744,12 +744,12 @@ would, with no new cryptography:
 
 1. replace the unconditional-allow observer with a real policy evaluation,
 2. upgrade `Receipt` → signable `DecisionReceipt`,
-3. give the hook a genuine `deny` / `ask` verdict the host honors.
+3. give the hook a genuine `deny` / `ask` verdict for the host to honor.
 
 It would still not cover `npm install` — that is an interactive-terminal event no
 hook can see (§5.3) — so C3 remains necessary. But it converts the agent path
-from telemetry into enforcement, and it should be sequenced ahead of every
-proposal in §6.
+from passive telemetry into policy-decision and audit mediation, and it should
+be sequenced ahead of every proposal in §6.
 
 **One boundary to state precisely, since it is easy to overclaim.** Even on the
 gateway path, `execute_with_receipt` is *not* called — the host runtime performs
@@ -1155,7 +1155,7 @@ Ordered by prevented-risk per unit of effort, not by architectural elegance.
 
 | Order | Control | Effort | Would it have prevented the incident? |
 |---|---|---|---|
-| 0 | **Migrate the hook to `UniversalGateway.handle_claude_hook`** (§5.4a) | hours-days | No — but it converts the agent path from telemetry to enforcement using code that already exists and is tested. Cheapest real capability gain available. |
+| 0 | **Migrate the hook to `UniversalGateway.handle_claude_hook`** (§5.4a) | hours-days | No — but it converts the agent path from passive telemetry to policy-decision and audit mediation using code that already exists and is tested. Cheapest real capability gain available. |
 | 1 | **C3 first row only** — deny non-canonical package manager | hours | **Yes, completely.** One read of `package.json`. |
 | 2 | C5 provenance sidecar for declared M4 surfaces | days | Converts the silent rewrite into a CI failure |
 | 3 | C2 control-surface inventory with owners | days | Yes — the file had no owner |

@@ -102,9 +102,12 @@ hook matcher can change that.
 
 ### D1 — The governed decision surface is `UniversalGateway`, not passive emission
 
-Execution-environment side effects are mediated by `UniversalGateway`. The
-passive `integration.emit_receipt_for_hook` path is retired from the enforcement
-role and retained only as a compatibility auditor during migration (see D6).
+Execution-owning integrations use `UniversalGateway.invoke` for receipt-gated
+side effects. The Claude hook uses `UniversalGateway.handle_claude_hook` only
+for decision, audit, and receipt mediation; the host remains outside the
+receipt executor gate. The passive `integration.emit_receipt_for_hook` path is
+retired from the hook's decision-mediation role and retained only as a
+compatibility auditor during migration (see D6).
 
 For the Claude Code hook specifically, `handle_claude_hook`
 (`gateway.py:1022-1109`) replaces `emit_receipt_for_hook`. It evaluates each
@@ -187,14 +190,19 @@ duplicate an existing adversary. Instead:
 Per `SECURITY_MODEL.md:52-55`, every control this ADR proposes is tagged
 `[proposed]` until it has cited tests in the checkout.
 
-### D5 — Fail-closed is preserved, and unmediated paths are proven absent rather than assumed
+### D5 — Fail-closed boundaries are stated per execution path
 
-The existing invariant is unchanged: **no valid Decision Receipt, no side
-effect.** Two additions specific to this layer:
+The existing **no valid Decision Receipt, no side effect** invariant remains
+true for paths wired through `UniversalGateway.invoke`. The Claude hook is a
+different boundary: it fails closed at the policy-decision surface, but the
+host performs the side effect without presenting the minted receipt to a
+gove-zone executor. Two additions specific to this layer:
 
-1. **Non-canonical package managers are denied before fetch.** If the repository
-   declares `packageManager` and a different manager is invoked, the decision is
-   `DENY` at the gate, before any network access or lifecycle execution.
+1. **Non-canonical package managers are denied at the hook decision surface.**
+   If the repository declares `packageManager` and a different manager reaches
+   the Claude PreToolUse hook, the returned decision is `DENY` before the host
+   would start that call. This does not mediate interactive or outside-hook
+   package-manager execution.
 2. **Bypass is measured, not assumed.** `bypass_attempts()` (`gateway.py:730`)
    already returns the audited record of sealed-tool calls made outside a grant.
    Completeness of mediation is an *observable*, and an empty result is evidence

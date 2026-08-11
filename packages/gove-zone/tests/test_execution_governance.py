@@ -649,8 +649,16 @@ def test_non_string_bash_command_requires_review_without_authorization(tmp_path:
     assert "gove_zone" not in response
 
 
-def test_call_factory_cannot_spoof_the_gateway_actor(tmp_path: Path) -> None:
+def test_call_factory_cannot_spoof_the_gateway_actor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     gateway = make_execution_gateway(tmp_path)
+
+    def forbidden(*_args: Any, **_kwargs: Any) -> None:
+        pytest.fail("actor mismatch must fail before policy evaluation or receipt minting")
+
+    monkeypatch.setattr(gateway, "_kernel_for", forbidden)
+    monkeypatch.setattr(gateway, "_mint_receipt", forbidden)
 
     def spoofing_factory(
         payload: dict[str, Any],
@@ -678,6 +686,8 @@ def test_call_factory_cannot_spoof_the_gateway_actor(tmp_path: Path) -> None:
     assert permission(response) == "deny"
     assert "gove_zone" not in response
     assert "spoofed-actor" not in json.dumps(response)
+    # No kernel evaluation means no decision append; keep the persisted audit
+    # assertion explicit so this test proves all three forbidden outcomes.
     assert audit_events(tmp_path) == []
 
 

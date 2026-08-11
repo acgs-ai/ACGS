@@ -1,9 +1,8 @@
 """Universal Agent Gateway — one strong gate, many agent-framework surfaces.
 
-Every agent framework surface (MCP, OpenAI function calling, LangGraph,
-Claude Code hooks, REST) is a thin *projection* onto a single governed
-chokepoint, :meth:`UniversalGateway.invoke`, which drives the full
-Policy → Receipt → Executor chain:
+Execution-owning framework surfaces (MCP, OpenAI function calling, LangGraph,
+REST) are thin *projections* onto :meth:`UniversalGateway.invoke`, which drives
+the full Policy → Receipt → Executor chain:
 
 1. **Policy** — :meth:`~gove_zone.kernel.Kernel.evaluate_and_record` evaluates
    the call under the fail-closed watchdog and appends exactly one decision to
@@ -40,7 +39,8 @@ introspects closures or object internals can reach the raw function without
 tripping it. The cryptographic closure remains the signed receipt gate plus
 offline verification of the audit chain and consumption ledger.
 
-Scope note: the Claude Code hook surface is decision + receipt only — the
+The Claude Code hook is deliberately different: it is a policy-decision, audit,
+and receipt-minting mediation surface, not a projection onto ``invoke``. The
 side effect there is executed by the host runtime, which must honor the
 returned deny. That matches the :mod:`gove_zone.integration` gate-mode story;
 it cannot be receipt-gated at the executor because the gateway does not run
@@ -1027,8 +1027,11 @@ class UniversalGateway:
         action_kind: str = "PreToolUse",
         call_factory: Callable[..., Sequence[ToolCall]] | None = None,
     ) -> dict[str, Any]:
-        """Decide one Claude Code hook event (Policy → Receipt; the host runtime
-        is the executor leg and must honor the returned decision).
+        """Decide one Claude Code hook event (Policy → Receipt only).
+
+        The host runtime owns any later side effect and must honor the returned
+        decision. This method does not call ``execute_with_receipt`` and must not
+        be described as receipt-gated side-effect execution.
 
         Batch-aware, deny-wins: multi-call payloads (OpenAI Responses /
         ``tool_calls`` batches, per :func:`gove_zone.integration.

@@ -345,10 +345,12 @@ against the live `.claude/settings.json` by
 
 ### 2.4 What preserves the invariant
 
-- **Fail-closed** is unchanged: no valid Decision Receipt, no side effect.
-  Policy timeout, policy error, audit-append failure, and malformed `TRANSFORM`
-  all synthesize `DENY` with distinct `policy_version` markers
-  (`kernel.py:328,361,371,377-387`).
+- **Fail-closed execution** is unchanged on paths wired through
+  `UniversalGateway.invoke`: no valid Decision Receipt, no side effect. On the
+  Claude hook path, policy timeout, policy error, and audit-append failure fail
+  closed at the decision surface, but the host does not present the minted
+  receipt to a gove-zone executor. Kernel failures synthesize `DENY` with
+  distinct `policy_version` markers (`kernel.py:328,361,371,377-387`).
 - **Self-validation** is structurally rejected: `validator_id == expected_actor`
   → `SELF_VALIDATION` (`receipt.py:850-869`). The two-signature rule for
   `control-surface` and above is the same rule the runtime already enforces.
@@ -569,12 +571,13 @@ is unmodified by this work.
 
 **A2-1 wording.** The original criterion was "20/20 `deny`; 0 `package-lock.json`
 created; 0 packages fetched." What is demonstrated is narrower and must be stated
-as such: **the hook returns `deny` for an `npm install` payload, before the host
-runtime executes anything.** There is no `PATH` shim, so an `npm install` typed
-into a terminal reaches no hook and is not prevented. The incident's specific
-path — an agent-issued Bash call — is closed; the interactive path and other
-outside-hook invocations are not. This is partial hook mediation, not complete
-package-manager mediation.
+as such: **the PreToolUse hook returns `deny` for an `npm install` payload before
+the host decides whether to execute it.** The hook mediates the decision and
+audit record; it does not run a receipt-gated executor. There is no `PATH` shim,
+so an `npm install` typed into a terminal reaches no hook and is not prevented.
+The incident's specific agent-hook decision path is mediated; the interactive
+path and other outside-hook invocations are not. This is partial hook mediation,
+not complete package-manager mediation.
 
 ### Not met
 
