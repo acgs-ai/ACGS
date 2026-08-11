@@ -106,3 +106,87 @@ def test_e2e_sandbox_missing_api_key() -> None:
     finally:
         if orig_key:
             os.environ["E2B_API_KEY"] = orig_key
+
+
+class _FakeE2BExecution:
+    def __init__(self, exit_code: int, stdout: str, stderr: str = "") -> None:
+        self.exit_code = exit_code
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _install_fake_e2b(monkeypatch: pytest.MonkeyPatch, execution: _FakeE2BExecution) -> None:
+    """Install a fake ``e2b`` module whose Sandbox returns ``execution``."""
+    import sys
+    import types
+
+    class _FakeCommands:
+        def run(self, _cmd: str) -> _FakeE2BExecution:
+            return execution
+
+    class _FakeFiles:
+        def write(self, _path: str, _content: str) -> None:
+            pass
+
+    class _FakeSandbox:
+        def __init__(self, api_key: str | None = None) -> None:
+            self.commands = _FakeCommands()
+            self.files = _FakeFiles()
+
+        def close(self) -> None:
+            pass
+
+    fake = types.ModuleType("e2b")
+    fake.Sandbox = _FakeSandbox  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "e2b", fake)
+
+
+def test_e2b_success_envelope_returns_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A well-formed success envelope after tool stdout noise yields the result."""
+    _install_fake_e2b(
+        monkeypatch,
+        _FakeE2BExecution(
+            0, 'tool log line\nGOVE_ZONE_ENVELOPE_V1:{"status": "success", "result": 42}'
+        ),
+    )
+    sandbox = E2BSandbox(api_key="test-api-key")
+    assert sandbox.run_tool(my_sandbox_test_tool, {"a": 1, "b": 2}) == 42
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        # Non-object JSON payload: _extract_envelope returns None.
+        "GOVE_ZONE_ENVELOPE_V1:[1, 2, 3]",
+        # Object envelope missing the status key.
+        'GOVE_ZONE_ENVELOPE_V1:{"result": 1}',
+        # Success envelope missing the result key.
+        'GOVE_ZONE_ENVELOPE_V1:{"status": "success"}',
+        # Error envelope missing the error key.
+        'GOVE_ZONE_ENVELOPE_V1:{"status": "error"}',
+    ],
+)
+def test_e2b_malformed_envelope_is_a_parse_failure(
+    monkeypatch: pytest.MonkeyPatch, stdout: str
+) -> None:
+    """A malformed envelope surfaces as an explicit parse failure, not a KeyError.
+
+    Without the key-presence guards these raised a bare KeyError/TypeError that
+    was only caught by the generic wrapper, yielding the misleading message
+    "E2B sandbox execution failed: 'status'".
+    """
+    _install_fake_e2b(monkeypatch, _FakeE2BExecution(0, stdout))
+    sandbox = E2BSandbox(api_key="test-api-key")
+    with pytest.raises(SandboxError, match="Failed to parse sandbox output"):
+        sandbox.run_tool(my_sandbox_test_tool, {"a": 1, "b": 2})
+
+
+def test_e2b_error_envelope_surfaces_tool_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A zero-exit error envelope still surfaces the tool's own message."""
+    _install_fake_e2b(
+        monkeypatch,
+        _FakeE2BExecution(0, 'GOVE_ZONE_ENVELOPE_V1:{"status": "error", "error": "tool said no"}'),
+    )
+    sandbox = E2BSandbox(api_key="test-api-key")
+    with pytest.raises(SandboxError, match="tool said no"):
+        sandbox.run_tool(my_sandbox_test_tool, {"a": 1, "b": 2})

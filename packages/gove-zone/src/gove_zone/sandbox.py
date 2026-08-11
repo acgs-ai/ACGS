@@ -46,7 +46,7 @@ _RUNNER_SCRIPT = (
     "    _env, _code = json.dumps({'status': 'success', 'result': _res}), 0\n"
     "except Exception as _e:\n"
     "    _env, _code = json.dumps({'status': 'error', 'error': str(_e)}), 1\n"
-    "print('\\nGOVE_ZONE_ENVELOPE_V1:' + _env)\n"
+    f"print('\\n{_ENVELOPE_MARKER}' + _env)\n"
     "sys.exit(_code)\n"
 )
 
@@ -390,11 +390,18 @@ class E2BSandbox(SandboxProvider):
                     raise SandboxError(str(payload["error"]))
                 raise SandboxError(f"Remote E2B execution failed: {execution.stderr}")
 
+            # Same key-presence guards as LocalProcessSandbox: a non-envelope
+            # payload (missing status/result key) must surface as a parse
+            # failure, not a KeyError swallowed into the generic wrapper below.
             data = _extract_envelope(execution.stdout)
-            if data is None:
+            if data is None or "status" not in data:
                 raise SandboxError(f"Failed to parse sandbox output: {execution.stdout.strip()}")
             if data["status"] == "error":
-                raise SandboxError(data["error"])
+                if "error" in data:
+                    raise SandboxError(str(data["error"]))
+                raise SandboxError(f"Failed to parse sandbox output: {execution.stdout.strip()}")
+            if "result" not in data:
+                raise SandboxError(f"Failed to parse sandbox output: {execution.stdout.strip()}")
             return data["result"]
         except Exception as e:
             if isinstance(e, SandboxError):
