@@ -937,6 +937,28 @@ def test_verifier_emits_blocked_verdict_on_malformed_manifest(tmp_path, monkeypa
     assert f"VERDICT: {V.INTEGRATION_BLOCKED}" in out
 
 
+def test_verifier_emits_blocked_verdict_on_malformed_registry(
+    substrate, tmp_path, monkeypatch, capsys
+):
+    # A corrupt authority_evidence_registry.jsonl makes read_registry() raise
+    # RegistryError (a RuntimeError subclass). The verifier must emit the
+    # required primary verdict (INTEGRATION_BLOCKED, rc 2), never an uncaught
+    # RegistryError traceback that makes registry corruption look like a
+    # verifier crash.
+    import verify_authority_state as V
+
+    home = tmp_path / "home"
+    home.mkdir()
+    manifest = build_manifest(substrate, "TEST_SUBSTRATE")
+    (home / V.MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
+    (home / V.REGISTRY_NAME).write_text("{ not json\n", encoding="utf-8")
+    monkeypatch.setattr(V, "HERE", home)
+    rc = V.main([str(substrate), f"--instant={INSTANT}"])
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert f"VERDICT: {V.INTEGRATION_BLOCKED}" in out
+
+
 def test_supersession_requires_qualified_successor(substrate, tmp_path):
     # `supersedes` is attacker-writable content: a successor that would not
     # itself stand (here: unattested, IDENTITY_EVIDENCED, no ingestion receipt)
@@ -983,6 +1005,52 @@ def test_ingest_conflict_same_id_different_document(tmp_path):
     rc2 = ING.main([*base, "--document", str(tmp_path / "doc2")])
     assert rc1 == 0
     assert rc2 == 3  # same id, different document digest -> conflict
+
+
+def test_ingest_retains_hashed_bytes_despite_document_swap(tmp_path, monkeypatch):
+    # TOCTOU regression: the retained artifact must be the SAME bytes that were
+    # hashed into source_digest. Simulate a document swapped on disk between
+    # hashing and retention by making every read of the document AFTER the
+    # first return different bytes — the artifact store must still hold the
+    # originally hashed bytes (i.e. the document is read exactly once).
+    import ingest_authority_evidence as ING
+
+    original = b"appointment deed (original bytes)"
+    doc = tmp_path / "doc"
+    doc.write_bytes(original)
+    rec = tmp_path / "rec.json"
+    rec.write_text(json.dumps(_evidence(ev_id="AE-TOCTOU", source_digest="")))
+    reg = tmp_path / "reg.jsonl"
+
+    real_read_bytes = Path.read_bytes
+    reads = {"doc": 0}
+
+    def swapping_read_bytes(self):
+        if self == doc:
+            reads["doc"] += 1
+            if reads["doc"] > 1:
+                return b"swapped after hashing"
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", swapping_read_bytes)
+    rc = ING.main(
+        [
+            "--record",
+            str(rec),
+            "--document",
+            str(doc),
+            "--registry",
+            str(reg),
+            "--keystore",
+            str(tmp_path / "ks"),
+            "--instant",
+            INSTANT,
+        ]
+    )
+    assert rc == 0
+    retained = tmp_path / ".authority_artifacts" / sha256_hex(original)
+    assert retained.is_file()
+    assert real_read_bytes(retained) == original
 
 
 @pytest.mark.parametrize(

@@ -20,7 +20,7 @@ from typing import Any
 
 import validator_trust as VT
 from _identity import IDENTITY_CONFIRMED, MANIFEST_NAME, verify_manifest
-from _registry import REGISTRY_NAME, read_registry
+from _registry import REGISTRY_NAME, RegistryError, read_registry
 from _substrate import SubstrateError, derive_counts, load_requests, resolve_root
 from authority_lifecycle import superseded_ids_of
 from authority_receipt import (
@@ -294,10 +294,11 @@ def main(argv: list[str]) -> int:
             HERE / ".authority_keystore",
             instant,
         )
-    except (ReceiptError, OSError, json.JSONDecodeError) as exc:
-        # A truncated, unreadable, or non-JSON substrate identity manifest is
-        # a blocked integration, not a verifier crash: the required primary
-        # verdict must still be emitted.
+    except (ReceiptError, RegistryError, OSError, json.JSONDecodeError) as exc:
+        # A truncated, unreadable, or non-JSON substrate identity manifest —
+        # or a malformed/corrupt authority-evidence registry (RegistryError
+        # from read_registry) — is a blocked integration, not a verifier
+        # crash: the required primary verdict must still be emitted.
         print(f"VERDICT: {INTEGRATION_BLOCKED}")
         print(f"  {exc}", file=sys.stderr)
         return 2

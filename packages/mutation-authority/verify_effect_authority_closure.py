@@ -15,6 +15,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import verify_gove_zone_mutation_authority as WIRING
+
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[1]
 GOVE_ZONE_SRC = REPO_ROOT / "packages" / "gove-zone" / "src" / "gove_zone"
@@ -83,11 +87,27 @@ def main() -> int:
         f"[REC] collision surface: {'unchanged (foreign/uncommitted)' if collision_present and not drift else 'DRIFTED: ' + ', '.join(drift)}"
     )
 
+    # 5. POSITIVE composition-wiring check. The collision record above is a
+    #    hash comparison against the V1 baseline: "unchanged" means the
+    #    surface is STILL foreign/unwired, "drifted" or "missing" means
+    #    nothing either way. Neither state proves gove-zone routes effects
+    #    through MutationGateway, so ENFORCED must additionally require the
+    #    AST-level wiring proof (import + construct + request_mutation()).
+    wired_files = WIRING._routes_through_gateway(GOVE_ZONE_SRC) if GOVE_ZONE_SRC.is_dir() else 0
+    composition_wired = wired_files > 0
+    lines.append(
+        f"[{'OK ' if composition_wired else 'GAP'}] composition wiring: "
+        f"{wired_files} gove-zone source file(s) route effects through MutationGateway"
+        + ("" if composition_wired else " — surface not positively verified as wired")
+    )
+
     print("\n".join(lines))
     print()
 
-    # Verdict.
-    if dominance_holds and baselines_ok:
+    # Verdict. ENFORCED requires dominance, green baselines, AND a
+    # positively-verified wired composition surface — never hash
+    # equality/drift alone.
+    if dominance_holds and baselines_ok and composition_wired:
         print("VERDICT: REPOSITORY_MUTATION_AUTHORITY_ENFORCED")
         return 0
     # Dominance does not hold. Mediated subset of the real repository is empty
@@ -97,8 +117,9 @@ def main() -> int:
     print("  prerequisite 1 (architectural, primary): the execution model provides no")
     print("    privilege boundary; 8/11 mutation carriers require OS-layer enforcement that")
     print("    no application-level wiring can supply (proven: ceiling_demonstration.py).")
-    print("  prerequisite 2 (collision): the gove-zone composition surface is foreign and")
-    print("    uncommitted (hashes unchanged from the V1 record); not overwritten or merged.")
+    print("  prerequisite 2 (composition): the gove-zone composition surface is not")
+    print("    positively verified as wired (no gove-zone source routes effects through")
+    print("    MutationGateway); hash equality/drift against the V1 record proves nothing.")
     print("  see GOVE_ZONE_EFFECT_AUTHORITY_CLOSURE_V1/REPORT.md")
     return 2
 

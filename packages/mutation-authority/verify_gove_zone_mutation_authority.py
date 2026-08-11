@@ -69,18 +69,38 @@ def _calls_mutation_gateway(tree: ast.AST) -> bool:
     return False
 
 
+def _invokes_request_mutation(tree: ast.AST) -> bool:
+    """True only when the file actually CALLS the effect-time entry point
+    (`<gateway>.request_mutation(...)`). Constructing a MutationGateway
+    proves availability, not mediation: an executor that builds the gateway
+    but never routes its effects through request_mutation() is unwired."""
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "request_mutation"
+        ):
+            return True
+    return False
+
+
 def _routes_through_gateway(src_dir: Path) -> int:
     """Count gove-zone source files that REALLY wire through this package:
-    the file must both import mutation_authority and construct/call
-    MutationGateway. A bare mention in a comment, docstring, or string
-    (which the old substring scan counted) proves nothing."""
+    the file must import mutation_authority, construct MutationGateway, AND
+    invoke the effect-time `request_mutation()` call. Construction alone (or
+    a bare mention in a comment, docstring, or string, which the old
+    substring scan counted) proves nothing about effect-time mediation."""
     refs = 0
     for py in src_dir.rglob("*.py"):
         try:
             tree = ast.parse(py.read_text(encoding="utf-8", errors="replace"))
         except SyntaxError:
             continue
-        if _imports_mutation_authority(tree) and _calls_mutation_gateway(tree):
+        if (
+            _imports_mutation_authority(tree)
+            and _calls_mutation_gateway(tree)
+            and _invokes_request_mutation(tree)
+        ):
             refs += 1
     return refs
 
@@ -111,17 +131,19 @@ def main() -> int:
     )
 
     # 4. COVERAGE GATE (the structural dominance check). If gove-zone genuinely
-    #    routed mutation through this package, its source would import it AND
-    #    instantiate MutationGateway — verified at the AST level so comments,
-    #    docstrings, and string literals cannot fake wiring. Zero real
-    #    references ⇒ MutationGateway mediates nothing in gove-zone ⇒
-    #    dominance is NOT established.
+    #    routed mutation through this package, its source would import it,
+    #    instantiate MutationGateway, AND invoke request_mutation() at effect
+    #    time — verified at the AST level so comments, docstrings, string
+    #    literals, and construction-without-mediation cannot fake wiring.
+    #    Zero real references ⇒ MutationGateway mediates nothing in
+    #    gove-zone ⇒ dominance is NOT established.
     refs = _routes_through_gateway(GOVE_ZONE_SRC) if GOVE_ZONE_SRC.is_dir() else 0
     dominance_established = refs > 0
     lines.append(
         f"[{'OK ' if dominance_established else 'GAP'}] gateway dominance: "
-        f"{refs} gove-zone source file(s) import mutation_authority and call MutationGateway"
-        + ("" if dominance_established else " — NOT mediated (no wiring present)")
+        f"{refs} gove-zone source file(s) import mutation_authority, construct "
+        f"MutationGateway, and invoke request_mutation()"
+        + ("" if dominance_established else " — NOT mediated (no effect-time wiring present)")
     )
 
     print("\n".join(lines))

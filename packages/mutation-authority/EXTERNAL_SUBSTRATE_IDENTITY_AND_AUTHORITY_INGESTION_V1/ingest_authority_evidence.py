@@ -84,7 +84,11 @@ def main(argv: list[str]) -> int:
         return 2
 
     record = json.loads(rec_path.read_text(encoding="utf-8"))
-    doc_digest = sha256_hex(doc_path.read_bytes())
+    # Snapshot the document bytes EXACTLY ONCE: hashing one read and retaining
+    # a later re-read is a TOCTOU window in which the file can be swapped,
+    # producing a retained artifact that does not match the bound digest.
+    doc_bytes = doc_path.read_bytes()
+    doc_digest = sha256_hex(doc_bytes)
 
     # Bind / cross-check the source digest against the actual document.
     if record.get("source_digest") in (None, ""):
@@ -231,7 +235,7 @@ def main(argv: list[str]) -> int:
                         dir_fd=dir_fd,
                     )
                     with os.fdopen(wf, "wb") as fh:
-                        fh.write(doc_path.read_bytes())
+                        fh.write(doc_bytes)
                         fh.flush()
                         os.fsync(fh.fileno())
                     os.replace(
@@ -249,7 +253,7 @@ def main(argv: list[str]) -> int:
                 return 2
             else:
                 with os.fdopen(artifact_fd, "wb") as fh:
-                    fh.write(doc_path.read_bytes())
+                    fh.write(doc_bytes)
         finally:
             os.close(dir_fd)
 
