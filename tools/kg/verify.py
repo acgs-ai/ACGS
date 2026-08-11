@@ -11,6 +11,21 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
+from pathlib import Path
+
+# The uniqueness constraints schema.cypher declares, derived from the file
+# itself so the two cannot drift. If `SHOW CONSTRAINTS` is missing any of
+# them — schema.cypher was never applied, or a constraint was dropped —
+# later loads can mint duplicate nodes and fan out relationships, so the
+# shape check must be a hard gate, not informational output.
+REQUIRED_CONSTRAINTS = frozenset(
+    re.findall(
+        r"^CREATE CONSTRAINT (\w+) IF NOT EXISTS",
+        (Path(__file__).resolve().parent / "schema.cypher").read_text(),
+        re.M,
+    )
+)
 
 # "Code evidence" means source code. Keep in lockstep with CODE_EXT in
 # reports.py and the Q6/Q6b filters in queries.cypher.
@@ -149,6 +164,14 @@ def main() -> int:
             rows = [r.data() for r in s.run(q)]
             print(f"\n== {title} ==")
             print(table(rows))
+            if title == "constraints":
+                missing = sorted(REQUIRED_CONSTRAINTS - {row.get("name") for row in rows})
+                if missing:
+                    failures.append(
+                        "missing required constraints: " + ", ".join(missing)
+                        + ": schema.cypher was not (fully) applied, so later "
+                        "loads can create duplicate nodes"
+                    )
             if title == "snapshot" and len(rows) != 1:
                 # An otherwise healthy graph with no (or several) Snapshot
                 # nodes has no provenance, and reports.py crashes on

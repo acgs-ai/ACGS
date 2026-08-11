@@ -35,12 +35,20 @@ def run_verify(monkeypatch):
         absent_lock_entries: int = 0,
         snapshot_rows: int = 1,
         semantic_declared_loaded: bool = False,
+        constraint_names: tuple[str, ...] | None = None,
         argv: tuple[str, ...] = (),
     ):
         catalog_queries = [q for _, q in verify.CATALOG]
         answered = set(catalog_queries[:catalog_hits])
+        constraints = (
+            sorted(verify.REQUIRED_CONSTRAINTS)
+            if constraint_names is None
+            else list(constraint_names)
+        )
 
         def responder(query: str) -> list[dict]:
+            if query.startswith("SHOW CONSTRAINTS"):
+                return [{"name": n, "on": ["X"], "props": ["key"]} for n in constraints]
             if query.startswith("MATCH (f:File) RETURN count(*) AS files"):
                 return [join_row]
             if query == verify.SEALED_ABSENT_Q:
@@ -153,6 +161,46 @@ def test_a_graph_with_multiple_snapshot_nodes_fails(run_verify, capsys):
 
     assert code == 1
     assert "FAIL: expected exactly 1 Snapshot node, found 2" in capsys.readouterr().out
+
+
+def test_a_missing_required_constraint_fails(run_verify, capsys):
+    """REGRESSION. The constraints check only printed the SHOW CONSTRAINTS
+    rows, so a database where schema.cypher was never applied (or where a
+    uniqueness constraint was dropped) still said VERIFY: PASS while later
+    loads could mint duplicate nodes and fan out relationships. The returned
+    names must cover every constraint schema.cypher declares."""
+    present = tuple(sorted(verify.REQUIRED_CONSTRAINTS - {"file_key"}))
+    code, _ = run_verify(HEALTHY_JOIN, constraint_names=present)
+
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "FAIL: missing required constraints: file_key" in out
+
+
+def test_an_unconstrained_database_fails(run_verify, capsys):
+    """SHOW CONSTRAINTS returning nothing at all is the fresh-container case:
+    every required constraint is missing."""
+    code, _ = run_verify(HEALTHY_JOIN, constraint_names=())
+
+    assert code == 1
+    assert "missing required constraints:" in capsys.readouterr().out
+
+
+def test_extra_constraints_beyond_the_schema_still_pass(run_verify):
+    """The gate requires coverage of schema.cypher, not exact equality: an
+    operator adding an extra local constraint is not a verification failure."""
+    present = tuple(sorted(verify.REQUIRED_CONSTRAINTS)) + ("operator_extra",)
+
+    assert run_verify(HEALTHY_JOIN, constraint_names=present)[0] == 0
+
+
+def test_required_constraints_are_derived_from_the_schema_file():
+    """The requirement list is parsed from schema.cypher itself so the two
+    cannot drift; spot-check the join spine's constraint and the overall
+    shape rather than duplicating the file here."""
+    assert "file_key" in verify.REQUIRED_CONSTRAINTS
+    assert "snapshot_key" in verify.REQUIRED_CONSTRAINTS
+    assert len(verify.REQUIRED_CONSTRAINTS) >= 10
 
 
 def test_absent_marker_lock_entries_satisfy_the_sealed_check(run_verify, capsys):

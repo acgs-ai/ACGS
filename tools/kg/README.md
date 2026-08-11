@@ -98,12 +98,15 @@ The graph carries its own caveats as data rather than hiding them:
 
 - **The semantic layer is a snapshot, the git layer is live.**
   `(:Snapshot)` records `ua_commit` vs `git_head` and sets
-  `semantic_layer_is_stale` when they differ **or** when an analyzed file is
+  `semantic_layer_is_stale` when they differ, when an analyzed file is
   dirty in the working tree (the offenders are listed in
-  `semantic_dirty_paths`) — even at the same commit, the snapshot describes
-  the committed contents, not your edits. Files added since that snapshot get
-  `ua_covered: false` — that is staleness, not a finding. Re-run
-  `/understand` to refresh, then `make reload`.
+  `semantic_dirty_paths`), **or** when a dirty tracked path of an analyzed
+  file type has no semantic coverage at all: a staged new file or a `git mv`
+  destination (listed in `semantic_uncovered_paths`). Even at the same
+  commit, the snapshot describes the committed contents, not your edits.
+  Files added since that snapshot get `ua_covered: false` — that is
+  staleness, not a finding. Re-run `/understand` to refresh, then
+  `make reload`.
 - **`TESTED_BY` undercounts.** It misses barrel and dynamic imports. Q5's
   "no test edge" output is a list of leads, not a verdict (this was already
   established in `.understand-anything/risk-sweep-2026-08-08.md`).

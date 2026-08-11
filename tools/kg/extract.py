@@ -888,11 +888,15 @@ def resolve_token(src: str, token: str) -> tuple[str | None, int | None, str | N
 
 
 def file_is_live(key: str) -> bool:
-    """A File node is usable as live evidence unless it is explicitly recorded
-    as absent: a semantic-only path whose file was since deleted is neither
-    tracked nor on disk, and binding doc links or compliance evidence to it
-    would report deleted source as an implementation."""
-    return bool(G.nodes[("File", key)]["props"].get("present", True))
+    """A File node is usable as live evidence only when it is both on disk
+    AND tracked by Git. A semantic-only path whose file was since deleted is
+    neither; a path removed from the index but still on disk (tracked=False,
+    present=True) will not exist in a checkout, so binding doc links or
+    compliance evidence to either would report unversioned or deleted source
+    as an implementation. Both flags default to their live value: every
+    ingest layer that mints File nodes records them explicitly."""
+    props = G.nodes[("File", key)]["props"]
+    return bool(props.get("present", True)) and bool(props.get("tracked", True))
 
 
 def resolve_link(src: str, target: str) -> str | None:
@@ -1348,7 +1352,9 @@ def collect_dirty_paths() -> list[str]:
     return dirty
 
 
-def semantic_snapshot_props(head: str, dirty: Sequence[str] = ()) -> dict:
+def semantic_snapshot_props(
+    head: str, dirty: Sequence[str] = (), tracked: Sequence[str] = ()
+) -> dict:
     """Snapshot fields describing the semantic layer.
 
     Availability is derived from UA_GRAPH — the artifact build_semantic()
@@ -1364,6 +1370,15 @@ def semantic_snapshot_props(head: str, dirty: Sequence[str] = ()) -> dict:
     no longer match what is being reported. Any dirty path with semantic
     coverage marks the layer stale, and the offending paths are published as
     ``semantic_dirty_paths``.
+
+    Coverage of the live tree matters too: a staged new file, or the
+    destination of a ``git mv``, is dirty but absent from the snapshot, so
+    intersecting dirt with analyzed paths alone still published the layer as
+    current while the tracked tree carried code it never analyzed. Dirty
+    tracked paths lacking semantic coverage mark the layer stale and are
+    published as ``semantic_uncovered_paths``, restricted to extensions the
+    snapshot demonstrably analyzes, because dirt in file types the analyzer
+    does not process (docs, config) says nothing about the layer's currency.
     """
     loaded = UA_GRAPH.exists()
     if not loaded:
@@ -1375,13 +1390,22 @@ def semantic_snapshot_props(head: str, dirty: Sequence[str] = ()) -> dict:
         if n.get("filePath")
     }
     dirty_analyzed = sorted(analyzed.intersection(dirty))
+    analyzed_exts = {os.path.splitext(p)[1].lower() for p in analyzed}
+    dirty_uncovered = sorted(
+        p
+        for p in set(tracked).intersection(dirty)
+        if p not in analyzed and os.path.splitext(p)[1].lower() in analyzed_exts
+    )
     return {
         "semantic_layer_loaded": True,
         "ua_commit": meta.get("gitCommitHash"),
         "ua_analyzed_at": meta.get("lastAnalyzedAt"),
         "ua_analyzed_files": meta.get("analyzedFiles"),
-        "semantic_layer_is_stale": meta.get("gitCommitHash") != head or bool(dirty_analyzed),
+        "semantic_layer_is_stale": meta.get("gitCommitHash") != head
+        or bool(dirty_analyzed)
+        or bool(dirty_uncovered),
         "semantic_dirty_paths": dirty_analyzed,
+        "semantic_uncovered_paths": dirty_uncovered,
     }
 
 
@@ -1391,6 +1415,10 @@ def main() -> int:
     branch = run("git", "rev-parse", "--abbrev-ref", "HEAD").strip()
     dirty = collect_dirty_paths()
     snapshot_key = head[:12]
+    # The spine is built first: semantic staleness needs the tracked path
+    # list, so a staged new file (dirty, tracked, uncovered) can mark the
+    # layer stale rather than hiding behind the analyzed-paths intersection.
+    tracked = build_spine()
     G.node(
         "Snapshot",
         snapshot_key,
@@ -1399,10 +1427,9 @@ def main() -> int:
         generated_at=datetime.now(UTC).isoformat(),
         dirty_paths=dirty,
         dirty_count=len(dirty),
-        **semantic_snapshot_props(head, dirty),
+        **semantic_snapshot_props(head, dirty, tracked),
     )
 
-    tracked = build_spine()
     build_semantic(snapshot_key)
     # One history per repo — submodules are independent repos — then merged and
     # sorted so "recent commits" is recent across all of them, not per-repo.

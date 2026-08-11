@@ -272,6 +272,7 @@ def test_semantic_snapshot_props_publishes_metadata_alongside_the_loaded_graph(
         "ua_analyzed_files": 10,
         "semantic_layer_is_stale": False,
         "semantic_dirty_paths": [],
+        "semantic_uncovered_paths": [],
     }
     assert extract.semantic_snapshot_props("other")["semantic_layer_is_stale"] is True
 
@@ -301,6 +302,62 @@ def test_semantic_snapshot_props_marks_dirty_analyzed_files_as_stale(tmp_path, m
     assert uncovered["semantic_dirty_paths"] == []
     assert covered["semantic_layer_is_stale"] is True
     assert covered["semantic_dirty_paths"] == ["src/a.py"]
+
+
+def test_semantic_snapshot_props_marks_uncovered_dirty_tracked_code_as_stale(
+    tmp_path, monkeypatch
+):
+    """REGRESSION. Staleness only intersected dirty paths with paths already
+    in the snapshot, so a staged new file (or the destination of `git mv`)
+    was dirty but absent from `analyzed` and the layer still published
+    `semantic_layer_is_stale=False` although the live tracked tree contained
+    code the layer never covered. A dirty tracked path of an analyzed file
+    type that lacks semantic coverage must mark the layer stale."""
+    graph = tmp_path / "knowledge-graph.json"
+    graph.write_text(
+        json.dumps(
+            {"nodes": [{"id": "n1", "type": "file", "filePath": "src/a.py"}], "edges": []}
+        )
+    )
+    monkeypatch.setattr(extract, "UA_GRAPH", graph)
+    meta = tmp_path / "meta.json"
+    meta.write_text(json.dumps({"gitCommitHash": "abc"}))
+    monkeypatch.setattr(extract, "UA_META", meta)
+
+    tracked = ["src/a.py", "src/new.py", "docs/notes.md"]
+    props = extract.semantic_snapshot_props("abc", ["src/new.py"], tracked)
+
+    assert props["semantic_layer_is_stale"] is True
+    assert props["semantic_uncovered_paths"] == ["src/new.py"]
+    assert props["semantic_dirty_paths"] == []
+
+
+def test_semantic_snapshot_props_ignores_uncovered_dirt_the_analyzer_never_processes(
+    tmp_path, monkeypatch
+):
+    """The uncovered-dirt check is scoped to extensions the snapshot
+    demonstrably analyzes: a dirty tracked doc or an untracked scratch file
+    says nothing about the semantic layer's currency."""
+    graph = tmp_path / "knowledge-graph.json"
+    graph.write_text(
+        json.dumps(
+            {"nodes": [{"id": "n1", "type": "file", "filePath": "src/a.py"}], "edges": []}
+        )
+    )
+    monkeypatch.setattr(extract, "UA_GRAPH", graph)
+    meta = tmp_path / "meta.json"
+    meta.write_text(json.dumps({"gitCommitHash": "abc"}))
+    monkeypatch.setattr(extract, "UA_META", meta)
+
+    doc_dirt = extract.semantic_snapshot_props(
+        "abc", ["docs/notes.md"], ["src/a.py", "docs/notes.md"]
+    )
+    untracked_dirt = extract.semantic_snapshot_props("abc", ["scratch.py"], ["src/a.py"])
+
+    assert doc_dirt["semantic_layer_is_stale"] is False
+    assert doc_dirt["semantic_uncovered_paths"] == []
+    assert untracked_dirt["semantic_layer_is_stale"] is False
+    assert untracked_dirt["semantic_uncovered_paths"] == []
 
 
 # --------------------------------------------------------------------------- #
@@ -623,6 +680,20 @@ def test_resolve_link_excludes_files_recorded_as_absent():
     extract.G.node("File", "gone.py", path="gone.py", present=False)
 
     assert extract.resolve_link("docs/x.md", "gone.py") is None
+
+
+def test_resolve_link_excludes_untracked_files_that_still_exist_on_disk():
+    """REGRESSION. A semantic snapshot can retain a path that was removed
+    from the Git index but still exists on disk (tracked=False,
+    present=True); file_is_live() keyed on presence alone, so resolve_token()
+    bound compliance citations to it and build_controls() could promote
+    controls to Tier B/C using code that will not exist in a checkout.
+    Repository evidence must be present AND tracked."""
+    extract.G.node("File", "untracked.py", path="untracked.py", present=True, tracked=False)
+
+    assert extract.file_is_live("untracked.py") is False
+    assert extract.resolve_link("docs/x.md", "untracked.py") is None
+    assert extract.resolve_token("docs/x.md", "untracked.py") == (None, None, None)
 
 
 # --------------------------------------------------------------------------- #
