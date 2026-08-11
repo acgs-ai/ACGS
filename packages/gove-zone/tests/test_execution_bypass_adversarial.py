@@ -38,6 +38,7 @@ from gove_zone.errors import (
 )
 from gove_zone.execution import (
     ACTION_PACKAGE_INSTALL,
+    ACTION_PACKAGE_INVOKE,
     ACTION_SHELL_EXEC,
     EXECUTION_BOUNDARY,
     build_execution_policy,
@@ -380,10 +381,14 @@ def test_absolute_path_invocation_fails_closed_but_a_path_shim_is_not_claimed() 
     """
     event = classify_command("/usr/local/bin/npm install", canonical_package_manager="pnpm")
 
-    assert event.action == ACTION_SHELL_EXEC
+    assert event.action == ACTION_PACKAGE_INVOKE
     assert event.decidable is False
     assert event.undecidable_reasons == ("untrusted-execution-context",)
     assert event.facts["invoked_by_absolute_path"] is True
+    # The recovered manager identity is preserved so the canonical-manager
+    # denial still applies to the explicit-path spelling.
+    assert event.facts["manager"] == "npm"
+    assert event.facts["manager_is_canonical"] is False
 
 
 def test_bypass_attempts_is_only_evidence_when_the_gate_is_on_the_path(

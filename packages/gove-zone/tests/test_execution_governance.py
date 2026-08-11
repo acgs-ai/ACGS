@@ -168,14 +168,17 @@ def test_argv_prefix_routes_to_the_declared_surface(command: str, action: str) -
 
 
 def test_wrappers_and_absolute_paths_make_execution_context_untrusted() -> None:
+    """The context is untrusted, but the manager identity was recovered: the
+    event stays on the package surface so the contract facts survive."""
     event = classify_command("sudo /usr/local/bin/npm install left-pad")
 
-    assert event.action == ACTION_SHELL_EXEC
+    assert event.action == ACTION_PACKAGE_INVOKE
     assert event.binary == "npm"
     assert event.decidable is False
     assert event.undecidable_reasons == ("untrusted-execution-context",)
     assert event.facts["wrapped"] is True
     assert event.facts["invoked_by_absolute_path"] is True
+    assert event.facts["manager"] == "npm"
 
 
 @pytest.mark.parametrize(
@@ -212,10 +215,49 @@ def test_option_bearing_wrappers_are_undecidable_without_parsing_values(
 def test_env_assignment_prefix_makes_execution_context_untrusted() -> None:
     event = classify_command("FOO=bar NODE_ENV=production npm ci")
 
-    assert event.action == ACTION_SHELL_EXEC
+    assert event.action == ACTION_PACKAGE_INVOKE
     assert event.binary == "npm"
     assert event.decidable is False
     assert event.undecidable_reasons == ("untrusted-execution-context",)
+    assert event.facts["manager"] == "npm"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/usr/bin/npm install left-pad",
+        "env npm install left-pad",
+        "sudo npm install left-pad",
+        "FOO=bar npm install left-pad",
+    ],
+)
+def test_untrusted_context_preserves_the_manager_contract_facts(command: str) -> None:
+    """``/usr/bin/npm install left-pad`` and ``env npm install left-pad`` in a
+    pnpm workspace: the explicit path or peeled wrapper makes the context
+    untrusted, but the manager identity was recovered. Dropping the contract
+    facts here downgraded the canonical-manager DENY into an approvable ask —
+    and approving that ask performed the forbidden dependency mutation."""
+    event = classify_command(command, canonical_package_manager="pnpm")
+
+    assert event.action == ACTION_PACKAGE_INVOKE
+    assert event.tier_hint == TIER_DEPENDENCY
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("untrusted-execution-context",)
+    assert event.facts["manager"] == "npm"
+    assert event.facts["manager_contract_applies"] is True
+    assert event.facts["manager_is_canonical"] is False
+
+
+def test_untrusted_context_with_another_reason_stays_unclassified() -> None:
+    """Positive control: the package-surface preservation applies only when
+    the untrusted context is the sole reason — an executable-word glob means
+    the identity was NOT recovered, so no contract facts may be claimed."""
+    event = classify_command("/opt/node/bin/n?m install left-pad", canonical_package_manager="pnpm")
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert event.tier_hint == TIER_UNCLASSIFIED
+    assert "manager" not in event.facts
 
 
 @pytest.mark.parametrize(
@@ -1553,6 +1595,48 @@ def test_canonical_manager_with_ambiguous_options_still_requires_a_human(
     assert f"RISK_TIER:{TIER_DEPENDENCY}" in event["matched_rules"]
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/usr/bin/npm install left-pad",
+        "env npm install left-pad",
+    ],
+)
+def test_untrusted_context_does_not_downgrade_the_manager_denial(
+    tmp_path: Path, command: str
+) -> None:
+    """``/usr/bin/npm install left-pad`` in a pnpm workspace: the explicit path
+    (or a peeled optionless wrapper) must not turn the canonical-manager DENY
+    into an approvable ask that performs the forbidden dependency mutation."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, command)
+
+    assert permission(response) == "deny"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["tool"] == ACTION_PACKAGE_INVOKE
+    assert event["decision"] == "deny"
+    assert "deny-non-canonical-package-manager" in event["matched_rules"]
+
+
+def test_canonical_manager_with_untrusted_context_still_requires_a_human(
+    tmp_path: Path,
+) -> None:
+    """Positive control: the canonical manager via an explicit path is not
+    denied — but the context stays undecidable and the dependency tier still
+    demands a human. The fail-closed floor is never an allow."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "/usr/bin/pnpm install left-pad")
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["decision"] == "escalate"
+    assert f"RISK_TIER:{TIER_DEPENDENCY}" in event["matched_rules"]
+
+
 def test_quoted_operator_argument_does_not_bypass_git_mutation_escalation(
     tmp_path: Path,
 ) -> None:
@@ -2526,3 +2610,63 @@ def test_verifier_tolerates_malformed_events() -> None:
     report = verify_execution_chain([{"tool": "env.shell.exec"}, "not-a-mapping"])  # type: ignore[list-item]
 
     assert report["checked"] == 1
+
+
+@pytest.mark.parametrize("value", ["RISK_TIER:default", "action_kind:edit"])
+def test_verifier_rejects_string_valued_matched_rules(value: str) -> None:
+    """A string IS a ``Sequence``: iterated naively it yields characters that
+    match no predicate while keeping the list nonempty, so a legacy event
+    carrying ``matched_rules`` as a JSON string silently passed every check
+    and returned ``ok: true``. The invalid shape must fail closed instead."""
+    report = verify_execution_chain(
+        [
+            {
+                "event_id": "ev_str",
+                "tool": ACTION_SHELL_EXEC,
+                "actor": "operator-a",
+                "decision": "deny",
+                "matched_rules": value,
+            }
+        ]
+    )
+
+    assert report["ok"] is False
+    assert report["counts"]["malformed_matched_rules"] == 1
+    # The characters of the string never counted as rules either: the
+    # execution record has no traceable rule and is reported as such.
+    assert report["counts"]["unconditional_allow"] == 1
+
+
+def test_verifier_rejects_non_sequence_matched_rules() -> None:
+    report = verify_execution_chain(
+        [
+            {
+                "event_id": "ev_dict",
+                "tool": "env.unknown",
+                "actor": "operator-a",
+                "decision": "deny",
+                "matched_rules": {"rule": "RISK_TIER:default"},
+            }
+        ]
+    )
+
+    assert report["ok"] is False
+    assert report["counts"]["malformed_matched_rules"] == 1
+
+
+def test_verifier_does_not_flag_an_absent_matched_rules_as_malformed() -> None:
+    """Positive control: absence is the writer emitting nothing — already
+    covered by ``unconditional_allow`` for execution records — not a schema
+    violation."""
+    report = verify_execution_chain(
+        [
+            {
+                "event_id": "ev_absent",
+                "tool": "env.unknown",
+                "actor": "operator-a",
+                "decision": "deny",
+            }
+        ]
+    )
+
+    assert report["counts"]["malformed_matched_rules"] == 0

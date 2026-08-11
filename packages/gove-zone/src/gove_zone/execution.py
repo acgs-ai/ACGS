@@ -1380,18 +1380,25 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
     if unsupported_wrapper_options:
         base_facts["wrapper_options_supported"] = False
 
-    if reasons == ["option-value-ambiguity"] and binary in _INSTALL_SUBCOMMANDS:
-        # A value-taking option this module does not model — `npm --prefix
-        # <dir> install <pkg>` — hides WHICH subcommand runs, but not WHICH
-        # manager runs: the binary is certain and no operator, substitution,
-        # or delegation reason accompanies it, so this is a single invocation
-        # of that manager. Returning the generic undecidable shell event here
-        # would drop the contract facts and let the option downgrade the
-        # canonical-manager DENY into the undecidable-shell ask. The event
-        # stays on the package surface instead, undecidable, with the contract
-        # facts intact: deny-non-canonical-package-manager still matches, and
-        # a canonical manager falls to the dependency tier's escalation — the
-        # fail-closed floor is never an allow.
+    if (
+        reasons in (["option-value-ambiguity"], ["untrusted-execution-context"])
+        and binary in _INSTALL_SUBCOMMANDS
+    ):
+        # Two shapes hide HOW the manager runs, but not WHICH manager runs. A
+        # value-taking option this module does not model — `npm --prefix <dir>
+        # install <pkg>` — hides the subcommand. An explicit executable path
+        # or a peeled optionless wrapper — `/usr/bin/npm install <pkg>`,
+        # `env npm install <pkg>` — makes the execution context untrusted. In
+        # both, the manager identity was successfully recovered and no
+        # operator, substitution, or delegation reason accompanies it, so this
+        # is a single invocation of that manager. Returning the generic
+        # undecidable shell event here would drop the contract facts and let
+        # the option or the spelling downgrade the canonical-manager DENY into
+        # the undecidable-shell ask. The event stays on the package surface
+        # instead, undecidable, with the contract facts intact:
+        # deny-non-canonical-package-manager still matches, and a canonical
+        # manager falls to the dependency tier's escalation — the fail-closed
+        # floor is never an allow.
         canonical = canonical_package_manager.strip()
         in_contract = bool(canonical) and binary in _JS_MANAGERS and canonical in _JS_MANAGERS
         return ExecutionEvent(
@@ -2276,6 +2283,11 @@ def verify_execution_chain(
       whole legacy path (including ``action_kind:edit``), not only the three
       substring-matched orchestration kinds — the count is the pre-cutover
       boundary, and it must never grow after cutover.
+    * ``malformed_matched_rules`` — a present ``matched_rules`` that is not a
+      list of rule identifiers. A JSON string like ``"RISK_TIER:default"`` is a
+      ``Sequence`` of characters: iterated naively it matches no predicate
+      while staying nonempty, silently passing every check above. The invalid
+      shape is reported instead of being reinterpreted.
 
     Returns a report dict; ``ok`` is ``True`` only when every enabled check is
     clean.
@@ -2285,6 +2297,7 @@ def verify_execution_chain(
         "unattributed": [],
         "unconditional_allow": [],
         "legacy_observer_path": [],
+        "malformed_matched_rules": [],
     }
     fallbacks = frozenset(fallback_actors) | {UNATTRIBUTED_ACTOR}
     checked = 0
@@ -2297,7 +2310,15 @@ def verify_execution_chain(
         tool = str(event.get("tool", ""))
         actor = str(event.get("actor", ""))
         matched = event.get("matched_rules")
-        matched_list = [str(m) for m in matched] if isinstance(matched, Sequence) else []
+        # A str/bytes value IS a Sequence: iterating it yields characters that
+        # match no predicate while keeping the list nonempty, so a string like
+        # "RISK_TIER:default" would silently pass every check. Only a real
+        # list-like of rule identifiers is trusted; any other present shape is
+        # reported as malformed rather than reinterpreted.
+        matched_valid = isinstance(matched, Sequence) and not isinstance(
+            matched, (str, bytes, bytearray)
+        )
+        matched_list = [str(m) for m in matched] if matched_valid else []
         anchor = {
             "event_id": event.get("event_id", ""),
             "tool": tool,
@@ -2305,6 +2326,8 @@ def verify_execution_chain(
             "decision": event.get("decision", ""),
         }
 
+        if matched is not None and not matched_valid:
+            findings["malformed_matched_rules"].append(anchor)
         if any(m.startswith("action_kind:") for m in matched_list):
             findings["legacy_observer_path"].append(anchor)
         if "RISK_TIER:default" in matched_list:
