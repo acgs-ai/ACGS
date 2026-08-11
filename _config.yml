@@ -39,26 +39,37 @@ exclude:
   - acgi-ai/
   - acgs-cft-governance-pack/
   - acgs-enterprise-ai-manager/
+  - acgs_benchmark/
   - acgs_governance_eval_mvp/
+  - acgs_trajectory/
   - automation/
+  - benchmarks/
+  - compliance/
   - evidence/
   - examples/
   - experiments/
   - external/
   - hermes_acgs_bundle/
+  - infra/
   - packages/
+  - requirements/
+  - schemas/
   - scripts/
   - specs/
   - tests/
+  - tools/
   - worktrees/
 
   # --- Agent/tooling state, never publishable ---
   - .agents/
+  - .benchmarks/
   - .ci-trigger/
   - .claude/
   - .codex/
+  - .design-sync/
   - .github/
   - .omc/
+  - .superpowers/
 
   # --- Build manifests ---
   - Makefile
@@ -66,3 +77,16 @@ exclude:
   - pnpm-workspace.yaml
   - pyproject.toml
   - turbo.json
+
+  # --- docs/ pages that quote GitHub Actions expression YAML verbatim ---
+  # The github-pages gem processes every Markdown file (via
+  # jekyll-optional-front-matter), and Liquid's raw-text pre-pass treats the
+  # `{{ ... }}` inside those snippets as its own tags — `||` expressions abort
+  # the build with Liquid::SyntaxError, bare lookups silently blank out on the
+  # rendered page. These stay readable on github.com; they are excluded from
+  # the published site rather than polluted with {% raw %} wrappers.
+  - docs/adr/0004-submodule-token-pat-strategy.md
+  - docs/audits/phase-3-check-6-amendment-2026-05-13.md
+  - docs/design/console-forward-auth-google-idp.md
+  - docs/runbooks/submodule-token.md
+  - docs/runbooks/submodule-token-v1.md
