@@ -114,9 +114,18 @@ def _key_events(mine: list[dict]) -> list[dict]:
     return [e for e in mine if e.get("event") in ("REGISTER", "ROTATE")]
 
 
-def _rotation_guard_error(current: list[dict], key_id: str, instant: str) -> str | None:
+def _rotation_guard_error(
+    mine: list[dict], current: list[dict], key_id: str, instant: str
+) -> str | None:
     """Shared write-time guards for rotate and prepare-rotation, so a staged
     payload is always one that rotate will actually accept.
+
+    A rotation at or after the validator's earliest REVOKE instant is refused:
+    authority_valid_at() treats that revocation as terminal and _key_windows()
+    discards windows beginning at or after it, so the CLI would append an
+    authenticated ROTATE, print ROTATED, and hand back a key that can never
+    validate an attestation. Rotations strictly BEFORE the revocation remain
+    legal (their window is trimmed at the revocation instant).
 
     The predecessor is selected as the LAST APPENDED key event, so the new
     rotation's instant must be strictly later than every existing key event's
@@ -134,6 +143,25 @@ def _rotation_guard_error(current: list[dict], key_id: str, instant: str) -> str
     attestations verify against the retired key and the "successfully
     rotated" validator is unusable."""
     new_instant = _parse_z(instant)
+    revocation_instants = []
+    for e in mine:
+        if e.get("event") != "REVOKE":
+            continue
+        rev = _parse_z(e.get("instant"))
+        if rev is None:
+            return (
+                "an existing REVOKE event carries an unparseable instant — "
+                "cannot establish whether the validator is revoked at the "
+                "rotation instant"
+            )
+        revocation_instants.append(rev)
+    if revocation_instants and new_instant >= min(revocation_instants):
+        return (
+            "validator is revoked at or before this rotation instant — a key "
+            "issued at or after the earliest revocation "
+            f"({min(revocation_instants).strftime('%Y-%m-%dT%H:%M:%SZ')}) "
+            "could never validate an attestation (revocation is terminal)"
+        )
     prior_instants = [
         _parse_z(e.get("effective_from") if e.get("event") == "REGISTER" else e.get("instant"))
         for e in current
@@ -251,7 +279,7 @@ def _admin(args: argparse.Namespace, registry: Path, keystore: Path) -> int:
                 file=sys.stderr,
             )
             return 3
-        guard = _rotation_guard_error(current, args.key_id, args.instant)
+        guard = _rotation_guard_error(mine, current, args.key_id, args.instant)
         if guard is not None:
             print(f"REFUSED: {guard}", file=sys.stderr)
             return 3
@@ -305,7 +333,7 @@ def _admin(args: argparse.Namespace, registry: Path, keystore: Path) -> int:
         if pred is None:
             return _refuse("no current key to authorize this rotation")
         pred_is_ed25519 = pred.get("key_algorithm", HMAC_SHA256) == ED25519
-        guard = _rotation_guard_error(current, args.key_id, args.instant)
+        guard = _rotation_guard_error(mine, current, args.key_id, args.instant)
         if guard is not None:
             return _refuse(guard)
         inferred = current[-1].get("key_algorithm", HMAC_SHA256) if current else HMAC_SHA256

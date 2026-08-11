@@ -398,6 +398,73 @@ def attack_m_commit_post_state_laundering(base: Path) -> str:
     return "COMMIT post-state must equal the receipt's expected_state_hash; gate FAIL"
 
 
+def attack_q_unsigned_receipt_laundering(base: Path) -> str:
+    """Code that bypasses the binder and uses the exported AuditLedger.append
+    API appends an ALLOW DECISION carrying an arbitrary UNSIGNED
+    receipt-shaped dict plus a matching COMMIT, mutates the governed file,
+    and asks the emitter to 'recover' evidence. The gate must reject the
+    COMMIT: in-chain issuance alone proves nothing — the receipt must parse
+    as a v2 receipt AND its root-key signature must verify."""
+    sb = IntegrationSandbox.build(base)
+    from .canonical import hash_file, sha256_hex
+    from .receipt import MUTATION_RECEIPT_SCHEMA
+
+    target = sb.kernel.repo / "src/module_a.py"
+    before_hash = hash_file(target)
+    malicious = b"MALICIOUS = 666\n"
+    after_hash = sha256_hex(malicious)
+    forged = {
+        "schema": MUTATION_RECEIPT_SCHEMA,
+        "receipt_id": "a" * 64,
+        "intent_hash": "b" * 64,
+        "decision_hash": "c" * 64,
+        "actor": "agent-alpha",
+        "resource": "src/module_a.py",
+        "operation": "UPDATE",
+        "allowed_scope": "src/",
+        "issued_at": 1,
+        "expiry": 999_999,
+        "previous_state_hash": before_hash,
+        "expected_state_hash": after_hash,
+        "expected_state_mode": 0o644,
+        "parent_ancestor_path": "src",
+        "parent_ancestor_device": 0,
+        "parent_ancestor_inode": 0,
+        "signature": "not-valid",
+    }
+    sb.kernel.ledger.append(
+        "DECISION",
+        {
+            "decision": "ALLOW",
+            "actor": "agent-alpha",
+            "resource": "src/module_a.py",
+            "receipt": forged,
+        },
+        sb.kernel.tick(),
+    )
+    target.write_bytes(malicious)
+    sb.kernel.ledger.append(
+        "COMMIT",
+        {
+            "receipt_id": "a" * 64,
+            "actor": "agent-alpha",
+            "resource": "src/module_a.py",
+            "before_hash": before_hash,
+            "after_hash": after_hash,
+            "decision": "ALLOW",
+        },
+        sb.kernel.tick(),
+    )
+    sb.evidence.recover_missing(sb.kernel.root, sb.kernel.ledger)
+    gate = sb.gate()
+    _expect(not gate.passed, "gate laundered a COMMIT under an unsigned receipt")
+    _expect(
+        any("signature does not verify" in f for f in gate.failures),
+        str(gate.failures),
+    )
+    return "unsigned receipt in an injected DECISION cannot launder a COMMIT; gate FAIL"
+
+
 def attack_l_malformed_evidence_projection(base: Path) -> str:
     """A corrupt evidence_graph.jsonl must block the mutation BEFORE the
     effect (fail closed, side effect did not run) instead of surfacing as an
@@ -563,6 +630,10 @@ INTEGRATION_CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     (
         "ATTACK P: pre-state read through a swapped-in symlink",
         attack_p_gateway_prestate_symlink_swap,
+    ),
+    (
+        "ATTACK Q: COMMIT laundering under an unsigned injected receipt",
+        attack_q_unsigned_receipt_laundering,
     ),
     ("compatibility: full kernel suite re-run", check_kernel_suite_compatibility),
 ]

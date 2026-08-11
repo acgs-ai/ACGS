@@ -1414,6 +1414,51 @@ def test_registry_symlink_refused_read_and_append(tmp_path):
     assert [r["authority_evidence_id"] for r in read_registry(real)] == ["AE-OK"]
 
 
+def test_registry_replaced_during_append_fails_closed(tmp_path, monkeypatch):
+    # A rename-and-replace of the registry AFTER _open_registry_fd returns
+    # but before the append completes leaves the record on a detached inode:
+    # the configured registry gains nothing while ingestion would report
+    # INGESTED. The append must revalidate the directory entry through the
+    # retained parent descriptor and fail loudly.
+    import os as _os
+
+    import _registry
+    from _registry import RegistryError, append_record, read_registry
+
+    reg = tmp_path / "reg.jsonl"
+    append_record(reg, _evidence(ev_id="AE-BASE"))
+    detached = tmp_path / "detached.jsonl"
+    real_fsync = _os.fsync
+    fired: list[bool] = []
+
+    def swapping_fsync(fd):
+        if not fired:
+            # Race the window between the no-follow open and the entry
+            # revalidation: detach the opened inode and install a fresh
+            # regular file at the configured registry path.
+            fired.append(True)
+            _os.rename(reg, detached)
+            reg.write_text("", encoding="utf-8")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(_registry.os, "fsync", swapping_fsync)
+    with pytest.raises(RegistryError):
+        append_record(reg, _evidence(ev_id="AE-INJECTED"))
+    monkeypatch.undo()
+    # The configured registry holds NO injected record (empty replacement),
+    # and the record that landed on the detached file was never reported
+    # as ingested — the append raised.
+    assert read_registry(reg) == []
+    assert [r["authority_evidence_id"] for r in read_registry(detached)] == [
+        "AE-BASE",
+        "AE-INJECTED",
+    ]
+    # Positive control: with the real fsync restored, appends still land in
+    # the configured registry and round-trip.
+    append_record(reg, _evidence(ev_id="AE-OK"))
+    assert [r["authority_evidence_id"] for r in read_registry(reg)] == ["AE-OK"]
+
+
 def test_replay_ledger_refuses_unterminated_tail(tmp_path):
     # An interrupted append that leaves the final line unterminated must be
     # an explicit error: silently loading the fragment forgets the real

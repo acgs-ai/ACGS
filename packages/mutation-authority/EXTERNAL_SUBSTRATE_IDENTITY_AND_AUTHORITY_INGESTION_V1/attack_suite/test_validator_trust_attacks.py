@@ -948,6 +948,59 @@ def test_non_monotonic_rotation_instant_refused(tmp_path):
     assert events is not None and [e["event"] for e in events] == ["REGISTER", "ROTATE"]
 
 
+def test_rotation_at_or_after_revocation_refused(tmp_path):
+    # authority_valid_at() treats the earliest REVOKE as terminal and
+    # _key_windows() discards windows beginning at or after it, so a ROTATE
+    # scheduled at or after that instant would be appended, print ROTATED,
+    # and hand back a key that can never validate an attestation. Refused
+    # loudly at write time instead; rotations strictly BEFORE the revocation
+    # stay legal (their window is trimmed at the revocation instant).
+    import validator_admin as VA
+
+    reg = tmp_path / "vreg.jsonl"
+    ks = tmp_path / "vks"
+    base = ["--registry", str(reg), "--keystore", str(ks)]
+    fingerprint = VA._write_key(ks, "rev-k1")
+    VA._append(
+        reg,
+        {
+            "schema": EVENT_SCHEMA,
+            "event": "REGISTER",
+            "validator_id": "[FIXTURE] vld-rev",
+            "validator_identity": "[FIXTURE] Revoked Validator",
+            "authorized_classes": ["DATA_CONTROLLER"],
+            "appointment_authority": "[FIXTURE] General Counsel",
+            "key_id": "rev-k1",
+            "key_fingerprint": fingerprint,
+            "effective_from": "2026-01-01T00:00:00Z",
+            "effective_until": None,
+            "onboarding": "EXTERNAL_VALIDATOR_ONBOARDING_V1",
+            "appointment_binding": sha256_hex(b"[FIXTURE] appointment binding"),
+            "appointment_evidence_digests": [sha256_hex(b"[FIXTURE] appointment deed")],
+        },
+    )
+    revoke = ["revoke", "--validator-id", "[FIXTURE] vld-rev"]
+    assert VA.main([*base, *revoke, "--instant", "2026-06-01T00:00:00Z"]) == 0
+
+    def _rotate(key_id, instant):
+        cmd = ["rotate", "--validator-id", "[FIXTURE] vld-rev", "--key-id", key_id]
+        return VA.main([*base, *cmd, "--instant", instant])
+
+    # At the revocation instant -> refused; after it -> refused. Neither
+    # attempt may persist an event or a successor key.
+    assert _rotate("rev-k2", "2026-06-01T00:00:00Z") == 3
+    assert _rotate("rev-k2", "2026-07-01T00:00:00Z") == 3
+    assert not (ks / "rev-k2").exists()
+    # Strictly before the revocation -> still a legal (window-trimmed) key.
+    assert _rotate("rev-k2", "2026-03-01T00:00:00Z") == 0
+    events = load_validator_events(reg)
+    assert events is not None and [e["event"] for e in events] == [
+        "REGISTER",
+        "REVOKE",
+        "ROTATE",
+    ]
+
+
 def test_governed_derivation_is_deterministic(tmp_path):
     trust = fixture_trust(tmp_path)
     ev = _attested(_evidence())

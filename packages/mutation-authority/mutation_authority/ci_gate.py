@@ -22,6 +22,7 @@ from pathlib import Path
 from .engine import _verify_chain_root_binding
 from .evidence_emitter import EvidenceEmitter, policy_version
 from .ledger import EVENT_COMMIT, AuditLedger
+from .receipt import MutationDecisionReceipt, ReceiptFormatError
 from .root import GovernanceRoot
 from .state import repository_violations
 
@@ -65,22 +66,40 @@ def _run_ci_gate(
         failures.append(f"unauthorized mutation: {violation['kind']} on {violation['resource']}")
 
     # 5. Receipt provenance for every COMMIT.
+    #    Authenticity first: an in-chain ALLOW DECISION appended through the
+    #    exported ledger API can carry an ARBITRARY receipt-shaped dict, so
+    #    "the receipt appeared in-chain" proves nothing. Every issued receipt
+    #    must parse as a v2 receipt AND carry a valid root-key signature
+    #    before its COMMIT is accepted as provenance — otherwise a direct
+    #    mutation could be laundered under an unsigned forgery.
     issued = ledger.issued_receipts()
     commits = [e for e in ledger.events() if e.type == EVENT_COMMIT]
+    root_key = root.root_key()
     for event in commits:
-        receipt = issued.get(event.payload.get("receipt_id", ""))
-        if receipt is None:
+        raw = issued.get(event.payload.get("receipt_id", ""))
+        if raw is None:
             failures.append(f"COMMIT seq={event.seq} references a receipt never issued in-chain")
+            continue
+        try:
+            receipt = MutationDecisionReceipt.from_dict(raw)
+        except ReceiptFormatError as exc:
+            failures.append(f"COMMIT seq={event.seq} references a malformed receipt: {exc}")
+            continue
+        if not receipt.verify_signature(root_key):
+            failures.append(
+                f"COMMIT seq={event.seq} references a receipt whose root-key "
+                "signature does not verify (forged/injected decision)"
+            )
             continue
         # The COMPLETE receipt/COMMIT binding, including the authorized
         # post-state: without the after_hash check, a chain-valid COMMIT
         # appended directly to the ledger could launder arbitrary bytes
         # under a legitimately issued receipt.
         if (
-            receipt["actor"] != event.payload["actor"]
-            or receipt["resource"] != event.payload["resource"]
-            or receipt["previous_state_hash"] != event.payload["before_hash"]
-            or receipt["expected_state_hash"] != event.payload["after_hash"]
+            receipt.actor != event.payload["actor"]
+            or receipt.resource != event.payload["resource"]
+            or receipt.previous_state_hash != event.payload["before_hash"]
+            or receipt.expected_state_hash != event.payload["after_hash"]
         ):
             failures.append(f"COMMIT seq={event.seq} does not match its receipt's binding")
 
