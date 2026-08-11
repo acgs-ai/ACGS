@@ -15,10 +15,12 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -223,6 +225,47 @@ def test_hook_fails_closed_when_gate_mode_unresolvable(
     # raise — the unresolvable-mode path must be enforce, never fail-open.
     monkeypatch.setitem(sys.modules, "gove_zone.integration", None)
     assert hook._gate_enforce() is True
+
+
+def _poisoned_execution_module() -> types.ModuleType:
+    """A ``gove_zone.execution`` stand-in whose import fails with a
+    *non*-``ImportError`` — the shape of an incompatible installed build
+    raising a ``SyntaxError`` or runtime initialization error at import."""
+    module = types.ModuleType("gove_zone.execution")
+
+    def _boom(name: str) -> object:
+        raise RuntimeError("incompatible installed build")
+
+    module.__getattr__ = _boom  # type: ignore[method-assign]
+    return module
+
+
+def test_hook_observe_defers_on_non_import_error_import_failure(
+    in_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The documented observe contract defers governance/import failures to
+    host permissions. A handler narrowed to ``ImportError`` would let any
+    other import-time failure fall through to the top-level guard and exit 2,
+    blocking the call despite observe mode."""
+    hook = _load_hook_module()
+    monkeypatch.setenv("GOVE_ZONE_GATE_MODE", "observe")
+    monkeypatch.setitem(sys.modules, "gove_zone.execution", _poisoned_execution_module())
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(_EDIT_PAYLOAD)))
+
+    assert hook.main() == 0
+
+
+def test_hook_enforce_blocks_on_non_import_error_import_failure(
+    in_project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Negative path: broadening the observe deferral must not weaken enforce —
+    the same import failure under the enforce default still exits 2."""
+    hook = _load_hook_module()
+    monkeypatch.setitem(sys.modules, "gove_zone.execution", _poisoned_execution_module())
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(_EDIT_PAYLOAD)))
+
+    assert hook.main() == 2
+    assert "cannot import gove_zone.execution" in capsys.readouterr().err
 
 
 def _run_hook(

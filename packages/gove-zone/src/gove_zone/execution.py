@@ -398,6 +398,16 @@ _GIT_READ_ONLY = frozenset(
     }
 )
 
+#: Options that make an otherwise read-only git subcommand write a file chosen
+#: on the command line. Git documents ``--output <file>`` for the diff family
+#: (``log``, ``show``, ``diff``, ``range-diff``, ...) and ``--output-directory``
+#: for ``format-patch``: ``git log --output=.gove-zone/gate.mode -1`` replaces
+#: the gate-mode file even though ``log`` never mutates repository state, so a
+#: host-whitelisted read-only prefix (``Bash(git log:*)``) must not carry one.
+#: Matched on the exact option name (``--output`` / ``--output=<file>``), never
+#: on a prefix, so ``--output-indicator-new=<char>`` stays untouched.
+_GIT_OUTPUT_REDIRECT_OPTIONS = frozenset({"--output", "--output-directory"})
+
 #: git global options that consume the *following* token as their value when
 #: not written in ``--option=value`` form. ``git -h`` explicitly permits these
 #: before the command (``git [-C <path>] [-c <name>=<value>] ... <command>``);
@@ -746,6 +756,25 @@ def _git_subcommand(argv: Sequence[str]) -> tuple[str, str]:
     return "", ""
 
 
+def _git_output_redirect_option(argv: Sequence[str]) -> str:
+    """The first output-redirecting option token on a git argv, or ``""``.
+
+    A bare ``--`` ends option parsing for git: everything after it is a
+    pathspec, so a file literally named ``--output`` is an argument there,
+    not a redirection. Only the option *name* is compared (attached
+    ``--output=<file>`` and separate ``--output <file>`` forms both match);
+    prefix lookalikes such as ``--output-indicator-new=<char>`` do not.
+    """
+    for token in argv[1:]:
+        if token == "--":
+            break
+        if not token.startswith("-"):
+            continue
+        if token.split("=", 1)[0] in _GIT_OUTPUT_REDIRECT_OPTIONS:
+            return token
+    return ""
+
+
 def _python_module_argv(argv: Sequence[str]) -> tuple[list[str] | None, str]:
     """``(module_argv, undecidable_reason)`` for a python interpreter argv.
 
@@ -1034,6 +1063,22 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
                 tier_hint=TIER_UNCLASSIFIED,
                 decidable=False,
                 undecidable_reasons=("unknown-git-subcommand",),
+                facts={**base_facts, "subcommand": subcommand},
+                command_sha256=digest,
+            )
+        if not mutating and _git_output_redirect_option(argv):
+            # `git log --output=<file>` writes the file git would otherwise
+            # print to stdout, so the "read-only" claim the tier assignment
+            # rests on is false and the destination path is not governed
+            # here. Fail closed rather than mint an allow receipt for a
+            # file write dressed as an inspection command.
+            return ExecutionEvent(
+                action=ACTION_SHELL_EXEC,
+                binary=binary,
+                argv_prefix=argv_prefix,
+                tier_hint=TIER_UNCLASSIFIED,
+                decidable=False,
+                undecidable_reasons=("git-output-redirection",),
                 facts={**base_facts, "subcommand": subcommand},
                 command_sha256=digest,
             )

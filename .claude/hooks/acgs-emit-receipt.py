@@ -150,11 +150,17 @@ def main() -> int:
             make_execution_call_factory,
             resolve_execution_actor,
         )
-    except ImportError as exc:
+    except Exception as exc:
+        # Not just ImportError: an incompatible installed build can raise a
+        # SyntaxError or a runtime initialization error at import time. The
+        # observe contract defers every governance/import failure to host
+        # permissions, so a narrow handler here would let such a failure fall
+        # through to the top-level guard and exit 2 despite observe mode.
+        # Enforce still blocks (fail-closed) exactly as before.
         if enforce:
             print(
                 "gove-zone hook: cannot import gove_zone.execution "
-                f"({exc}). Install with `uv sync` or `pip install -e packages/gove-zone`.",
+                f"({exc!r}). Install with `uv sync` or `pip install -e packages/gove-zone`.",
                 file=sys.stderr,
             )
             return 2

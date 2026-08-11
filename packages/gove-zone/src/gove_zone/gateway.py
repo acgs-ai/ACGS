@@ -1069,9 +1069,19 @@ class UniversalGateway:
             return _hook_response(action_kind, "deny", "call factory actor mismatch")
 
         if self.allowed_actors is not None and actor not in self.allowed_actors:
-            return _hook_response(
-                action_kind, "deny", f"actor {actor!r} is not in the gateway actor allowlist"
-            )
+            reason = f"actor {actor!r} is not in the gateway actor allowlist"
+            # `invoke` records this condition through `_append_synthesized_deny`;
+            # the hook surface must too, or repeated unauthorized-principal
+            # attempts would be invisible to chain verification and incident
+            # review. One record per proposed call keeps the "every call is
+            # audited individually" contract; an unrecordable deny still
+            # denies (the refusal never depends on the append succeeding).
+            for call in calls:
+                try:
+                    self._append_synthesized_deny(call, rule=_ACTOR_ALLOWLIST_RULE, reason=reason)
+                except AuditError:
+                    break
+            return _hook_response(action_kind, "deny", reason)
 
         decided: list[tuple[Any, str, str]] = []  # (record, audit_hash, previous_audit_hash)
         for call in calls:

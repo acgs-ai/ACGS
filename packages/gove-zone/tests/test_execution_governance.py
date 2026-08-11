@@ -532,6 +532,47 @@ def test_declared_read_only_git_subcommands_stay_decidable(command: str) -> None
     assert event.tier_hint == TIER_READ_ONLY
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git log --format=tformat:observe --output=.gove-zone/gate.mode -1",
+        "git log --output .gove-zone/gate.mode -1",
+        "git diff --output=/tmp/out HEAD~1",
+        "git show --output=.claude/settings.json HEAD",
+    ],
+)
+def test_git_output_option_on_read_only_subcommand_is_undecidable(command: str) -> None:
+    """Git documents ``--output <file>`` for the diff family: ``git log
+    --output=.gove-zone/gate.mode`` *writes* the gate-mode file even though
+    ``log`` never mutates repository state, so a host-whitelisted read-only
+    prefix (``Bash(git log:*)``) would reach a protected file without ever
+    invoking ``Write``. The read-only claim is false; fail closed."""
+    event = classify_command(command)
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("git-output-redirection",)
+    assert event.tier_hint == TIER_UNCLASSIFIED
+
+
+def test_git_output_indicator_option_is_not_an_output_redirect() -> None:
+    """Positive control: the match is on the option name, not a prefix —
+    ``--output-indicator-new`` changes diff markers, not the destination."""
+    event = classify_command("git log --output-indicator-new=+ -1")
+
+    assert event.decidable is True
+    assert event.tier_hint == TIER_READ_ONLY
+
+
+def test_git_pathspec_named_like_output_option_stays_read_only() -> None:
+    """A bare ``--`` ends option parsing: a file literally named ``--output``
+    after it is a pathspec argument, not a redirection."""
+    event = classify_command("git log -- --output")
+
+    assert event.decidable is True
+    assert event.tier_hint == TIER_READ_ONLY
+
+
 # -- 2. what the classifier refuses to decide -------------------------------- #
 
 
@@ -961,6 +1002,7 @@ def test_artifact_generation_requires_a_human_at_the_gate(tmp_path: Path) -> Non
         'git status "$(npm install left-pad)"',
         "gh api -X DELETE repos/owner/name",
         "gh pr checkout 123",
+        "git log --format=tformat:observe --output=.gove-zone/gate.mode -1",
     ],
 )
 def test_classifier_refusals_fail_closed_to_a_human_at_the_gate(
