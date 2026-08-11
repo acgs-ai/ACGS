@@ -1,0 +1,649 @@
+{
+  "conditional_result": {
+    "failed_for_architectural_reasons": [],
+    "failed_now": [
+      "06",
+      "07",
+      "12",
+      "17",
+      "19"
+    ],
+    "failed_only_because_of_host_privilege_configuration": [
+      "06",
+      "07",
+      "12",
+      "17",
+      "19"
+    ],
+    "interpretation": "every condition that fails is one the cutover deltas remove. No condition fails for a reason inherent to the architecture, so the V2 impossibility is a property of this host's privilege topology and not of the design.",
+    "repeatability_condition_18_met": true,
+    "would_hold_after_cutover": true
+  },
+  "conditions": {
+    "01": {
+      "evidence": {
+        "agent_uid": 1000,
+        "broker_uid": 940,
+        "decision_uid": 941,
+        "store_owner_uid": 940
+      },
+      "met": true,
+      "text": "a dedicated authority principal exists"
+    },
+    "02": {
+      "evidence": {
+        "criteria": {
+          "1_not_uid_0": true,
+          "2_not_agent_uid": true,
+          "3_not_in_agent_subuid": true,
+          "4_not_in_agent_subgid": true,
+          "5_no_group_grants_agent_write": true,
+          "6_no_transition_path": true,
+          "7_not_reused_by_unrelated_service": true,
+          "8_agent_cannot_alter_account": true,
+          "9_readable_but_not_mutable_supported": true
+        },
+        "newuidmap": {
+          "mappable": false,
+          "returncode": 1,
+          "stderr": "newuidmap: uid range [0-1) -> [940-941) not allowed"
+        },
+        "uid": 940
+      },
+      "met": true,
+      "text": "the authority uid/gid is not agent-delegable"
+    },
+    "03": {
+      "evidence": {
+        "append": "DENIED_BY_DAC",
+        "create": "DENIED_BY_DAC",
+        "mmap_write": "DENIED_BY_DAC",
+        "overwrite": "DENIED_BY_DAC",
+        "shell_redirection": "DENIED_BY_DAC",
+        "subprocess": "DENIED_BY_DAC",
+        "truncate": "DENIED_BY_DAC"
+      },
+      "met": true,
+      "text": "direct content mutation is denied"
+    },
+    "04": {
+      "evidence": {
+        "acl_change": "DENIED_BY_DAC",
+        "chmod": "DENIED_BY_DAC",
+        "chown": "DENIED_BY_DAC",
+        "exec_bit_transition": "DENIED_BY_DAC",
+        "utime": "DENIED_BY_DAC",
+        "xattr": "DENIED_BY_DAC"
+      },
+      "met": true,
+      "text": "direct metadata mutation is denied"
+    },
+    "05": {
+      "evidence": {
+        "carriers": 25,
+        "control_failures": [],
+        "not_denied": []
+      },
+      "met": true,
+      "text": "all measured mutation carriers are denied"
+    },
+    "06": {
+      "cutover_dependent": true,
+      "evidence": {
+        "root_equivalent_paths": [
+          "docker_rootful"
+        ],
+        "route": [
+          "group membership: agent is in group 'docker'"
+        ]
+      },
+      "met": false,
+      "text": "no root-equivalent runtime path exists for the agent"
+    },
+    "07": {
+      "cutover_dependent": true,
+      "evidence": {
+        "holds": false,
+        "path": [
+          "agent_principal --can_control--> rootful_container_root",
+          "rootful_container_root --can_impersonate--> host_root",
+          "host_root --can_impersonate--> authority_principal"
+        ]
+      },
+      "met": false,
+      "text": "no authority-equivalent uid transition exists"
+    },
+    "08": {
+      "evidence": {
+        "attack": "D_delegated_subuid_remap",
+        "changed_canonical": false,
+        "stderr": "/bin/sh: line 1: /tmp/cspa3-e59509353b61/canon/files/README.md: Permission denied",
+        "verdict": "DENIED_BY_DAC",
+        "why": "the delegated range tops out at 589823; uid 940 is not in it, so remapping lands on a principal with no authority over the store"
+      },
+      "met": true,
+      "text": "the subuid/subgid attack is denied"
+    },
+    "09": {
+      "evidence": {
+        "attack": "E_setns_reentry",
+        "docker_route": {
+          "changed_canonical": true,
+          "route": "docker exec, i.e. the root-equivalent socket",
+          "stderr": "",
+          "verdict": "EXPECTED_SUCCESS",
+          "why": "this is not a namespace weakness. It is the Docker socket, and its remediation is removing that socket, not changing namespaces."
+        },
+        "procfs_route": {
+          "error": "Permission denied",
+          "openable": false,
+          "route": "/proc/<pid>/ns via the namespace boundary",
+          "verdict": "DENIED_BY_DAC"
+        }
+      },
+      "met": true,
+      "note": "the procfs route is the namespace boundary; the docker exec route is the socket, and is condition 6",
+      "text": "setns cannot obtain authority-equivalent privilege"
+    },
+    "10": {
+      "evidence": {
+        "attached_authority": false,
+        "attack": "F_nondescendant_ptrace",
+        "broker_pid_found": 1763211,
+        "container_pid": "1763169",
+        "control_attached_agent_owned_process": true,
+        "maps_readable": false,
+        "mem_readable": false,
+        "stdout": "DENIED Operation not permitted",
+        "verdict": "DENIED_BY_DAC",
+        "why": "ptrace_may_access requires matching uid or CAP_SYS_PTRACE in the target's user namespace. The authority is uid 940, which the agent cannot become -- so ptrace_scope=0 no longer helps it. This is the direct reversal of V2's result."
+      },
+      "met": true,
+      "text": "ptrace / process injection cannot control the authority"
+    },
+    "11": {
+      "evidence": {
+        "changed_canonical": false,
+        "output": "Error: short-name resolution enforced but cannot prompt without a TTY",
+        "verdict": "DENIED_BY_DAC",
+        "why": "rootless container root maps to the agent uid or its delegated subuid range, neither of which owns the store"
+      },
+      "met": true,
+      "text": "rootless-container root cannot mutate authority state"
+    },
+    "12": {
+      "cutover_dependent": true,
+      "evidence": {
+        "J1_host_write_to_code": {
+          "detail": "Permission denied",
+          "verdict": "DENIED_BY_DAC"
+        },
+        "J2_docker_cp_into_container": {
+          "returncode": 0,
+          "stderr": "",
+          "verdict": "EXPECTED_SUCCESS",
+          "why": "the Docker socket writes into the authority's filesystem regardless of who owns it"
+        },
+        "J3_replace_whole_authority": {
+          "container_running": "true",
+          "detail": "the agent can 'docker rm -f' this container and start its own with substituted code; the container is running under the agent's own Docker authority",
+          "not_executed": "the destructive form is not run because it would end the measurement; J2 already demonstrates write access to the authority's code, which is the same capability",
+          "verdict": "EXPECTED_SUCCESS"
+        },
+        "control_plane_agent_replaceable": true,
+        "derived_from": [
+          "J1_host_write_to_code",
+          "J2_docker_cp_into_container"
+        ]
+      },
+      "met": false,
+      "text": "the broker code / control plane is not agent-replaceable"
+    },
+    "13": {
+      "evidence": {
+        "cases": 10,
+        "failures": []
+      },
+      "met": true,
+      "text": "unauthorized IPC requests are denied"
+    },
+    "14": {
+      "evidence": {
+        "actual": "PROMOTED",
+        "after": "98bfd34b23f52828e0797d59adaffff00224de201b474a9154fbacfc42fed6d3",
+        "before": "f387304a8cf59985004bc0644b96362dc756878fa6ff2e4f7cf80c64d53b178d",
+        "expected": "PROMOTED",
+        "matches_receipt": true,
+        "pass": true
+      },
+      "met": true,
+      "text": "a valid authorized request succeeds"
+    },
+    "15": {
+      "evidence": {
+        "all_denied": true,
+        "broker_created_file_ownership": {
+          "agent_uid": 1000,
+          "agent_writable": false,
+          "owner_uid": 940,
+          "verdict": "DENIED_BY_DAC"
+        },
+        "directory_fd_write": {
+          "detail": "Permission denied",
+          "verdict": "DENIED_BY_DAC"
+        },
+        "staging_residue": {
+          "leftovers": [],
+          "verdict": "DENIED_BY_DAC"
+        },
+        "writable_fd_after_promotion": {
+          "detail": "Permission denied",
+          "verdict": "DENIED_BY_DAC"
+        }
+      },
+      "met": true,
+      "text": "an authorized operation leaks no reusable mutation authority"
+    },
+    "16": {
+      "evidence": {
+        "count": 13,
+        "failures": []
+      },
+      "met": true,
+      "text": "workspace / git operations remain functional"
+    },
+    "17": {
+      "cutover_dependent": true,
+      "evidence": {
+        "holds": false,
+        "path": [
+          "agent_principal --can_control--> rootful_container_root",
+          "rootful_container_root --can_impersonate--> host_root",
+          "host_root --can_write--> canonical_store"
+        ]
+      },
+      "met": false,
+      "text": "the privilege graph contains no unauthorized path to canonical mutation"
+    },
+    "18": {
+      "evidence": {
+        "distinct_digests": [
+          "ab4ae6bcb4509712"
+        ],
+        "distinct_verdicts": [
+          "BLOCKED_ROOT_EQUIVALENCE"
+        ],
+        "runs_recorded": 19,
+        "window": [
+          {
+            "evidence_digest": "ab4ae6bcb450971214b4e4e6a34be75147653826400ccd09c5e3786415e1c9ac",
+            "verdict": "BLOCKED_ROOT_EQUIVALENCE"
+          },
+          {
+            "evidence_digest": "ab4ae6bcb450971214b4e4e6a34be75147653826400ccd09c5e3786415e1c9ac",
+            "verdict": "BLOCKED_ROOT_EQUIVALENCE"
+          },
+          {
+            "evidence_digest": "ab4ae6bcb450971214b4e4e6a34be75147653826400ccd09c5e3786415e1c9ac",
+            "verdict": "BLOCKED_ROOT_EQUIVALENCE"
+          },
+          {
+            "evidence_digest": "ab4ae6bcb450971214b4e4e6a34be75147653826400ccd09c5e3786415e1c9ac",
+            "verdict": "BLOCKED_ROOT_EQUIVALENCE"
+          }
+        ]
+      },
+      "met": true,
+      "text": "4 consecutive verifier runs produce the same result and evidence digest"
+    },
+    "19": {
+      "cutover_dependent": true,
+      "evidence": {
+        "count": 19,
+        "inventory_admissibility": {
+          "PRIVILEGE_TOPOLOGY": true,
+          "ROOT_EQUIVALENCE_REGISTRY": true
+        },
+        "requires_operator_evidence_paths": [
+          "container_runtimes:libvirt_ro_socket",
+          "container_runtimes:libvirt_socket",
+          "groups:membership_wheel",
+          "polkit:dbus_system_bus",
+          "polkit:pkexec",
+          "setuid:/opt/1Password/chrome-sandbox",
+          "setuid:/usr/bin/chfn",
+          "setuid:/usr/bin/chsh",
+          "setuid:/usr/bin/gpasswd",
+          "setuid:/usr/bin/pkexec",
+          "setuid:/usr/bin/su",
+          "setuid:/usr/bin/sudo",
+          "setuid:/usr/bin/userhelper",
+          "setuid:/usr/bin/vmware-user-suid-wrapper",
+          "setuid:/usr/libexec/dbus-1/dbus-daemon-launch-helper",
+          "setuid:/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper",
+          "sudo:sudo",
+          "systemd:systemd_run"
+        ],
+        "sources": [
+          "ROOT_EQUIVALENCE_REGISTRY.json \u2192 unknown_paths",
+          "PRIVILEGE_TOPOLOGY_FINAL.json \u2192 unknown_privilege_paths, requires_operator_evidence_paths"
+        ],
+        "unknown_privilege_paths": [
+          "sudo_polkit_interactive"
+        ],
+        "unresolved_privilege_paths": [
+          "container_runtimes:libvirt_ro_socket",
+          "container_runtimes:libvirt_socket",
+          "groups:membership_wheel",
+          "polkit:dbus_system_bus",
+          "polkit:pkexec",
+          "setuid:/opt/1Password/chrome-sandbox",
+          "setuid:/usr/bin/chfn",
+          "setuid:/usr/bin/chsh",
+          "setuid:/usr/bin/gpasswd",
+          "setuid:/usr/bin/pkexec",
+          "setuid:/usr/bin/su",
+          "setuid:/usr/bin/sudo",
+          "setuid:/usr/bin/userhelper",
+          "setuid:/usr/bin/vmware-user-suid-wrapper",
+          "setuid:/usr/libexec/dbus-1/dbus-daemon-launch-helper",
+          "setuid:/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper",
+          "sudo:sudo",
+          "sudo_polkit_interactive",
+          "systemd:systemd_run"
+        ]
+      },
+      "met": false,
+      "text": "no privilege path is left unresolved (neither UNKNOWN nor REQUIRES_OPERATOR_EVIDENCE is a pass)"
+    }
+  },
+  "environment_equivalence": {
+    "equivalent": true,
+    "problems": [],
+    "verdict_if_not_equivalent": "ENVIRONMENT_NOT_EQUIVALENT"
+  },
+  "evidence_digest": "ab4ae6bcb450971214b4e4e6a34be75147653826400ccd09c5e3786415e1c9ac",
+  "exclusivity": {
+    "authority_equivalent_paths": [],
+    "every_inventory_host_measured": true,
+    "exclusivity_requires": "root_equivalent_paths == [] and unknown_privilege_paths == [] and requires_operator_evidence_paths == [] and every inventory measured in a host-representative context",
+    "failed_conditions": [
+      "06",
+      "07",
+      "12",
+      "17",
+      "19"
+    ],
+    "graph_closure_holds": false,
+    "inventory_admissibility": {
+      "PRIVILEGE_TOPOLOGY": true,
+      "ROOT_EQUIVALENCE_REGISTRY": true
+    },
+    "precedence": [
+      "BLOCKED_ROOT_EQUIVALENCE",
+      "BLOCKED_AUTHORITY_EQUIVALENCE",
+      "BLOCKED_PRIVILEGE_UNCERTAIN",
+      "VERIFIED_EXCLUSIVE_AUTHORITY"
+    ],
+    "reasons": [
+      "root-equivalent paths measured: ['container_runtimes:docker_rootful_socket', 'docker_rootful', 'groups:membership_docker']"
+    ],
+    "requires_operator_evidence_paths": [
+      "container_runtimes:libvirt_ro_socket",
+      "container_runtimes:libvirt_socket",
+      "groups:membership_wheel",
+      "polkit:dbus_system_bus",
+      "polkit:pkexec",
+      "setuid:/opt/1Password/chrome-sandbox",
+      "setuid:/usr/bin/chfn",
+      "setuid:/usr/bin/chsh",
+      "setuid:/usr/bin/gpasswd",
+      "setuid:/usr/bin/pkexec",
+      "setuid:/usr/bin/su",
+      "setuid:/usr/bin/sudo",
+      "setuid:/usr/bin/userhelper",
+      "setuid:/usr/bin/vmware-user-suid-wrapper",
+      "setuid:/usr/libexec/dbus-1/dbus-daemon-launch-helper",
+      "setuid:/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper",
+      "sudo:sudo",
+      "systemd:systemd_run"
+    ],
+    "root_equivalent_paths": [
+      "container_runtimes:docker_rootful_socket",
+      "docker_rootful",
+      "groups:membership_docker"
+    ],
+    "specific_reason": "BLOCKED_ROOT_EQUIVALENCE_DOCKER",
+    "surfaces_covered": [
+      "container_runtimes",
+      "filecaps",
+      "groups",
+      "polkit",
+      "setuid",
+      "sudo",
+      "systemd"
+    ],
+    "surfaces_missing": [],
+    "surfaces_required": [
+      "container_runtimes",
+      "filecaps",
+      "groups",
+      "polkit",
+      "setuid",
+      "sudo",
+      "systemd"
+    ],
+    "unknown_privilege_paths": [
+      "sudo_polkit_interactive"
+    ],
+    "unresolved_privilege_paths": [
+      "container_runtimes:libvirt_ro_socket",
+      "container_runtimes:libvirt_socket",
+      "groups:membership_wheel",
+      "polkit:dbus_system_bus",
+      "polkit:pkexec",
+      "setuid:/opt/1Password/chrome-sandbox",
+      "setuid:/usr/bin/chfn",
+      "setuid:/usr/bin/chsh",
+      "setuid:/usr/bin/gpasswd",
+      "setuid:/usr/bin/pkexec",
+      "setuid:/usr/bin/su",
+      "setuid:/usr/bin/sudo",
+      "setuid:/usr/bin/userhelper",
+      "setuid:/usr/bin/vmware-user-suid-wrapper",
+      "setuid:/usr/libexec/dbus-1/dbus-daemon-launch-helper",
+      "setuid:/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper",
+      "sudo:sudo",
+      "sudo_polkit_interactive",
+      "systemd:systemd_run"
+    ],
+    "verdict": "BLOCKED_ROOT_EQUIVALENCE"
+  },
+  "prior_packages_unchanged": true,
+  "privilege_graph_closure": {
+    "closed": false,
+    "conditions": {
+      "authorized_path_exists": {
+        "holds": true,
+        "path": [
+          "agent_principal --can_send_authorized_request--> broker_ipc",
+          "broker_ipc --can_delegate--> authority_process",
+          "authority_process --can_write--> canonical_store (authorized)"
+        ]
+      },
+      "no_path_to_authority_principal": {
+        "holds": false,
+        "path": [
+          "agent_principal --can_control--> rootful_container_root",
+          "rootful_container_root --can_impersonate--> host_root",
+          "host_root --can_impersonate--> authority_principal"
+        ]
+      },
+      "no_path_to_host_root": {
+        "holds": false,
+        "path": [
+          "agent_principal --can_control--> rootful_container_root",
+          "rootful_container_root --can_impersonate--> host_root"
+        ]
+      },
+      "no_unauthorized_path_to_canonical_mutation": {
+        "holds": false,
+        "path": [
+          "agent_principal --can_control--> rootful_container_root",
+          "rootful_container_root --can_impersonate--> host_root",
+          "host_root --can_write--> canonical_store"
+        ]
+      }
+    },
+    "reachable_without_authorization": [
+      "agent_principal",
+      "agent_userns_root",
+      "authority_principal",
+      "authority_process",
+      "broker_ipc",
+      "canonical_store",
+      "host_root",
+      "rootful_container_root",
+      "rootless_container_root",
+      "workspace"
+    ]
+  },
+  "privilege_topology": {
+    "counts": {
+      "blocking": 20,
+      "non_root_equivalent": 37,
+      "not_present": 0,
+      "requires_operator_evidence": 18,
+      "root_equivalent": 2,
+      "total": 57,
+      "unknown": 0
+    },
+    "measurement_context_fingerprint": "f20868966845913d0438af7e97d5e8aebafd22979f6ce13d9d652d12e6c7c823",
+    "measurement_context_host_representative": true,
+    "not_present_paths": [],
+    "requires_operator_evidence_paths": [
+      "container_runtimes:libvirt_ro_socket",
+      "container_runtimes:libvirt_socket",
+      "groups:membership_wheel",
+      "polkit:dbus_system_bus",
+      "polkit:pkexec",
+      "setuid:/opt/1Password/chrome-sandbox",
+      "setuid:/usr/bin/chfn",
+      "setuid:/usr/bin/chsh",
+      "setuid:/usr/bin/gpasswd",
+      "setuid:/usr/bin/pkexec",
+      "setuid:/usr/bin/su",
+      "setuid:/usr/bin/sudo",
+      "setuid:/usr/bin/userhelper",
+      "setuid:/usr/bin/vmware-user-suid-wrapper",
+      "setuid:/usr/libexec/dbus-1/dbus-daemon-launch-helper",
+      "setuid:/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper",
+      "sudo:sudo",
+      "systemd:systemd_run"
+    ],
+    "root_equivalent_paths": [
+      "container_runtimes:docker_rootful_socket",
+      "groups:membership_docker"
+    ],
+    "source": "PRIVILEGE_TOPOLOGY_FINAL.json",
+    "unknown_privilege_paths": []
+  },
+  "property_split": {
+    "A_dac_effectiveness": {
+      "means": "does uid separation make content and metadata mutation fail",
+      "pass": true
+    },
+    "B_principal_exclusivity": {
+      "blocked_by": [
+        "docker_rootful"
+      ],
+      "means": "can the agent become root, the authority uid, or otherwise obtain equivalent capability",
+      "pass": false
+    },
+    "C_governed_liveness": {
+      "means": "can authorized canonical changes still occur through the broker",
+      "pass": true
+    },
+    "complete": false
+  },
+  "root_equivalent_paths": [
+    "docker_rootful"
+  ],
+  "selected_authority_uid": 940,
+  "unknown_paths": [
+    "sudo_polkit_interactive"
+  ],
+  "v2_evidence": {
+    "agent_uid": 1000,
+    "broker_uid": 524288,
+    "carrier_counts": {
+      "DAC_DENIED": 34,
+      "ESCALATION_PATH": 2,
+      "READ_PERMITTED_BY_DESIGN": 1
+    },
+    "carriers_total": 37,
+    "independent_attacker": {
+      "independent_process_ptrace_authority": "ESCALATION_PATH",
+      "launcher_setns_reentry": "ESCALATION_PATH",
+      "plain_same_uid_process": "DAC_DENIED",
+      "subuid_reacquisition": "ESCALATION_PATH"
+    },
+    "minimum_primitive": {
+      "agent_uid": 1000,
+      "all_mutation_carriers_denied": true,
+      "assumability": {
+        "attempts": {
+          "0": {
+            "refused": true,
+            "returncode": 1,
+            "stderr": "newuidmap: uid range [0-1) -> [0-1) not allowed"
+          },
+          "424242": {
+            "refused": true,
+            "returncode": 1,
+            "stderr": "newuidmap: uid range [0-1) -> [424242-424243) not allowed"
+          },
+          "524288 (delegated)": {
+            "refused": false,
+            "returncode": 0
+          },
+          "999": {
+            "refused": true,
+            "returncode": 1,
+            "stderr": "newuidmap: uid range [0-1) -> [999-1000) not allowed"
+          }
+        },
+        "delegated_uid_accepted": true,
+        "non_delegable_uid_refused": true
+      },
+      "canonical_readable_by_agent": true,
+      "carriers": {
+        "chmod": "denied (Operation not permitted)",
+        "chown": "denied (Operation not permitted)",
+        "content_write": "denied (Permission denied)",
+        "create_in_tree": "denied (Permission denied)",
+        "pointer_replace": "denied (Permission denied)",
+        "read_canonical": "PERMITTED",
+        "rename_store_root": "denied (Permission denied)",
+        "rmdir_store_root": "denied (Permission denied)",
+        "setxattr": "denied (Permission denied)",
+        "shell_redirect": "denied (/bin/sh: line 1: /tmp/cspa2-minprim-4pjf2k3g/canonical/state)",
+        "unlink": "denied (Permission denied)",
+        "utime": "denied (Operation not permitted)"
+      },
+      "cleanup": "removed",
+      "conclusion": "A store owned by a uid outside the caller's /etc/subuid delegation is unreachable from the agent principal by ordinary DAC, and the namespace escalation that defeats the self-provisioned store does not apply because the uid cannot be mapped. This is section 18 condition 3, satisfied -- given one privileged provisioning step the agent cannot perform for itself.",
+      "image": "icanbet-mirror:argcheck",
+      "instrument": "rootful docker socket, used only to create and remove the store; the security questions are asked as the agent uid",
+      "measured": true,
+      "store_owner_uid": 999
+    },
+    "protocol_cases": 21,
+    "protocol_failures": [],
+    "v2_section18_failed": [
+      "03"
+    ],
+    "v2_verdict": "PROVABLY_UNREACHABLE_ON_THIS_HOST"
+  },
+  "verdict": "BLOCKED_ROOT_EQUIVALENCE"
+}

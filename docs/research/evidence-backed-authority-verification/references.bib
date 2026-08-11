@@ -1,0 +1,365 @@
+% Bibliography for
+%   "Evidence-Backed Authority Verification for Autonomous Agents:
+%    Measuring and Governing Root-Equivalent Execution Paths"
+%   paper.md revision 3
+%
+% Metadata policy. Entries whose bibliographic details were verified against the
+% publisher or canonical record carry full metadata (volume, number, pages, doi
+% or eprint). Entries that were NOT verified carry author, title, venue and year
+% only: `pages`, `volume` and `doi` are omitted rather than guessed. A missing
+% optional field is a formatting gap; a wrong one is fabricated metadata, which
+% is the recorded-versus-consumed failure this paper is about. The unverified
+% entries are marked `% UNVERIFIED-METADATA` and are listed in CHANGELOG.md.
+%
+% Citation policy. Every entry supports a mechanism description or prior-work
+% claim. No entry is cited as evidence for a property of the evaluated host;
+% those claims cite artifacts in the package (see paper.md Table 16).
+
+% ---------------------------------------------------------------- Linux mechanism
+
+@misc{cap7,
+  author       = {{Linux man-pages project}},
+  title        = {capabilities(7) --- overview of {Linux} capabilities},
+  howpublished = {\url{https://man7.org/linux/man-pages/man7/capabilities.7.html}},
+  note         = {File capability sets; permitted, effective and inheritable
+                  semantics; the {\tt =ep} and {\tt =ei} notations}
+}
+
+@misc{cred7,
+  author       = {{Linux man-pages project}},
+  title        = {credentials(7) --- process identifiers},
+  howpublished = {\url{https://man7.org/linux/man-pages/man7/credentials.7.html}},
+  note         = {Process credentials and supplementary group sets}
+}
+
+@misc{userns7,
+  author       = {{Linux man-pages project}},
+  title        = {user\_namespaces(7) --- overview of {Linux} user namespaces},
+  howpublished = {\url{https://man7.org/linux/man-pages/man7/user_namespaces.7.html}},
+  note         = {uid/gid map semantics underlying the admissibility predicate}
+}
+
+@misc{ns7,
+  author       = {{Linux man-pages project}},
+  title        = {namespaces(7) --- overview of {Linux} namespaces},
+  howpublished = {\url{https://man7.org/linux/man-pages/man7/namespaces.7.html}}
+}
+
+@misc{seccomp2,
+  author       = {{Linux man-pages project}},
+  title        = {seccomp(2) --- operate on {Secure Computing} state of the process},
+  howpublished = {\url{https://man7.org/linux/man-pages/man2/seccomp.2.html}}
+}
+
+@misc{nnp,
+  author       = {{Linux kernel documentation}},
+  title        = {No New Privileges flag},
+  howpublished = {\texttt{Documentation/userspace-api/no\_new\_privs.rst}; see also
+                  prctl(2), {\tt PR\_SET\_NO\_NEW\_PRIVS}},
+  note         = {Why {\tt NoNewPrivs = 1} suppresses every setuid transition}
+}
+
+@misc{landlock,
+  author       = {{Linux kernel documentation}},
+  title        = {Landlock: unprivileged access control},
+  howpublished = {\texttt{Documentation/userspace-api/landlock.rst}}
+}
+
+@misc{unix7,
+  author       = {{Linux man-pages project}},
+  title        = {unix(7) --- sockets for local interprocess communication},
+  howpublished = {\url{https://man7.org/linux/man-pages/man7/unix.7.html}},
+  note         = {Permission checks on connect(2) to an {\tt AF\_UNIX} socket}
+}
+
+@misc{acl5,
+  author       = {{Linux man-pages project}},
+  title        = {acl(5) and setfacl(1) --- {POSIX} access control lists},
+  howpublished = {\url{https://man7.org/linux/man-pages/man5/acl.5.html}},
+  note         = {An ACL entry as an alternative grant to group membership}
+}
+
+@misc{sudoers5,
+  author       = {Miller, Todd C.},
+  title        = {sudoers(5) --- default sudo security policy plugin},
+  howpublished = {\url{https://www.sudo.ws/docs/man/sudoers.man/}},
+  note         = {Policy semantics and the non-interactive {\tt sudo -n -l} query}
+}
+
+@misc{libcap,
+  author       = {{libcap project}},
+  title        = {getcap(8), setcap(8) and the libcap documentation},
+  howpublished = {\url{https://sites.google.com/site/fullycapable/}},
+  note         = {File capability storage in extended attributes}
+}
+
+% ------------------------------------------------------- Privilege enumeration tooling
+
+@misc{peass,
+  author       = {Polop, Carlos and {contributors}},
+  title        = {{PEASS-ng}: Privilege Escalation Awesome Scripts Suite ({LinPEAS})},
+  howpublished = {\url{https://github.com/peass-ng/PEASS-ng}}
+}
+
+@misc{lynis,
+  author       = {{CISOfy}},
+  title        = {Lynis: security auditing tool for {Linux}, {macOS} and {UNIX}-based systems},
+  howpublished = {\url{https://cisofy.com/lynis/}}
+}
+
+@misc{oscap,
+  author       = {{OpenSCAP project}},
+  title        = {{OpenSCAP}},
+  howpublished = {\url{https://www.open-scap.org/}},
+  note         = {XCCDF rule-result vocabulary: notchecked, notapplicable,
+                  unknown, alongside pass and fail}
+}
+
+% ------------------------------------------------------------------------ Containers
+
+@misc{dockersec,
+  author       = {{Docker, Inc.}},
+  title        = {Docker {Engine} security},
+  howpublished = {\url{https://docs.docker.com/engine/security/}},
+  note         = {The ``Docker daemon attack surface'' section, quoted in
+                  paper.md \S12.1}
+}
+
+@misc{rootless,
+  author       = {{Docker, Inc.}},
+  title        = {Run the {Docker} daemon as a non-root user (rootless mode)},
+  howpublished = {\url{https://docs.docker.com/engine/security/rootless/}}
+}
+
+% UNVERIFIED-METADATA: arXiv identifier not confirmed against the canonical record.
+@misc{Bui15,
+  author = {Bui, Thanh},
+  title  = {Analysis of {Docker} Security},
+  year   = {2015},
+  note   = {arXiv preprint}
+}
+
+% UNVERIFIED-METADATA: volume, number and pages omitted deliberately.
+@article{CMD16,
+  author  = {Combe, Theo and Martin, Antony and Di Pietro, Roberto},
+  title   = {To {Docker} or Not to {Docker}: A Security Perspective},
+  journal = {IEEE Cloud Computing},
+  year    = {2016}
+}
+
+% UNVERIFIED-METADATA: full author list and document revision not confirmed.
+@techreport{NCC16,
+  author      = {Grattafiori, Aaron and others},
+  title       = {Understanding and Hardening {Linux} Containers},
+  institution = {NCC Group},
+  year        = {2016},
+  type        = {Whitepaper}
+}
+
+@inproceedings{Lin18,
+  author    = {Lin, Xin and Lei, Lingguang and Wang, Yuewu and Jing, Jiwu and
+               Sun, Kun and Zhou, Quan},
+  title     = {A Measurement Study on {Linux} Container Security:
+               Attacks and Countermeasures},
+  booktitle = {Proceedings of the 34th Annual Computer Security Applications
+               Conference (ACSAC '18)},
+  pages     = {418--429},
+  year      = {2018},
+  doi       = {10.1145/3274694.3274720}
+}
+
+% ------------------------------------------------------ Sandboxing and confinement
+
+@inproceedings{gvisor,
+  author    = {Young, Ethan G. and Zhu, Pengfei and Caraza-Harter, Tyler and
+               Arpaci-Dusseau, Andrea C. and Arpaci-Dusseau, Remzi H.},
+  title     = {The True Cost of Containing: A {gVisor} Case Study},
+  booktitle = {Proceedings of the 11th USENIX Workshop on Hot Topics in
+               Cloud Computing (HotCloud '19)},
+  year      = {2019}
+}
+
+@inproceedings{firecracker,
+  author    = {Agache, Alexandru and Brooker, Marc and Iordache, Alexandra and
+               Liguori, Anthony and Neugebauer, Rolf and Piwonka, Phil and
+               Popa, Diana-Maria},
+  title     = {Firecracker: Lightweight Virtualization for Serverless Applications},
+  booktitle = {Proceedings of the 17th USENIX Symposium on Networked Systems
+               Design and Implementation (NSDI '20)},
+  pages     = {419--434},
+  year      = {2020}
+}
+
+% --------------------------------------------- Authorization and protection principles
+
+@misc{polkit,
+  author       = {{freedesktop.org}},
+  title        = {polkit {Reference} {Manual}},
+  howpublished = {\url{https://www.freedesktop.org/software/polkit/docs/latest/}},
+  note         = {Authorization architecture, rules precedence, administrator
+                  identity resolution}
+}
+
+@article{SS75,
+  author  = {Saltzer, Jerome H. and Schroeder, Michael D.},
+  title   = {The Protection of Information in Computer Systems},
+  journal = {Proceedings of the IEEE},
+  volume  = {63},
+  number  = {9},
+  pages   = {1278--1308},
+  month   = sep,
+  year    = {1975},
+  doi     = {10.1109/PROC.1975.9939}
+}
+
+@techreport{And72,
+  author      = {Anderson, James P.},
+  title       = {Computer Security Technology Planning Study},
+  institution = {U.S. Air Force Electronic Systems Division},
+  number      = {ESD-TR-73-51},
+  year        = {1972}
+}
+
+@inproceedings{CWD02,
+  author    = {Chen, Hao and Wagner, David and Dean, Drew},
+  title     = {Setuid Demystified},
+  booktitle = {Proceedings of the 11th USENIX Security Symposium},
+  pages     = {171--190},
+  year      = {2002}
+}
+
+@inproceedings{PFH03,
+  author    = {Provos, Niels and Friedl, Markus and Honeyman, Peter},
+  title     = {Preventing Privilege Escalation},
+  booktitle = {Proceedings of the 12th USENIX Security Symposium},
+  year      = {2003}
+}
+
+% UNVERIFIED-METADATA: page range not confirmed.
+@inproceedings{HM08,
+  author    = {Hallyn, Serge E. and Morgan, Andrew G.},
+  title     = {Linux capabilities: making them work},
+  booktitle = {Proceedings of the Linux Symposium},
+  year      = {2008}
+}
+
+% ------------------------------------------- Verification, evidence, and provenance
+
+@article{Liv15,
+  author  = {Livshits, Benjamin and Sridharan, Manu and Smaragdakis, Yannis and
+             Lhot{\'a}k, Ond{\v r}ej and Amaral, J. Nelson and
+             Chang, Bor-Yuh Evan and Guyer, Samuel Z. and Khedker, Uday P. and
+             M{\o}ller, Anders and Vardoulakis, Dimitrios},
+  title   = {In Defense of Soundiness: A Manifesto},
+  journal = {Communications of the ACM},
+  volume  = {58},
+  number  = {2},
+  pages   = {44--46},
+  year    = {2015},
+  doi     = {10.1145/2644805}
+}
+
+@inproceedings{Nec97,
+  author    = {Necula, George C.},
+  title     = {Proof-Carrying Code},
+  booktitle = {Proceedings of the 24th ACM SIGPLAN-SIGACT Symposium on
+               Principles of Programming Languages (POPL '97)},
+  pages     = {106--119},
+  year      = {1997},
+  doi       = {10.1145/263699.263712}
+}
+
+@article{MMNS11,
+  author  = {McConnell, Ross M. and Mehlhorn, Kurt and N{\"a}her, Stefan and
+             Schweitzer, Pascal},
+  title   = {Certifying algorithms},
+  journal = {Computer Science Review},
+  volume  = {5},
+  number  = {2},
+  pages   = {119--161},
+  year    = {2011}
+}
+
+% UNVERIFIED-METADATA: full author list and page range omitted deliberately.
+@inproceedings{Kle09,
+  author    = {Klein, Gerwin and others},
+  title     = {{seL4}: Formal Verification of an {OS} Kernel},
+  booktitle = {Proceedings of the 22nd ACM Symposium on Operating Systems
+               Principles (SOSP)},
+  year      = {2009}
+}
+
+% UNVERIFIED-METADATA: volume, number and pages omitted deliberately.
+@article{Ler09,
+  author  = {Leroy, Xavier},
+  title   = {Formal verification of a realistic compiler},
+  journal = {Communications of the ACM},
+  year    = {2009}
+}
+
+@inproceedings{TA19,
+  author    = {Torres-Arias, Santiago and Afzali, Hammad and
+               Kuppusamy, Trishank Karthik and Curtmola, Reza and Cappos, Justin},
+  title     = {in-toto: Providing farm-to-table guarantees for bits and bytes},
+  booktitle = {Proceedings of the 28th USENIX Security Symposium},
+  pages     = {1393--1410},
+  year      = {2019}
+}
+
+@misc{repro,
+  author       = {{Reproducible Builds project}},
+  title        = {Reproducible Builds},
+  howpublished = {\url{https://reproducible-builds.org/}}
+}
+
+@misc{slsa,
+  author       = {{Open Source Security Foundation}},
+  title        = {{SLSA}: Supply-chain Levels for Software Artifacts},
+  howpublished = {\url{https://slsa.dev/}}
+}
+
+% ------------------------------------------------------------ Autonomous agent security
+
+@inproceedings{GAM+23,
+  author    = {Greshake, Kai and Abdelnabi, Sahar and Mishra, Shailesh and
+               Endres, Christoph and Holz, Thorsten and Fritz, Mario},
+  title     = {Not what you've signed up for: Compromising Real-World
+               {LLM}-Integrated Applications with Indirect Prompt Injection},
+  booktitle = {Proceedings of the 16th ACM Workshop on Artificial Intelligence
+               and Security (AISec '23)},
+  year      = {2023},
+  eprint    = {2302.12173},
+  archivePrefix = {arXiv}
+}
+
+% UNVERIFIED-METADATA: full author list not confirmed; venue, year and eprint are.
+@inproceedings{Deb24,
+  author    = {Debenedetti, Edoardo and others},
+  title     = {{AgentDojo}: A Dynamic Environment to Evaluate Prompt Injection
+               Attacks and Defenses for {LLM} Agents},
+  booktitle = {Advances in Neural Information Processing Systems 37
+               (NeurIPS 2024), Datasets and Benchmarks Track},
+  year      = {2024},
+  eprint    = {2406.13352},
+  archivePrefix = {arXiv}
+}
+
+@misc{Deb25,
+  author    = {Debenedetti, Edoardo and Shumailov, Ilia and Fan, Tianqi and
+               Hayes, Jamie and Carlini, Nicholas and Fabian, Daniel and
+               Kern, Christoph and Shi, Chongyang and Terzis, Andreas and
+               Tram{\`e}r, Florian},
+  title     = {Defeating Prompt Injections by Design},
+  year      = {2025},
+  eprint    = {2503.18813},
+  archivePrefix = {arXiv}
+}
+
+% UNVERIFIED-METADATA: full author list not confirmed.
+@inproceedings{Rua24,
+  author    = {Ruan, Yangjun and others},
+  title     = {Identifying the Risks of {LM} Agents with an {LM}-Emulated Sandbox},
+  booktitle = {Proceedings of the International Conference on Learning
+               Representations (ICLR)},
+  year      = {2024}
+}

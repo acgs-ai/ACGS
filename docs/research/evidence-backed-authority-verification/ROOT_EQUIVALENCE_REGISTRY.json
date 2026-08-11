@@ -1,0 +1,409 @@
+{
+  "agent_is_root_equivalent": true,
+  "authority_equivalent_paths": [],
+  "docker_access_route": {
+    "acl": [
+      "user::rw-",
+      "group::rw-",
+      "other::---"
+    ],
+    "minimal_removal": "remove the agent from group 'docker' (or drop the ACL entry); the daemon itself needs no change",
+    "routes": [
+      "group membership: agent is in group 'docker'"
+    ],
+    "socket": "/var/run/docker.sock",
+    "socket_group": "docker",
+    "socket_mode": "0o660",
+    "socket_owner_uid": 0
+  },
+  "measurement_context": {
+    "capabilities": {
+      "bounding": "000001ffffffffff",
+      "effective": "0000000000000000",
+      "permitted": "0000000000000000"
+    },
+    "disqualifiers": [],
+    "euid": 1000,
+    "filesystem_visibility": {
+      "/etc/fstab": {
+        "mode": "0o644",
+        "owner_gid": 0,
+        "owner_uid": 0,
+        "parent_searchable": true,
+        "readable_by_agent": true,
+        "state": "PRESENT"
+      },
+      "/etc/group": {
+        "mode": "0o644",
+        "owner_gid": 0,
+        "owner_uid": 0,
+        "parent_searchable": true,
+        "readable_by_agent": true,
+        "state": "PRESENT"
+      },
+      "/etc/gshadow": {
+        "mode": "0o0",
+        "owner_gid": 0,
+        "owner_uid": 0,
+        "parent_searchable": true,
+        "readable_by_agent": false,
+        "state": "PRESENT"
+      },
+      "/etc/polkit-1/rules.d": {
+        "mode": "0o750",
+        "owner_gid": 114,
+        "owner_uid": 0,
+        "parent_searchable": true,
+        "readable_by_agent": false,
+        "state": "PRESENT"
+      },
+      "/etc/subgid": {
+        "mode": "0o644",
+        "owner_gid": 0,
+        "owner_uid": 0,
+        "parent_searchable": true,
+        "readable_by_agent": true,
+        "state": "PRESENT"
+      },
+      "/etc/subuid": {
+        "mode": "0o644",
+        "owner_gid": 0,
+        "owner_uid": 0,
+        "parent_searchable": true,
+        "readable_by_agent": true,
+        "state": "PRESENT"
+      },
+      "/etc/sudoers": {
+        "mode": "0o440",
+        "owner_gid": 0,
+        "owner_uid": 0,
+        "parent_searchable": true,
+        "readable_by_agent": false,
+        "state": "PRESENT"
+      },
+      "/etc/sudoers.d": {
+        "mode": "0o750",
+        "owner_gid": 0,
+        "owner_uid": 0,
+        "parent_searchable": true,
+        "readable_by_agent": false,
+        "state": "PRESENT"
+      },
+      "/proc/self/status": {
+        "mode": "0o444",
+        "owner_gid": 1000,
+        "owner_uid": 1000,
+        "parent_searchable": true,
+        "readable_by_agent": true,
+        "state": "PRESENT"
+      },
+      "/usr/bin/sudo": {
+        "mode": "0o4111",
+        "owner_gid": 0,
+        "owner_uid": 0,
+        "parent_searchable": true,
+        "readable_by_agent": false,
+        "state": "PRESENT"
+      },
+      "/usr/share/polkit-1/rules.d": {
+        "mode": "0o755",
+        "owner_gid": 0,
+        "owner_uid": 0,
+        "parent_searchable": true,
+        "readable_by_agent": true,
+        "state": "PRESENT"
+      },
+      "/var/run/docker.sock": {
+        "mode": "0o660",
+        "owner_gid": 969,
+        "owner_uid": 0,
+        "parent_searchable": true,
+        "readable_by_agent": true,
+        "state": "PRESENT"
+      },
+      "_mountinfo_entries": {
+        "count": 56
+      }
+    },
+    "fingerprint_sha256": "f20868966845913d0438af7e97d5e8aebafd22979f6ce13d9d652d12e6c7c823",
+    "getgroups": [
+      10,
+      969,
+      1000
+    ],
+    "gid_map": [
+      [
+        0,
+        0,
+        4294967295
+      ]
+    ],
+    "host_representative": true,
+    "namespaces": {
+      "cgroup": "cgroup:[4026531835]",
+      "ipc": "ipc:[4026531839]",
+      "mnt": "mnt:[4026531832]",
+      "net": "net:[4026531833]",
+      "pid": "pid:[4026531836]",
+      "pid_for_children": "pid:[4026531836]",
+      "time": "time:[4026531834]",
+      "time_for_children": "time:[4026531834]",
+      "user": "user:[4026531837]",
+      "uts": "uts:[4026531838]"
+    },
+    "requirement": "uid_map == gid_map == [(0, 0, 4294967295)] and NoNewPrivs == 0 and Seccomp == 0; an inventory taken outside this context is not evidence about the host and is treated as absent",
+    "status": {
+      "CapAmb": "0000000000000000",
+      "CapBnd": "000001ffffffffff",
+      "CapEff": "0000000000000000",
+      "CapInh": "0000000800000000",
+      "CapPrm": "0000000000000000",
+      "Gid": "1000\t1000\t1000\t1000",
+      "Groups": "10 969 1000",
+      "NoNewPrivs": "0",
+      "Seccomp": "0",
+      "Seccomp_filters": "0",
+      "Uid": "1000\t1000\t1000\t1000"
+    },
+    "uid": 1000,
+    "uid_map": [
+      [
+        0,
+        0,
+        4294967295
+      ]
+    ],
+    "undetermined_paths": []
+  },
+  "mechanisms": {
+    "buildkit": {
+      "classification": "NOT_PRESENT"
+    },
+    "containerd": {
+      "classification": "PRESENT_NON_ESCALATING",
+      "evidence": {
+        "acl": [
+          "user::rw-",
+          "group::rw-",
+          "other::---"
+        ],
+        "group_name": "root",
+        "mode": "0o660",
+        "owner_gid": 0,
+        "owner_uid": 0,
+        "path": "/run/containerd/containerd.sock",
+        "writable_by_agent": false
+      }
+    },
+    "cri": {
+      "classification": "NOT_PRESENT"
+    },
+    "docker_rootful": {
+      "classification": "ROOT_EQUIVALENT",
+      "evidence": {
+        "container_uid_map": [
+          "         0          0 4294967295"
+        ],
+        "docker_root_dir": "/var/lib/docker|[\"name=seccomp,profile=builtin\",\"name=selinux\",\"name=cgroupns\"]",
+        "host_file_content_after": "unreadable by agent: Permission denied",
+        "host_file_uid_after": 4242,
+        "image": "icanbet-mirror:argcheck",
+        "rootless_daemon": false,
+        "socket": "/var/run/docker.sock",
+        "writable": true
+      },
+      "note": "SELinux denies the bind-mount write by default; --security-opt label=disable removes it. A flag is not a boundary when the attacker chooses the flags.",
+      "targets": {
+        "A_arbitrary_host_write": true,
+        "B_arbitrary_host_chown": true,
+        "C_uid_0": true,
+        "E_capabilities": true,
+        "F_mount_defeats_dac": true
+      }
+    },
+    "foreign_namespace_handles": {
+      "classification": "PRESENT_NON_ESCALATING",
+      "evidence": {
+        "count": 0,
+        "foreign_namespace_handles_openable": []
+      },
+      "note": "opening another principal's namespace handle requires ptrace_may_access; a non-empty list would mean the agent can reach namespaces of principals it does not own"
+    },
+    "lxd": {
+      "classification": "NOT_PRESENT"
+    },
+    "podman_rootless": {
+      "classification": "PRESENT_NON_ESCALATING",
+      "evidence": {
+        "agent_reachable_uid_ranges": [
+          "1000..1000",
+          "524288..589823"
+        ],
+        "host_file_uid_after": 528529,
+        "host_file_uid_before": 1000,
+        "image": "docker.io/library/postgres:17.10-bookworm",
+        "info_stderr": "",
+        "landed_uid_inside_agent_delegation": true,
+        "output": "0\n         0       1000          1\n         1     524288      65536\ndone",
+        "rootless": true
+      },
+      "note": "rootless container root maps to the agent uid or its delegated subuid range, so it confers nothing the agent does not already have -- which is exactly why it is a safe replacement for rootful Docker",
+      "targets": {
+        "B_arbitrary_host_chown": false,
+        "D_transition_outside_delegation": false
+      }
+    },
+    "podman_system": {
+      "classification": "NOT_PRESENT"
+    },
+    "setuid_capability_helpers": {
+      "classification": "PRESENT_NON_ESCALATING",
+      "evidence": {
+        "file_capabilities": [
+          "/usr/bin/newgidmap cap_setgid=ep",
+          "/usr/bin/newuidmap cap_setuid=ep",
+          "/usr/bin/arping cap_net_raw=p",
+          "/usr/bin/clockdiff cap_net_raw=p",
+          "/usr/bin/warp-svc cap_dac_read_search,cap_setgid,cap_setuid,cap_net_bind_service,cap_net_admin,cap_net_raw,cap_sys_ptrace=ei",
+          "/usr/bin/suexec cap_setgid,cap_setuid=ep",
+          "/usr/bin/mtr-packet cap_net_raw=ep",
+          "/usr/libexec/gstreamer-1.0/gst-ptp-helper cap_net_bind_service,cap_net_admin,cap_sys_nice=ep",
+          "/usr/libexec/sssd/sssd_pam cap_dac_read_search=p",
+          "/usr/libexec/sssd/krb5_child cap_dac_read_search,cap_setgid,cap_setuid=p",
+          "/usr/libexec/sssd/ldap_child cap_dac_read_search=p"
+        ],
+        "setuid_root_binaries": [
+          "/bin/at",
+          "/bin/chage",
+          "/bin/chfn",
+          "/bin/chsh",
+          "/bin/crontab",
+          "/bin/fusermount",
+          "/bin/fusermount-glusterfs",
+          "/bin/fusermount3",
+          "/bin/gpasswd",
+          "/bin/grub2-set-bootflag",
+          "/bin/mount",
+          "/bin/mount.nfs",
+          "/bin/newgrp",
+          "/bin/pam_timestamp_check",
+          "/bin/passwd",
+          "/bin/pkexec",
+          "/bin/su",
+          "/bin/sudo",
+          "/bin/umount",
+          "/bin/unix_chkpwd",
+          "/bin/userhelper",
+          "/bin/vmware-user-suid-wrapper",
+          "/sbin/at",
+          "/sbin/chage",
+          "/sbin/chfn",
+          "/sbin/chsh",
+          "/sbin/crontab",
+          "/sbin/fusermount",
+          "/sbin/fusermount-glusterfs",
+          "/sbin/fusermount3",
+          "/sbin/gpasswd",
+          "/sbin/grub2-set-bootflag",
+          "/sbin/mount",
+          "/sbin/mount.nfs",
+          "/sbin/newgrp",
+          "/sbin/pam_timestamp_check",
+          "/sbin/passwd",
+          "/sbin/pkexec",
+          "/sbin/su",
+          "/sbin/sudo",
+          "/sbin/umount",
+          "/sbin/unix_chkpwd",
+          "/sbin/userhelper",
+          "/sbin/vmware-user-suid-wrapper",
+          "/usr/bin/at",
+          "/usr/bin/chage",
+          "/usr/bin/chfn",
+          "/usr/bin/chsh",
+          "/usr/bin/crontab",
+          "/usr/bin/fusermount",
+          "/usr/bin/fusermount-glusterfs",
+          "/usr/bin/fusermount3",
+          "/usr/bin/gpasswd",
+          "/usr/bin/grub2-set-bootflag",
+          "/usr/bin/mount",
+          "/usr/bin/mount.nfs",
+          "/usr/bin/newgrp",
+          "/usr/bin/pam_timestamp_check",
+          "/usr/bin/passwd",
+          "/usr/bin/pkexec",
+          "/usr/bin/su",
+          "/usr/bin/sudo",
+          "/usr/bin/umount",
+          "/usr/bin/unix_chkpwd",
+          "/usr/bin/userhelper",
+          "/usr/bin/vmware-user-suid-wrapper",
+          "/usr/libexec/libgtop_server2",
+          "/usr/libexec/qemu-bridge-helper",
+          "/usr/sbin/at",
+          "/usr/sbin/chage",
+          "/usr/sbin/chfn",
+          "/usr/sbin/chsh",
+          "/usr/sbin/crontab",
+          "/usr/sbin/fusermount",
+          "/usr/sbin/fusermount-glusterfs",
+          "/usr/sbin/fusermount3",
+          "/usr/sbin/gpasswd",
+          "/usr/sbin/grub2-set-bootflag",
+          "/usr/sbin/mount",
+          "/usr/sbin/mount.nfs",
+          "/usr/sbin/newgrp",
+          "/usr/sbin/pam_timestamp_check",
+          "/usr/sbin/passwd",
+          "/usr/sbin/pkexec",
+          "/usr/sbin/su",
+          "/usr/sbin/sudo",
+          "/usr/sbin/umount",
+          "/usr/sbin/unix_chkpwd",
+          "/usr/sbin/userhelper",
+          "/usr/sbin/vmware-user-suid-wrapper"
+        ]
+      },
+      "note": "newuidmap/newgidmap carry cap_setuid/cap_setgid and are the identity-transition path V2 used. They are bounded by /etc/subuid, which the agent cannot write -- so they reach the delegated range and nothing else.",
+      "targets": {
+        "D_transition_to_authority_uid": "tested in escalations.py",
+        "J_alter_own_delegation": false
+      }
+    },
+    "sudo_polkit_interactive": {
+      "classification": "UNKNOWN",
+      "evidence": {
+        "agent_in_wheel_or_sudo": true,
+        "present": {
+          "machinectl": "/usr/bin/machinectl",
+          "pkexec": "/usr/bin/pkexec",
+          "run0": "/usr/bin/run0",
+          "sudo": "/usr/bin/sudo",
+          "systemd-run": "/usr/bin/systemd-run"
+        },
+        "sudoers_readable": false
+      },
+      "note": "sudo and pkexec are password- or polkit-gated interactive paths. They are recorded as present and NOT exercised: escalating through them is a human action, and doing so would neither change the verdict nor be reversible from inside this task.",
+      "targets": {
+        "C_uid_0": "UNKNOWN"
+      },
+      "why_unknown_is_acceptable_here": "UNKNOWN never counts as a pass. It does not need resolving because Docker already establishes root-equivalence; if Docker were removed this entry would have to be resolved by the administrator, and the cutover plan says so."
+    },
+    "systemd_units": {
+      "classification": "PRESENT_NON_ESCALATING",
+      "evidence": {
+        "user_unit_dir": "/home/martin/.config/systemd/user",
+        "user_unit_dir_exists": true,
+        "writable_system_unit_dirs": []
+      },
+      "note": "user units run as the agent uid and confer nothing new. A writable system unit directory would be root-equivalent; none is."
+    }
+  },
+  "root_equivalent_paths": [
+    "docker_rootful"
+  ],
+  "unknown_paths": [
+    "sudo_polkit_interactive"
+  ]
+}
