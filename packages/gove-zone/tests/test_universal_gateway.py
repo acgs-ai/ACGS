@@ -468,6 +468,35 @@ def test_claude_hook_actor_allowlist(tmp_path: Path) -> None:
     gateway = make_gateway(tmp_path, allowed_actors=frozenset({"alice"}))
     response = gateway.handle_claude_hook({"tool_name": "Read", "tool_input": {}}, actor="mallory")
     assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    # The refusal is chain-visible, exactly like the `invoke` surface: an
+    # unauthorized principal probing the hook must not be invisible to chain
+    # verification and incident review.
+    (event,) = audit_events(tmp_path)
+    assert event["decision"] == "deny"
+    assert event["matched_rules"] == ["ACTOR_NOT_ALLOWED"]
+    assert event["actor"] == "mallory"
+
+
+def test_claude_hook_actor_allowlist_audits_every_batched_call(tmp_path: Path) -> None:
+    # The docstring promise — every proposed call is evaluated and audited
+    # individually — holds for the allowlist refusal too: one synthesized
+    # deny per call, not one per batch.
+    gateway = make_gateway(tmp_path, allowed_actors=frozenset({"alice"}))
+    response = gateway.handle_claude_hook(
+        {
+            "tool_calls": [
+                {"function": {"name": "Read", "arguments": '{"file_path": "/tmp/a"}'}},
+                {"function": {"name": "Glob", "arguments": '{"pattern": "*.py"}'}},
+            ]
+        },
+        actor="mallory",
+    )
+    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "gove_zone" not in response
+    events = audit_events(tmp_path)
+    assert len(events) == 2
+    assert all(event["decision"] == "deny" for event in events)
+    assert all(event["matched_rules"] == ["ACTOR_NOT_ALLOWED"] for event in events)
 
 
 # -- REST surface ------------------------------------------------------------------- #

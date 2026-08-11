@@ -81,6 +81,17 @@ from gove_zone.evaluation import (
     load_evaluation_scenarios,
     load_evaluation_suite,
 )
+from gove_zone.execution import (
+    EXECUTION_ACTIONS,
+    EXECUTION_BOUNDARY,
+    ExecutionEvent,
+    build_execution_policy,
+    classify_command,
+    declared_package_manager,
+    execution_tool_calls_from_hook_payload,
+    make_execution_call_factory,
+    verify_execution_chain,
+)
 from gove_zone.executor import (
     GovernedExecutor,
     execute_with_receipt,
@@ -330,6 +341,15 @@ __all__ = [
     "alternative_from_record",
     "approve_escalation",
     "discover_alternatives",
+    "EXECUTION_ACTIONS",
+    "EXECUTION_BOUNDARY",
+    "ExecutionEvent",
+    "build_execution_policy",
+    "classify_command",
+    "declared_package_manager",
+    "execution_tool_calls_from_hook_payload",
+    "make_execution_call_factory",
+    "verify_execution_chain",
     "emit_receipt_for_hook",
     "emit_receipts_for_hook",
     "evaluate_policy_scenarios",

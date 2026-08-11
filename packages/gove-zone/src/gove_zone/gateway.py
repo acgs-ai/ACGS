@@ -1,9 +1,8 @@
 """Universal Agent Gateway — one strong gate, many agent-framework surfaces.
 
-Every agent framework surface (MCP, OpenAI function calling, LangGraph,
-Claude Code hooks, REST) is a thin *projection* onto a single governed
-chokepoint, :meth:`UniversalGateway.invoke`, which drives the full
-Policy → Receipt → Executor chain:
+Execution-owning framework surfaces (MCP, OpenAI function calling, LangGraph,
+REST) are thin *projections* onto :meth:`UniversalGateway.invoke`, which drives
+the full Policy → Receipt → Executor chain:
 
 1. **Policy** — :meth:`~gove_zone.kernel.Kernel.evaluate_and_record` evaluates
    the call under the fail-closed watchdog and appends exactly one decision to
@@ -40,7 +39,8 @@ introspects closures or object internals can reach the raw function without
 tripping it. The cryptographic closure remains the signed receipt gate plus
 offline verification of the audit chain and consumption ledger.
 
-Scope note: the Claude Code hook surface is decision + receipt only — the
+The Claude Code hook is deliberately different: it is a policy-decision, audit,
+and receipt-minting mediation surface, not a projection onto ``invoke``. The
 side effect there is executed by the host runtime, which must honor the
 returned deny. That matches the :mod:`gove_zone.integration` gate-mode story;
 it cannot be receipt-gated at the executor because the gateway does not run
@@ -1025,9 +1025,13 @@ class UniversalGateway:
         *,
         actor: str,
         action_kind: str = "PreToolUse",
+        call_factory: Callable[..., Sequence[ToolCall]] | None = None,
     ) -> dict[str, Any]:
-        """Decide one Claude Code hook event (Policy → Receipt; the host runtime
-        is the executor leg and must honor the returned decision).
+        """Decide one Claude Code hook event (Policy → Receipt only).
+
+        The host runtime owns any later side effect and must honor the returned
+        decision. This method does not call ``execute_with_receipt`` and must not
+        be described as receipt-gated side-effect execution.
 
         Batch-aware, deny-wins: multi-call payloads (OpenAI Responses /
         ``tool_calls`` batches, per :func:`gove_zone.integration.
@@ -1042,28 +1046,80 @@ class UniversalGateway:
 
         Fail-closed: an unrecordable decision (audit failure) or any
         governance error returns ``"deny"``.
+
+        ``call_factory`` (optional) replaces the default payload → ``ToolCall``
+        normalization with a caller-supplied one, called as
+        ``factory(payload, action_kind=..., actor=...)``. It exists so a surface
+        can classify the proposed call *structurally* before policy evaluation —
+        :func:`gove_zone.execution.execution_tool_calls_from_hook_payload` maps a
+        shell invocation onto its ``env.*`` execution surface this way. The
+        factory only chooses how the proposed action is *named and described*;
+        every decision, audit append, and receipt still runs through the same
+        kernel below. It cannot choose or replace the gateway actor: a mismatch
+        denies the entire batch before evaluation, audit, or receipt minting.
+        ``None`` (the default) keeps the existing behavior exactly.
         """
         if not actor or not actor.strip():
             raise ValueError("actor is required for hook governance (fail-closed)")
-        calls = tool_calls_from_hook_payload(dict(payload), action_kind=action_kind, actor=actor)
+        factory = call_factory if call_factory is not None else tool_calls_from_hook_payload
+        try:
+            calls = tuple(factory(dict(payload), action_kind=action_kind, actor=actor))
+        except Exception as exc:  # noqa: BLE001 - a crashing normalizer must fail closed
+            # A factory that raises on a malformed or unsupported payload is a
+            # governance failure, not a caller contract error: direct
+            # integrations rely on this method's documented fail-closed
+            # response shape, so the crash must become a deny, not an escaped
+            # exception that drops the response contract.
+            return _hook_response(
+                action_kind, "deny", f"call normalization failed: {type(exc).__name__}"
+            )
+        if not all(isinstance(call, ToolCall) for call in calls):
+            # Result validation is part of the same boundary: a factory
+            # returning a non-ToolCall would otherwise crash the actor-binding
+            # check below and escape the response contract the same way.
+            return _hook_response(action_kind, "deny", "call factory returned a non-ToolCall")
         if not calls:
             return _hook_response(action_kind, "deny", "no governable call in hook payload")
+        if any(call.actor != actor for call in calls):
+            return _hook_response(action_kind, "deny", "call factory actor mismatch")
 
         if self.allowed_actors is not None and actor not in self.allowed_actors:
-            return _hook_response(
-                action_kind, "deny", f"actor {actor!r} is not in the gateway actor allowlist"
-            )
+            reason = f"actor {actor!r} is not in the gateway actor allowlist"
+            # `invoke` records this condition through `_append_synthesized_deny`;
+            # the hook surface must too, or repeated unauthorized-principal
+            # attempts would be invisible to chain verification and incident
+            # review. One record per proposed call keeps the "every call is
+            # audited individually" contract; an unrecordable deny still
+            # denies (the refusal never depends on the append succeeding).
+            for call in calls:
+                try:
+                    self._append_synthesized_deny(call, rule=_ACTOR_ALLOWLIST_RULE, reason=reason)
+                except AuditError:
+                    break
+            return _hook_response(action_kind, "deny", reason)
 
         decided: list[tuple[Any, str, str]] = []  # (record, audit_hash, previous_audit_hash)
         for call in calls:
-            previous_audit_hash = self._audit.last_hash()
+            # Source previous_audit_hash from the append result, NOT a separate
+            # pre-read: ``append`` computes ``previous_hash`` under the store's
+            # exclusive lock against the real in-chain predecessor, so the
+            # receipt's chain-linkage claim stays accurate even when another
+            # writer advances the head between decisions (a lock-free
+            # ``last_hash()`` pre-read could be superseded before the locked
+            # write and record a stale anchor).
             try:
-                record, audit_hash = self._kernel_for(actor).evaluate_and_record(call)
+                audited = self._kernel_for(actor).evaluate_and_append(call)
             except GoveZoneError as exc:
                 return _hook_response(
                     action_kind, "deny", f"governance decision unavailable: {type(exc).__name__}"
                 )
-            decided.append((record, audit_hash, previous_audit_hash))
+            decided.append(
+                (
+                    audited.record,
+                    audited.audit_hash,
+                    str(audited.append_result.get("previous_hash", "")),
+                )
+            )
 
         denied = [record for record, _, _ in decided if record.decision is Decision.DENY]
         if denied:
