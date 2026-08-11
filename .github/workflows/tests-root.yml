@@ -16,8 +16,9 @@
 # is gated by the automatic hosted contract lane in
 # `saas-beta-p0-evidence.yml`; its exact proof remains authorized/manual. It is
 # not a generic root test. The five release-evidence / readiness tests use the dedicated
-# `readiness-evidence.yml` workflow (+ its hosted twin); the package-floor /
-# mypy-scope tests need initialized submodules and remain a follow-up.
+# `readiness-evidence.yml` workflow (+ its hosted twin); the package-floor
+# tests hard-require initialized submodules and stay excluded here (the swarm
+# mypy-gate test self-skips when the submodule is absent and is not excluded).
 
 name: tests-root
 
@@ -102,10 +103,19 @@ jobs:
         #   test_release_evidence_bundle       -> covered by readiness-evidence.yml
         #   test_production_blocker_evidence   -> covered by readiness-evidence.yml
         #   test_production_launch_preflight   -> covered by readiness-evidence.yml
-        #   *_floor_* / *mypy* scope tests     -> need initialized submodules (follow-up)
+        #   *_floor_* / typecheck-scope tests  -> read submodule pyproject.toml files,
+        #                                         and submodules are intentionally not
+        #                                         initialized in this gate; run locally
+        #                                         with initialized submodules instead.
+        #                                         (The swarm mypy-gate test now skips
+        #                                         itself when the submodule is absent.)
+        #
+        # The --with deps are pinned: this gate runs --no-project (not lock-governed),
+        # so unpinned specs re-resolve fresh on every run — a reproducibility and
+        # supply-chain hole for the crypto backend that decides signature verdicts.
         run: |
           uv python install 3.11
-          uv run --no-project --python 3.11 --with pytest --with pyyaml --with cryptography \
+          uv run --no-project --python 3.11 --with pytest==9.1.1 --with pyyaml==6.0.3 --with cryptography==50.0.0 \
             python -m pytest tests/ \
             --ignore=tests/docs \
             --ignore=tests/saas_beta \
@@ -114,5 +124,5 @@ jobs:
             --ignore=tests/test_release_evidence_bundle.py \
             --ignore=tests/test_production_blocker_evidence.py \
             --ignore=tests/test_production_launch_preflight.py \
-            -k "not test_acgs_lite_published_floor_unchanged and not test_acgs_swarm_floor_drives_workspace_floor and not test_acgs_swarm_has_strict_core_mypy_gate and not test_typecheck_py_uses_configured_mypy_scope" \
+            -k "not test_acgs_lite_published_floor_unchanged and not test_acgs_swarm_floor_drives_workspace_floor and not test_typecheck_py_uses_configured_mypy_scope" \
             -v --import-mode=importlib

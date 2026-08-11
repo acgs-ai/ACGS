@@ -93,7 +93,7 @@ jobs:
         # stay out of this gate.
         run: |
           uv python install 3.11
-          uv run --no-project --python 3.11 --with pytest --with pyyaml --with cryptography \
+          uv run --no-project --python 3.11 --with pytest==9.1.1 --with pyyaml==6.0.3 --with cryptography==50.0.0 \
             python -m pytest tests/ \
             --ignore=tests/docs \
             --ignore=tests/saas_beta \
@@ -102,5 +102,5 @@ jobs:
             --ignore=tests/test_release_evidence_bundle.py \
             --ignore=tests/test_production_blocker_evidence.py \
             --ignore=tests/test_production_launch_preflight.py \
-            -k "not test_acgs_lite_published_floor_unchanged and not test_acgs_swarm_floor_drives_workspace_floor and not test_acgs_swarm_has_strict_core_mypy_gate and not test_typecheck_py_uses_configured_mypy_scope" \
+            -k "not test_acgs_lite_published_floor_unchanged and not test_acgs_swarm_floor_drives_workspace_floor and not test_typecheck_py_uses_configured_mypy_scope" \
             -v --import-mode=importlib
