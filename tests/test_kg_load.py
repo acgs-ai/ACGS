@@ -306,6 +306,56 @@ def test_duplicate_node_identities_are_refused_before_touching_the_database(
     assert "driver" not in captured  # never connected, so nothing was wiped
 
 
+def test_duplicate_relationship_identities_are_refused_before_touching_the_database(
+    tmp_path, monkeypatch, capsys
+):
+    """REGRESSION. The relationship loader MERGEs on (type, endpoints), so two
+    input rows sharing an identity silently collapsed into one edge with the
+    later row's SET overwriting the earlier row's properties — while
+    loaded_rels still counted and logged both input rows, publishing fewer
+    edges than supplied with a successful exit. Duplicate identities must be
+    refused before connecting or deleting anything, exactly like nodes."""
+    graph_path = tmp_path / "graph.json"
+    graph_path.write_text(
+        json.dumps(
+            _graph(
+                nodes=[_node("a.py"), _node("b.py")],
+                rels=[
+                    _rel("IMPORTS", "a.py", "b.py", weight=1),
+                    _rel("IMPORTS", "a.py", "b.py", weight=2),
+                ],
+            )
+        )
+    )
+    captured = fake_neo4j(monkeypatch, lambda query: [])
+    monkeypatch.setattr(sys, "argv", ["load.py", "--graph", str(graph_path), "--wipe"])
+
+    code = load.main()
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "duplicate relationship identity" in err
+    assert "(:File {key: 'a.py'})-[:IMPORTS]->(:File {key: 'b.py'})" in err
+    assert "refusing" in err
+    assert "driver" not in captured  # never connected, so nothing was wiped
+
+
+def test_same_endpoints_under_different_types_are_not_duplicate_relationships(run_load):
+    """(type, endpoints) is the identity: two relationship types between the
+    same pair of nodes are distinct edges and must still load."""
+    graph = _graph(
+        nodes=[_node("a.py"), _node("b.py")],
+        rels=[_rel("IMPORTS", "a.py", "b.py"), _rel("COVERS", "a.py", "b.py")],
+    )
+
+    code, driver, _ = run_load(graph)
+
+    assert code == 0
+    merges = [q for q, _ in driver.sessions[0].calls if "MERGE (a)" in q]
+    assert any("[e:`IMPORTS`]" in q for q in merges)
+    assert any("[e:`COVERS`]" in q for q in merges)
+
+
 def test_same_key_under_different_labels_is_not_a_duplicate(run_load):
     """(label, key) is the identity: a File and a Package sharing a key are
     distinct nodes and must still load."""

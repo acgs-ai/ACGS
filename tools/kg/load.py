@@ -266,6 +266,34 @@ def main() -> int:
         )
         return 1
 
+    # The relationship loader MERGEs on (type, endpoints), so two input rows
+    # sharing an identity silently collapse into one edge with the later
+    # row's SET overwriting the earlier row's properties — while loaded_rels
+    # still counts and reports both input rows. Exactly like duplicate node
+    # identities, fewer edges than supplied must never be published with a
+    # successful exit, so duplicates are refused before connecting or
+    # deleting anything.
+    rel_keys: set[tuple[str, str, str, str, str]] = set()
+    dup_rels: list[tuple[str, str, str, str, str]] = []
+    for r in rels:
+        ident = (r["type"], r["src_label"], r["src"], r["dst_label"], r["dst"])
+        if ident in rel_keys:
+            dup_rels.append(ident)
+        rel_keys.add(ident)
+    if dup_rels:
+        for rtype, src_label, src, dst_label, dst in dup_rels[:10]:
+            log(
+                "ERROR: duplicate relationship identity "
+                f"(:{src_label} {{key: {src!r}}})-[:{rtype}]->"
+                f"(:{dst_label} {{key: {dst!r}}})"
+            )
+        log(
+            f"ERROR: {len(dup_rels)} duplicate relationship identit"
+            f"{'y' if len(dup_rels) == 1 else 'ies'}: MERGE would silently "
+            "collapse the rows and overwrite their properties; refusing"
+        )
+        return 1
+
     # The relationship loader MATCHes both endpoints before MERGE, so Cypher
     # silently discards a row whose endpoint is absent — a dangling rel after
     # an extractor-schema change, or a hand-built --graph override — while

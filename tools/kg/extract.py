@@ -657,13 +657,30 @@ def build_topology(tracked: list[str]) -> dict[str, str]:
                     submodules[v] = cur
     status = {}
     try:
-        for line in run("git", "submodule", "status").splitlines():
+        # Plain `git submodule status` reports the commit currently checked
+        # out in the submodule working tree, which differs from the
+        # superproject's recorded gitlink exactly when the checkout has
+        # pointer drift ('+' rows) — publishing that value as pinned_sha
+        # misstated the parent repository's topology precisely when it
+        # mattered. `--cached` reports the SHA recorded in the superproject,
+        # so the pin comes from it and the checked-out commit is kept
+        # separately.
+        for line in run("git", "submodule", "status", "--cached").splitlines():
             line = line.rstrip()
             if not line:
                 continue
             marker, rest = line[0], line[1:].strip()
             sha, path = rest.split(" ", 1)[0], rest.split(" ")[1]
             status[path] = {"initialized": marker != "-", "pinned_sha": sha}
+        for line in run("git", "submodule", "status").splitlines():
+            line = line.rstrip()
+            if not line:
+                continue
+            marker, rest = line[0], line[1:].strip()
+            sha, path = rest.split(" ", 1)[0], rest.split(" ")[1]
+            st = status.setdefault(path, {"initialized": marker != "-", "pinned_sha": None})
+            if marker != "-":  # nothing is checked out for '-' rows
+                st["checkout_sha"] = sha
     except subprocess.CalledProcessError:
         pass
 
@@ -716,6 +733,7 @@ def build_topology(tracked: list[str]) -> dict[str, str]:
             branch=cfg.get("branch"),
             initialized=st.get("initialized", False),
             pinned_sha=st.get("pinned_sha"),
+            checkout_sha=st.get("checkout_sha"),
         )
 
     pkg_paths = sorted(
@@ -845,7 +863,14 @@ def build_sealed(tracked: list[str]) -> None:
         data = json.loads(lock.read_text())
         for path, value in data.get("hashes", {}).items():
             G.node("Hash", value, extra_labels=("ConstitutionalHash",), value=value)
-            if G.has("File", path):
+            # Node existence alone is not presence: a stale semantic snapshot
+            # retains a File node for a path since removed from the Git index
+            # (tracked=false) or deleted from disk (present=false), and that
+            # ghost satisfied the lookup, letting verify.py pass — and even
+            # count the entry as sealed — over a protected file that will not
+            # exist in a checkout. The lock entry is present only when its
+            # node is live AND tracked; anything else is an absence.
+            if G.has("File", path) and file_is_live(path):
                 props = G.nodes[("File", path)]["props"]
                 live = (
                     props.get("sealed_hash")

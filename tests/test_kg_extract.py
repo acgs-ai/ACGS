@@ -1754,6 +1754,59 @@ def test_build_topology_assigns_a_gitlink_file_to_its_own_submodule_package(tmp_
     ) in extract.G.rels
 
 
+def test_build_topology_records_the_superproject_pin_not_the_drifted_checkout(
+    tmp_path, monkeypatch
+):
+    """REGRESSION. `git submodule status` reports the commit currently checked
+    out in the submodule working tree ('+' rows when it differs from the
+    gitlink), so a drifted checkout published that value as pinned_sha and
+    the graph misstated the parent repository's topology exactly when the
+    checkout had pointer drift. The pin must come from `--cached` (the SHA
+    recorded in the superproject), with the checked-out commit kept
+    separately."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    (tmp_path / ".gitmodules").write_text(
+        '[submodule "acgs-lite"]\n'
+        "\tpath = packages/acgs-lite\n"
+        "\turl = git@example.com:acgs-lite.git\n"
+    )
+
+    def fake_run(*args):
+        if "--cached" in args:
+            return "+aaaaaaa packages/acgs-lite (v1.0)\n"
+        return "+bbbbbbb packages/acgs-lite (heads/main)\n"
+
+    monkeypatch.setattr(extract, "run", fake_run)
+
+    extract.build_topology([])
+
+    props = extract.G.nodes[("Package", "packages/acgs-lite")]["props"]
+    assert props["pinned_sha"] == "aaaaaaa"
+    assert props["checkout_sha"] == "bbbbbbb"
+    assert props["initialized"] is True
+
+
+def test_build_topology_records_no_checkout_sha_for_an_uninitialized_submodule(
+    tmp_path, monkeypatch
+):
+    """A '-' row has no working-tree checkout, so only the superproject's pin
+    is known."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    (tmp_path / ".gitmodules").write_text(
+        '[submodule "acgs-lite"]\n'
+        "\tpath = packages/acgs-lite\n"
+        "\turl = git@example.com:acgs-lite.git\n"
+    )
+    monkeypatch.setattr(extract, "run", lambda *a: "-abc123 packages/acgs-lite\n")
+
+    extract.build_topology([])
+
+    props = extract.G.nodes[("Package", "packages/acgs-lite")]["props"]
+    assert props["pinned_sha"] == "abc123"
+    assert "checkout_sha" not in props
+    assert props["initialized"] is False
+
+
 # --------------------------------------------------------------------------- #
 # Sealed constitutional-hash markers
 # --------------------------------------------------------------------------- #
@@ -1904,6 +1957,38 @@ def test_build_sealed_reports_a_parent_tree_lock_entry_with_no_file_node_as_miss
     extract.build_sealed([])
 
     assert extract.SEALED_STATS["sealed_lock_missing"] == ["docs/SECURITY_MODEL.md"]
+
+
+@pytest.mark.parametrize("dead_props", [{"tracked": False}, {"present": False}])
+def test_build_sealed_reports_a_lock_entry_resolving_to_a_dead_node_as_missing(
+    tmp_path, monkeypatch, dead_props
+):
+    """REGRESSION. A stale semantic snapshot retains a File node for a path
+    since removed from the Git index (tracked=false) or deleted from disk
+    (present=false), and the lock pass's node-existence check accepted that
+    ghost as present — verify.py could pass, and even count the entry as
+    sealed, over a protected file that will not exist in a checkout. A lock
+    entry is present only when its node is live AND tracked; anything else
+    is an absence published for verify.py to fail on."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    monkeypatch.setattr(extract, "run", lambda *a: "")
+    _lock(tmp_path, {"docs/SECURITY_MODEL.md": "0123456789abcdef"})
+    extract.G.node("File", "docs/SECURITY_MODEL.md", path="docs/SECURITY_MODEL.md", **dead_props)
+
+    extract.build_sealed([])
+
+    props = extract.G.nodes[("File", "docs/SECURITY_MODEL.md")]["props"]
+    assert "pinned_hash" not in props
+    assert "in_hash_lock" not in props
+    assert (
+        "SEALED_WITH",
+        "File",
+        "docs/SECURITY_MODEL.md",
+        "Hash",
+        "0123456789abcdef",
+    ) not in extract.G.rels
+    assert extract.SEALED_STATS["sealed_lock_missing"] == ["docs/SECURITY_MODEL.md"]
+    assert extract.SEALED_STATS["sealed_lock_missing_count"] == 1
 
 
 # --------------------------------------------------------------------------- #
