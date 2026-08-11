@@ -204,6 +204,50 @@ def test_a_dangling_relationship_is_refused_before_touching_the_database(
     assert "driver" not in captured  # never connected, so nothing was wiped
 
 
+def test_a_structurally_incomplete_node_is_refused_before_touching_the_database(
+    tmp_path, monkeypatch, capsys
+):
+    """REGRESSION. The endpoint precheck reads only identity fields, so a
+    node with a valid (label, key) but no `props` (a hand-built --graph
+    override) passed it, the explicitly requested `--wipe` completed its
+    DETACH DELETE, and only then did the grouping loop raise KeyError: the
+    replacement the user asked for was left empty because malformed input
+    was discovered after destruction. Every field the loading loops read
+    must be validated before the loader connects, applies schema, or wipes."""
+    graph_path = tmp_path / "graph.json"
+    graph_path.write_text(json.dumps(_graph(nodes=[{"label": "File", "key": "a.py", "extra": []}])))
+    captured = fake_neo4j(monkeypatch, lambda query: [])
+    monkeypatch.setattr(sys, "argv", ["load.py", "--graph", str(graph_path), "--wipe"])
+
+    code = load.main()
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "node[0] is missing 'props'" in err
+    assert "refusing" in err
+    assert "driver" not in captured  # never connected, so nothing was wiped
+
+
+def test_a_mistyped_relationship_row_is_refused_before_touching_the_database(
+    tmp_path, monkeypatch, capsys
+):
+    """Type errors are structural too: a rel whose `props` is a scalar would
+    raise only inside the batched UNWIND, after the schema and any wipe."""
+    rel = _rel("IMPORTS", "a.py", "b.py")
+    rel["props"] = None
+    graph_path = tmp_path / "graph.json"
+    graph_path.write_text(json.dumps(_graph(nodes=[_node("a.py"), _node("b.py")], rels=[rel])))
+    captured = fake_neo4j(monkeypatch, lambda query: [])
+    monkeypatch.setattr(sys, "argv", ["load.py", "--graph", str(graph_path), "--wipe"])
+
+    code = load.main()
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "rel[0].props is NoneType, expected dict" in err
+    assert "driver" not in captured
+
+
 def test_a_relationship_whose_endpoint_label_mismatches_is_dangling(tmp_path, monkeypatch, capsys):
     """Endpoint identity is (label, key), exactly what the MATCH clauses use:
     a rel naming the right key under the wrong label would also be silently

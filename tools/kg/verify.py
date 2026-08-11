@@ -68,9 +68,21 @@ CHECKS = [
     ("relationships", "MATCH ()-[r]->() RETURN type(r) AS rel_type, count(*) AS n ORDER BY n DESC"),
     (
         "JOIN HEALTH (the load-bearing check)",
-        "MATCH (f:File) RETURN count(*) AS files, "
-        "count(f.summary) AS with_semantic, count(f.commit_count) AS with_git, "
-        "sum(CASE WHEN f.summary IS NOT NULL AND f.commit_count IS NOT NULL "
+        # The join threshold is computed over the live tracked spine only: a
+        # stale semantic snapshot retains File nodes for deleted
+        # (present=false) or index-removed (tracked=false) paths, which by
+        # construction carry no current git facts and can push joined_both
+        # below the threshold even when every live tracked file joins
+        # correctly. Both flags default to their live value, exactly like
+        # extract.py's file_is_live(). total_files keeps the unfiltered
+        # count so an all-remnant graph is still distinguishable.
+        "MATCH (f:File) "
+        "WITH f, (coalesce(f.tracked, true) AND coalesce(f.present, true)) AS live "
+        "RETURN count(*) AS total_files, "
+        "sum(CASE WHEN live THEN 1 ELSE 0 END) AS files, "
+        "sum(CASE WHEN live AND f.summary IS NOT NULL THEN 1 ELSE 0 END) AS with_semantic, "
+        "sum(CASE WHEN live AND f.commit_count IS NOT NULL THEN 1 ELSE 0 END) AS with_git, "
+        "sum(CASE WHEN live AND f.summary IS NOT NULL AND f.commit_count IS NOT NULL "
         "THEN 1 ELSE 0 END) AS joined_both, "
         "sum(CASE WHEN f.sealed THEN 1 ELSE 0 END) AS sealed",
     ),
@@ -213,8 +225,14 @@ def main() -> int:
                 )
             if title.startswith("JOIN HEALTH"):
                 r = rows[0]
-                if r["files"] == 0:
+                if r["total_files"] == 0:
                     failures.append("no File nodes")
+                elif r["files"] == 0:
+                    failures.append(
+                        "no live tracked File nodes: every File is a deleted "
+                        "or index-removed remnant, so there is no current "
+                        "spine to verify"
+                    )
                 if r["with_semantic"] == 0:
                     row = s.run(SEMANTIC_DECLARED_Q).single()
                     if row and row["loaded"]:
@@ -231,8 +249,8 @@ def main() -> int:
                         print("    (no semantic snapshot loaded: join threshold not applicable)")
                 elif r["joined_both"] < 0.25 * r["files"]:
                     failures.append(
-                        f"join health: only {r['joined_both']}/{r['files']} files carry "
-                        "both semantic and git facts — path keys are not unifying"
+                        f"join health: only {r['joined_both']}/{r['files']} live tracked "
+                        "files carry both semantic and git facts — path keys are not unifying"
                     )
                 if r["sealed"] == 0:
                     # A non-recursive checkout has no live markers: the lock

@@ -21,7 +21,17 @@ from _kg_common import fake_neo4j, load_kg_module
 
 verify = load_kg_module("verify")
 
-HEALTHY_JOIN = {"files": 100, "with_semantic": 60, "with_git": 90, "joined_both": 55, "sealed": 12}
+# total_files > files: a healthy graph may carry stale remnants (deleted or
+# index-removed paths retained by the semantic snapshot); the join threshold
+# is computed over the live tracked spine only.
+HEALTHY_JOIN = {
+    "total_files": 120,
+    "files": 100,
+    "with_semantic": 60,
+    "with_git": 90,
+    "joined_both": 55,
+    "sealed": 12,
+}
 
 
 @pytest.fixture
@@ -56,7 +66,7 @@ def run_verify(monkeypatch):
                 if constraint_rows is not None:
                     return list(constraint_rows)
                 return [_row(n) for n in constraints]
-            if query.startswith("MATCH (f:File) RETURN count(*) AS files"):
+            if query.startswith("MATCH (f:File) WITH f,"):
                 return [join_row]
             if query == verify.SEALED_ABSENT_Q:
                 return [{"absent": absent_lock_entries}]
@@ -118,10 +128,31 @@ def test_a_healthy_graph_passes(run_verify, capsys):
 
 
 def test_an_empty_file_spine_fails(run_verify, capsys):
-    code, _ = run_verify({**HEALTHY_JOIN, "files": 0, "joined_both": 0, "sealed": 0})
+    code, _ = run_verify(
+        {**HEALTHY_JOIN, "total_files": 0, "files": 0, "joined_both": 0, "sealed": 0}
+    )
 
     assert code == 1
     assert "FAIL: no File nodes" in capsys.readouterr().out
+
+
+def test_a_graph_of_only_stale_remnants_fails(run_verify, capsys):
+    """File nodes exist, but every one is a deleted or index-removed remnant:
+    there is no current spine, which must not read as 'no File nodes' passing
+    silently nor as a healthy join."""
+    code, _ = run_verify(
+        {
+            **HEALTHY_JOIN,
+            "total_files": 80,
+            "files": 0,
+            "with_semantic": 0,
+            "with_git": 0,
+            "joined_both": 0,
+        }
+    )
+
+    assert code == 1
+    assert "FAIL: no live tracked File nodes" in capsys.readouterr().out
 
 
 def test_a_graph_whose_layers_did_not_join_fails(run_verify, capsys):
@@ -132,7 +163,7 @@ def test_a_graph_whose_layers_did_not_join_fails(run_verify, capsys):
 
     assert code == 1
     out = capsys.readouterr().out
-    assert "join health: only 10/100 files carry" in out
+    assert "join health: only 10/100 live tracked files carry" in out
 
 
 def test_join_health_threshold_is_a_quarter_of_the_spine(run_verify):
@@ -306,7 +337,14 @@ def test_three_answered_catalog_queries_are_enough(run_verify):
 
 def test_every_failure_is_reported_not_just_the_first(run_verify, capsys):
     code, _ = run_verify(
-        {"files": 0, "with_semantic": 0, "with_git": 0, "joined_both": 0, "sealed": 0}
+        {
+            "total_files": 0,
+            "files": 0,
+            "with_semantic": 0,
+            "with_git": 0,
+            "joined_both": 0,
+            "sealed": 0,
+        }
     )
 
     assert code == 1
@@ -324,6 +362,19 @@ def test_join_health_check_is_present_and_uniquely_prefixed():
     titled = [t for t, _ in verify.CHECKS if t.startswith("JOIN HEALTH")]
 
     assert len(titled) == 1
+
+
+def test_join_health_is_computed_over_the_live_tracked_spine():
+    """REGRESSION. The join-health denominator counted every File node, so a
+    stale semantic snapshot retaining many deleted (present=false) or
+    index-removed (tracked=false) paths, which by construction carry no
+    current git facts, could push joined_both below 25% and fail
+    verification even when every live tracked file joined correctly."""
+    q = dict(verify.CHECKS)["JOIN HEALTH (the load-bearing check)"]
+
+    assert "coalesce(f.tracked, true)" in q
+    assert "coalesce(f.present, true)" in q
+    assert "AS total_files" in q  # the unfiltered count stays observable
 
 
 def test_every_check_and_catalog_entry_is_a_title_query_pair():

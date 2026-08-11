@@ -32,6 +32,43 @@ def chunks(seq, n):
         yield seq[i : i + n]
 
 
+# Every field the loading loops read, with its expected type. The endpoint
+# precheck below touches only identity fields, so a row with valid endpoints
+# but a missing `extra` or `props` (a hand-built --graph override) used to
+# pass it, survive the explicitly requested DETACH DELETE, and only then
+# raise KeyError in the grouping loop: the replacement the user asked for
+# was destroyed in exchange for nothing. Validate the full shape up front.
+NODE_FIELDS: dict[str, type] = {"label": str, "key": str, "extra": list, "props": dict}
+REL_FIELDS: dict[str, type] = {
+    "type": str,
+    "src_label": str,
+    "src": str,
+    "dst_label": str,
+    "dst": str,
+    "props": dict,
+}
+
+
+def malformed_rows(rows: list, fields: dict[str, type], kind: str) -> list[str]:
+    """Human-readable structural errors for every invalid row of one kind."""
+    errors: list[str] = []
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            errors.append(f"{kind}[{i}] is {type(row).__name__}, not an object")
+            continue
+        for field, ftype in fields.items():
+            if field not in row:
+                errors.append(f"{kind}[{i}] is missing {field!r}")
+            elif not isinstance(row[field], ftype):
+                errors.append(
+                    f"{kind}[{i}].{field} is {type(row[field]).__name__}, expected {ftype.__name__}"
+                )
+        extra = row.get("extra")
+        if isinstance(extra, list) and not all(isinstance(x, str) for x in extra):
+            errors.append(f"{kind}[{i}].extra must contain only strings")
+    return errors
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--uri", default=os.environ.get("NEO4J_URI", "bolt://localhost:7687"))
@@ -60,6 +97,19 @@ def main() -> int:
 
     data = json.loads(Path(args.graph).read_text())
     nodes, rels = data["nodes"], data["rels"]
+
+    # Structural validation must complete before connecting, applying schema,
+    # or wiping: discovering malformed input after an explicit DETACH DELETE
+    # leaves the requested replacement empty (see malformed_rows above).
+    invalid = malformed_rows(nodes, NODE_FIELDS, "node") + malformed_rows(rels, REL_FIELDS, "rel")
+    if invalid:
+        for msg in invalid[:10]:
+            log(f"ERROR: malformed row: {msg}")
+        log(
+            f"ERROR: {len(invalid)} structural error(s) in {args.graph}: the load "
+            "would fail after the database had already been modified; refusing"
+        )
+        return 1
 
     # The relationship loader MATCHes both endpoints before MERGE, so Cypher
     # silently discards a row whose endpoint is absent — a dangling rel after

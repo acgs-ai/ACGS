@@ -834,6 +834,44 @@ def test_build_workflows_keys_nodes_by_path_so_same_named_files_stay_distinct(
     assert ("GATES", "Workflow", b_key, "File", "a/x.py") not in extract.G.rels
 
 
+def test_build_workflows_skips_workflow_files_that_are_not_live(tmp_path, monkeypatch):
+    """REGRESSION. GitHub runs workflows from the commit's tree, but the
+    filesystem glob also found an untracked local draft (no File node) and an
+    index-removed workflow left on disk (tracked=false), minting Workflow and
+    GATES edges that Q1/Q2, the verifier, and the reports presented as real
+    CI coverage for tracked source, hiding genuinely ungated files."""
+    pytest.importorskip("yaml")
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    body = (
+        "name: local-only\n"
+        "on:\n"
+        "  pull_request:\n"
+        "    paths:\n"
+        "      - 'src/**'\n"
+        "jobs:\n"
+        "  test:\n"
+        "    steps: []\n"
+    )
+    (wf_dir / "draft.yml").write_text(body)  # untracked: never entered the spine
+    (wf_dir / "removed.yml").write_text(body)  # removed from the index, left on disk
+    _files("src/main.py")
+    extract.G.node(
+        "File",
+        ".github/workflows/removed.yml",
+        path=".github/workflows/removed.yml",
+        present=True,
+        tracked=False,
+    )
+
+    extract.build_workflows(["src/main.py"])
+
+    assert ("Workflow", ".github/workflows/draft.yml") not in extract.G.nodes
+    assert ("Workflow", ".github/workflows/removed.yml") not in extract.G.nodes
+    assert not any(key[0] == "GATES" for key in extract.G.rels)
+
+
 # --------------------------------------------------------------------------- #
 # Compliance control ids
 # --------------------------------------------------------------------------- #
@@ -1371,6 +1409,21 @@ def test_parse_history_aborts_when_git_history_cannot_be_read(tmp_path, monkeypa
         extract.parse_history("not-a-repo")
 
 
+def test_parse_history_rejects_a_shallow_clone(git_repo, tmp_path):
+    """REGRESSION. In a shallow clone `git log` exits 0 with only the
+    retained history, so churn, contributor counts, hotspots, co-change
+    edges, and commit counts were silently computed from a truncated sample
+    while the generated report claimed they cover full history. The
+    check runs once per repo, covering the parent and every initialized
+    submodule alike."""
+    (git_repo / "a.py").write_text("one\ntwo\nthree\n")
+    _git(git_repo, "commit", "-aqm", "second commit")
+    _git(tmp_path, "clone", "-q", "--depth", "1", f"file://{git_repo}", "shallow")
+
+    with pytest.raises(RuntimeError, match="shallow clone"):
+        extract.parse_history("shallow")
+
+
 def test_initialized_submodules_skips_uninitialised_gitlinks(monkeypatch):
     """A leading '-' in `git submodule status` means registered but empty."""
     monkeypatch.setattr(
@@ -1898,6 +1951,37 @@ def test_build_adrs_defaults_unknown_status(tmp_path, monkeypatch):
     extract.build_adrs()
 
     assert extract.G.nodes[("ADR", "ADR-0003")]["props"]["status"] == "Unknown"
+
+
+def test_build_adrs_skips_adr_files_that_are_not_live(tmp_path, monkeypatch):
+    """REGRESSION. The filesystem glob also found an untracked local draft
+    (no File node) and an index-removed ADR left on disk (tracked=false),
+    minting ADR nodes and DECIDES_ON edges for decisions that will not exist
+    in a checkout: the phantom appeared in Q7 and suppressed Q3b's
+    missing-ADR finding for the sealed files it cited."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    adr_dir = tmp_path / "docs" / "adr"
+    adr_dir.mkdir(parents=True)
+    (adr_dir / "0001-draft.md").write_text(
+        "# 0001. Draft\n\n## Status\n\nAccepted\n\nDecides on `src/kernel.py`.\n"
+    )
+    (adr_dir / "0002-removed.md").write_text(
+        "# 0002. Removed\n\n## Status\n\nAccepted\n\nRelates to ADR-0001.\n"
+    )
+    _files("src/kernel.py")
+    extract.G.node(
+        "File",
+        "docs/adr/0002-removed.md",
+        path="docs/adr/0002-removed.md",
+        present=True,
+        tracked=False,
+    )
+
+    extract.build_adrs()
+
+    assert ("ADR", "ADR-0001") not in extract.G.nodes
+    assert ("ADR", "ADR-0002") not in extract.G.nodes
+    assert not any(key[0] in ("DECIDES_ON", "RELATES_TO") for key in extract.G.rels)
 
 
 def test_build_adrs_is_a_noop_without_an_adr_directory(tmp_path, monkeypatch):

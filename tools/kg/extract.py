@@ -415,6 +415,23 @@ def split_rename(path: str) -> tuple[str, str]:
 def parse_history(repo: str = ".", prefix: str = "") -> list[dict]:
     """Commits of one repo. Submodules are separate histories, so this is
     called once per repo and paths are prefixed back onto the parent's spine."""
+    # In a shallow clone `git log` exits 0 with only the retained history, so
+    # churn, contributor counts, hotspots, co-change edges, and commit counts
+    # would be silently computed from a truncated sample while the generated
+    # report claims they cover full history. Called once per repo, so the
+    # parent and every initialized submodule are each checked.
+    shallow = subprocess.run(
+        ["git", "-C", str(ROOT / repo), "rev-parse", "--is-shallow-repository"],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if shallow.returncode == 0 and shallow.stdout.strip() == "true":
+        raise RuntimeError(
+            f"repo {repo!r} is a shallow clone: `git log` would return truncated "
+            "history while the report claims full-history metrics; run "
+            "`git fetch --unshallow` there before extracting"
+        )
     proc = subprocess.run(
         [
             "git",
@@ -974,6 +991,14 @@ def build_adrs() -> None:
     count = 0
     for f in sorted(adr_dir.glob("*.md")):
         rel = f.relative_to(ROOT).as_posix()
+        # An untracked local draft or an index-removed ADR left on disk will
+        # not exist in a checkout, so it is not a decision record. The glob
+        # still found it, minting an ADR whose DECIDES_ON edges appeared in
+        # Q7 and suppressed Q3b's missing-ADR finding for sealed files. Same
+        # live-and-tracked predicate the other doc layers apply.
+        if not (G.has("File", rel) and file_is_live(rel)):
+            log(f"    ! {rel}: not live+tracked, skipped")
+            continue
         text = f.read_text(errors="replace")
         m = re.search(r"^#\s+(.+)$", text, re.M)
         title = m.group(1).strip() if m else f.stem
@@ -1025,6 +1050,10 @@ def build_adrs() -> None:
 
     for f in sorted(adr_dir.glob("*.md")):
         rel = f.relative_to(ROOT).as_posix()
+        # Mirror the ingest gate above: a skipped ADR has no node, so minting
+        # RELATES_TO/SUPERSEDES/DECIDES_ON edges from it would dangle.
+        if not (G.has("File", rel) and file_is_live(rel)):
+            continue
         text = f.read_text(errors="replace")
         num = re.match(r"(\d{4})", f.stem)
         akey = f"ADR-{num.group(1)}" if num else f.stem
@@ -1303,6 +1332,15 @@ def build_workflows(files: list[str]) -> None:
     gates = 0
     for f in sorted(list(wf_dir.glob("*.yml")) + list(wf_dir.glob("*.yaml"))):
         rel = f.relative_to(ROOT).as_posix()
+        # GitHub runs workflows from the commit's tree, so an untracked local
+        # draft or an index-removed file left on disk is not CI. The glob
+        # still found it, minting Workflow/GATES edges that Q1/Q2, the
+        # verifier, and the reports presented as real coverage, hiding
+        # genuinely ungated source. Same live-and-tracked predicate every
+        # other evidence layer applies to its sources.
+        if not (G.has("File", rel) and file_is_live(rel)):
+            log(f"    ! {rel}: not live+tracked, skipped")
+            continue
         try:
             doc = yaml.safe_load(f.read_text(errors="replace")) or {}
         except Exception as exc:  # malformed workflow shouldn't kill the run
