@@ -724,6 +724,40 @@ def test_doc_scope_of_a_missing_file_is_empty_and_cached(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# Document links
+# --------------------------------------------------------------------------- #
+def test_doc_links_resolve_bare_root_document_citations(tmp_path, monkeypatch):
+    """REGRESSION. CLAUDE.md cites `CONCEPTS.md` as a bare backticked filename:
+    PATH_TOKEN requires a slash and MD_LINK requires link syntax, so no
+    LINKS_TO edge was created, Q8 reported CONCEPTS.md as orphaned, and Q12
+    undercounted its authority. CODE_TOKEN already recognises the token; the
+    optional `:line` suffix must be stripped before resolving."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    (tmp_path / "CLAUDE.md").write_text(
+        "Read `CONCEPTS.md` first, then `docs/plan.md:12` for the phases.\n"
+    )
+    _files("CLAUDE.md", "CONCEPTS.md", "docs/plan.md")
+
+    extract.build_doc_links()
+
+    assert ("LINKS_TO", "File", "CLAUDE.md", "File", "CONCEPTS.md") in extract.G.rels
+    assert ("LINKS_TO", "File", "CLAUDE.md", "File", "docs/plan.md") in extract.G.rels
+
+
+def test_doc_links_do_not_link_a_document_to_itself(tmp_path, monkeypatch):
+    """A README naming its own filename (`README.md` says "this README.md")
+    must not mint a self-edge now that bare filename tokens resolve."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    (tmp_path / "README.md").write_text("This `README.md` covers `CONCEPTS.md`.\n")
+    _files("README.md", "CONCEPTS.md")
+
+    extract.build_doc_links()
+
+    assert ("LINKS_TO", "File", "README.md", "File", "README.md") not in extract.G.rels
+    assert ("LINKS_TO", "File", "README.md", "File", "CONCEPTS.md") in extract.G.rels
+
+
+# --------------------------------------------------------------------------- #
 # Git history parsing
 # --------------------------------------------------------------------------- #
 def _git(repo, *args: str) -> None:

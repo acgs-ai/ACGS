@@ -1013,7 +1013,14 @@ def build_doc_links() -> None:
             continue
         text = f.read_text(errors="replace")
         targets = set()
-        for tok in set(MD_LINK.findall(text)) | set(PATH_TOKEN.findall(text)):
+        # Root documents cite each other as bare backticked filenames
+        # (CLAUDE.md says `CONCEPTS.md`): PATH_TOKEN requires a slash and
+        # MD_LINK requires link syntax, so those citations vanished and Q8
+        # reported the target as orphaned. CODE_TOKEN keeps its optional
+        # `:line` suffix inside the capture; strip it before resolving.
+        toks = set(MD_LINK.findall(text)) | set(PATH_TOKEN.findall(text))
+        toks |= {tok.split(":")[0] for tok in CODE_TOKEN.findall(text)}
+        for tok in toks:
             tgt = resolve_link(key, tok)
             if tgt and tgt != key:
                 targets.add(tgt)

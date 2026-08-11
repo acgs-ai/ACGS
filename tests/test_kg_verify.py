@@ -34,6 +34,7 @@ def run_verify(monkeypatch):
         catalog_hits: int = len(verify.CATALOG),
         absent_lock_entries: int = 0,
         snapshot_rows: int = 1,
+        semantic_declared_loaded: bool = False,
         argv: tuple[str, ...] = (),
     ):
         catalog_queries = [q for _, q in verify.CATALOG]
@@ -44,6 +45,8 @@ def run_verify(monkeypatch):
                 return [join_row]
             if query == verify.SEALED_ABSENT_Q:
                 return [{"absent": absent_lock_entries}]
+            if query == verify.SEMANTIC_DECLARED_Q:
+                return [{"loaded": 1 if semantic_declared_loaded else 0}]
             if query.startswith("MATCH (s:Snapshot)"):
                 return [{"head": "abc123", "branch": "main"}] * snapshot_rows
             if query in answered:
@@ -166,12 +169,31 @@ def test_absent_marker_lock_entries_satisfy_the_sealed_check(run_verify, capsys)
 
 def test_a_declared_absent_semantic_layer_skips_the_join_threshold(run_verify, capsys):
     """build_semantic() skips when no knowledge-graph.json is tracked (fresh
-    clone). joined_both is then necessarily zero, which is a declared absence,
-    not broken path-key joins; the gate must not fail `make all` for it."""
+    clone) and the Snapshot declares the layer absent. joined_both is then
+    necessarily zero, which is a declared absence, not broken path-key joins;
+    the gate must not fail `make all` for it."""
     code, _ = run_verify({**HEALTHY_JOIN, "with_semantic": 0, "joined_both": 0})
 
     assert code == 0
     assert "join threshold not applicable" in capsys.readouterr().out
+
+
+def test_a_declared_loaded_semantic_layer_with_no_facts_fails(run_verify, capsys):
+    """REGRESSION. The waiver keyed on count(f.summary) == 0 alone, so an
+    ingested knowledge-graph.json that produced zero file summaries (incomplete
+    export, semantic-schema change) was reported as "no semantic snapshot
+    loaded" and VERIFY passed. The Snapshot's authoritative
+    semantic_layer_loaded flag must gate the waiver: declared loaded with zero
+    semantic facts is a hard failure."""
+    code, _ = run_verify(
+        {**HEALTHY_JOIN, "with_semantic": 0, "joined_both": 0},
+        semantic_declared_loaded=True,
+    )
+
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "declares the semantic layer loaded" in out
+    assert "join threshold not applicable" not in out
 
 
 def test_a_present_semantic_layer_still_enforces_the_join_threshold(run_verify):

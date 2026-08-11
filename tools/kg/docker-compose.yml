@@ -18,7 +18,12 @@ services:
       - acgs-kg-data:/data
       - acgs-kg-logs:/logs
     healthcheck:
-      test: ["CMD-SHELL", "cypher-shell -u neo4j -p ${NEO4J_PASSWORD:-acgs-kg-local} 'RETURN 1' || exit 1"]
+      # $$ defers expansion to the container shell: Compose would otherwise
+      # splice the raw password into the command, where whitespace splits
+      # arguments and metacharacters execute, marking a healthy Neo4j
+      # unhealthy forever. NEO4J_AUTH already carries the credential inside
+      # the container; strip its "neo4j/" prefix and keep it quoted.
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$${NEO4J_AUTH#neo4j/}\" 'RETURN 1' || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 20

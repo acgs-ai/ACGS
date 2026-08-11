@@ -24,6 +24,16 @@ SEALED_ABSENT_Q = (
     "RETURN sum(p.sealed_files_absent) AS absent"
 )
 
+# extract.py publishes Snapshot.semantic_layer_loaded as the authoritative
+# availability flag. Inferring absence from count(f.summary) alone would also
+# waive a loaded-but-empty layer (incomplete export, semantic-schema change),
+# which is a broken join, not a declared absence. Aggregated so zero Snapshot
+# nodes still yield one row; the snapshot-count check reports that case.
+SEMANTIC_DECLARED_Q = (
+    "MATCH (s:Snapshot) "
+    "RETURN sum(CASE WHEN s.semantic_layer_loaded THEN 1 ELSE 0 END) AS loaded"
+)
+
 CHECKS = [
     (
         "constraints",
@@ -153,10 +163,21 @@ def main() -> int:
                 if r["files"] == 0:
                     failures.append("no File nodes")
                 if r["with_semantic"] == 0:
-                    # build_semantic() skips when no snapshot is tracked (fresh
-                    # clone: .understand-anything/ is ignored). That is a
-                    # declared absence, not a broken path-key join.
-                    print("    (no semantic snapshot loaded: join threshold not applicable)")
+                    row = s.run(SEMANTIC_DECLARED_Q).single()
+                    if row and row["loaded"]:
+                        failures.append(
+                            "snapshot declares the semantic layer loaded but no "
+                            "File carries semantic facts: the export is empty "
+                            "or the path keys are not unifying"
+                        )
+                    else:
+                        # build_semantic() skips when no snapshot is tracked
+                        # (fresh clone: .understand-anything/ is ignored) and
+                        # the Snapshot declares the layer absent. That is a
+                        # declared absence, not a broken path-key join.
+                        print(
+                            "    (no semantic snapshot loaded: join threshold not applicable)"
+                        )
                 elif r["joined_both"] < 0.25 * r["files"]:
                     failures.append(
                         f"join health: only {r['joined_both']}/{r['files']} files carry "
