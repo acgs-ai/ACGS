@@ -22,7 +22,7 @@ from typing import Any
 from .canonical import ABSENT, hash_file, hash_obj, hmac_verify, sha256_hex
 from .intent import OPERATIONS, SignedIntent
 from .ledger import EVENT_DECISION, AuditLedger, LedgerIntegrityError
-from .receipt import MutationDecisionReceipt
+from .receipt import MUTATION_RECEIPT_SCHEMA, MutationDecisionReceipt
 from .root import GovernanceRoot, UnknownActorError
 from .state import governed_match
 
@@ -62,7 +62,7 @@ def _normalized(resource_path: str) -> str | None:
     return norm
 
 
-def _capture_parent_precondition(repo_dir: Path, resource: str) -> tuple[dict[str, Any], str]:
+def _capture_parent_precondition(repo_dir: Path, resource: str) -> tuple[dict[str, Any], str, int]:
     """Pin the nearest existing parent ancestor and hash state through its fd."""
     parts = Path(resource).parts
     if not parts or any(part in ("", ".", "..") for part in parts):
@@ -92,12 +92,12 @@ def _capture_parent_precondition(repo_dir: Path, resource: str) -> tuple[dict[st
             "inode": ancestor.st_ino,
         }
         if parent_missing:
-            return binding, ABSENT
+            return binding, ABSENT, 0
 
         try:
             target_fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
         except FileNotFoundError:
-            return binding, ABSENT
+            return binding, ABSENT, 0
         try:
             target_stat = os.fstat(target_fd)
             if not stat.S_ISREG(target_stat.st_mode):
@@ -111,11 +111,25 @@ def _capture_parent_precondition(repo_dir: Path, resource: str) -> tuple[dict[st
             digest = sha256_hex(b"".join(chunks))
             if target_stat.st_mode & 0o111:
                 digest += ":exec"
-            return binding, digest
+            return binding, digest, stat.S_IMODE(target_stat.st_mode)
         finally:
             os.close(target_fd)
     finally:
         os.close(fd)
+
+
+def _default_create_mode() -> int:
+    current_umask = os.umask(0)
+    os.umask(current_umask)
+    return 0o666 & ~current_umask
+
+
+def _valid_content_hash(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(char in "0123456789abcdef" for char in value)
+    )
 
 
 class DecisionEngine:
@@ -139,7 +153,7 @@ class DecisionEngine:
             resource = _normalized(intent.resource_path)
             assert resource is not None
             try:
-                parent_precondition, secured_hash = _capture_parent_precondition(
+                parent_precondition, secured_hash, secured_mode = _capture_parent_precondition(
                     self.repo_dir, resource
                 )
             except OSError:
@@ -157,6 +171,24 @@ class DecisionEngine:
                     deny_reason = "CREATE on a resource that already exists"
                 elif intent.operation in ("UPDATE", "DELETE") and secured_hash == ABSENT:
                     deny_reason = f"{intent.operation} on a resource that does not exist"
+
+                if deny_reason is None:
+                    expected_mode = (
+                        _default_create_mode()
+                        if intent.operation == "CREATE"
+                        else secured_mode
+                        if intent.operation == "UPDATE"
+                        else 0
+                    )
+                    expected_state_hash = intent.expected_post_hash
+                    if expected_state_hash != ABSENT and expected_mode & 0o111:
+                        expected_state_hash += ":exec"
+                    parent_precondition.update(
+                        {
+                            "expected_state_hash": expected_state_hash,
+                            "expected_state_mode": expected_mode,
+                        }
+                    )
 
         if deny_reason is not None:
             return self._record(DENY, deny_reason, intent_hash, intent, now)
@@ -188,6 +220,11 @@ class DecisionEngine:
         # 2. Structural validity.
         if intent.operation not in OPERATIONS:
             return f"unknown operation: {intent.operation}"
+        if intent.operation == "DELETE":
+            if intent.expected_post_hash != ABSENT:
+                return "DELETE expected_post_hash must be ABSENT"
+        elif not _valid_content_hash(intent.expected_post_hash):
+            return "expected_post_hash must be a lowercase sha256 digest"
         resource = _normalized(intent.resource_path)
         if resource is None:
             return "resource path escapes governed repository"
@@ -297,6 +334,7 @@ class DecisionEngine:
             assert resource is not None  # already validated
             assert parent_precondition is not None
             body = {
+                "schema": MUTATION_RECEIPT_SCHEMA,
                 "receipt_id": hash_obj({"intent": intent_hash, "decision": decision_hash}),
                 "intent_hash": intent_hash,
                 "decision_hash": decision_hash,
@@ -307,6 +345,8 @@ class DecisionEngine:
                 "issued_at": now,
                 "expiry": now + self.root.receipt_ttl(),
                 "previous_state_hash": intent.expected_pre_hash,
+                "expected_state_hash": parent_precondition["expected_state_hash"],
+                "expected_state_mode": parent_precondition["expected_state_mode"],
                 "parent_ancestor_path": parent_precondition["path"],
                 "parent_ancestor_device": parent_precondition["device"],
                 "parent_ancestor_inode": parent_precondition["inode"],

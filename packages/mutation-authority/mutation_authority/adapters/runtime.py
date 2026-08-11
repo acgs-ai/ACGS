@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..canonical import hash_file, hash_obj
+from ..canonical import ABSENT, hash_file, hash_obj, sha256_hex
 from ..effect import ACCEPTED, EffectBinder
 from ..engine import ALLOW, DecisionEngine, _normalized
 from ..evidence_emitter import EvidenceEmitter
@@ -85,6 +85,11 @@ class MutationGateway:
 
         if operation not in OPERATIONS:
             return GatewayResult(REJECTED, f"unknown operation: {operation}")
+        if operation == "DELETE" and new_content is not None:
+            return GatewayResult(REJECTED, "DELETE cannot carry new content")
+        if operation != "DELETE" and new_content is None:
+            return GatewayResult(REJECTED, f"{operation} requires new content")
+        expected_post_hash = ABSENT if new_content is None else sha256_hex(new_content)
 
         # 1b. The resource path must stay inside the governed repository
         #     BEFORE anything touches the filesystem: the pre-state hash
@@ -127,6 +132,7 @@ class MutationGateway:
             resource_path=resource,
             operation=operation,
             expected_pre_hash=expected_pre_hash,
+            expected_post_hash=expected_post_hash,
             requested_change_scope=resource,
             timestamp=now,
             task_reference=context.task_reference,

@@ -325,6 +325,13 @@ class EffectBinder:
             return CommitResult(REJECTED, "DELETE receipt cannot carry new content")
         if receipt.operation != "DELETE" and new_content is None:
             return CommitResult(REJECTED, f"{receipt.operation} requires new content")
+        requested_state_hash = (
+            ABSENT
+            if new_content is None
+            else sha256_hex(new_content) + (":exec" if receipt.expected_state_mode & 0o111 else "")
+        )
+        if requested_state_hash != receipt.expected_state_hash:
+            return CommitResult(REJECTED, "requested content is not authorized by receipt")
 
         # 6. Open the signed ancestor and require the exact device/inode
         #    captured by the decision engine before reading or creating state.
@@ -362,7 +369,7 @@ class EffectBinder:
                 prior_bytes, before_hash, prior_mode = (
                     None,
                     ABSENT,
-                    _default_create_mode(),
+                    receipt.expected_state_mode,
                 )
             else:
                 parent_fd = os.dup(ancestor_fd)
@@ -379,6 +386,8 @@ class EffectBinder:
                     "resource changed after approval (pre-state hash mismatch)",
                     before_hash=before_hash,
                 )
+            if receipt.operation == "UPDATE" and prior_mode != receipt.expected_state_mode:
+                return CommitResult(REJECTED, "resource mode changed after approval")
 
             if missing_parents:
                 if not _parent_matches_path(ancestor_fd, ancestor_path):
@@ -395,7 +404,9 @@ class EffectBinder:
                     _remove_created_parents(created_parents)
                     return CommitResult(REJECTED, "created resource parent path changed")
                 try:
-                    prior_bytes, current_hash, prior_mode = _read_state_at(parent_fd, target_name)
+                    prior_bytes, current_hash, _current_mode = _read_state_at(
+                        parent_fd, target_name
+                    )
                 except OSError:
                     _remove_created_parents(created_parents)
                     return CommitResult(REJECTED, "CREATE target state could not be verified")
@@ -406,32 +417,53 @@ class EffectBinder:
             assert parent_fd is not None
             # 7. Apply the effect atomically. Snapshot the prior bytes and metadata
             #    so an unrecordable effect can be rolled back completely.
-            if receipt.operation == "DELETE":
-                os.unlink(target_name, dir_fd=parent_fd)
-                after_hash = ABSENT
-            else:
-                assert new_content is not None
-                try:
+            try:
+                if receipt.operation == "DELETE":
+                    os.unlink(target_name, dir_fd=parent_fd)
+                else:
+                    assert new_content is not None
                     if receipt.operation == "CREATE":
-                        _atomic_create_at(parent_fd, target_name, new_content, prior_mode)
+                        _atomic_create_at(
+                            parent_fd,
+                            target_name,
+                            new_content,
+                            receipt.expected_state_mode,
+                        )
                     else:
-                        _atomic_replace_at(parent_fd, target_name, new_content, prior_mode)
-                except OSError:
-                    _remove_created_parents(created_parents)
-                    return CommitResult(
-                        REJECTED, "secure temporary effect file could not be created"
-                    )
-                try:
-                    _after_bytes, after_hash, _after_mode = _read_state_at(parent_fd, target_name)
-                except OSError:
-                    _rollback_transaction(
-                        parent_fd,
-                        target_name,
-                        prior_bytes,
-                        prior_mode,
-                        created_parents,
-                    )
-                    return CommitResult(REJECTED, "effect after-state could not be verified")
+                        _atomic_replace_at(
+                            parent_fd,
+                            target_name,
+                            new_content,
+                            receipt.expected_state_mode,
+                        )
+            except OSError:
+                _remove_created_parents(created_parents)
+                return CommitResult(REJECTED, "secure temporary effect file could not be created")
+            try:
+                _after_bytes, after_hash, after_mode = _read_state_at(parent_fd, target_name)
+            except OSError:
+                _rollback_transaction(
+                    parent_fd,
+                    target_name,
+                    prior_bytes,
+                    prior_mode,
+                    created_parents,
+                )
+                return CommitResult(REJECTED, "effect after-state could not be verified")
+            if after_hash != receipt.expected_state_hash or (
+                after_hash != ABSENT and after_mode != receipt.expected_state_mode
+            ):
+                _rollback_transaction(
+                    parent_fd,
+                    target_name,
+                    prior_bytes,
+                    prior_mode,
+                    created_parents,
+                )
+                return CommitResult(
+                    REJECTED,
+                    "effect after-state does not match receipt authorization",
+                )
 
             # Retain both the signed ancestor and final parent pins through the
             # mutation and audit append boundaries.

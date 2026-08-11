@@ -79,6 +79,7 @@
         "authority_scope",
         "evidence_digest",
         "substrate_identity",
+        "substrate_critical_set_digest",
         "decision_inputs_digest",
         "policy_version",
         "decision",
@@ -87,7 +88,7 @@
         "signature"
       ],
       "properties": {
-        "schema": {"const": "acgs_authority_transition_receipt/v1"},
+        "schema": {"const": "acgs_authority_transition_receipt/v2"},
         "receipt_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "request_id": {"type": "string", "minLength": 1},
         "prior_state": {"type": "string", "minLength": 1},
@@ -97,6 +98,7 @@
         "authority_scope": {"$ref": "#/properties/authority_scope"},
         "evidence_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "substrate_identity": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "substrate_critical_set_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "decision_inputs_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "policy_version": {"type": "string", "minLength": 1},
         "decision": {"type": "string", "minLength": 1},

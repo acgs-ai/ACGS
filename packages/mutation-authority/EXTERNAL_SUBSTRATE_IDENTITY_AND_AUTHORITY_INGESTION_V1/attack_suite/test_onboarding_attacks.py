@@ -422,7 +422,9 @@ def test_ob8_relocation_with_changed_content_blocks(substrate, tmp_path):
     append_record(reg, _attested(_evidence()))
     # The record carries an ingestion receipt, so verification demands the
     # real trust root on file (it never mints one).
-    (tmp_path / "ks8").write_bytes(FIX_AUTH_KEY)
+    keystore = tmp_path / "ks8"
+    keystore.write_bytes(FIX_AUTH_KEY)
+    keystore.chmod(0o600)
     st = V.compute_state(
         moved,
         reg,

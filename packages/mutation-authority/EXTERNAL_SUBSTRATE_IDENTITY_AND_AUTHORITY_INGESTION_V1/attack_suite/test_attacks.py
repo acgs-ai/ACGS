@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft7Validator, ValidationError
 
 PKG = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PKG))
@@ -703,6 +704,41 @@ def test_route_denies_invalid_substrate_binding_before_receipt(identity, digest,
     assert result.transitions == []
     assert all(state == "ROUTING_REQUIRED" for state in result.request_final_state.values())
     assert derived_counts(_requests(), result.request_final_state)["ready_to_send"] == 0
+
+
+def test_transition_receipt_v2_matches_schema_and_v1_fails_closed():
+    receipt = mint_receipt(
+        KEY,
+        request_id="R1",
+        prior_state="ROUTING_REQUIRED",
+        new_state="ROUTING_RESOLVED",
+        authority_subject="X",
+        authority_evidence_id="AE-1",
+        evidence_digest="a" * 64,
+        authority_scope={"asset_ids": "ALL", "requirement_ids": "ALL"},
+        substrate_identity="b" * 64,
+        substrate_critical_set_digest="d" * 64,
+        decision="ALLOW",
+        decision_reason="x",
+        created_at=INSTANT,
+    )
+    schema = json.loads((PKG / "AUTHORITY_EVIDENCE_SCHEMA.json").read_text())
+    receipt_schema = dict(schema["definitions"]["transition_receipt"])
+    receipt_schema["properties"] = dict(receipt_schema["properties"])
+    receipt_schema["properties"]["authority_scope"] = schema["properties"]["authority_scope"]
+    Draft7Validator(receipt_schema).validate(receipt)
+
+    legacy = dict(receipt, schema="acgs_authority_transition_receipt/v1")
+    legacy_body = {key: value for key, value in legacy.items() if key != "signature"}
+    legacy["signature"] = hmac_sign(KEY, canonical_json(legacy_body))
+    assert not verify_receipt(KEY, legacy)
+    with pytest.raises(ValidationError):
+        Draft7Validator(receipt_schema).validate(legacy)
+
+    missing_digest = dict(receipt)
+    del missing_digest["substrate_critical_set_digest"]
+    with pytest.raises(ValidationError):
+        Draft7Validator(receipt_schema).validate(missing_digest)
 
 
 def test_attack20_receipt_for_request_a_used_for_request_b():

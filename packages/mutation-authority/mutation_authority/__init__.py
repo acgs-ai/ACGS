@@ -8,7 +8,7 @@ from .effect import ACCEPTED, REJECTED, CommitResult, EffectBinder, EffectRecord
 from .engine import ALLOW, DENY, Decision, DecisionEngine
 from .intent import MutationIntent, SignedIntent
 from .ledger import AuditLedger, LedgerIntegrityError
-from .receipt import MutationDecisionReceipt
+from .receipt import MUTATION_RECEIPT_SCHEMA, MutationDecisionReceipt, ReceiptFormatError
 from .root import GovernanceRoot, RootIntegrityError
 from .state import repository_violations
 
@@ -17,6 +17,7 @@ __all__ = [
     "ACCEPTED",
     "ALLOW",
     "DENY",
+    "MUTATION_RECEIPT_SCHEMA",
     "REJECTED",
     "AuditLedger",
     "CommitResult",
@@ -28,6 +29,7 @@ __all__ = [
     "LedgerIntegrityError",
     "MutationDecisionReceipt",
     "MutationIntent",
+    "ReceiptFormatError",
     "RootIntegrityError",
     "SignedIntent",
     "repository_violations",

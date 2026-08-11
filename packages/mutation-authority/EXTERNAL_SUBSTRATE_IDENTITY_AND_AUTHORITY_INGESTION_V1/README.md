@@ -57,7 +57,7 @@ changes implemented). See
 | `authority_evidence_registry.jsonl` | the evidence registry — **empty is valid** |
 | `ingest_authority_evidence.py` | ingest one record: hash its real source document, validate, dedup, receipt |
 | `authority_router.py` | scope-aware mapping of verified evidence → request transitions |
-| `authority_receipt.py` | single-use, deterministic, HMAC-signed transition receipts + replay ledger |
+| `authority_receipt.py` | single-use, deterministic, HMAC-signed transition receipts + replay ledger; v2 receipts bind both substrate identity and critical-set digest, and v1 is rejected |
 | `verify_authority_state.py` | top verifier — identity + live counts + authority state + Section 23 report + verdict |
 | `attack_suite/test_attacks.py` | 32 adversarial attacks + invariants I1–I14 + positive controls |
 | `ARCHITECTURE.md` | the A/B/C separation, lifecycle, receipt binding, drift semantics |

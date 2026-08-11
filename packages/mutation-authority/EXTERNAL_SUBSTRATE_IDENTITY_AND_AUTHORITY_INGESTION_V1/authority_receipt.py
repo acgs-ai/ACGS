@@ -23,7 +23,7 @@ from typing import Any
 
 from _canonical import canonical_json, hash_obj, hmac_sign, hmac_verify
 
-RECEIPT_SCHEMA = "acgs_authority_transition_receipt/v1"
+RECEIPT_SCHEMA = "acgs_authority_transition_receipt/v2"
 POLICY_VERSION = "external-substrate-authority-ingestion/v1"
 
 
@@ -124,6 +124,24 @@ def _validate_pinned_parent(parent_fd: int, parent: Path) -> None:
         pinned.st_ino,
     ) != (named.st_dev, named.st_ino):
         raise ReceiptError(f"keystore parent changed during access: {parent}")
+
+
+def load_key(keystore: Path) -> bytes | None:
+    """Securely load an existing key without minting one during verification."""
+    parent_fd, name, parent = _open_trusted_parent(keystore)
+    try:
+        try:
+            data = _read_secure_key(parent_fd, name, keystore)
+        except ReceiptError:
+            try:
+                os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                return None
+            raise
+        _validate_pinned_parent(parent_fd, parent)
+        return data
+    finally:
+        os.close(parent_fd)
 
 
 def load_or_create_key(keystore: Path) -> bytes:
@@ -281,6 +299,8 @@ def verify_receipt(key: bytes, receipt: dict[str, Any]) -> bool:
     Any mismatch — including a body field altered after minting — returns
     False. Fail closed on a malformed receipt."""
     try:
+        if receipt.get("schema") != RECEIPT_SCHEMA:
+            return False
         if not substrate_binding_valid(
             receipt.get("substrate_identity"),
             receipt.get("substrate_critical_set_digest"),

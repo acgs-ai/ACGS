@@ -32,7 +32,8 @@ agent
 DecisionEngine ──── reads ──► GovernanceRoot (immutable, manifest-sealed)
   │                           AuditLedger    (append-only hash chain)
   │  ALLOW ⇒ MutationDecisionReceipt (root-signed, single-use, expiring,
-  │           bound to exact pre-state hash + existing parent identity)
+  │           bound to exact pre-state, authorized post-state/mode,
+  │           and existing parent identity)
   ▼
 EffectBinder ── the ONLY writer to the governed repository
   │  re-verifies: root integrity, chain integrity, receipt signature,
@@ -49,9 +50,9 @@ COMMIT event appended to mutation_ledger.jsonl (hash-chained)
 | Module | Responsibility |
 |---|---|
 | `mutation_authority/root.py` | **Immutable governance root.** `policy.json` + `actors.json` sealed by an HMAC-signed manifest. Signing keys live in a keystore *outside* the governed tree. `verify_integrity()` runs before **every** decision and **every** commit — tampered root ⇒ `RootIntegrityError` ⇒ the layer refuses all decisions (fail closed). |
-| `mutation_authority/intent.py` | **Mutation Intent model.** `{actor_identity, resource_path, operation, expected_pre_hash, requested_change_scope, timestamp, task_reference}` + nonce, signed with the actor's key. Direct filesystem mutation is forbidden by construction: agents hold no write path other than `EffectBinder`. |
+| `mutation_authority/intent.py` | **Mutation Intent model.** `{actor_identity, resource_path, operation, expected_pre_hash, expected_post_hash, requested_change_scope, timestamp, task_reference}` + nonce, signed with the actor's key. The requested bytes are bound before authorization. |
 | `mutation_authority/engine.py` | **Deterministic decision engine.** Fixed check order: actor identity → intent signature → path safety → governance-root protection → governed prefix → scope permission (requested ⊆ actor ownership) → task authority → pre-state binding (disk **==** ledger-authorized state **==** `expected_pre_hash`) → concurrency (one live receipt per resource). First violation wins; every decision — ALLOW **and** DENY — is a ledger event. |
-| `mutation_authority/receipt.py` | **Mutation Decision Receipt.** `{receipt_id, intent_hash, decision_hash, actor, resource, allowed_scope, expiry, previous_state_hash, parent_ancestor_path, parent_ancestor_device, parent_ancestor_inode}` signed by the root key. Single-use, expiring, chain-bound. |
+| `mutation_authority/receipt.py` | **Mutation Decision Receipt v2.** Adds signed `schema`, `expected_state_hash`, `expected_state_mode`, and nearest-existing-ancestor path/device/inode bindings to the request and pre-state fields. Unversioned/v1 persisted receipts fail closed because the missing state and ancestor identity cannot be reconstructed safely. |
 | `mutation_authority/effect.py` | **Effect binding.** Opens the signed existing parent (or nearest existing ancestor for nested CREATE) by directory fd, requires its device/inode identity before any effect-time state read, and retains/revalidates the pin through mutation and audit append. Nested parent creation uses no-follow dirfd operations and transactional rollback. |
 | `mutation_authority/ledger.py` | **Append-only audit chain** (`mutation_ledger.jsonl`). Each event embeds `prev_event_hash`; genesis binds the root-manifest hash and a baseline snapshot. An **anchor checkpoint** (`{count, head_hash}`, stored with the keystore, outside the governed tree) is updated on every append and re-checked on every chain verification — internal hash-chain consistency proves a self-consistent *prefix*; only the anchor proves *completeness* (no tail truncation, rewrite, or delete-and-regenerate). The genesis→root binding is enforced at runtime by engine and binder, not merely recorded. The ledger — not the filesystem — defines each resource's authorized state. |
 | `mutation_authority/state.py` | **Out-of-band mutation detector.** Compares disk to ledger-authorized state; any divergence (modify/create/delete) is an unauthorized mutation. |
@@ -74,7 +75,7 @@ COMMIT event appended to mutation_ledger.jsonl (hash-chained)
    resources until the root is restored.
 4. **Receipts cannot be forged, replayed, or stretched:** root-key signature,
    issuance-in-this-chain check, single-use consumption in the ledger, logical
-   expiry, and exact pre-state binding.
+   expiry, and exact pre-state plus authorized post-state/mode binding.
 5. **The ledger itself cannot be rolled back:** truncating the tail to
    "un-consume" a receipt, rewriting history, or deleting the ledger and
    minting a fresh genesis all diverge from the out-of-tree anchor checkpoint
@@ -171,6 +172,7 @@ intent = MutationIntent(
     resource_path="src/verify_readiness.py",
     operation="UPDATE",
     expected_pre_hash="<sha256 of current content>",
+    expected_post_hash="<sha256 of requested new content>",
     requested_change_scope="src/verify_readiness.py",
     timestamp=now,                 # logical tick
     task_reference="TASK-1234",

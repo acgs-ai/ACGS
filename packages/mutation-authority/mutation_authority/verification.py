@@ -23,9 +23,9 @@ from .effect import ACCEPTED, REJECTED, EffectBinder, EffectRecordingError
 from .engine import ALLOW, DENY, DecisionEngine
 from .intent import MutationIntent, SignedIntent
 from .ledger import AuditLedger, LedgerIntegrityError
-from .receipt import MutationDecisionReceipt
+from .receipt import MutationDecisionReceipt, ReceiptFormatError
 from .root import GovernanceRoot, RootIntegrityError
-from .state import repository_violations
+from .state import ABSENT, repository_violations
 
 
 class CheckFailure(Exception):
@@ -121,16 +121,19 @@ class Sandbox:
         operation: str = "UPDATE",
         scope: str | None = None,
         expected_pre_hash: str | None = None,
+        new_content: bytes | None = b"VALUE = 2\n",
         task: str = "TASK-1",
     ) -> SignedIntent:
         self._nonce += 1
         if expected_pre_hash is None:
             expected_pre_hash = hash_file(self.repo / resource)
+        expected_post_hash = ABSENT if operation == "DELETE" else sha256_hex(new_content or b"")
         intent = MutationIntent(
             actor_identity=actor,
             resource_path=resource,
             operation=operation,
             expected_pre_hash=expected_pre_hash,
+            expected_post_hash=expected_post_hash,
             requested_change_scope=scope if scope is not None else resource,
             timestamp=self.now,
             task_reference=task,
@@ -142,7 +145,9 @@ class Sandbox:
         self, actor: str, resource: str, content: bytes
     ) -> MutationDecisionReceipt:
         """Happy-path helper: intent -> ALLOW -> commit ACCEPTED."""
-        decision = self.engine.decide(self.intent(actor, resource), self.tick())
+        decision = self.engine.decide(
+            self.intent(actor, resource, new_content=content), self.tick()
+        )
         if decision.decision != ALLOW or decision.receipt is None:
             raise CheckFailure(f"expected ALLOW, got {decision.decision}: {decision.reason}")
         result = self.binder.commit(decision.receipt, content, self.tick())
@@ -284,7 +289,9 @@ def attack_c_concurrent_writers(base: Path) -> str:
     """Two agents race to mutate the same resource."""
     sb = Sandbox.build(base)
     resource = "src/verify_readiness.py"
-    first = sb.engine.decide(sb.intent("agent-alpha", resource), sb.tick())
+    first = sb.engine.decide(
+        sb.intent("agent-alpha", resource, new_content=b"print('winner')\n"), sb.tick()
+    )
     _expect(first.decision == ALLOW, f"first writer denied: {first.reason}")
     second = sb.engine.decide(sb.intent("agent-beta", resource), sb.tick())
     _expect(second.decision == DENY, "second concurrent writer was allowed")
@@ -442,7 +449,12 @@ def attack_j_symlink_escape(base: Path) -> str:
     _expect("outside the governed repository" in decision.reason, decision.reason)
 
     # (2) Effect time: symlink introduced AFTER approval.
-    signed2 = sb.intent("agent-alpha", "src/sub2/leak.txt", operation="CREATE")
+    signed2 = sb.intent(
+        "agent-alpha",
+        "src/sub2/leak.txt",
+        operation="CREATE",
+        new_content=b"leak\n",
+    )
     decision2 = sb.engine.decide(signed2, sb.tick())
     _expect(decision2.decision == ALLOW, f"clean CREATE denied: {decision2.reason}")
     assert decision2.receipt is not None
@@ -589,7 +601,10 @@ def attack_p_temp_symlink_race(base: Path) -> str:
         resource = "src/module_a.py"
         target = sb.repo / resource
         original = target.read_bytes()
-        decision = sb.engine.decide(sb.intent("agent-alpha", resource), sb.tick())
+        decision = sb.engine.decide(
+            sb.intent("agent-alpha", resource, new_content=b"attacker-controlled\n"),
+            sb.tick(),
+        )
         assert decision.receipt is not None
         if victim_kind == "external":
             victim = sb.base / "outside.txt"
@@ -620,7 +635,9 @@ def attack_pre_state_path_swap(base: Path) -> str:
     replacement_target.write_bytes(original_bytes)
     replacement_before = replacement_target.read_bytes()
     moved_src = sb.base / "original-src"
-    decision = sb.engine.decide(sb.intent("agent-alpha", resource), sb.tick())
+    decision = sb.engine.decide(
+        sb.intent("agent-alpha", resource, new_content=b"attacker-controlled\n"), sb.tick()
+    )
     assert decision.receipt is not None
 
     original_src.rename(moved_src)
@@ -656,7 +673,9 @@ def attack_post_open_parent_swap(base: Path) -> str:
     replacement_target.write_bytes(original_bytes)
     replacement_before = replacement_target.read_bytes()
     moved_src = sb.base / "original-src"
-    decision = sb.engine.decide(sb.intent("agent-alpha", resource), sb.tick())
+    decision = sb.engine.decide(
+        sb.intent("agent-alpha", resource, new_content=b"attacker-controlled\n"), sb.tick()
+    )
     assert decision.receipt is not None
     real_open = effect_module._open_bound_ancestor
     swapped = False
@@ -724,7 +743,10 @@ def attack_q_parent_rename_during_effect(base: Path) -> str:
         outside.mkdir()
         outside_victim = outside / "module_a.py"
         outside_victim.write_bytes(b"outside-original\n")
-        decision = sb.engine.decide(sb.intent("agent-alpha", resource), sb.tick())
+        decision = sb.engine.decide(
+            sb.intent("agent-alpha", resource, new_content=b"attacker-controlled\n"),
+            sb.tick(),
+        )
         assert decision.receipt is not None
 
         moved_parent = sb.base / "moved-src"
@@ -770,7 +792,9 @@ def attack_r_parent_rename_at_audit_append(base: Path) -> str:
     outside.mkdir()
     outside_victim = outside / "module_a.py"
     outside_victim.write_bytes(b"outside-original\n")
-    decision = sb.engine.decide(sb.intent("agent-alpha", resource), sb.tick())
+    decision = sb.engine.decide(
+        sb.intent("agent-alpha", resource, new_content=b"attacker-controlled\n"), sb.tick()
+    )
     assert decision.receipt is not None
     real_append = sb.ledger.append
     moved_parent = sb.base / "moved-src"
@@ -806,7 +830,8 @@ def check_nested_create_uses_bound_ancestor(base: Path) -> str:
     success = Sandbox.build(base / "success")
     resource = "src/nested/deep/private.py"
     decision = success.engine.decide(
-        success.intent("agent-alpha", resource, operation="CREATE"), success.tick()
+        success.intent("agent-alpha", resource, operation="CREATE", new_content=b"SECRET = True\n"),
+        success.tick(),
     )
     assert decision.receipt is not None
     src_stat = (success.repo / "src").stat()
@@ -831,7 +856,10 @@ def check_nested_create_uses_bound_ancestor(base: Path) -> str:
 
     rollback = Sandbox.build(base / "rollback")
     rollback_decision = rollback.engine.decide(
-        rollback.intent("agent-alpha", resource, operation="CREATE"), rollback.tick()
+        rollback.intent(
+            "agent-alpha", resource, operation="CREATE", new_content=b"SECRET = True\n"
+        ),
+        rollback.tick(),
     )
     assert rollback_decision.receipt is not None
     with patch.object(rollback.ledger, "append", side_effect=OSError("disk full")):
@@ -854,13 +882,21 @@ def check_nested_create_uses_bound_ancestor(base: Path) -> str:
 
 
 def check_create_respects_restrictive_umask(base: Path) -> str:
-    """CREATE must derive its mode from the caller's restrictive umask."""
+    """CREATE must bind and preserve the caller's restrictive umask."""
     sb = Sandbox.build(base)
     resource = "src/private.py"
-    decision = sb.engine.decide(sb.intent("agent-alpha", resource, operation="CREATE"), sb.tick())
-    assert decision.receipt is not None
     previous_umask = os.umask(0o077)
     try:
+        decision = sb.engine.decide(
+            sb.intent(
+                "agent-alpha",
+                resource,
+                operation="CREATE",
+                new_content=b"SECRET = True\n",
+            ),
+            sb.tick(),
+        )
+        assert decision.receipt is not None
         result = sb.binder.commit(decision.receipt, b"SECRET = True\n", sb.tick())
     finally:
         os.umask(previous_umask)
@@ -868,6 +904,80 @@ def check_create_respects_restrictive_umask(base: Path) -> str:
     mode = stat.S_IMODE((sb.repo / resource).stat().st_mode)
     _expect(mode == 0o600, f"CREATE widened umask 077 mode to {mode:o}")
     return "CREATE under umask 077 produced mode 0600"
+
+
+def attack_s_post_write_replacement(base: Path) -> str:
+    """Bytes substituted after the atomic write must be rolled back."""
+    sb = Sandbox.build(base)
+    resource = "src/module_a.py"
+    target = sb.repo / resource
+    original = target.read_bytes()
+    authorized = b"VALUE = 2\n"
+    rogue = b"ROGUE = True\n"
+    decision = sb.engine.decide(
+        sb.intent("agent-alpha", resource, new_content=authorized), sb.tick()
+    )
+    assert decision.receipt is not None
+    real_replace = effect_module._atomic_replace_at
+    replaced = False
+
+    def replace_then_substitute(parent_fd: int, name: str, content: bytes, mode: int) -> None:
+        nonlocal replaced
+        real_replace(parent_fd, name, content, mode)
+        if not replaced:
+            replaced = True
+            real_replace(parent_fd, name, rogue, mode)
+
+    with patch(
+        "mutation_authority.effect._atomic_replace_at",
+        side_effect=replace_then_substitute,
+    ):
+        result = sb.binder.commit(decision.receipt, authorized, sb.tick())
+
+    _expect(replaced, "deterministic post-write substitution did not run")
+    _expect(result.status == REJECTED, "rogue post-write state was accepted")
+    _expect(target.read_bytes() == original, "post-write mismatch was not rolled back")
+    _expect(
+        decision.receipt.receipt_id not in sb.ledger.committed_receipt_ids(),
+        "post-write mismatch left a COMMIT",
+    )
+    sb.ledger.verify_chain()
+    return "post-write substituted bytes rejected; prior state restored and no COMMIT"
+
+
+def check_mutation_receipt_schema_v2_rejects_legacy(base: Path) -> str:
+    """Persisted legacy receipts fail closed with a typed format error."""
+    sb = Sandbox.build(base)
+    decision = sb.engine.decide(
+        sb.intent("agent-alpha", "src/module_a.py", new_content=b"VALUE = 2\n"),
+        sb.tick(),
+    )
+    assert decision.receipt is not None
+    legacy = decision.receipt.to_dict()
+    for field_name in (
+        "schema",
+        "expected_state_hash",
+        "expected_state_mode",
+        "parent_ancestor_path",
+        "parent_ancestor_device",
+        "parent_ancestor_inode",
+    ):
+        legacy.pop(field_name, None)
+    try:
+        MutationDecisionReceipt.from_dict(legacy)
+    except ReceiptFormatError as exc:
+        _expect("legacy unversioned" in str(exc), str(exc))
+    else:
+        raise CheckFailure("legacy unversioned mutation receipt was accepted")
+
+    malformed = decision.receipt.to_dict()
+    malformed.pop("expected_state_hash")
+    try:
+        MutationDecisionReceipt.from_dict(malformed)
+    except ReceiptFormatError as exc:
+        _expect("missing=" in str(exc), str(exc))
+        return "v2 receipt parser rejects legacy/malformed state bindings with typed errors"
+    raise CheckFailure("malformed v2 mutation receipt was accepted")
 
 
 def attack_o_in_memory_root_mutation(base: Path) -> str:
@@ -950,6 +1060,11 @@ CHECKS: list[tuple[str, Callable[[Path], str]]] = [
         check_nested_create_uses_bound_ancestor,
     ),
     ("CREATE respects restrictive umask", check_create_respects_restrictive_umask),
+    ("ATTACK P: post-write state substitution", attack_s_post_write_replacement),
+    (
+        "mutation receipt v2 rejects legacy state bindings",
+        check_mutation_receipt_schema_v2_rejects_legacy,
+    ),
     ("ledger is bound to its governance root", check_ledger_root_binding),
     ("unanchored ledger construction is refused", check_unanchored_ledger_refused),
 ]

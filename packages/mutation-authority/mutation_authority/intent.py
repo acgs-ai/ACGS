@@ -21,6 +21,7 @@ class MutationIntent:
     resource_path: str
     operation: str  # CREATE | UPDATE | DELETE
     expected_pre_hash: str  # sha256 of current content, or ABSENT for CREATE
+    expected_post_hash: str  # sha256 of requested bytes, or ABSENT for DELETE
     requested_change_scope: str  # glob the mutation claims to stay inside
     timestamp: int  # logical clock tick
     task_reference: str
@@ -32,6 +33,7 @@ class MutationIntent:
             "resource_path": self.resource_path,
             "operation": self.operation,
             "expected_pre_hash": self.expected_pre_hash,
+            "expected_post_hash": self.expected_post_hash,
             "requested_change_scope": self.requested_change_scope,
             "timestamp": self.timestamp,
             "task_reference": self.task_reference,
