@@ -26,6 +26,8 @@ DecisionRecord
 DeniedError
 DenyAllPolicy
 E2BSandbox
+EXECUTION_ACTIONS
+EXECUTION_BOUNDARY
 Ed25519Signer
 EdgeKind
 EscalateError
@@ -33,6 +35,7 @@ EvaluationReport
 EvaluationResult
 EvaluationScenario
 ExecutionBoundary
+ExecutionEvent
 GENESIS_HASH
 GateMode
 GateModeError
@@ -121,13 +124,17 @@ agentdojo_scenarios_from_fixture
 alternative_from_record
 approve_escalation
 authz_enforce_from_env
+build_execution_policy
 canonical_json
+classify_command
+declared_package_manager
 discover_alternatives
 emit_receipt_for_hook
 emit_receipts_for_hook
 evaluate_policy_scenarios
 evaluate_tenant_action
 execute_with_receipt
+execution_tool_calls_from_hook_payload
 find_event
 govern_identity_action
 http_json_tool
@@ -135,6 +142,7 @@ injecagent_scenarios_from_fixture
 load_benchmark_suite
 load_evaluation_scenarios
 load_evaluation_suite
+make_execution_call_factory
 make_langgraph_tool_node
 make_signer
 mcp_tools_call
@@ -158,5 +166,6 @@ tool_call_from_hook_payload
 tool_calls_from_hook_payload
 validate_authority
 verify_dag_replay
+verify_execution_chain
 verify_proof_pack
 verify_workflow_replay

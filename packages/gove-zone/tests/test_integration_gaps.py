@@ -248,6 +248,8 @@ def test_hook_end_to_end_emits_receipt_under_enforce_default(tmp_path: Path) -> 
 
 
 def test_hook_end_to_end_blocks_on_emission_failure(tmp_path: Path) -> None:
+    # The governed gateway must fail closed when it cannot persist the decision;
+    # the diagnostic identifies unavailable governance, not an observer-mode issue.
     blocker = tmp_path / "blocker"
     blocker.write_text("not a directory", encoding="utf-8")
     proc = _run_hook(
@@ -258,12 +260,12 @@ def test_hook_end_to_end_blocks_on_emission_failure(tmp_path: Path) -> None:
         },
     )
     assert proc.returncode == 2
-    assert "enforce" in proc.stderr
+    assert "governance unavailable" in proc.stderr
 
 
 def test_hook_end_to_end_production_without_signer_blocks(tmp_path: Path) -> None:
-    # This is why settings.json pins GOVE_ZONE_PROFILE=dev: the passive
-    # auditor emits unsigned anchors, which production+enforce refuses.
+    # This is why settings.json pins GOVE_ZONE_PROFILE=dev: the governed gateway
+    # refuses to construct a production receipt path without a signer.
     proc = _run_hook(tmp_path, {})
     assert proc.returncode == 2
     assert "signer" in proc.stderr

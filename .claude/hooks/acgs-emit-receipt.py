@@ -1,35 +1,47 @@
 #!/usr/bin/env python3
-"""govern-zone PreToolUse hook — emit one governance receipt per mutating
-runtime action through the canonical ``gove_zone.integration`` adapter.
+"""govern-zone PreToolUse hook — route every matched tool call through the
+governed decision gateway (ADR-0010 / P11, Execution Governance Layer).
 
-Matched on ``Edit | Write | MultiEdit | NotebookEdit`` and selected ``Bash``
-workflow commands by ``.claude/settings.json``. Scope note: Bash commands
-that do not match the orchestration classifier (autopilot / ralph / team)
-are deliberately out of audit scope — they exit 0 unaudited by design; the
-governed surfaces are file mutations and agent-orchestration commands.
-Concurrent sessions appending to the same audit chain serialize on a
-blocking POSIX ``flock`` (latency under fan-out, never a lockout).
+This hook replaces a passive auditor with an enforced gateway. Three things
+changed, and each closes a specific finding from the 2026-08-09 incident:
 
-Gate-mode resolution is delegated to the library
-(:func:`gove_zone.integration.current_gate_mode` — env var, then the
-``.gove-zone/gate.mode`` file, then the fail-closed ``enforce`` default), so
-this hook inherits enforce-by-default and the file-based opt-in instead of
-re-implementing its own env-only check (issue #111 / PR-3b):
+1. **The decision surface.** ``UniversalGateway.handle_claude_hook`` evaluates a
+   real ``CompositePolicy`` and mints a ``DecisionReceipt``. It supersedes
+   ``integration.emit_receipt_for_hook``, whose ``_ObserverPolicy`` returned
+   ``ALLOW`` unconditionally and emitted the 5-field ``Receipt``, which has no
+   signature field and which ``execute_with_receipt`` does not accept.
 
-* ``enforce`` (the default): fail-closed. Import, parse, or emission
-  failures exit 2 with a stderr diagnostic, blocking the tool call until
-  the operator fixes the audit pipeline.
-* ``observe`` (explicit opt-in): fail-open. Failures exit 0 and swallow
-  the error.
-* If the gate mode itself cannot be resolved (``gove_zone`` not
-  importable), the hook fails CLOSED — an unauditable action is blocked,
-  not waved through.
+2. **Classification.** Bash commands are classified structurally by
+   :func:`gove_zone.execution.classify_command` (argv prefix), replacing the
+   substring matcher that produced three observed false positives — including a
+   ``grep`` audited as an ``autopilot`` orchestration event. Nothing is exempt
+   from audit any more: the old classifier returned ``None`` for anything it did
+   not recognize and the hook exited 0 unaudited, which is why the live chain
+   held 396 records and exactly one ``runtime.Bash``.
 
-No ``sys.path`` manipulation: the hook relies on ``gove-zone`` being
-installed in the active interpreter's environment. ``.claude/settings.json``
-pins the interpreter to the project venv
-(``$CLAUDE_PROJECT_DIR/.venv/bin/python``) and exits 2 when the venv is
-missing — run ``uv sync`` first.
+3. **Attribution.** The actor comes from :func:`resolve_execution_actor`, which
+   states its source rather than falling back to a hardcoded
+   ``"govern-zone-hook"``. It is still an environment-derived identity, not an
+   authenticated principal — the residual is recorded in the receipt as
+   ``attribution_source`` rather than papered over.
+
+**Boundary statement.** ``execute_with_receipt`` is *not* called here: the host
+runtime performs the side effect. What this hook produces is a minted,
+verifiable Decision Receipt for the *decision*. It is not receipt-gated
+execution — only ``UniversalGateway.invoke`` closes that loop.
+
+Output protocol: a JSON ``hookSpecificOutput`` object on stdout with exit 0.
+Exit 2 remains the fail-closed channel for a hook that cannot decide at all.
+
+Gate mode (``gove_zone.integration.current_gate_mode`` — env var, then
+``.gove-zone/gate.mode``, then the fail-closed ``enforce`` default):
+
+* ``enforce`` (default): the policy verdict is returned as-is; an import, parse,
+  or governance failure exits 2 and blocks the call.
+* ``observe`` (explicit, time-boxed opt-in): the decision is still evaluated,
+  recorded, and receipted, but the response is downgraded to ``allow`` with the
+  real verdict in the reason. Per ADR-0010 D6 an indefinitely-observing gate is
+  the failure this layer exists to correct — this mode is for cutover only.
 """
 
 from __future__ import annotations
@@ -37,17 +49,11 @@ from __future__ import annotations
 import json
 import os
 import sys
+from typing import Any
 
 
 def _gate_enforce() -> bool:
-    """Delegate to the library resolver; fail closed when it cannot be loaded.
-
-    The single source of truth for gate mode is
-    :func:`gove_zone.integration.current_gate_mode` (enforce-by-default,
-    file-based observe opt-in). If that cannot even be imported, the mode is
-    unresolvable — treat as enforce so an unauditable action never slips
-    through fail-open.
-    """
+    """Delegate to the library resolver; fail closed when it cannot be loaded."""
     try:
         from gove_zone.integration import GateMode, current_gate_mode
     except Exception:
@@ -55,18 +61,27 @@ def _gate_enforce() -> bool:
     return current_gate_mode() is GateMode.ENFORCE
 
 
-def _classify(tool_name: str, tool_input: dict) -> str | None:
-    if tool_name in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
-        return "edit"
-    if tool_name == "Bash":
-        cmd = (tool_input.get("command") or "").lower()
-        if "autopilot" in cmd:
-            return "autopilot"
-        if "ralph" in cmd:
-            return "ralph"
-        if " team " in f" {cmd} ":
-            return "team"
-    return None
+def _emit(response: dict[str, Any]) -> int:
+    json.dump(response, sys.stdout)
+    sys.stdout.write("\n")
+    return 0
+
+
+def _observe_downgrade(response: dict[str, Any]) -> dict[str, Any]:
+    block = dict(response.get("hookSpecificOutput") or {})
+    verdict = str(block.get("permissionDecision", "allow"))
+    if verdict == "allow":
+        return response
+    reason = str(block.get("permissionDecisionReason", ""))
+    block["permissionDecision"] = "allow"
+    block["permissionDecisionReason"] = f"[observe] would be {verdict}: {reason}"
+    downgraded = dict(response)
+    downgraded["hookSpecificOutput"] = block
+    print(
+        f"gove-zone hook (observe): decision {verdict!r} recorded but not enforced",
+        file=sys.stderr,
+    )
+    return downgraded
 
 
 def main() -> int:
@@ -90,39 +105,57 @@ def main() -> int:
             return 2
         return 0
 
-    tool_name = payload.get("tool_name") or ""
-    tool_input = payload.get("tool_input") or {}
-    action_kind = _classify(tool_name, tool_input if isinstance(tool_input, dict) else {})
-    if action_kind is None:
+    if not isinstance(payload, dict):
+        if enforce:
+            print("gove-zone hook: payload is not a JSON object", file=sys.stderr)
+            return 2
         return 0
 
     try:
-        from gove_zone.integration import GateModeError, emit_receipt_for_hook
+        from gove_zone.execution import (
+            build_execution_gateway,
+            declared_package_manager,
+            make_execution_call_factory,
+            resolve_execution_actor,
+        )
     except ImportError as exc:
         if enforce:
             print(
-                "gove-zone hook: cannot import gove_zone.integration "
+                "gove-zone hook: cannot import gove_zone.execution "
                 f"({exc}). Install with `uv sync` or `pip install -e packages/gove-zone`.",
                 file=sys.stderr,
             )
             return 2
         return 0
 
-    actor = os.environ.get("PAPERCLIP_AGENT_ID") or "govern-zone-hook"
-    run_id = os.environ.get("PAPERCLIP_RUN_ID") or None
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    actor, attribution_source = resolve_execution_actor()
+    run_id = (
+        os.environ.get("PAPERCLIP_RUN_ID")
+        or (payload.get("session_id") if isinstance(payload.get("session_id"), str) else "")
+        or ""
+    )
 
     try:
-        emit_receipt_for_hook(payload, action_kind=action_kind, actor=actor, run_id=run_id)
-    except GateModeError as exc:
-        print(f"gove-zone hook (enforce): {exc}", file=sys.stderr)
-        return 2
+        gateway = build_execution_gateway()
+        response = gateway.handle_claude_hook(
+            payload,
+            actor=actor,
+            action_kind=str(payload.get("hook_event_name") or "PreToolUse"),
+            call_factory=make_execution_call_factory(
+                declared_package_manager(project_dir),
+                run_context={"run_id": run_id, "attribution_source": attribution_source},
+            ),
+        )
     except Exception as exc:
         if enforce:
-            print(f"gove-zone hook (enforce): unexpected failure: {exc!r}", file=sys.stderr)
+            print(f"gove-zone hook (enforce): governance unavailable: {exc!r}", file=sys.stderr)
             return 2
-        # observe: stay silent, preserve fail-open contract.
+        return 0
 
-    return 0
+    if not enforce:
+        response = _observe_downgrade(response)
+    return _emit(response)
 
 
 if __name__ == "__main__":

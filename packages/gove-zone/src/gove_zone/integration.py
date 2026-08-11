@@ -54,6 +54,8 @@ __all__ = [
     "emit_receipts_for_hook",
     "tool_call_from_hook_payload",
     "tool_calls_from_hook_payload",
+    "individual_tool_payloads",
+    "tool_name_and_input",
     "GateModeError",
     "make_langgraph_tool_node",
 ]
@@ -575,6 +577,30 @@ def tool_calls_from_hook_payload(
         tool_call_from_hook_payload(child, action_kind=action_kind, actor=actor)
         for child in _individual_tool_payloads_from_payload(payload)
     )
+
+
+def individual_tool_payloads(payload: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    """Expand one runtime event into its per-call child payloads.
+
+    The public form of the expansion :func:`tool_calls_from_hook_payload`
+    performs internally. A caller that needs the *raw* per-call payload — not
+    the lossy :class:`ToolCall` projection, which keeps only a summary — uses
+    this. :mod:`gove_zone.execution` needs the raw ``command`` string to
+    classify a shell invocation structurally, and a batch-wrapped call must
+    reach that classifier too, or wrapping an install in a batch would evade it.
+    """
+    return _individual_tool_payloads_from_payload(payload)
+
+
+def tool_name_and_input(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Runtime-neutral ``(tool_name, tool_input)`` for one per-call payload.
+
+    Public form of the shape normalization documented on
+    :func:`_tool_name_and_input_from_payload`. Exposed so a classifier can read
+    a specific argument (e.g. ``command``) without re-implementing support for
+    every runtime's payload shape.
+    """
+    return _tool_name_and_input_from_payload(payload)
 
 
 class _ObserverPolicy(Policy):

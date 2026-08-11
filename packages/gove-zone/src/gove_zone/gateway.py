@@ -1025,6 +1025,7 @@ class UniversalGateway:
         *,
         actor: str,
         action_kind: str = "PreToolUse",
+        call_factory: Callable[..., Sequence[ToolCall]] | None = None,
     ) -> dict[str, Any]:
         """Decide one Claude Code hook event (Policy → Receipt; the host runtime
         is the executor leg and must honor the returned decision).
@@ -1042,12 +1043,27 @@ class UniversalGateway:
 
         Fail-closed: an unrecordable decision (audit failure) or any
         governance error returns ``"deny"``.
+
+        ``call_factory`` (optional) replaces the default payload → ``ToolCall``
+        normalization with a caller-supplied one, called as
+        ``factory(payload, action_kind=..., actor=...)``. It exists so a surface
+        can classify the proposed call *structurally* before policy evaluation —
+        :func:`gove_zone.execution.execution_tool_calls_from_hook_payload` maps a
+        shell invocation onto its ``env.*`` execution surface this way. The
+        factory only chooses how the proposed action is *named and described*;
+        every decision, audit append, and receipt still runs through the same
+        kernel below. It cannot choose or replace the gateway actor: a mismatch
+        denies the entire batch before evaluation, audit, or receipt minting.
+        ``None`` (the default) keeps the existing behavior exactly.
         """
         if not actor or not actor.strip():
             raise ValueError("actor is required for hook governance (fail-closed)")
-        calls = tool_calls_from_hook_payload(dict(payload), action_kind=action_kind, actor=actor)
+        factory = call_factory if call_factory is not None else tool_calls_from_hook_payload
+        calls = tuple(factory(dict(payload), action_kind=action_kind, actor=actor))
         if not calls:
             return _hook_response(action_kind, "deny", "no governable call in hook payload")
+        if any(call.actor != actor for call in calls):
+            return _hook_response(action_kind, "deny", "call factory actor mismatch")
 
         if self.allowed_actors is not None and actor not in self.allowed_actors:
             return _hook_response(
