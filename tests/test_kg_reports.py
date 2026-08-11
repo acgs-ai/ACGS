@@ -192,12 +192,13 @@ def test_governance_coverage_reports_absence_as_absence_of_evidence():
 
 
 @pytest.mark.parametrize("query", [reports.HOTSPOT_Q, reports.CONTROL_PLANE_Q])
-def test_report_gate_counts_include_pr_only_workflows_and_exclude_push_only(query):
+def test_report_gate_counts_only_include_unconditional_pr_workflows(query):
     """GATES edges carry their triggering events. Governance coverage is PR
-    merge-gate evidence, so a push-only workflow must not increment it while a
-    pull_request workflow must."""
+    merge-gate evidence, so push-only and conditional workflows must not
+    increment it while an unconditional pull_request workflow must."""
     assert "[g:GATES]" in query
     assert "'pull_request' IN coalesce(g.events, [])" in query
+    assert "NOT coalesce(g.conditional, false)" in query
     assert "'push' IN coalesce(g.events, [])" not in query
 
 
@@ -209,10 +210,11 @@ def _catalog_query(number: int) -> str:
     return block[: nxt.start()] if nxt else block
 
 
-def test_catalog_q1_and_q2_partition_gates_by_pull_request_event():
+def test_catalog_q1_and_q2_only_treat_unconditional_pr_edges_as_gates():
     """The interactive catalog must use the same PR-only interpretation as
-    generated reports: Q1 includes PR gates; Q2 treats push-only edges as
-    ungated for pull-request merge coverage."""
+    generated reports: Q1 includes unconditional PR gates; Q2 treats
+    push-only and conditional edges as ungated for guaranteed merge
+    coverage."""
     catalog = (Path(reports.__file__).with_name("queries.cypher")).read_text()
     q1 = catalog.split("// --- Q1.", 1)[1].split("// --- Q2.", 1)[0]
     q2 = catalog.split("// --- Q2.", 1)[1].split("// --- Q3.", 1)[0]
@@ -220,6 +222,7 @@ def test_catalog_q1_and_q2_partition_gates_by_pull_request_event():
     for query in (q1, q2):
         assert "[g:GATES]" in query
         assert "'pull_request' IN coalesce(g.events, [])" in query
+        assert "NOT coalesce(g.conditional, false)" in query
         assert "'push' IN coalesce(g.events, [])" not in query
 
 

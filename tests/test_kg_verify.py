@@ -332,6 +332,17 @@ def test_every_check_and_catalog_entry_is_a_title_query_pair():
         assert isinstance(query, str) and query.strip()
 
 
+def test_catalog_q1_only_proves_unconditional_pull_request_gates():
+    """Verifier proof must not count push-only or conditional workflow edges
+    as guaranteed pull-request merge coverage."""
+    q1 = dict(verify.CATALOG)["Q1 CI gates on gove-zone gateway.py"]
+
+    assert "[g:GATES]" in q1
+    assert "'pull_request' IN coalesce(g.events, [])" in q1
+    assert "NOT coalesce(g.conditional, false)" in q1
+    assert "'push' IN coalesce(g.events, [])" not in q1
+
+
 def test_catalog_q5_ignores_test_edges_to_deleted_targets():
     """REGRESSION. The verifier's Q5 kept the unqualified
     `NOT (f)-[:TESTED_BY]->()` after the report queries were fixed, so a stale

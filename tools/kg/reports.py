@@ -89,6 +89,7 @@ OPTIONAL MATCH (f)-[t:TESTED_BY]->(tt)
 WITH f, count(t) AS test_edges
 OPTIONAL MATCH (w:Workflow)-[g:GATES]->(f)
   WHERE 'pull_request' IN coalesce(g.events, [])
+    AND NOT coalesce(g.conditional, false)
 WITH f, test_edges, count(w) AS gates
 OPTIONAL MATCH (a:ADR)-[:DECIDES_ON]->(f)
 WITH f, test_edges, gates, count(a) AS adrs
@@ -116,6 +117,7 @@ OPTIONAL MATCH (f)-[t:TESTED_BY]->(tt)
 WITH f, count(t) AS test_edges
 OPTIONAL MATCH (w:Workflow)-[g:GATES]->(f)
   WHERE 'pull_request' IN coalesce(g.events, [])
+    AND NOT coalesce(g.conditional, false)
 WITH f, test_edges, count(w) AS gates
 OPTIONAL MATCH (a:ADR)-[:DECIDES_ON]->(f)
 RETURN f.key AS path, coalesce(f.package,'.') AS package,
