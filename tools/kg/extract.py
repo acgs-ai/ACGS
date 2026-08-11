@@ -1134,19 +1134,26 @@ def build_controls() -> None:
                     enumerations += 1
                     continue
 
-                evidence: dict[str, tuple[int | None, str]] = {}
-                for tok in set(PATH_TOKEN.findall(line)) | set(CODE_TOKEN.findall(line)):
+                evidence: dict[str, list[tuple[int | None, str]]] = {}
+                for tok in sorted(set(PATH_TOKEN.findall(line)) | set(CODE_TOKEN.findall(line))):
                     tgt, ln, method = resolve_token(rel, tok)
                     if tgt and tgt != rel:
                         # How the token resolved decides how much it is worth.
                         # An explicit repo path is unambiguous; a bare basename
                         # survives only because it happens to be unique in the
                         # workspace, which is luck, not evidence.
-                        evidence.setdefault(tgt, (ln, method))
+                        # One scope may cite several lines of the same file
+                        # (`receipt.py:139`, `:140`, `:141`); keying on the
+                        # target alone kept only whichever token a set's hash
+                        # order surfaced first, so every distinct location is
+                        # accumulated (in sorted-token order, for determinism).
+                        locations = evidence.setdefault(tgt, [])
+                        if (ln, method) not in locations:
+                            locations.append((ln, method))
                         if method != "path":
                             by_basename += 1
                 for framework, cid in hits:
-                    for tgt, (ln, method) in evidence.items():
+                    for tgt, locations in evidence.items():
                         slot = G.rel("EVIDENCED_BY", "Control", cid, "File", tgt)
                         if slot is None:
                             continue
@@ -1157,20 +1164,23 @@ def build_controls() -> None:
                         # whichever sorted document was processed last. Every
                         # cited location is accumulated on the edge; the
                         # scalars mirror the strongest citation seen.
-                        cite = f"{rel}:{ln}" if ln is not None else rel
-                        cites = props.setdefault("citations", [])
-                        if cite not in cites:
-                            cites.append(cite)
-                            evidences += 1
-                        rank = METHOD_RANK.get(method, len(METHOD_RANK))
-                        seen = METHOD_RANK.get(props.get("resolved_by"), len(METHOD_RANK) + 1)
-                        if rank < seen:
-                            props["cited_in"] = rel
-                            props["resolved_by"] = method
-                            if ln is not None:
-                                props["cited_line"] = ln
-                            else:
-                                props.pop("cited_line", None)
+                        for ln, method in locations:
+                            cite = f"{rel}:{ln}" if ln is not None else rel
+                            cites = props.setdefault("citations", [])
+                            if cite not in cites:
+                                cites.append(cite)
+                                evidences += 1
+                            rank = METHOD_RANK.get(method, len(METHOD_RANK))
+                            seen = METHOD_RANK.get(
+                                props.get("resolved_by"), len(METHOD_RANK) + 1
+                            )
+                            if rank < seen:
+                                props["cited_in"] = rel
+                                props["resolved_by"] = method
+                                if ln is not None:
+                                    props["cited_line"] = ln
+                                else:
+                                    props.pop("cited_line", None)
     CONTROL_STATS.update(
         enumeration_scopes_skipped=enumerations,
         evidence_links=evidences,
@@ -1392,7 +1402,10 @@ def semantic_snapshot_props(
     edit to a file the graph analyzed means its summaries and TESTED_BY edges
     no longer match what is being reported. Any dirty path with semantic
     coverage marks the layer stale, and the offending paths are published as
-    ``semantic_dirty_paths``.
+    ``semantic_dirty_paths``. A dirty gitlink is dirt too: a submodule
+    checked out at a different commit while the parent HEAD is unchanged
+    surfaces in porcelain only as the submodule root path, so a dirty path
+    also invalidates its analyzed descendants.
 
     Coverage of the live tree matters too: a staged new file, or the
     destination of a ``git mv``, is dirty but absent from the snapshot, so
@@ -1412,7 +1425,16 @@ def semantic_snapshot_props(
         for n in json.loads(UA_GRAPH.read_text()).get("nodes", [])
         if n.get("filePath")
     }
-    dirty_analyzed = sorted(analyzed.intersection(dirty))
+    # Exact intersection alone misses a dirty gitlink: an initialized
+    # submodule checked out at a different commit is reported by porcelain
+    # only as the submodule root path, while every analyzed file beneath it
+    # may describe another revision. Any dirty path is therefore treated as
+    # invalidating both itself and its analyzed descendants.
+    dirty_exact = {p.rstrip("/") for p in dirty}
+    dirty_prefixes = tuple(f"{p}/" for p in dirty_exact)
+    dirty_analyzed = sorted(
+        p for p in analyzed if p in dirty_exact or p.startswith(dirty_prefixes)
+    )
     analyzed_exts = {os.path.splitext(p)[1].lower() for p in analyzed}
     dirty_uncovered = sorted(
         p

@@ -77,7 +77,10 @@ def governance_coverage(rec: dict) -> str:
 # not evidence either. Nodes without the flags (e.g. Symbols) stay countable.
 # The subject file must be live as well: build_spine() keeps tracked=true for
 # an unstaged deletion and records present=false, and a deleted file is not a
-# hotspot anyone can edit or gate.
+# hotspot anyone can edit or gate. The subject must also be tracked: a
+# semantic-retained node for a file removed from the index but left on disk
+# (tracked=false, present=true) will not exist in a checkout, so neither
+# report may publish it as a current path.
 HOTSPOT_Q = """
 MATCH (f:File)
 WHERE f.tracked AND coalesce(f.present, true) AND f.commit_count IS NOT NULL
@@ -105,7 +108,7 @@ LIMIT $limit
 CONTROL_PLANE_Q = """
 MATCH (f:File)
 WHERE f.key STARTS WITH 'packages/acgs-control-plane/'
-  AND coalesce(f.present, true)
+  AND f.tracked AND coalesce(f.present, true)
   AND (f.key CONTAINS 'migration' OR f.key CONTAINS '/app.py'
        OR f.key CONTAINS 'tenant' OR f.key CONTAINS 'native')
 OPTIONAL MATCH (f)-[t:TESTED_BY]->(tt)

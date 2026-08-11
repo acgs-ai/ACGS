@@ -258,6 +258,18 @@ def test_working_tree_queries_exclude_files_recorded_as_absent():
         assert "coalesce(f.present, true)" in query, query
 
 
+def test_report_subjects_require_tracked_files():
+    """REGRESSION. A control-plane file removed from the nested repository's
+    index but left on disk keeps a semantic-retained node with tracked=false
+    and present=true; the focus query checked only presence, so the generated
+    report published a path that will not exist in a checkout as current.
+    Both report subjects must require a tracked file, like the hotspot query
+    always has."""
+    for query in (reports.HOTSPOT_Q, reports.CONTROL_PLANE_Q):
+        subject = query.split("OPTIONAL MATCH", 1)[0]
+        assert "f.tracked" in subject, f"report subject no longer requires tracked:\n{query}"
+
+
 def test_catalog_q14_traverses_every_advertised_structural_edge():
     """REGRESSION. Q14's heading (and the README) advertise a blast radius
     over every structural edge, but the allowlist held six relationship types:

@@ -49,6 +49,13 @@ def main() -> int:
     )
     args = ap.parse_args()
 
+    # A non-positive batch makes chunks() yield nothing (--batch -1) or raise
+    # mid-load (--batch 0) while the counters still claim every row loaded —
+    # after an explicit --wipe that reports success over an emptied database.
+    # Refuse before connecting, applying schema, or deleting anything.
+    if args.batch < 1:
+        ap.error(f"--batch must be a positive integer (got {args.batch})")
+
     from neo4j import GraphDatabase
 
     data = json.loads(Path(args.graph).read_text())

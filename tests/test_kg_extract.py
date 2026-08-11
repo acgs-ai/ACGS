@@ -360,6 +360,56 @@ def test_semantic_snapshot_props_ignores_uncovered_dirt_the_analyzer_never_proce
     assert untracked_dirt["semantic_uncovered_paths"] == []
 
 
+def test_semantic_snapshot_props_treats_a_dirty_gitlink_as_invalidating_descendants(
+    tmp_path, monkeypatch
+):
+    """REGRESSION. An initialized submodule checked out at a different commit
+    while the parent HEAD is unchanged is reported by porcelain only as the
+    dirty gitlink path (e.g. `packages/acgs-control-plane`). The exact-path
+    intersection missed it, and the uncovered check ignored it because a
+    gitlink has no analyzed extension, so the layer published as current
+    although summaries and TESTED_BY edges for analyzed files beneath the
+    submodule can describe another revision. A dirty path must invalidate its
+    analyzed descendants; a mere name prefix without the `/` boundary must
+    not."""
+    graph = tmp_path / "knowledge-graph.json"
+    graph.write_text(
+        json.dumps(
+            {
+                "nodes": [
+                    {"id": "n1", "type": "file", "filePath": "src/a.py"},
+                    {
+                        "id": "n2",
+                        "type": "file",
+                        "filePath": "packages/acgs-control-plane/src/app.py",
+                    },
+                ],
+                "edges": [],
+            }
+        )
+    )
+    monkeypatch.setattr(extract, "UA_GRAPH", graph)
+    meta = tmp_path / "meta.json"
+    meta.write_text(json.dumps({"gitCommitHash": "abc"}))
+    monkeypatch.setattr(extract, "UA_META", meta)
+    tracked = ["src/a.py", "packages/acgs-control-plane"]
+
+    dirty_gitlink = extract.semantic_snapshot_props(
+        "abc", ["packages/acgs-control-plane"], tracked
+    )
+    name_prefix_only = extract.semantic_snapshot_props(
+        "abc", ["packages/acgs-control"], tracked
+    )
+
+    assert dirty_gitlink["semantic_layer_is_stale"] is True
+    assert dirty_gitlink["semantic_dirty_paths"] == [
+        "packages/acgs-control-plane/src/app.py"
+    ]
+    assert dirty_gitlink["semantic_uncovered_paths"] == []
+    assert name_prefix_only["semantic_layer_is_stale"] is False
+    assert name_prefix_only["semantic_dirty_paths"] == []
+
+
 # --------------------------------------------------------------------------- #
 # CI path-gate globs
 # --------------------------------------------------------------------------- #
@@ -1649,6 +1699,44 @@ def test_build_controls_accumulates_citations_from_every_mapping_document(tmp_pa
     assert evidence["props"]["cited_line"] == 141
     assert evidence["props"]["resolved_by"] == "path"
     assert extract.CONTROL_STATS["evidence_links"] == 2
+
+
+def test_build_controls_keeps_every_same_file_line_citation(tmp_path, monkeypatch):
+    """REGRESSION. One scope citing several lines of the same evidence file
+    (docs/EU_AI_ACT_MAPPING.md:49 cites receipt.py:139, :140 and :141 for a
+    single control) collapsed to one citation: evidence was keyed on the
+    target alone, and tokens iterate over a set, so the surviving line was
+    hash-order dependent. Every distinct target-and-line citation must be
+    recorded, in deterministic order."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    doc = tmp_path / "docs" / "compliance-mapping.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text(
+        "| Art. 12(1) | `packages/gove-zone/receipt.py:139`, "
+        "`packages/gove-zone/receipt.py:140` and `packages/gove-zone/receipt.py:141` |\n"
+    )
+    _files("docs/compliance-mapping.md", "packages/gove-zone/receipt.py")
+
+    extract.build_controls()
+
+    evidence = extract.G.rels[
+        (
+            "EVIDENCED_BY",
+            "Control",
+            "EU AI Act Art 12(1)",
+            "File",
+            "packages/gove-zone/receipt.py",
+        )
+    ]
+    assert evidence["props"]["citations"] == [
+        "docs/compliance-mapping.md:139",
+        "docs/compliance-mapping.md:140",
+        "docs/compliance-mapping.md:141",
+    ]
+    # The scalars mirror the first equally-strong citation, deterministically.
+    assert evidence["props"]["cited_line"] == 139
+    assert evidence["props"]["resolved_by"] == "path"
+    assert extract.CONTROL_STATS["evidence_links"] == 3
 
 
 def test_build_controls_refuses_to_bind_evidence_from_an_enumeration(tmp_path, monkeypatch):

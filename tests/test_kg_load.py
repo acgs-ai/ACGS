@@ -156,6 +156,30 @@ def test_rows_are_sent_in_batches_of_the_requested_size(run_load):
     assert [len(p["rows"]) for p in merge_calls] == [2, 2, 1]
 
 
+@pytest.mark.parametrize("batch", ["0", "-1"])
+def test_a_non_positive_batch_size_is_rejected_before_touching_the_database(
+    tmp_path, monkeypatch, capsys, batch
+):
+    """REGRESSION. chunks() with a negative size yields no batches while the
+    surrounding loops still count every row as loaded, so `--wipe --batch -1`
+    exited 0 claiming a full load over an emptied database; `--batch 0` raised
+    only after the wipe had already run. The loader must refuse a non-positive
+    batch before connecting, applying schema, or deleting anything."""
+    graph_path = tmp_path / "graph.json"
+    graph_path.write_text(json.dumps(_graph(nodes=[_node("a.py")])))
+    captured = fake_neo4j(monkeypatch, lambda query: [])
+    monkeypatch.setattr(
+        sys, "argv", ["load.py", "--graph", str(graph_path), "--wipe", "--batch", batch]
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        load.main()
+
+    assert exc.value.code == 2
+    assert "--batch must be a positive integer" in capsys.readouterr().err
+    assert "driver" not in captured  # never connected, so nothing was wiped
+
+
 def test_wipe_drains_until_the_delete_batch_returns_zero(run_load):
     _, driver, _ = run_load(_graph(), "--wipe", wipe_counts=[20000, 137, 0])
 
