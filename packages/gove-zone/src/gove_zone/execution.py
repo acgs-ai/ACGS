@@ -155,14 +155,36 @@ TIER_PUBLICATION = "publication"
 
 # -- argv-prefix classification tables --------------------------------------- #
 
-# Tokens that, standing alone as their own token, mean the command line contains
-# more than one command, a redirection, or a substitution. shlex with
-# punctuation_chars=True emits these as separate tokens ONLY when unquoted, which
-# is exactly the property a substring matcher lacks.
+# Characters that, reachable by the shell (unquoted and unescaped), make the
+# command line contain more than one command, a redirection, or a substitution.
+# Detection happens on the RAW command text with quote tracking
+# (:func:`_has_unquoted_operator`), NOT on the shlex token stream: shlex in
+# POSIX mode strips quotes, so a standalone quoted operator argument —
+# ``git commit -m ';'`` or ``grep -F '|' file`` — reaches the token list as a
+# bare ``;`` / ``|``, indistinguishable from a real separator. Only an
+# occurrence the shell would actually parse as an operator counts; quoted or
+# escaped punctuation is argument data.
 _OPERATOR_CHARS = frozenset("();<>|&")
 
 # Leading tokens that wrap another command rather than being the command.
-_WRAPPERS = frozenset({"sudo", "env", "command", "nohup", "time", "nice", "exec", "doas"})
+# These pass their remaining arguments through as an argv — the wrapped
+# command's structure is preserved — which is why peeling them is sound.
+# ``builtin`` is included: it routes to the named builtin with argv semantics,
+# and leaving it out would hide ``builtin eval '<command>'`` behind an
+# unclassified token.
+_WRAPPERS = frozenset(
+    {"sudo", "env", "command", "builtin", "nohup", "time", "nice", "exec", "doas"}
+)
+
+#: Shell builtins that evaluate a *string* (or file contents) as a new shell
+#: command line. ``eval 'npm install left-pad'`` concatenates its arguments and
+#: re-parses the result as a second command line — one this classifier never
+#: tokenizes and that carries no unquoted operator of its own — while
+#: ``source`` / ``.`` execute a script's contents in the current shell. Unlike
+#: the :data:`_WRAPPERS`, the payload is unparsed program text, not an argv
+#: this classifier could recurse into, so every such invocation is returned
+#: undecidable (fail-closed) rather than classified as a decidable plain exec.
+_SHELL_EVAL_BUILTINS = frozenset({"eval", "source", "."})
 
 #: Shell interpreter binaries. Invoking one delegates the real program — an
 #: inline ``-c`` string, a script file, or stdin — that this classifier never
@@ -707,6 +729,41 @@ def _has_active_substitution(text: str) -> bool:
     return False
 
 
+def _has_unquoted_operator(text: str) -> bool:
+    """True when a shell operator character is reachable by the shell in *text*.
+
+    The check runs on the raw command text because :mod:`shlex` in POSIX mode
+    strips quotes: a standalone quoted operator — ``git commit -m ';'`` or
+    ``grep -F '|' file`` — survives tokenization as a bare ``;`` / ``|`` token,
+    so a token-value test cannot tell data from a separator and would mark an
+    explicitly permitted single command undecidable. Quoting semantics mirror
+    :func:`_has_active_substitution`: operator characters are inert inside
+    single quotes, inside double quotes, and behind a backslash escape; only
+    occurrences the shell would actually parse as operators count.
+    """
+    in_single = False
+    in_double = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if in_single:
+            if char == "'":
+                in_single = False
+            index += 1
+            continue
+        if char == "\\":
+            index += 2
+            continue
+        if char == "'" and not in_double:
+            in_single = True
+        elif char == '"':
+            in_double = not in_double
+        elif not in_double and char in _OPERATOR_CHARS:
+            return True
+        index += 1
+    return False
+
+
 def _git_config_key(value: str) -> str:
     """The config key of a ``name=value`` / ``name=envvar`` option value."""
     return value.split("=", 1)[0].strip().lower()
@@ -878,8 +935,12 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
             command_sha256=digest,
         )
 
-    operators = [t for t in tokens if t and set(t) <= _OPERATOR_CHARS]
-    if operators:
+    # Checked on the raw text with quote tracking, not on the token values:
+    # shlex strips quotes, so `git commit -m ';'` emits a bare `;` token that a
+    # token-value test cannot tell from a real separator, while the shell
+    # passes the quoted punctuation as data.
+    operator_present = _has_unquoted_operator(text)
+    if operator_present:
         reasons.append("shell-operator")
     if _has_active_substitution(text):
         # Checked on the raw text, not the tokens: a `$(...)` or backtick
@@ -895,7 +956,16 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
     if raw_newlines > sum(t.count("\n") + t.count("\r") for t in tokens):
         reasons.append("newline-separator")
 
-    words = [t for t in tokens if not (t and set(t) <= _OPERATOR_CHARS)]
+    if operator_present:
+        # Attribution on a multi-command line is best-effort: operator tokens
+        # are dropped so the leading argv can still be attributed. The line is
+        # already undecidable, so this never feeds a positive verdict.
+        words = [t for t in tokens if not (t and set(t) <= _OPERATOR_CHARS)]
+    else:
+        # No unquoted operator exists, so any punctuation-only token was
+        # quoted or escaped argument data (`grep -F '|' file`), not a
+        # separator, and must stay in the argv.
+        words = list(tokens)
     argv, wrappers, unsupported_wrapper_options = _strip_wrappers(words)
     if unsupported_wrapper_options:
         reasons.append("unsupported-wrapper-options")
@@ -907,13 +977,21 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
             tier_hint=TIER_UNCLASSIFIED,
             decidable=False,
             undecidable_reasons=tuple(reasons or ["empty-command"]),
-            facts={"operator_present": bool(operators)},
+            facts={"operator_present": operator_present},
             command_sha256=digest,
         )
 
-    binary = Path(argv[0]).name
+    binary = Path(argv[0]).name or argv[0]
     invoked_by_absolute_path = argv[0] != binary
     interpreter = ""
+    if binary in _SHELL_EVAL_BUILTINS:
+        # `eval` combines its arguments and executes them as a new shell
+        # command line; `source`/`.` run file contents in the current shell.
+        # Neither payload is recoverable from this argv — `eval 'npm install
+        # left-pad'` contains no unquoted operator — so classifying the outer
+        # builtin as a decidable exec would mint an allow receipt for whatever
+        # the evaluated text does.
+        reasons.append("shell-eval-builtin")
     if binary in _SHELL_INTERPRETERS:
         # The real program is whatever the shell is handed — inline `-c` text,
         # a script, or stdin — none of which is recoverable from this argv.
@@ -945,7 +1023,7 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
     flags = frozenset(t for t in argv[1:] if t.startswith("-"))
 
     base_facts: dict[str, Any] = {
-        "operator_present": bool(operators),
+        "operator_present": operator_present,
         "invoked_by_absolute_path": invoked_by_absolute_path,
         "wrapped": bool(wrappers),
     }
@@ -953,6 +1031,39 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
         base_facts["interpreter"] = interpreter
     if unsupported_wrapper_options:
         base_facts["wrapper_options_supported"] = False
+
+    if reasons == ["option-value-ambiguity"] and binary in _INSTALL_SUBCOMMANDS:
+        # A value-taking option this module does not model — `npm --prefix
+        # <dir> install <pkg>` — hides WHICH subcommand runs, but not WHICH
+        # manager runs: the binary is certain and no operator, substitution,
+        # or delegation reason accompanies it, so this is a single invocation
+        # of that manager. Returning the generic undecidable shell event here
+        # would drop the contract facts and let the option downgrade the
+        # canonical-manager DENY into the undecidable-shell ask. The event
+        # stays on the package surface instead, undecidable, with the contract
+        # facts intact: deny-non-canonical-package-manager still matches, and
+        # a canonical manager falls to the dependency tier's escalation — the
+        # fail-closed floor is never an allow.
+        canonical = canonical_package_manager.strip()
+        in_contract = bool(canonical) and binary in _JS_MANAGERS and canonical in _JS_MANAGERS
+        return ExecutionEvent(
+            action=ACTION_PACKAGE_INVOKE,
+            binary=binary,
+            argv_prefix=argv_prefix,
+            tier_hint=TIER_DEPENDENCY,
+            decidable=False,
+            undecidable_reasons=tuple(reasons),
+            facts={
+                **base_facts,
+                "manager": binary,
+                "subcommand": subcommand,
+                "canonical_manager": canonical if in_contract else "",
+                "manager_is_canonical": (binary == canonical) if in_contract else True,
+                "manager_contract_applies": in_contract,
+                "scripts_disabled": bool(flags & _IGNORE_SCRIPTS_FLAGS),
+            },
+            command_sha256=digest,
+        )
 
     if reasons:
         # Undecidable lines stop here: attributed, never promoted to a surface

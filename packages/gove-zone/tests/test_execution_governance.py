@@ -385,6 +385,62 @@ def test_shell_interpreter_delegation_is_undecidable(command: str, shell: str) -
 
 
 @pytest.mark.parametrize(
+    ("command", "builtin"),
+    [
+        ("eval 'npm install left-pad'", "eval"),
+        ("eval npm install left-pad", "eval"),
+        ("source ./setup.sh", "source"),
+        (". ./setup.sh", "."),
+        ("sudo eval 'npm install left-pad'", "eval"),
+        ("builtin eval 'npm install left-pad'", "eval"),
+    ],
+)
+def test_shell_eval_builtins_are_undecidable(command: str, builtin: str) -> None:
+    """``eval`` combines its arguments and executes them as a NEW shell command
+    line; ``source``/``.`` run file contents in the current shell. ``eval 'npm
+    install left-pad'`` carries no unquoted operator, so without this marker
+    the outer builtin would classify as a decidable exec and mint an allow
+    receipt while the evaluated text performs a governed dependency mutation."""
+    event = classify_command(command)
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.binary == builtin
+    assert event.decidable is False
+    assert "shell-eval-builtin" in event.undecidable_reasons
+
+
+def test_value_taking_manager_options_preserve_the_contract_facts() -> None:
+    """``npm --prefix acgi-ai install left-pad``: the unmodeled ``--prefix``
+    value makes the *subcommand* ambiguous, but the *manager* is certain.
+    Dropping the contract facts here let the option downgrade the
+    canonical-manager DENY into the generic undecidable-shell ask."""
+    event = classify_command(
+        "npm --prefix acgi-ai install left-pad", canonical_package_manager="pnpm"
+    )
+
+    assert event.action == ACTION_PACKAGE_INVOKE
+    assert event.tier_hint == TIER_DEPENDENCY
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("option-value-ambiguity",)
+    assert event.facts["manager"] == "npm"
+    assert event.facts["manager_contract_applies"] is True
+    assert event.facts["manager_is_canonical"] is False
+
+
+def test_manager_option_ambiguity_with_an_operator_stays_unclassified() -> None:
+    """Positive control: the package-surface preservation applies only when the
+    option ambiguity is the sole reason — a multi-command line is not a single
+    manager invocation and keeps the unclassified undecidable shape."""
+    event = classify_command(
+        "npm --prefix acgi-ai install left-pad; ls", canonical_package_manager="pnpm"
+    )
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert event.tier_hint == TIER_UNCLASSIFIED
+
+
+@pytest.mark.parametrize(
     "command",
     [
         "python -c \"open('.gove-zone/gate.mode','w').write('observe')\"",
@@ -615,6 +671,41 @@ def test_operator_detection_ignores_quoted_operators() -> None:
     assert event.facts["operator_present"] is False
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git commit -m ';'",
+        'git commit -m "&"',
+    ],
+)
+def test_standalone_quoted_operator_arguments_stay_git_mutations(command: str) -> None:
+    """shlex strips quotes, so ``git commit -m ';'`` emits a bare ``;`` token —
+    a token-value test reads it as a separator and marks the explicitly
+    permitted commit undecidable, while bash passes the quoted punctuation as
+    data. Operator detection must read the RAW text's quoting instead."""
+    event = classify_command(command)
+
+    assert event.action == ACTION_GIT_MUTATE
+    assert event.decidable is True
+    assert event.facts["operator_present"] is False
+    assert event.facts["subcommand"] == "commit"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "grep -F '|' file.txt",
+        "find . -name '*.py' -exec grep x {} \\;",
+    ],
+)
+def test_quoted_or_escaped_operator_tokens_are_data(command: str) -> None:
+    event = classify_command(command)
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is True
+    assert event.facts["operator_present"] is False
+
+
 def test_backtick_command_substitution_is_undecidable() -> None:
     event = classify_command("echo `whoami`")
 
@@ -819,6 +910,56 @@ def test_option_bearing_wrapper_is_denied_before_receipt_minting(tmp_path: Path)
     assert "deny-unsupported-wrapper-options" in events[0]["matched_rules"]
 
 
+def test_value_taking_options_do_not_downgrade_the_manager_denial(tmp_path: Path) -> None:
+    """``npm --prefix acgi-ai install left-pad`` in a pnpm workspace: npm
+    accepts ``--prefix <dir>`` before the subcommand and proceeds into the
+    install, so the unmodeled option must not turn the canonical-manager DENY
+    into an approvable ask."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "npm --prefix acgi-ai install left-pad")
+
+    assert permission(response) == "deny"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["tool"] == ACTION_PACKAGE_INVOKE
+    assert event["decision"] == "deny"
+    assert "deny-non-canonical-package-manager" in event["matched_rules"]
+
+
+def test_canonical_manager_with_ambiguous_options_still_requires_a_human(
+    tmp_path: Path,
+) -> None:
+    """Positive control: the canonical manager with an unmodeled option is not
+    denied — but it is undecidable, and the dependency tier still demands a
+    human. The fail-closed floor is never an allow."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "pnpm --prefix acgi-ai install left-pad")
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["decision"] == "escalate"
+    assert f"RISK_TIER:{TIER_DEPENDENCY}" in event["matched_rules"]
+
+
+def test_quoted_operator_argument_does_not_block_a_permitted_git_commit(
+    tmp_path: Path,
+) -> None:
+    """``git commit -m ';'`` is one command with a punctuation argument; the
+    gate must not override the explicitly permitted commit flow with an
+    undecidable ask."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "git commit -m ';'")
+
+    assert permission(response) == "allow"
+    event = audit_events(tmp_path)[-1]
+    assert event["tool"] == ACTION_GIT_MUTATE
+    assert event["decision"] == "allow"
+
+
 def test_canonical_manager_escalates_rather_than_denying(tmp_path: Path) -> None:
     """Positive control. The canonical manager is not denied — but a dependency
     mutation still requires a human, which is the ``dependency`` tier baseline.
@@ -997,6 +1138,8 @@ def test_artifact_generation_requires_a_human_at_the_gate(tmp_path: Path) -> Non
         "git st",
         "python --some-future-option -m pip install requests",
         "bash -c 'npm install left-pad'",
+        "eval 'npm install left-pad'",
+        "source ./setup.sh",
         "python -c \"open('.gove-zone/gate.mode','w').write('observe')\"",
         "node -e \"require('fs').writeFileSync('.gove-zone/gate.mode','observe')\"",
         'git status "$(npm install left-pad)"',
