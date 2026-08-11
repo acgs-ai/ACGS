@@ -38,10 +38,15 @@ def load_or_create_key(keystore: Path) -> bytes:
     Creation is atomic and owner-only: the file is opened with
     O_CREAT|O_EXCL and mode 0600, so the key bytes are never observable
     through a world-readable window and a failure to restrict permissions
-    fails closed instead of leaving a readable keystore behind."""
+    fails closed instead of leaving a readable keystore behind.
+
+    The key is raw random bytes and is read back verbatim — never
+    whitespace-stripped. Stripping would reject (or worse, silently alter)
+    a key whose first or last byte happens to be a whitespace byte, making
+    load nondeterministically disagree with the key returned at creation."""
     if keystore.exists():
         if keystore.is_file():
-            data = keystore.read_bytes().strip()
+            data = keystore.read_bytes()
             if len(data) >= 32:
                 return data
         raise ReceiptError(f"keystore exists but holds no usable key: {keystore}")
@@ -50,7 +55,7 @@ def load_or_create_key(keystore: Path) -> bytes:
     try:
         fd = os.open(keystore, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
-        data = keystore.read_bytes().strip()
+        data = keystore.read_bytes()
         if len(data) >= 32:
             return data
         raise ReceiptError(f"keystore exists but holds no usable key: {keystore}") from None

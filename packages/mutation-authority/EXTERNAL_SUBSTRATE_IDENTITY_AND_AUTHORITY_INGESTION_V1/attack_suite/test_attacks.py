@@ -33,6 +33,7 @@ from _substrate import CRITICAL_OBJECTS  # noqa: E402
 from authority_receipt import (  # noqa: E402
     ReceiptError,
     ReplayLedger,
+    load_or_create_key,
     mint_receipt,
     verify_receipt,
 )
@@ -393,6 +394,23 @@ def test_attack19_replayed_receipt():
     ledger.consume(r["receipt_id"])
     with pytest.raises(ReceiptError):
         ledger.consume(r["receipt_id"])
+
+
+def test_keystore_key_with_whitespace_edge_bytes_round_trips(tmp_path):
+    # Regression: the key is raw random bytes; roughly 1 in 22 generated keys
+    # begins or ends with an ASCII-whitespace byte. Loading must return the
+    # stored bytes verbatim — a whitespace-stripping load would reject such a
+    # key ("holds no usable key") or, worse, silently verify with different
+    # key bytes than the ones that minted the receipts.
+    ks = tmp_path / "ks"
+    edge_key = b"\n" + b"k" * 30 + b" "  # 32 bytes, whitespace at both edges
+    ks.write_bytes(edge_key)
+    assert load_or_create_key(ks) == edge_key
+    # Create-then-reload must also agree bit-for-bit.
+    ks2 = tmp_path / "ks2"
+    created = load_or_create_key(ks2)
+    assert len(created) == 32
+    assert load_or_create_key(ks2) == created
 
 
 def test_attack20_receipt_for_request_a_used_for_request_b():
