@@ -219,6 +219,62 @@ def test_build_semantic_records_filesystem_presence_for_snapshot_only_paths(
     assert extract.G.nodes[("File", "gone.py")]["props"]["present"] is False
 
 
+def test_semantic_snapshot_props_ignores_metadata_when_the_graph_artifact_is_absent(
+    tmp_path, monkeypatch
+):
+    """REGRESSION. meta.json can outlive a deleted knowledge-graph.json, and
+    the snapshot recorded its commit — potentially even marking the layer
+    current — although build_semantic() skipped and loaded no semantic nodes.
+    Availability must be derived from the artifact actually ingested."""
+    monkeypatch.setattr(extract, "UA_GRAPH", tmp_path / "knowledge-graph.json")
+    meta = tmp_path / "meta.json"
+    meta.write_text(json.dumps({"gitCommitHash": "abc", "analyzedFiles": 10}))
+    monkeypatch.setattr(extract, "UA_META", meta)
+
+    assert extract.semantic_snapshot_props("abc") == {"semantic_layer_loaded": False}
+
+
+def test_semantic_snapshot_props_marks_a_graph_without_metadata_as_loaded_but_stale(
+    tmp_path, monkeypatch
+):
+    """The converse gap: a present graph with missing metadata IS loaded, but
+    its commit is unknown — it must publish as loaded and stale, not absent."""
+    graph = tmp_path / "knowledge-graph.json"
+    graph.write_text("{}")
+    monkeypatch.setattr(extract, "UA_GRAPH", graph)
+    monkeypatch.setattr(extract, "UA_META", tmp_path / "meta.json")
+
+    props = extract.semantic_snapshot_props("abc")
+
+    assert props["semantic_layer_loaded"] is True
+    assert props["ua_commit"] is None
+    assert props["semantic_layer_is_stale"] is True
+
+
+def test_semantic_snapshot_props_publishes_metadata_alongside_the_loaded_graph(
+    tmp_path, monkeypatch
+):
+    graph = tmp_path / "knowledge-graph.json"
+    graph.write_text("{}")
+    monkeypatch.setattr(extract, "UA_GRAPH", graph)
+    meta = tmp_path / "meta.json"
+    meta.write_text(
+        json.dumps({"gitCommitHash": "abc", "lastAnalyzedAt": "2026-08-09", "analyzedFiles": 10})
+    )
+    monkeypatch.setattr(extract, "UA_META", meta)
+
+    props = extract.semantic_snapshot_props("abc")
+
+    assert props == {
+        "semantic_layer_loaded": True,
+        "ua_commit": "abc",
+        "ua_analyzed_at": "2026-08-09",
+        "ua_analyzed_files": 10,
+        "semantic_layer_is_stale": False,
+    }
+    assert extract.semantic_snapshot_props("other")["semantic_layer_is_stale"] is True
+
+
 # --------------------------------------------------------------------------- #
 # CI path-gate globs
 # --------------------------------------------------------------------------- #
@@ -987,6 +1043,69 @@ def test_build_sealed_accepts_the_gate_marker_syntax_including_uppercase_hex(
     assert props["sealed"] is True
     assert props["sealed_hash"] == "DEADBEEFCAFEBABE"
     assert ("SEALED_WITH", "File", "sealed.md", "Hash", "DEADBEEFCAFEBABE") in extract.G.rels
+
+
+def _lock(tmp_path, hashes: dict[str, str]) -> None:
+    lock_dir = tmp_path / "docs"
+    lock_dir.mkdir(exist_ok=True)
+    (lock_dir / "constitutional-hashes.lock").write_text(json.dumps({"hashes": hashes}))
+
+
+def test_build_sealed_keeps_the_live_marker_when_the_lock_pins_a_different_hash(
+    tmp_path, monkeypatch
+):
+    """REGRESSION. When a checked-out sealed file's marker differs from
+    docs/constitutional-hashes.lock — the exact drift this graph exists to
+    expose — the lock pass overwrote the live marker in sealed_hash, so Q3
+    displayed the pinned value while sealed_source still said working-tree.
+    The observed and pinned values must stay separate, with the mismatch
+    recorded."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    (tmp_path / "sealed.md").write_text("Constitutional Hash: `deadbeefcafebabe`\n")
+    _lock(tmp_path, {"sealed.md": "0123456789abcdef"})
+    _files("sealed.md")
+
+    extract.build_sealed(["sealed.md"])
+
+    props = extract.G.nodes[("File", "sealed.md")]["props"]
+    assert props["sealed_hash"] == "deadbeefcafebabe"
+    assert props["sealed_source"] == "working-tree"
+    assert props["pinned_hash"] == "0123456789abcdef"
+    assert props["hash_drift"] is True
+    assert ("SEALED_WITH", "File", "sealed.md", "Hash", "deadbeefcafebabe") in extract.G.rels
+    assert ("SEALED_WITH", "File", "sealed.md", "Hash", "0123456789abcdef") in extract.G.rels
+
+
+def test_build_sealed_records_no_drift_when_lock_and_marker_agree(tmp_path, monkeypatch):
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    (tmp_path / "sealed.md").write_text("Constitutional Hash: `deadbeefcafebabe`\n")
+    _lock(tmp_path, {"sealed.md": "deadbeefcafebabe"})
+    _files("sealed.md")
+
+    extract.build_sealed(["sealed.md"])
+
+    props = extract.G.nodes[("File", "sealed.md")]["props"]
+    assert props["sealed_hash"] == "deadbeefcafebabe"
+    assert props["pinned_hash"] == "deadbeefcafebabe"
+    assert props["hash_drift"] is False
+
+
+def test_build_sealed_seals_a_marker_less_file_from_the_lock_pin(tmp_path, monkeypatch):
+    """With no live marker observed, the pin is the only hash — and the source
+    must say so instead of implying the value was seen in the working tree."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    (tmp_path / "plain.md").write_text("no marker here\n")
+    _lock(tmp_path, {"plain.md": "0123456789abcdef"})
+    _files("plain.md")
+
+    extract.build_sealed(["plain.md"])
+
+    props = extract.G.nodes[("File", "plain.md")]["props"]
+    assert props["sealed"] is True
+    assert props["sealed_hash"] == "0123456789abcdef"
+    assert props["sealed_source"] == "hash-lock"
+    assert props["pinned_hash"] == "0123456789abcdef"
+    assert "hash_drift" not in props
 
 
 # --------------------------------------------------------------------------- #

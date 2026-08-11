@@ -9,6 +9,7 @@ pass path, using a stub driver rather than a live Neo4j.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -193,6 +194,20 @@ def test_every_check_and_catalog_entry_is_a_title_query_pair():
     for title, query in [*verify.CHECKS, *verify.CATALOG]:
         assert isinstance(title, str) and title
         assert isinstance(query, str) and query.strip()
+
+
+def test_catalog_q5_ignores_test_edges_to_deleted_targets():
+    """REGRESSION. The verifier's Q5 kept the unqualified
+    `NOT (f)-[:TESTED_BY]->()` after the report queries were fixed, so a stale
+    snapshot's edge to a deleted test file (present=false) still hid a hotspot
+    from the catalog check. It must restrict to live targets like reports.py
+    (nodes without the flag, e.g. Symbols, stay countable)."""
+    q5 = dict(verify.CATALOG)["Q5 hotspots with no test edge"]
+
+    assert "TESTED_BY]->()" not in q5
+    match = re.search(r"TESTED_BY]->\((\w+)", q5)
+    assert match, f"query no longer binds its TESTED_BY target:\n{q5}"
+    assert f"coalesce({match.group(1)}.present, true)" in q5
 
 
 def test_catalog_queries_are_distinct():

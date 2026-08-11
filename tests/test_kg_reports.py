@@ -201,6 +201,14 @@ def test_report_gate_counts_include_pr_only_workflows_and_exclude_push_only(quer
     assert "'push' IN coalesce(g.events, [])" not in query
 
 
+def _catalog_query(number: int) -> str:
+    """One query block out of tools/kg/queries.cypher, by its Q-number."""
+    catalog = (Path(reports.__file__).with_name("queries.cypher")).read_text()
+    block = catalog.split(f"// --- Q{number}.", 1)[1]
+    nxt = re.search(r"// --- Q\d+", block)
+    return block[: nxt.start()] if nxt else block
+
+
 def test_catalog_q1_and_q2_partition_gates_by_pull_request_event():
     """The interactive catalog must use the same PR-only interpretation as
     generated reports: Q1 includes PR gates; Q2 treats push-only edges as
@@ -213,6 +221,52 @@ def test_catalog_q1_and_q2_partition_gates_by_pull_request_event():
         assert "[g:GATES]" in query
         assert "'pull_request' IN coalesce(g.events, [])" in query
         assert "'push' IN coalesce(g.events, [])" not in query
+
+
+def test_catalog_q5_and_q13_ignore_test_edges_to_deleted_targets():
+    """REGRESSION. When the semantic snapshot predates a test file's deletion,
+    its TESTED_BY edge survives pointing at a target with present=false. Q5's
+    unqualified `NOT (f)-[:TESTED_BY]->()` suppressed the source from the
+    hotspot list on stale evidence alone, and Q13 counted the dead edge as
+    test status. Both must restrict to live targets, like the generated
+    reports (nodes without the flag, e.g. Symbols, stay countable)."""
+    for query in (_catalog_query(5), _catalog_query(13)):
+        assert "TESTED_BY]->()" not in query
+        match = re.search(r"TESTED_BY]->\((\w+)", query)
+        assert match, f"query no longer binds its TESTED_BY target:\n{query}"
+        assert f"coalesce({match.group(1)}.present, true)" in query
+
+
+def test_catalog_q14_traverses_every_advertised_structural_edge():
+    """REGRESSION. Q14's heading (and the README) advertise a blast radius
+    over every structural edge, but the allowlist held six relationship types:
+    a file's tests (TESTED_BY), symbols (CONTAINS), callers (CALLS), and the
+    rest of layer B's typed edges were silently absent from the result."""
+    q14 = _catalog_query(14)
+    traversal = re.search(r"\[:([A-Z_|]+)\*1\.\.2\]", q14)
+    assert traversal, f"Q14 lost its multi-hop traversal:\n{q14}"
+    rels = set(traversal.group(1).split("|"))
+
+    structural = {
+        "CONTAINS", "IMPORTS", "EXPORTS", "TESTED_BY", "DOCUMENTS", "DEPENDS_ON",
+        "CONFIGURES", "CALLS", "INHERITS", "DEFINES_SCHEMA", "TRIGGERS", "DEPLOYS",
+        "SERVES", "ROUTES", "IMPLEMENTS", "RELATED_TO",
+    }  # fmt: skip
+    governance = {"GATES", "DECIDES_ON", "SEALED_WITH"}
+    assert rels >= structural | governance
+    # Membership edges would pull in a whole Layer/tour at two hops.
+    assert not rels & {"IN_LAYER", "HIGHLIGHTS", "IN_PACKAGE", "CO_CHANGED"}
+
+
+def test_catalog_q15_rebuilds_steps_that_highlight_symbols_and_endpoints():
+    """REGRESSION. build_semantic() mints HIGHLIGHTS edges to Symbols and
+    Endpoints as well as Files, but Q15 matched `(f:File)` only, so a tour
+    step whose highlights are all functions/classes/endpoints vanished from
+    the rebuilt tour."""
+    q15 = _catalog_query(15)
+    match = re.search(r"\[:HIGHLIGHTS\]->\((\w+)\)", q15)
+    assert match, f"Q15's HIGHLIGHTS target must not be label-restricted:\n{q15}"
+    assert ":File)" not in q15.split("RETURN")[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -493,6 +547,22 @@ def test_provenance_survives_a_missing_semantic_commit(run_reports):
         assert "recorded no semantic snapshot" in document
         assert "0/200 tracked files analyzed" in document
         assert "STALE relative to HEAD" not in document
+
+
+def test_provenance_reports_a_loaded_layer_without_metadata_as_stale_not_absent(run_reports):
+    """REGRESSION companion to extract.semantic_snapshot_props(): when
+    knowledge-graph.json was ingested but meta.json is missing, the layer IS
+    loaded — labelling it absent would contradict every ua_covered fact in the
+    same report. It renders as loaded-but-unverifiable, i.e. stale."""
+    code, hotspot, tiers, _ = run_reports(
+        snapshot={**SNAPSHOT, "ua_commit": None, "semantic_loaded": True},
+    )
+
+    assert code == 0
+    for document in (hotspot, tiers):
+        assert "**absent**" not in document
+        assert "meta.json" in document
+        assert "treated as STALE" in document
 
 
 def test_provenance_derives_submodule_coverage_from_the_graph(run_reports):

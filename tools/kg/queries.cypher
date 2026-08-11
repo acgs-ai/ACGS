@@ -36,8 +36,12 @@ RETURN f.package AS package, count(*) AS ungated_files,
 ORDER BY ungated_files DESC;
 
 // --- Q3. Sealed-file drift: hash-sealed files changed recently ------------
+// sealed_hash is the marker observed in the working tree; pinned_hash is the
+// docs/constitutional-hashes.lock entry. hash_drift=true is the mismatch this
+// graph exists to expose (only set when both sources cover the file).
 MATCH (c:Commit)-[t:TOUCHED]->(f:File {sealed: true})
-RETURN f.key AS sealed_file, f.sealed_hash AS hash, count(c) AS recent_commits,
+RETURN f.key AS sealed_file, f.sealed_hash AS live_hash, f.pinned_hash AS pinned_hash,
+       f.hash_drift AS drift, count(c) AS recent_commits,
        collect(DISTINCT c.author) AS authors, max(c.date) AS last_change
 ORDER BY recent_commits DESC LIMIT 25;
 
@@ -61,11 +65,16 @@ ORDER BY joint_commits DESC LIMIT 20;
 
 // --- Q5. Hotspots with no test edge ---------------------------------------
 // hotspot = normalised churn x complexity weight. TESTED_BY undercounts
-// barrel/dynamic imports — treat as leads, not verdicts.
+// barrel/dynamic imports — treat as leads, not verdicts. A stale snapshot
+// keeps TESTED_BY edges to deleted test files (present=false); only a live
+// target counts as test evidence, matching the generated reports.
 MATCH (f:File)
 WHERE f.tracked AND NOT f.is_test AND f.hotspot > 0.05
   AND f.language IN ['Python', 'TypeScript']
-  AND NOT (f)-[:TESTED_BY]->()
+  AND NOT EXISTS {
+    MATCH (f)-[:TESTED_BY]->(tt)
+    WHERE coalesce(tt.present, true)
+  }
 RETURN f.key AS file, f.hotspot AS hotspot, f.churn AS churn,
        f.commit_count AS commits, f.complexity AS complexity, f.summary AS summary
 ORDER BY hotspot DESC LIMIT 20;
@@ -152,9 +161,12 @@ RETURN f.key AS doc, count(l) AS inbound_refs, f.summary AS summary
 ORDER BY inbound_refs DESC LIMIT 20;
 
 // --- Q13. Kernel symbols by complexity, with test status ------------------
+// Like Q5, test evidence must be live: an edge to a deleted test file
+// (present=false) left by a stale snapshot is not test status.
 MATCH (s:Symbol)<-[:CONTAINS]-(f:File)
 WHERE f.package = 'packages/gove-zone' AND s.complexity = 'complex'
 OPTIONAL MATCH (f)-[:TESTED_BY]->(t:File)
+  WHERE coalesce(t.present, true)
 RETURN s.name AS symbol, f.key AS file, s.line_start AS line,
        count(t) AS test_files, s.summary AS summary
 ORDER BY test_files ASC, symbol LIMIT 25;
@@ -162,12 +174,22 @@ ORDER BY test_files ASC, symbol LIMIT 25;
 // --- Q14. Blast radius of a file: 2 hops out over every structural edge ---
 // Undirected on purpose: GATES/DECIDES_ON point INTO the file while
 // SEALED_WITH/IMPORTS point OUT of it, and both directions are blast radius.
+// The set is every layer-B structural edge (see README) plus the governance
+// joins; membership edges (IN_LAYER, HIGHLIGHTS, IN_PACKAGE) are excluded on
+// purpose — two hops through a Layer node is the whole layer, not blast
+// radius. CO_CHANGED is statistical coupling, reported by Q4 instead.
 MATCH (f:File {key: 'packages/gove-zone/src/gove_zone/gateway.py'})
-MATCH p = (f)-[:IMPORTS|DEPENDS_ON|DOCUMENTS|GATES|DECIDES_ON|SEALED_WITH*1..2]-(x)
+MATCH p = (f)-[:CONTAINS|IMPORTS|EXPORTS|TESTED_BY|DOCUMENTS|DEPENDS_ON|CONFIGURES|CALLS|INHERITS|DEFINES_SCHEMA|TRIGGERS|DEPLOYS|SERVES|ROUTES|IMPLEMENTS|RELATED_TO|GATES|DECIDES_ON|SEALED_WITH*1..2]-(x)
 RETURN DISTINCT labels(x)[0] AS kind, coalesce(x.key, x.name) AS node
 ORDER BY kind, node LIMIT 60;
 
 // --- Q15. Guided tour, rebuilt from the graph -----------------------------
-MATCH (t:TourStep)-[:HIGHLIGHTS]->(f:File)
-RETURN t.order AS step, t.title AS title, collect(f.key)[0..6] AS files
+// A tour step can highlight a Symbol or Endpoint, not only a File; a
+// File-only match dropped those edges and made steps without a file vanish.
+// Files render as their path; Symbols/Endpoints as name plus defining path.
+MATCH (t:TourStep)-[:HIGHLIGHTS]->(n)
+RETURN t.order AS step, t.title AS title,
+       collect(CASE WHEN n:File THEN n.key
+                    ELSE coalesce(n.name, n.key) + coalesce(' (' + n.path + ')', '')
+               END)[0..6] AS highlights
 ORDER BY step;

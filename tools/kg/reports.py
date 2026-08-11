@@ -129,6 +129,7 @@ ORDER BY commit_nodes DESC, repo ASC
 SNAPSHOT_Q = """
 MATCH (s:Snapshot)
 RETURN s.git_head AS head, s.git_branch AS branch, s.ua_commit AS ua_commit,
+       s.semantic_layer_loaded AS semantic_loaded,
        s.semantic_layer_is_stale AS stale, s.generated_at AS generated_at,
        s.dirty_count AS dirty, s.enumeration_scopes_skipped AS enumeration_scopes_skipped
 """
@@ -209,6 +210,13 @@ def main() -> int:
             f"Semantic layer (understand-anything) is pinned at "
             f"`{snap['ua_commit'][:12]}` and is "
             f"{'STALE relative to HEAD' if snap['stale'] else 'current'}"
+        )
+    elif snap.get("semantic_loaded"):
+        # knowledge-graph.json was ingested but meta.json is missing: the
+        # layer is loaded, its commit unknown — treated as stale, not absent.
+        semantic_note = (
+            "Semantic layer (understand-anything) is loaded but its meta.json "
+            "is missing, so its commit is unknown and it is treated as STALE"
         )
     else:
         semantic_note = (

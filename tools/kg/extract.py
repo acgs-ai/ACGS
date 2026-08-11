@@ -753,7 +753,22 @@ def build_sealed(tracked: list[str]) -> None:
         for path, value in data.get("hashes", {}).items():
             G.node("Hash", value, extra_labels=("ConstitutionalHash",), value=value)
             if G.has("File", path):
-                G.node("File", path, sealed=True, sealed_hash=value, in_hash_lock=True)
+                props = G.nodes[("File", path)]["props"]
+                live = (
+                    props.get("sealed_hash")
+                    if props.get("sealed_source") == "working-tree"
+                    else None
+                )
+                G.node("File", path, sealed=True, pinned_hash=value, in_hash_lock=True)
+                if live is None:
+                    # No live marker observed here: the pin is the only hash.
+                    G.node("File", path, sealed_hash=value, sealed_source="hash-lock")
+                else:
+                    # Keep the observed working-tree marker as sealed_hash and
+                    # record the mismatch. Overwriting it with the pin hid
+                    # exactly the drift this graph exists to expose, while
+                    # sealed_source still claimed the value was observed live.
+                    G.node("File", path, hash_drift=live != value)
                 G.rel("SEALED_WITH", "File", path, "Hash", value)
             else:
                 pkg = next(
@@ -1283,12 +1298,34 @@ def collect_dirty_paths() -> list[str]:
     return dirty
 
 
+def semantic_snapshot_props(head: str) -> dict:
+    """Snapshot fields describing the semantic layer.
+
+    Availability is derived from UA_GRAPH — the artifact build_semantic()
+    actually loads — never from meta.json. The two are generated together but
+    can be independently deleted: metadata without a graph would publish a
+    semantic commit (potentially even marking it current) for a layer no query
+    can reach, while a graph without metadata is loaded but unverifiable, so
+    it must be recorded as stale rather than labelled absent.
+    """
+    loaded = UA_GRAPH.exists()
+    if not loaded:
+        return {"semantic_layer_loaded": False}
+    meta = json.loads(UA_META.read_text()) if UA_META.exists() else {}
+    return {
+        "semantic_layer_loaded": True,
+        "ua_commit": meta.get("gitCommitHash"),
+        "ua_analyzed_at": meta.get("lastAnalyzedAt"),
+        "ua_analyzed_files": meta.get("analyzedFiles"),
+        "semantic_layer_is_stale": meta.get("gitCommitHash") != head,
+    }
+
+
 # --------------------------------------------------------------------------- #
 def main() -> int:
     head = run("git", "rev-parse", "HEAD").strip()
     branch = run("git", "rev-parse", "--abbrev-ref", "HEAD").strip()
     dirty = collect_dirty_paths()
-    ua_meta = json.loads(UA_META.read_text()) if UA_META.exists() else {}
     snapshot_key = head[:12]
     G.node(
         "Snapshot",
@@ -1296,12 +1333,9 @@ def main() -> int:
         git_head=head,
         git_branch=branch,
         generated_at=datetime.now(UTC).isoformat(),
-        ua_commit=ua_meta.get("gitCommitHash"),
-        ua_analyzed_at=ua_meta.get("lastAnalyzedAt"),
-        ua_analyzed_files=ua_meta.get("analyzedFiles"),
-        semantic_layer_is_stale=ua_meta.get("gitCommitHash") != head,
         dirty_paths=dirty,
         dirty_count=len(dirty),
+        **semantic_snapshot_props(head),
     )
 
     tracked = build_spine()

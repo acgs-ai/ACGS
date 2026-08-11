@@ -61,7 +61,9 @@ Joined layers: `IN_PACKAGE` `PART_OF` `DECLARED_BY` `TOUCHED` `AUTHORED`
 
 Useful `File` properties: `summary` `complexity` `hotspot` `churn`
 `commit_count` `author_count` `last_commit` `days_since_change` `package`
-`language` `is_test` `sealed` `sealed_hash` `ua_covered` `dirty_at_extract`.
+`language` `is_test` `sealed` `sealed_hash` (observed; `sealed_source` says
+where) `pinned_hash` (the lock entry) `hash_drift` (marker ≠ pin) `ua_covered`
+`dirty_at_extract`.
 
 ---
 
