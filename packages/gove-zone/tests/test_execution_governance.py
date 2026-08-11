@@ -27,6 +27,7 @@ from gove_zone.execution import (
     ACTION_GIT_MUTATE,
     ACTION_PACKAGE_INSTALL,
     ACTION_PACKAGE_INVOKE,
+    ACTION_PACKAGE_LIFECYCLE_ENABLE,
     ACTION_RELEASE_PUBLISH,
     ACTION_SHELL_EXEC,
     EXECUTION_ACTIONS,
@@ -400,6 +401,91 @@ def test_python_inline_programs_are_undecidable(command: str) -> None:
     assert event.undecidable_reasons == ("inline-interpreter-program",)
 
 
+@pytest.mark.parametrize(
+    ("command", "interpreter"),
+    [
+        (
+            "node -e \"require('fs').writeFileSync('.gove-zone/gate.mode','observe')\"",
+            "node",
+        ),
+        ("ruby -e 'system(%q(npm install left-pad))'", "ruby"),
+        ("perl -E 'mutate()'", "perl"),
+        ("node -", "node"),
+    ],
+)
+def test_inline_interpreter_options_are_undecidable(command: str, interpreter: str) -> None:
+    """``node -e`` (and ruby/perl equivalents) evaluates an inline program the
+    argv prefix cannot recover; option grammars for these interpreters are not
+    modeled, so any option fails closed rather than passing as a plain exec."""
+    event = classify_command(command)
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.binary == interpreter
+    assert event.decidable is False
+    assert "inline-interpreter-option" in event.undecidable_reasons
+
+
+def test_bare_interpreter_script_runs_stay_decidable() -> None:
+    """Positive control: ``node server.js`` carries no inline program and
+    classifies like ``python app.py`` — a plain exec."""
+    event = classify_command("node server.js")
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is True
+
+
+@pytest.mark.parametrize(
+    ("command", "group", "operation"),
+    [
+        ("gh pr merge 123 --squash", "pr", "merge"),
+        ("gh pr close 123", "pr", "close"),
+        ("gh issue edit 7 --title x", "issue", "edit"),
+        ("gh repo delete owner/name --yes", "repo", "delete"),
+    ],
+)
+def test_gh_remote_mutations_classify_as_control_surface_mutations(
+    command: str, group: str, operation: str
+) -> None:
+    """``gh pr merge`` mutates the remote base branch exactly as ``git push``
+    would; a host permission grant for the prefix makes an unclassified allow a
+    real authorization, so the same control-surface escalation must apply."""
+    event = classify_command(command)
+
+    assert event.action == ACTION_GIT_MUTATE
+    assert event.argv_prefix == ("gh", group, operation)
+    assert event.decidable is True
+    assert event.facts["git_control_surface"] is True
+    assert event.facts["remote_mutation"] is True
+
+
+def test_gh_read_only_operations_stay_decidable_inspection() -> None:
+    event = classify_command("gh pr view 123")
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is True
+    assert event.tier_hint == TIER_READ_ONLY
+
+
+@pytest.mark.parametrize(
+    ("command", "reason"),
+    [
+        ("gh api -X DELETE repos/owner/name", "gh-api-passthrough"),
+        ("gh pr checkout 123", "undeclared-gh-operation"),
+        ("gh pr -R owner/name merge", "option-value-ambiguity"),
+        ("gh pr", "missing-gh-operation"),
+    ],
+)
+def test_undeclared_gh_surface_fails_closed(command: str, reason: str) -> None:
+    """``gh api`` is an arbitrary authenticated REST call, and an operation in
+    neither declared table may be a future mutating verb — none of these may
+    inherit the unclassified allow tier."""
+    event = classify_command(command)
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert event.undecidable_reasons == (reason,)
+
+
 def test_unrecognized_python_option_is_undecidable_not_guessed() -> None:
     """An undeclared interpreter option may consume the next token, so nothing
     after it can be trusted — including whether ``-m pip`` is a module run."""
@@ -496,6 +582,42 @@ def test_backtick_command_substitution_is_undecidable() -> None:
     assert "command-substitution" in event.undecidable_reasons
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        'git status "$(npm install left-pad)"',
+        'echo "`npm install left-pad`"',
+    ],
+)
+def test_substitution_inside_double_quotes_is_undecidable(command: str) -> None:
+    """shlex keeps a double-quoted ``$(...)`` inside one token, so neither the
+    operator check nor a token-level backtick check fires — while bash runs the
+    install *before* the read-only outer command. The raw-text scan must catch
+    it or the nested side effect rides a ``git status`` allow."""
+    event = classify_command(command)
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert "command-substitution" in event.undecidable_reasons
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo '$(npm install left-pad)'",
+        "echo '`npm install left-pad`'",
+        'echo "\\$(npm install left-pad)"',
+    ],
+)
+def test_single_quoted_or_escaped_substitution_text_is_inert(command: str) -> None:
+    """Positive control: single quotes and a backslash escape make substitution
+    inert data; flagging them would rediscover the substring-matcher's false
+    positives."""
+    event = classify_command(command)
+
+    assert event.decidable is True
+
+
 def test_operator_only_command_is_undecidable() -> None:
     event = classify_command("&&")
 
@@ -536,13 +658,14 @@ def test_classification_appears_in_both_args_and_state() -> None:
     Publishing to only one of the two would either decide without attesting or
     attest without deciding.
     """
-    (call,) = execution_tool_calls_from_hook_payload(
+    enable_call, call = execution_tool_calls_from_hook_payload(
         bash_payload("npm install"),
         action_kind="PreToolUse",
         actor="operator-a",
         canonical_package_manager="pnpm",
     )
 
+    assert enable_call.name == ACTION_PACKAGE_LIFECYCLE_ENABLE
     assert call.name == ACTION_PACKAGE_INSTALL
     assert call.args["facts"]["manager"] == "npm"
     assert call.state["manager_is_canonical"] is False
@@ -707,6 +830,52 @@ def test_release_publication_escalates(tmp_path: Path) -> None:
     assert permission(decide(gateway, "npm publish")) == "ask"
 
 
+def test_gh_pull_request_mutation_escalates_like_git_push(tmp_path: Path) -> None:
+    """This checkout's host permissions explicitly allow ``Bash(gh pr merge:*)``,
+    so an unclassified allow here would be a real authorization to mutate the
+    remote base branch without the escalation applied to ``git push``."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "gh pr merge 123 --squash")
+
+    assert permission(response) == "ask"
+    event = audit_events(tmp_path)[-1]
+    assert event["tool"] == ACTION_GIT_MUTATE
+    assert "escalate-git-control-surface" in event["matched_rules"]
+    # Positive control: remote inspection is not over-escalated.
+    assert permission(decide(gateway, "gh pr view 123")) == "allow"
+
+
+def test_install_with_scripts_enabled_records_the_lifecycle_enablement_surface(
+    tmp_path: Path,
+) -> None:
+    """ADR-0010 D2 declares script enablement a separately recorded decision
+    taken before the manager runs; the audit chain must carry it on its own
+    declared surface, not only as a rule hit on the install record."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "pnpm install")
+
+    assert permission(response) == "ask"
+    tools = [e["tool"] for e in audit_events(tmp_path)]
+    assert tools == [ACTION_PACKAGE_LIFECYCLE_ENABLE, ACTION_PACKAGE_INSTALL]
+    enable_event = audit_events(tmp_path)[0]
+    assert enable_event["decision"] == "escalate"
+
+
+def test_install_with_scripts_disabled_does_not_claim_lifecycle_enablement(
+    tmp_path: Path,
+) -> None:
+    """Positive control: ``--ignore-scripts`` is the surface-3 default posture;
+    no enablement decision exists to record."""
+    gateway = make_execution_gateway(tmp_path)
+
+    decide(gateway, "pnpm install --ignore-scripts")
+
+    tools = [e["tool"] for e in audit_events(tmp_path)]
+    assert tools == [ACTION_PACKAGE_INSTALL]
+
+
 def test_npx_in_a_pnpm_workspace_is_denied_before_any_fetch(tmp_path: Path) -> None:
     gateway = make_execution_gateway(tmp_path)
 
@@ -788,6 +957,10 @@ def test_artifact_generation_requires_a_human_at_the_gate(tmp_path: Path) -> Non
         "python --some-future-option -m pip install requests",
         "bash -c 'npm install left-pad'",
         "python -c \"open('.gove-zone/gate.mode','w').write('observe')\"",
+        "node -e \"require('fs').writeFileSync('.gove-zone/gate.mode','observe')\"",
+        'git status "$(npm install left-pad)"',
+        "gh api -X DELETE repos/owner/name",
+        "gh pr checkout 123",
     ],
 )
 def test_classifier_refusals_fail_closed_to_a_human_at_the_gate(
@@ -1153,6 +1326,56 @@ def test_run_context_is_threaded_into_the_receipt_binding() -> None:
     assert call.state["attribution_source"] == "posix-user"
 
 
+def test_run_context_cannot_override_classifier_facts() -> None:
+    """A reserved key in caller-supplied context — ``execution_decidable`` —
+    must not replace the classifier's trusted state: it would flip
+    ``escalate-undecidable-shell`` off while the receipt arguments still say
+    the command is undecidable."""
+    (call,) = execution_tool_calls_from_hook_payload(
+        bash_payload("true; npm install left-pad"),
+        action_kind="PreToolUse",
+        actor="operator-a",
+        run_context={
+            "execution_decidable": True,
+            "decidable": True,
+            "action_kind": "spoofed",
+            "governance_path_tier": "",
+        },
+    )
+
+    assert call.state["execution_decidable"] is False
+    assert call.args["decidable"] is False
+    assert call.args["action_kind"] == "PreToolUse"
+
+
+def test_run_context_cannot_disable_fail_closed_rules_at_the_gate(tmp_path: Path) -> None:
+    gateway = make_execution_gateway(tmp_path)
+
+    response = gateway.handle_claude_hook(
+        bash_payload("true; npm install left-pad"),
+        actor="operator-a",
+        call_factory=make_execution_call_factory("pnpm", run_context={"execution_decidable": True}),
+    )
+
+    assert permission(response) == "ask"
+    assert "escalate-undecidable-shell" in audit_events(tmp_path)[-1]["matched_rules"]
+
+
+def test_run_context_cannot_override_governance_path_tiers(tmp_path: Path) -> None:
+    """The trust-root deny on ``.gove-zone`` writes must survive a context that
+    tries to blank the path tier."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = gateway.handle_claude_hook(
+        {"tool_name": "Write", "tool_input": {"file_path": ".gove-zone/gate.mode"}},
+        actor="operator-a",
+        call_factory=make_execution_call_factory("pnpm", run_context={"governance_path_tier": ""}),
+    )
+
+    assert permission(response) == "deny"
+    assert "deny-trust-root-path-mutation" in audit_events(tmp_path)[-1]["matched_rules"]
+
+
 def test_run_context_reaches_non_shell_calls_too() -> None:
     (call,) = execution_tool_calls_from_hook_payload(
         {"tool_name": "Edit", "tool_input": {"file_path": "a.py"}},
@@ -1169,7 +1392,7 @@ def test_a_payload_cannot_choose_its_own_canonical_manager() -> None:
     """The canonical manager is deployment configuration. If a payload could
     name it, any install could exempt itself in one field."""
     factory = make_execution_call_factory("pnpm")
-    (call,) = factory(
+    calls = factory(
         {
             "tool_name": "Bash",
             "tool_input": {"command": "npm install"},
@@ -1179,7 +1402,8 @@ def test_a_payload_cannot_choose_its_own_canonical_manager() -> None:
         actor="operator-a",
     )
 
-    assert call.state["manager_is_canonical"] is False
+    assert calls
+    assert all(call.state["manager_is_canonical"] is False for call in calls)
 
 
 # -- 6. independent verification --------------------------------------------- #
@@ -1249,7 +1473,9 @@ def test_verifier_accepts_a_governed_chain(tmp_path: Path) -> None:
     report = verify_execution_chain(audit_events(tmp_path))
 
     assert report["ok"] is True, report["findings"]
-    assert report["execution_records"] == 2
+    # `ls -la`, plus the install's two records: the lifecycle-enablement
+    # decision and the install itself.
+    assert report["execution_records"] == 3
 
 
 def test_verifier_reports_the_pre_cutover_boundary(tmp_path: Path) -> None:

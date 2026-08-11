@@ -175,6 +175,16 @@ _WRAPPERS = frozenset({"sudo", "env", "command", "nohup", "time", "nice", "exec"
 #: rather than parsed on a guess.
 _SHELL_INTERPRETERS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh"})
 
+#: Non-shell interpreters that accept an inline program — ``node -e``,
+#: ``ruby -e``, ``perl -E``, a ``-`` stdin program — on option flags whose
+#: per-interpreter grammars this module does not model. Python gets full
+#: option modeling above because ``-m`` recovery is load-bearing there; for
+#: these binaries any option token may introduce (or consume) inline program
+#: text the argv prefix cannot recover, so an invocation carrying *any*
+#: option is returned undecidable (fail-closed). A bare script run
+#: (``node server.js``) stays a decidable plain exec, like ``python app.py``.
+_INLINE_INTERPRETERS = frozenset({"node", "nodejs", "deno", "ruby", "perl", "php", "lua", "luajit"})
+
 _INSTALL_SUBCOMMANDS: Mapping[str, frozenset[str]] = {
     "npm": frozenset({"install", "i", "ci", "add", "update", "up"}),
     "pnpm": frozenset({"install", "i", "add", "update", "up"}),
@@ -237,6 +247,74 @@ _ARTIFACT_SUBCOMMANDS: Mapping[str, frozenset[str]] = {
     "uv": frozenset({"build"}),
     "gem": frozenset({"build"}),
 }
+
+#: ``gh`` subcommand groups that reach *remote* GitHub state through the API.
+#: ``gh pr merge`` mutates the remote base branch exactly as a ``git push``
+#: would — and a host permission grant for the prefix makes an unclassified
+#: allow a real authorization, not a deferral — so pull-request, issue, and
+#: repository mutations must not fall through to the unclassified allow tier.
+#: Operations declared read-only stay decidable inspection; declared mutating
+#: operations classify as remote mutations on the same control surface as
+#: ``git push``; an operation in neither table is returned undecidable
+#: (fail-closed). ``gh api`` is an arbitrary authenticated REST call whose
+#: effect lives in its method and path, not its argv prefix, and is always
+#: undecidable.
+_GH_REMOTE_READ_ONLY: Mapping[str, frozenset[str]] = {
+    "pr": frozenset({"checks", "diff", "list", "status", "view"}),
+    "issue": frozenset({"list", "status", "view"}),
+    "repo": frozenset({"list", "view"}),
+}
+
+_GH_REMOTE_MUTATING: Mapping[str, frozenset[str]] = {
+    "pr": frozenset(
+        {
+            "close",
+            "comment",
+            "create",
+            "edit",
+            "lock",
+            "merge",
+            "ready",
+            "reopen",
+            "review",
+            "unlock",
+            "update-branch",
+        }
+    ),
+    "issue": frozenset(
+        {
+            "close",
+            "comment",
+            "create",
+            "delete",
+            "develop",
+            "edit",
+            "lock",
+            "pin",
+            "reopen",
+            "transfer",
+            "unlock",
+            "unpin",
+        }
+    ),
+    "repo": frozenset(
+        {
+            "archive",
+            "create",
+            "delete",
+            "edit",
+            "fork",
+            "rename",
+            "set-default",
+            "sync",
+            "unarchive",
+        }
+    ),
+}
+
+#: Every gh group the classifier resolves beyond the group token. ``api`` is
+#: included so it can be forced undecidable rather than falling through.
+_GH_REMOTE_GROUPS = frozenset({"api", *_GH_REMOTE_READ_ONLY, *_GH_REMOTE_MUTATING})
 
 _GIT_MUTATING = frozenset(
     {
@@ -558,6 +636,67 @@ def _subcommand(binary: str, argv: Sequence[str]) -> tuple[str, str]:
     return "", ""
 
 
+def _gh_operation(argv: Sequence[str], group: str) -> tuple[str, str]:
+    """``(operation, undecidable_reason)`` for a ``gh <group> <operation>`` argv.
+
+    Mirrors the option guards of :func:`_subcommand`: gh option grammars are
+    not modeled here, so once an option token appears before the operation the
+    next word may be that option's value — ``gh pr -R owner/name merge`` must
+    not read ``owner/name`` as the operation, and neither may a word after a
+    skipped option be trusted unless it is an operation this module declared
+    for the group. Anything else is returned undecidable (fail-closed).
+    """
+    declared = _GH_REMOTE_READ_ONLY.get(group, frozenset()) | _GH_REMOTE_MUTATING.get(
+        group, frozenset()
+    )
+    saw_option = False
+    for token in argv[2:]:
+        if token.startswith("-"):
+            saw_option = True
+            continue
+        if not saw_option:
+            return (token, "") if _SUBCOMMAND_RE.match(token) else ("", "non-subcommand-token")
+        if _SUBCOMMAND_RE.match(token) and token in declared:
+            return token, ""
+        return "", "option-value-ambiguity"
+    return "", "missing-gh-operation"
+
+
+def _has_active_substitution(text: str) -> bool:
+    """True when ``$(`` or a backtick is reachable by the shell in *text*.
+
+    :mod:`shlex` in POSIX mode strips quotes, so a substitution *inside double
+    quotes* — ``git status "$(npm install left-pad)"`` — survives tokenization
+    as ordinary argument text: no operator token is emitted and a token-level
+    backtick check never fires, while bash executes the inner command before
+    the outer one. Substitution is inert inside single quotes, and a backslash
+    escapes the character that follows it (both unquoted and inside double
+    quotes, where ``\\$`` and ``\\``` are the documented escapes), so only
+    occurrences the shell would actually expand count.
+    """
+    in_single = False
+    in_double = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if in_single:
+            if char == "'":
+                in_single = False
+            index += 1
+            continue
+        if char == "\\":
+            index += 2
+            continue
+        if char == "'" and not in_double:
+            in_single = True
+        elif char == '"':
+            in_double = not in_double
+        elif char == "`" or char == "$" and index + 1 < len(text) and text[index + 1] == "(":
+            return True
+        index += 1
+    return False
+
+
 def _git_config_key(value: str) -> str:
     """The config key of a ``name=value`` / ``name=envvar`` option value."""
     return value.split("=", 1)[0].strip().lower()
@@ -713,7 +852,11 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
     operators = [t for t in tokens if t and set(t) <= _OPERATOR_CHARS]
     if operators:
         reasons.append("shell-operator")
-    if any("`" in t for t in tokens):
+    if _has_active_substitution(text):
+        # Checked on the raw text, not the tokens: a `$(...)` or backtick
+        # inside double quotes survives shlex as plain argument text while the
+        # shell executes it first. Single-quoted substitution text is inert
+        # and deliberately not flagged.
         reasons.append("command-substitution")
     # An unquoted literal newline (or carriage return) separates commands just
     # like `;` does, but shlex consumes it as whitespace and emits no operator
@@ -746,6 +889,12 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
         # The real program is whatever the shell is handed — inline `-c` text,
         # a script, or stdin — none of which is recoverable from this argv.
         reasons.append("shell-interpreter-delegation")
+    if binary in _INLINE_INTERPRETERS and any(t.startswith("-") for t in argv[1:]):
+        # `node -e "..."`, `ruby -e '...'`, a `-` stdin program: these option
+        # grammars are not modeled, so any option may introduce (or consume)
+        # inline program text this classifier never tokenizes. A bare script
+        # run carries no options and stays a decidable plain exec.
+        reasons.append("inline-interpreter-option")
     if _PYTHON_BINARY_RE.match(binary):
         # `python -m pip install x` IS `pip install x`; leaving it unrecovered
         # would make the interpreter an alias for every governed manager.
@@ -811,6 +960,63 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
             tier_hint=TIER_CONTROL_SURFACE,
             decidable=True,
             facts={**base_facts, "builder": binary, "subcommand": subcommand},
+            command_sha256=digest,
+        )
+
+    if binary == "gh" and subcommand in _GH_REMOTE_GROUPS:
+        if subcommand == "api":
+            # An arbitrary authenticated REST call: the method and path decide
+            # the effect, not the argv prefix. Fail closed.
+            return ExecutionEvent(
+                action=ACTION_SHELL_EXEC,
+                binary=binary,
+                argv_prefix=argv_prefix,
+                tier_hint=TIER_UNCLASSIFIED,
+                decidable=False,
+                undecidable_reasons=("gh-api-passthrough",),
+                facts={**base_facts, "subcommand": subcommand},
+                command_sha256=digest,
+            )
+        operation, op_reason = _gh_operation(argv, subcommand)
+        if operation and operation in _GH_REMOTE_MUTATING[subcommand]:
+            # `gh pr merge` moves the remote base branch exactly as `git push`
+            # would; it gets the same control-surface escalation, not a
+            # deferral to host permissions that explicitly allow the prefix.
+            return ExecutionEvent(
+                action=ACTION_GIT_MUTATE,
+                binary=binary,
+                argv_prefix=(binary, subcommand, operation),
+                tier_hint=TIER_CONTROL_SURFACE,
+                decidable=True,
+                facts={
+                    **base_facts,
+                    "subcommand": subcommand,
+                    "operation": operation,
+                    "remote_mutation": True,
+                    "git_control_surface": True,
+                },
+                command_sha256=digest,
+            )
+        if operation and operation in _GH_REMOTE_READ_ONLY.get(subcommand, frozenset()):
+            return ExecutionEvent(
+                action=ACTION_SHELL_EXEC,
+                binary=binary,
+                argv_prefix=(binary, subcommand, operation),
+                tier_hint=TIER_READ_ONLY,
+                decidable=True,
+                facts={**base_facts, "subcommand": subcommand, "operation": operation},
+                command_sha256=digest,
+            )
+        # An operation in neither table may be anything — including a future
+        # mutating verb — so it is not presumed harmless.
+        return ExecutionEvent(
+            action=ACTION_SHELL_EXEC,
+            binary=binary,
+            argv_prefix=argv_prefix,
+            tier_hint=TIER_UNCLASSIFIED,
+            decidable=False,
+            undecidable_reasons=(op_reason or "undeclared-gh-operation",),
+            facts={**base_facts, "subcommand": subcommand},
             command_sha256=digest,
         )
 
@@ -1024,7 +1230,11 @@ EXECUTION_RULE_BUNDLE: dict[str, Any] = {
         {
             "id": "deny-non-canonical-package-manager",
             "effect": "deny",
-            "tools": [ACTION_PACKAGE_INVOKE, ACTION_PACKAGE_INSTALL],
+            "tools": [
+                ACTION_PACKAGE_INVOKE,
+                ACTION_PACKAGE_INSTALL,
+                ACTION_PACKAGE_LIFECYCLE_ENABLE,
+            ],
             "state_equals": {"manager_contract_applies": True, "manager_is_canonical": False},
             "reason": (
                 "repository declares a canonical packageManager; a different manager "
@@ -1087,7 +1297,10 @@ EXECUTION_RULE_BUNDLE: dict[str, Any] = {
             "effect": "escalate",
             "tools": [ACTION_GIT_MUTATE],
             "state_equals": {"git_control_surface": True},
-            "reason": "git subcommand moves or rewrites published history",
+            "reason": (
+                "subcommand moves or rewrites published history (git push/reset "
+                "family, or a gh remote mutation such as pr merge)"
+            ),
         },
     ],
 }
@@ -1280,7 +1493,17 @@ def execution_tool_calls_from_hook_payload(
     and ``state`` of every call, shell or not. It goes into ``args`` because the
     prior hook path accepted a ``run_id`` and then dropped it before the receipt
     was constructed, leaving decisions correlated to nothing. Anything placed
-    here is hashed into the receipt, so it must not carry secrets.
+    here is hashed into the receipt, so it must not carry secrets. It merges at
+    the **lowest** precedence: caller metadata carrying a reserved key such as
+    ``execution_decidable`` must not be able to replace classifier facts,
+    normalizer state, or governance path tiers — a context that could disable
+    the fail-closed rules would be a policy bypass one dict key wide.
+
+    An install that would run lifecycle scripts additionally emits the
+    :data:`ACTION_PACKAGE_LIFECYCLE_ENABLE` call *before* the install call:
+    ADR-0010 D2 declares script enablement a separately recorded, escalated
+    decision taken before the manager runs. It records that decision; it does
+    not gate the scripts (see the module docstring).
     """
     context = {str(k): v for k, v in dict(run_context or {}).items()}
     calls: list[ToolCall] = []
@@ -1293,6 +1516,7 @@ def execution_tool_calls_from_hook_payload(
                     ToolCall(
                         name="runtime.malformed_batch",
                         args={
+                            **context,
                             "action_kind": action_kind,
                             "summary": {
                                 "batch_shape": "single.Bash",
@@ -1301,12 +1525,11 @@ def execution_tool_calls_from_hook_payload(
                                 "parseable_count": 0,
                                 "unparseable_count": 1,
                             },
-                            **context,
                         },
                         goal=call.goal,
                         actor=actor,
                         path=call.path,
-                        state={**dict(call.state), **context},
+                        state={**context, **dict(call.state)},
                     )
                 )
                 continue
@@ -1314,19 +1537,44 @@ def execution_tool_calls_from_hook_payload(
                 command,
                 canonical_package_manager=canonical_package_manager,
             )
+            if event.action == ACTION_PACKAGE_INSTALL and not event.facts.get(
+                "scripts_disabled", False
+            ):
+                # ADR-0010 D2: enabling lifecycle scripts is a separately
+                # declared, escalated decision, recorded on its own surface
+                # *before* the manager runs. The classification facts and the
+                # command digest are identical — same command, second decision.
+                enable_event = dataclasses.replace(
+                    event,
+                    action=ACTION_PACKAGE_LIFECYCLE_ENABLE,
+                    tier_hint=TIER_CONTROL_SURFACE,
+                )
+                calls.append(
+                    ToolCall(
+                        name=enable_event.action,
+                        args={**context, "action_kind": action_kind, **enable_event.to_args()},
+                        goal=call.goal,
+                        actor=actor,
+                        path=call.path,
+                        state={**context, **dict(call.state), **enable_event.to_state()},
+                    )
+                )
+            # Classifier facts merge after the caller-supplied context: a
+            # run_context key like `execution_decidable` must not be able to
+            # replace the classifier's trusted state.
             calls.append(
                 ToolCall(
                     name=event.action,
-                    args={"action_kind": action_kind, **event.to_args(), **context},
+                    args={**context, "action_kind": action_kind, **event.to_args()},
                     goal=call.goal,
                     actor=actor,
                     path=call.path,
-                    state={**dict(call.state), **event.to_state(), **context},
+                    state={**context, **dict(call.state), **event.to_state()},
                 )
             )
             continue
 
-        extra: dict[str, Any] = dict(context)
+        extra: dict[str, Any] = {}
         if call.name in _FILE_MUTATION_TOOLS:
             governance_tier = _governance_path_tier(call.path)
             if governance_tier:
@@ -1335,17 +1583,17 @@ def execution_tool_calls_from_hook_payload(
                 # RISK_TIER:source edit — see deny-trust-root-path-mutation and
                 # escalate-control-surface-path-mutation.
                 extra["governance_path_tier"] = governance_tier
-        if not extra:
+        if not context and not extra:
             calls.append(call)
             continue
         calls.append(
             ToolCall(
                 name=call.name,
-                args={**dict(call.args), **extra},
+                args={**context, **dict(call.args), **extra},
                 goal=call.goal,
                 actor=actor,
                 path=call.path,
-                state={**dict(call.state), **extra},
+                state={**context, **dict(call.state), **extra},
             )
         )
     return tuple(calls)
