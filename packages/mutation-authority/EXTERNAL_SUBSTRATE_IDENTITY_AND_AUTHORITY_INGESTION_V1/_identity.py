@@ -18,7 +18,9 @@ is a separate explicit build.
 
 from __future__ import annotations
 
+import os
 import re
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -154,22 +156,60 @@ def build_manifest(root: Path, identity_class: str) -> dict[str, Any]:
     }
 
 
-def _verify_checksum_manifest(sums_rel: str, sums_path: Path) -> tuple[list[str], list[str]]:
+def _capture_manifest_bytes(path: Path) -> bytes | str:
+    """ONE pinned read of a checksum manifest: the same captured bytes feed
+    both the identity digest and the transitive-pin entry verification.
+
+    Hashing the file and then re-reading it by pathname would open a window
+    where a synchronized writer swaps in a different manifest (e.g. an empty
+    one) after the authorized digest is computed but before the entries are
+    parsed — drift in every transitively listed file would be skipped while
+    identity still confirms. Mirrors hash_file's symlink discipline: a
+    symlinked slot yields the ``UNHASHABLE:symlink`` marker, a non-regular
+    object ABSENT, absence ABSENT — never followed, never a content read."""
+    try:
+        st = path.lstat()
+    except OSError:
+        return ABSENT
+    if stat.S_ISLNK(st.st_mode):
+        return "UNHASHABLE:symlink"
+    if not stat.S_ISREG(st.st_mode):
+        return ABSENT
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return ABSENT
+    except OSError:
+        # ELOOP: the entry became a symlink after lstat — never followed.
+        return "UNHASHABLE:symlink"
+    with os.fdopen(fd, "rb") as fh:
+        fst = os.fstat(fh.fileno())
+        if not stat.S_ISREG(fst.st_mode):
+            return "UNHASHABLE:" + stat.filemode(fst.st_mode)
+        return fh.read()
+
+
+def _verify_checksum_manifest(
+    sums_rel: str, layer_dir: Path, content: bytes
+) -> tuple[list[str], list[str]]:
     """Verify every entry of one layer's sha256sums.txt against the files it
     names (coreutils format: '<64 hex>  <name>'). The identity claims each
     layer's checksum manifest "transitively pins its files", so those pins must
     actually be checked: a listed file altered or removed fails identity even
     though the sums file's own bytes are unchanged.
 
+    ``content`` is the EXACT byte capture the identity digest was computed
+    from (see _capture_manifest_bytes) — the entries verified are always the
+    entries that were hashed, never a second pathname read.
+
     Returns (mismatched, absent) entry labels. A sums file that cannot be
     parsed, carries a malformed line, or names a path escaping its layer
     directory is itself reported as mismatched (fail closed)."""
     mismatched: list[str] = []
     absent: list[str] = []
-    layer_dir = sums_path.parent
     try:
-        lines = sums_path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
+        lines = content.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
         return [sums_rel], []
     for line in lines:
         if not line.strip():
@@ -202,22 +242,39 @@ def verify_manifest(manifest: dict[str, Any], candidate_root: Path) -> dict[str,
     live: dict[str, dict[str, Any]] = {}
     for rel in CRITICAL_OBJECTS:
         p = candidate_root / rel
-        digest = hash_file(p)
+        captured: bytes | None = None
+        if rel.endswith("sha256sums.txt"):
+            # Capture the checksum manifest ONCE: the identity digest and the
+            # transitive-pin entries below must come from the same bytes, or
+            # a swap between the hash and a second pathname read could skip
+            # every listed pin while identity still confirms.
+            got = _capture_manifest_bytes(p)
+            if isinstance(got, bytes):
+                captured = got
+                digest = sha256_hex(got)
+            else:
+                digest = got
+        else:
+            digest = hash_file(p)
         is_content = digest != ABSENT and not digest.startswith("UNHASHABLE:")
         live[rel] = {
             "sha256": digest,
-            "bytes": (p.stat().st_size if (is_content and p.is_file()) else None),
+            "bytes": (
+                len(captured)
+                if captured is not None
+                else (p.stat().st_size if (is_content and p.is_file()) else None)
+            ),
         }
         exp = expected.get(rel, {}).get("sha256")
         if digest == ABSENT:
             absent.append(rel)
         elif exp is not None and digest != exp:
             mismatched.append(rel)
-        elif rel.endswith("sha256sums.txt"):
-            # The sums file's own bytes match the manifest; now honor the
-            # transitive pin — every file it names must still hash to its
-            # recorded digest.
-            entry_mismatched, entry_absent = _verify_checksum_manifest(rel, p)
+        elif rel.endswith("sha256sums.txt") and captured is not None:
+            # The sums file's captured bytes match the manifest; now honor the
+            # transitive pin — every file those exact bytes name must still
+            # hash to its recorded digest.
+            entry_mismatched, entry_absent = _verify_checksum_manifest(rel, p.parent, captured)
             mismatched.extend(e for e in entry_mismatched if e not in mismatched)
             absent.extend(e for e in entry_absent if e not in absent)
 

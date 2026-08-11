@@ -508,6 +508,35 @@ def test_preexisting_non_regular_artifact_refuses_registration(tmp_path):
     assert not (tmp_path / "vreg.jsonl").exists()
 
 
+def test_symlinked_appointments_dir_refuses_retention(tmp_path):
+    # The retention pathname (`<keystore>/.appointments/<binding>.json`) is
+    # predictable. A pre-planted symlink at the `.appointments` entry must
+    # never be followed: onboarding fails closed with nothing written into
+    # the external target and nothing appended to the registry.
+    app, deed = fixture_appointment(tmp_path)
+    external = tmp_path / "external"
+    external.mkdir()
+    (tmp_path / "vks" / ".appointments").symlink_to(external)
+    assert _onboard(tmp_path, app, deed) == 2
+    assert not (tmp_path / "vreg.jsonl").exists()
+    assert list(external.iterdir()) == []
+
+
+def test_symlinked_appointment_entry_refuses_retention(tmp_path):
+    # A symlink squatting on the binding-named retention file itself must
+    # not be followed either: a plain pathname write would truncate an
+    # arbitrary external file during an otherwise valid onboarding.
+    app, deed = fixture_appointment(tmp_path)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("innocent\n", encoding="utf-8")
+    appointments = tmp_path / "vks" / ".appointments"
+    appointments.mkdir(parents=True)
+    (appointments / f"{appointment_binding(app)}.json").symlink_to(victim)
+    assert _onboard(tmp_path, app, deed) == 2
+    assert victim.read_text(encoding="utf-8") == "innocent\n"
+    assert not (tmp_path / "vreg.jsonl").exists()
+
+
 def test_unauthenticated_rotation_never_derives_rotated(tmp_path):
     # A chain-linked ROTATE forged WITHOUT a predecessor-signed
     # rotation_authorization must not derive ROTATED: the ceremony falls back

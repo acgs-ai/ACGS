@@ -400,6 +400,49 @@ def test_malformed_or_traversal_sums_manifest_fails_identity(substrate):
     assert verify_manifest(m2, substrate)["state"] == IDENTITY_MISMATCH
 
 
+def test_sums_swapped_during_verification_fails_identity(substrate, monkeypatch):
+    # A synchronized writer replaces a layer's sha256sums.txt with an EMPTY
+    # manifest during the verification window — right after its bytes are
+    # captured — while also altering a transitively pinned file. Verification
+    # must parse the EXACT bytes it hashed: the altered pinned file is caught
+    # from the captured entries. (Hashing the original and then re-reading
+    # the pathname would parse the empty replacement, skip every pin, and
+    # still return IDENTITY_CONFIRMED.)
+    import _identity
+
+    ex = "COMMERCIAL_RIGHTS_REQUEST_EXECUTION_V1"
+    extra = substrate / ex / "extra_evidence_bundle.json"
+    extra.write_text('{"pinned": true}', encoding="utf-8")
+    _rewrite_layer_sums(substrate, ex)
+    m = build_manifest(substrate, "TEST_SUBSTRATE")
+    assert verify_manifest(m, substrate)["state"] == IDENTITY_CONFIRMED
+
+    sums = substrate / ex / "sha256sums.txt"
+    real_capture = _identity._capture_manifest_bytes
+    fired: list[bool] = []
+
+    def swapping_capture(path):
+        got = real_capture(path)
+        if path == sums and not fired:
+            # Race the window right after the capture: drift the pinned file
+            # and install an empty manifest at the configured path.
+            fired.append(True)
+            extra.write_text('{"pinned": false}', encoding="utf-8")
+            sums.write_text("", encoding="utf-8")
+        return got
+
+    monkeypatch.setattr(_identity, "_capture_manifest_bytes", swapping_capture)
+    res = verify_manifest(m, substrate)
+    assert res["state"] == IDENTITY_MISMATCH
+    assert f"{ex}/extra_evidence_bundle.json" in res["mismatched"]
+    monkeypatch.undo()
+    # The other interleaving — swap landing BEFORE the capture — fails the
+    # sums file's own digest instead. Either way, never IDENTITY_CONFIRMED.
+    res = verify_manifest(m, substrate)
+    assert res["state"] == IDENTITY_MISMATCH
+    assert f"{ex}/sha256sums.txt" in res["mismatched"]
+
+
 def test_unknown_identity_class_refused(substrate):
     with pytest.raises(ValueError, match="unknown identity_class"):
         build_manifest(substrate, "TOTALLY_LEGIT_SUBSTRATE")
@@ -680,6 +723,46 @@ def test_replay_ledger_refuses_symlinked_path(tmp_path):
     late.unlink()
     ledger.consume("a" * 64)
     assert ReplayLedger(late).has("a" * 64)
+
+
+def test_replay_ledger_replaced_during_consumption_fails_closed(tmp_path, monkeypatch):
+    # A rename-and-replace of the persistent replay ledger AFTER the pinned
+    # open leaves the consumed ids on a detached inode while the replacement
+    # stays empty — a fresh ReplayLedger would then accept the same receipt
+    # again. The consume must retain the parent descriptor through the
+    # flock/append/fsync and verify the named entry still matches before
+    # reporting consumption.
+    import os as _os
+
+    path = tmp_path / "replay.jsonl"
+    ledger = ReplayLedger(path)
+    ledger.consume("a" * 64)
+    detached = tmp_path / "detached.jsonl"
+    real_fsync = _os.fsync
+    fired: list[bool] = []
+
+    def swapping_fsync(fd):
+        if not fired:
+            # Race the window between the no-follow open and the entry
+            # revalidation: detach the opened inode and install a fresh
+            # regular file at the configured ledger path.
+            fired.append(True)
+            _os.rename(path, detached)
+            path.write_text("", encoding="utf-8")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(AR.os, "fsync", swapping_fsync)
+    with pytest.raises(ReceiptError, match="replaced during consumption"):
+        ReplayLedger(path).consume("b" * 64)
+    monkeypatch.undo()
+    # The id landed only on the detached inode and consumption was NEVER
+    # reported — the configured (replacement) ledger is empty.
+    assert ("b" * 64) in detached.read_text(encoding="utf-8")
+    assert path.read_text(encoding="utf-8") == ""
+    # Positive control: with the real fsync restored, consumption lands in
+    # the configured ledger and persists across a fresh load.
+    ReplayLedger(path).consume("c" * 64)
+    assert ReplayLedger(path).has("c" * 64)
 
 
 def test_keystore_key_with_whitespace_edge_bytes_round_trips(tmp_path):

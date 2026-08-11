@@ -21,7 +21,7 @@ from pathlib import Path
 
 from .engine import _verify_chain_root_binding
 from .evidence_emitter import EvidenceEmitter, policy_version
-from .ledger import EVENT_COMMIT, AuditLedger
+from .ledger import EVENT_COMMIT, AuditLedger, LedgerEvent
 from .receipt import MutationDecisionReceipt, ReceiptFormatError
 from .root import GovernanceRoot
 from .state import repository_violations
@@ -124,7 +124,22 @@ def _run_ci_gate(
         seen_receipts.add(receipt_id)
         by_receipt[receipt_id] = record
 
-    commit_by_receipt = {e.payload["receipt_id"]: e for e in commits}
+    # One COMMIT per receipt, checked BEFORE the map is built: last-wins
+    # selection over duplicate receipt_ids would silently drop the earlier
+    # COMMIT, so a single signed evidence record for the retained event
+    # satisfies the bijection while the earlier evidence-less mutation is
+    # accepted — receipt replay through the exported ledger append API.
+    commit_by_receipt: dict[str, LedgerEvent] = {}
+    for event in commits:
+        receipt_id = event.payload["receipt_id"]
+        prior = commit_by_receipt.get(receipt_id)
+        if prior is not None:
+            failures.append(
+                f"receipt replay: COMMIT seq={event.seq} reuses receipt "
+                f"{receipt_id[:12]}… already bound to COMMIT seq={prior.seq}"
+            )
+            continue
+        commit_by_receipt[receipt_id] = event
     for receipt_id, event in commit_by_receipt.items():
         record = by_receipt.get(receipt_id)
         if record is None:

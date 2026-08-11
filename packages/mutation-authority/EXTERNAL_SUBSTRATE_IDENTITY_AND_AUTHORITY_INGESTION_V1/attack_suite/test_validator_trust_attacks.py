@@ -851,6 +851,52 @@ def test_validator_admin_lifecycle_and_bindings(tmp_path):
             assert sha256_hex((ks / e["key_id"]).read_bytes()) == e["key_fingerprint"]
 
 
+def test_symlinked_registry_refuses_lifecycle_append(tmp_path):
+    import validator_admin as VA
+
+    # The configured registry swapped for a symlink to an external, VALID
+    # registry JSONL must never be appended through: the lifecycle event
+    # would land in the external file (corrupting a privileged target) while
+    # the configured trust store stays unchanged and the command reports
+    # success. The no-follow append must refuse with an operational error
+    # and leave the external file byte-identical.
+    ks = tmp_path / "vks"
+    fingerprint = VA._write_key(ks, "cli-k1")
+    external = tmp_path / "external.jsonl"
+    VA._append(
+        external,
+        {
+            "schema": EVENT_SCHEMA,
+            "event": "REGISTER",
+            "validator_id": "[FIXTURE] vld-sym",
+            "validator_identity": "[FIXTURE] CLI Validator",
+            "authorized_classes": ["DATA_CONTROLLER"],
+            "appointment_authority": "[FIXTURE] General Counsel",
+            "key_id": "cli-k1",
+            "key_fingerprint": fingerprint,
+            "effective_from": "2026-01-01T00:00:00Z",
+            "effective_until": None,
+            "onboarding": "EXTERNAL_VALIDATOR_ONBOARDING_V1",
+            "appointment_binding": sha256_hex(b"[FIXTURE] appointment binding"),
+            "appointment_evidence_digests": [sha256_hex(b"[FIXTURE] appointment deed")],
+        },
+    )
+    before = external.read_bytes()
+    reg = tmp_path / "vreg.jsonl"
+    reg.symlink_to(external)
+    base = ["--registry", str(reg), "--keystore", str(ks)]
+    revoke = ["revoke", "--validator-id", "[FIXTURE] vld-sym"]
+    assert VA.main([*base, *revoke, "--instant", "2026-07-01T00:00:00Z"]) == 2
+    assert external.read_bytes() == before  # nothing appended through the link
+    # Positive control: a real regular file at the configured path works.
+    reg.unlink()
+    reg.write_bytes(before)
+    assert VA.main([*base, *revoke, "--instant", "2026-07-01T00:00:00Z"]) == 0
+    events = load_validator_events(reg)
+    assert events is not None and events[-1]["event"] == "REVOKE"
+    assert external.read_bytes() == before
+
+
 def test_current_substrate_binding_is_mandatory_at_every_ingestion_api(tmp_path):
     trust = fixture_trust(tmp_path)
     ev = _attested(_evidence())

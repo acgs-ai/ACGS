@@ -40,6 +40,7 @@ import argparse
 import json
 import os
 import secrets
+import stat
 import sys
 from pathlib import Path
 
@@ -64,14 +65,78 @@ from validator_trust import (
 HERE = Path(__file__).resolve().parent
 
 
+class RegistryWriteError(RuntimeError):
+    """Registry entry symlinked, non-regular, or replaced mid-append — fail closed."""
+
+
 def _append(path: Path, event: dict) -> None:
     """Append one chain-linked event: prev_event_binding continues the registry
-    hash chain (GENESIS for the first event) and is covered by event_binding."""
-    events = load_validator_events(path) or []
-    event["prev_event_binding"] = events[-1]["event_binding"] if events else GENESIS
-    event["event_binding"] = event_binding(event)
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(event, sort_keys=True, ensure_ascii=False) + "\n")
+    hash chain (GENESIS for the first event) and is covered by event_binding.
+
+    The registry is opened relative to a RETAINED parent directory descriptor
+    with O_NOFOLLOW and must be a regular file: a configured registry swapped
+    for a symlink to an external valid JSONL would otherwise be read AND
+    appended through the link — the lifecycle event lands outside the
+    configured registry (potentially corrupting a privileged file) while the
+    intended trust store stays unchanged and the command reports success. The
+    chain tail is read through the SAME pinned descriptor the append writes
+    to, and the directory entry is revalidated after the durable write, so a
+    rename-and-replace mid-append fails loudly instead of leaving the event
+    on a detached inode. Raises RegistryWriteError on refusal."""
+    absolute = path.absolute()
+    try:
+        parent_fd = os.open(absolute.parent, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError as exc:
+        raise RegistryWriteError(f"cannot pin registry directory {absolute.parent}: {exc}") from exc
+    try:
+        try:
+            fd = os.open(
+                absolute.name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o644, dir_fd=parent_fd
+            )
+        except OSError as exc:
+            raise RegistryWriteError(
+                f"registry is symlinked or unopenable — refusing to follow it: {path}: {exc}"
+            ) from exc
+        with os.fdopen(fd, "r+", encoding="utf-8") as fh:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                raise RegistryWriteError(f"registry is not a regular file: {path}")
+            events: list[dict] = []
+            for line in fh.read().splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    obj = None
+                if not isinstance(obj, dict):
+                    raise RegistryWriteError(f"registry is malformed — refusing to append: {path}")
+                events.append(obj)
+            event["prev_event_binding"] = events[-1]["event_binding"] if events else GENESIS
+            event["event_binding"] = event_binding(event)
+            fh.seek(0, os.SEEK_END)
+            fh.write(json.dumps(event, sort_keys=True, ensure_ascii=False) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+            # Revalidate through the retained parent: the appended-to inode
+            # must still be what the configured registry entry names.
+            try:
+                named = os.stat(absolute.name, dir_fd=parent_fd, follow_symlinks=False)
+            except OSError as exc:
+                raise RegistryWriteError(
+                    f"registry replaced during append — event not in the "
+                    f"configured registry: {path}"
+                ) from exc
+            opened = os.fstat(fh.fileno())
+            if not stat.S_ISREG(named.st_mode) or (named.st_dev, named.st_ino) != (
+                opened.st_dev,
+                opened.st_ino,
+            ):
+                raise RegistryWriteError(
+                    f"registry replaced during append — event not in the "
+                    f"configured registry: {path}"
+                )
+    finally:
+        os.close(parent_fd)
 
 
 def _write_key(keystore: Path, key_id: str) -> str:
@@ -443,7 +508,17 @@ def _admin(args: argparse.Namespace, registry: Path, keystore: Path) -> int:
                         "an unauthenticated rotation"
                     )
                 event["rotation_authorization"] = hmac_sign(pred_key, payload)
-        _append(registry, event)
+        try:
+            _append(registry, event)
+        except RegistryWriteError as exc:
+            # The ROTATE never landed in the configured registry; a freshly
+            # minted successor key must not survive (same retry logic as a
+            # refusal — the keystore's O_EXCL would turn every retry into a
+            # spurious duplicate).
+            if minted_key_path is not None:
+                minted_key_path.unlink(missing_ok=True)
+            print(f"FATAL: {exc}", file=sys.stderr)
+            return 2
         print(
             f"ROTATED {args.validator_id} -> key={args.key_id} "
             f"algorithm={algorithm} fingerprint={event['key_fingerprint']}"
@@ -451,15 +526,19 @@ def _admin(args: argparse.Namespace, registry: Path, keystore: Path) -> int:
         return 0
 
     if args.cmd == "revoke":
-        _append(
-            registry,
-            {
-                "schema": EVENT_SCHEMA,
-                "event": "REVOKE",
-                "validator_id": args.validator_id,
-                "instant": args.instant,
-            },
-        )
+        try:
+            _append(
+                registry,
+                {
+                    "schema": EVENT_SCHEMA,
+                    "event": "REVOKE",
+                    "validator_id": args.validator_id,
+                    "instant": args.instant,
+                },
+            )
+        except RegistryWriteError as exc:
+            print(f"FATAL: {exc}", file=sys.stderr)
+            return 2
         print(f"REVOKED {args.validator_id} at {args.instant}")
         return 0
 

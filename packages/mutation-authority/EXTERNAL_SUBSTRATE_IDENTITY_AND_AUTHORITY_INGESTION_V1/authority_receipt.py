@@ -347,10 +347,14 @@ class ReplayLedger:
         self._seen: set[str] = set()
         self._path = path
         if path is not None and os.path.lexists(path):
-            fd = self._open_pinned_ledger(os.O_RDONLY)
-            if fd is not None:
-                with os.fdopen(fd, "r", encoding="utf-8") as fh:
-                    self._seen.update(self._parse_ledger(fh.read()))
+            opened = self._open_pinned_ledger(os.O_RDONLY)
+            if opened is not None:
+                fd, parent_fd, _name, _parent = opened
+                try:
+                    with os.fdopen(fd, "r", encoding="utf-8") as fh:
+                        self._seen.update(self._parse_ledger(fh.read()))
+                finally:
+                    os.close(parent_fd)
 
     def _parse_ledger(self, content: str) -> set[str]:
         """Parse ledger content, REFUSING broken framing (fail closed).
@@ -370,20 +374,25 @@ class ReplayLedger:
             )
         return {line.strip() for line in content.splitlines() if line.strip()}
 
-    def _open_pinned_ledger(self, flags: int) -> int | None:
+    def _open_pinned_ledger(self, flags: int) -> tuple[int, int, str, Path] | None:
         """Open the persistent ledger with no-follow, regular-file checks.
 
         A replay path replaced by a symlink (or reached through a symlinked
         ancestor) must be refused: following it would read prior ids from —
         and append consumed ids into — an arbitrary writable target while the
-        replay guard reports success. Returns None only when the ledger does
-        not exist and O_CREAT was not requested."""
+        replay guard reports success. Returns (fd, parent_fd, name, parent) —
+        the parent descriptor is RETAINED so the caller can revalidate that
+        the directory entry still names the opened inode after the write
+        (rename-and-replace defense); the caller owns both descriptors.
+        Returns None only when the ledger does not exist and O_CREAT was not
+        requested."""
         assert self._path is not None
         parent_fd, name, parent = _open_trusted_parent(self._path)
         try:
             try:
                 fd = os.open(name, flags | os.O_NOFOLLOW, 0o600, dir_fd=parent_fd)
             except FileNotFoundError:
+                os.close(parent_fd)
                 return None
             except OSError as exc:
                 raise ReceiptError(
@@ -396,9 +405,28 @@ class ReplayLedger:
             except Exception:
                 os.close(fd)
                 raise
-            return fd
-        finally:
+            return fd, parent_fd, name, parent
+        except Exception:
             os.close(parent_fd)
+            raise
+
+    def _validate_ledger_entry(self, fd: int, parent_fd: int, name: str, parent: Path) -> None:
+        """The opened ledger inode must STILL be what the configured directory
+        entry names. A rename-and-replace after the open would otherwise land
+        consumed receipt ids on a detached inode while the replacement stays
+        empty — a fresh ReplayLedger would then accept the same receipt
+        again, erasing the persistent single-use guarantee."""
+        _validate_pinned_parent(parent_fd, parent)
+        try:
+            named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError as exc:
+            raise ReceiptError(f"replay ledger replaced during consumption: {self._path}") from exc
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(named.st_mode) or (named.st_dev, named.st_ino) != (
+            opened.st_dev,
+            opened.st_ino,
+        ):
+            raise ReceiptError(f"replay ledger replaced during consumption: {self._path}")
 
     def consume(self, receipt_id: str) -> None:
         self.consume_many([receipt_id])
@@ -424,24 +452,40 @@ class ReplayLedger:
             # the lock so any id another process consumed since load is seen,
             # and the whole batch is checked and written under that one lock.
             self._path.absolute().parent.mkdir(parents=True, exist_ok=True)
-            fd = self._open_pinned_ledger(os.O_RDWR | os.O_CREAT)
-            assert fd is not None
-            with os.fdopen(fd, "r+", encoding="utf-8") as fh:
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-                fh.seek(0)
-                # Framing is validated UNDER the lock, before appending: an
-                # unterminated tail from a crashed writer must abort the
-                # consume instead of concatenating this batch's first id
-                # onto the fragment.
-                self._seen.update(self._parse_ledger(fh.read()))
-                for rid in receipt_ids:
-                    if rid in self._seen:
-                        raise ReceiptError(f"receipt replay: {rid} already consumed")
-                fh.seek(0, os.SEEK_END)
-                fh.write("".join(rid + "\n" for rid in receipt_ids))
-                fh.flush()
-                os.fsync(fh.fileno())
-                # flock releases on close
+            opened = self._open_pinned_ledger(os.O_RDWR | os.O_CREAT)
+            assert opened is not None
+            fd, parent_fd, name, parent = opened
+            # The parent descriptor is retained across the flock, the append,
+            # and the fsync: consumption is only reported once the appended-to
+            # inode is verified to STILL be what the configured path names.
+            try:
+                with os.fdopen(fd, "r+", encoding="utf-8") as fh:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                    # A rename-and-replace between the open and the lock must
+                    # abort before this consumer trusts (or extends) a
+                    # detached inode.
+                    self._validate_ledger_entry(fh.fileno(), parent_fd, name, parent)
+                    fh.seek(0)
+                    # Framing is validated UNDER the lock, before appending: an
+                    # unterminated tail from a crashed writer must abort the
+                    # consume instead of concatenating this batch's first id
+                    # onto the fragment.
+                    self._seen.update(self._parse_ledger(fh.read()))
+                    for rid in receipt_ids:
+                        if rid in self._seen:
+                            raise ReceiptError(f"receipt replay: {rid} already consumed")
+                    fh.seek(0, os.SEEK_END)
+                    fh.write("".join(rid + "\n" for rid in receipt_ids))
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                    # Ids appended to an inode the configured path no longer
+                    # names protect nothing — a fresh ReplayLedger reading the
+                    # replacement would accept the same receipts again. Verify
+                    # the entry before reporting consumption; fail closed.
+                    self._validate_ledger_entry(fh.fileno(), parent_fd, name, parent)
+                    # flock releases on close
+            finally:
+                os.close(parent_fd)
         self._seen.update(receipt_ids)
 
     def has(self, receipt_id: str) -> bool:

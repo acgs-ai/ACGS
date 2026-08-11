@@ -32,11 +32,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 import sys
 from pathlib import Path
 
 from _canonical import sha256_hex
-from validator_admin import _append
+from validator_admin import RegistryWriteError, _append
 from validator_onboarding import (
     ACTIVE,
     AppointmentError,
@@ -67,6 +68,92 @@ HERE = Path(__file__).resolve().parent
 # via validator_trust.registry_write_lock so admin/onboarding races
 # serialize on the same sidecar, not just onboarding/onboarding ones.
 _registry_lock = registry_write_lock
+
+
+def _retain_appointment(keystore: Path, binding: str, document: bytes) -> str | None:
+    """Durably retain the verified appointment record through pinned,
+    no-follow directory descriptors. Returns an error message on refusal.
+
+    The retention pathname is predictable (`.appointments/<binding>.json`
+    under the keystore), so a pre-planted symlink — the `.appointments`
+    entry itself or the digest-named file — would otherwise be followed by
+    a plain pathname write, truncating an arbitrary external file during an
+    otherwise valid onboarding while the ceremony still derives ACTIVE
+    (the provenance verifier follows the same link). Every component is
+    opened O_NOFOLLOW relative to a retained parent descriptor, any
+    existing non-regular entry is refused, and the directory entry is
+    revalidated after the durable write — fail closed."""
+    ks_fd = -1
+    app_fd = -1
+    fd = -1
+    try:
+        keystore.mkdir(parents=True, exist_ok=True)
+        try:
+            ks_fd = os.open(keystore, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError as exc:
+            return f"cannot pin keystore directory {keystore}: {exc}"
+        try:
+            os.mkdir(APPOINTMENTS_DIR_NAME, dir_fd=ks_fd)
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            return f"cannot create appointment retention directory: {exc}"
+        try:
+            app_fd = os.open(
+                APPOINTMENTS_DIR_NAME,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=ks_fd,
+            )
+        except OSError as exc:
+            return (
+                "appointment retention directory is symlinked or not a real "
+                f"directory — refusing to follow it: {exc}"
+            )
+        name = f"{binding}.json"
+        try:
+            existing = os.stat(name, dir_fd=app_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            existing = None
+        except OSError as exc:
+            return f"cannot inspect retained appointment entry {name}: {exc}"
+        if existing is not None and not stat.S_ISREG(existing.st_mode):
+            return (
+                f"retained appointment entry {name} is not a regular file — "
+                "refusing to write through it"
+            )
+        try:
+            fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o644, dir_fd=app_fd)
+        except OSError as exc:
+            return f"retained appointment entry {name} is symlinked or unopenable: {exc}"
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return f"retained appointment entry {name} is not a regular file"
+        os.ftruncate(fd, 0)
+        view = memoryview(document)
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                return "short write while retaining the appointment record"
+            view = view[written:]
+        os.fsync(fd)
+        # The appended-to inode must still be what the configured entry
+        # names: a rename-and-replace mid-write would leave the retained
+        # record on a detached file while provenance later reads a swap.
+        try:
+            named = os.stat(name, dir_fd=app_fd, follow_symlinks=False)
+        except OSError as exc:
+            return f"retained appointment entry {name} replaced during write: {exc}"
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(named.st_mode) or (named.st_dev, named.st_ino) != (
+            opened.st_dev,
+            opened.st_ino,
+        ):
+            return f"retained appointment entry {name} replaced during write"
+        os.fsync(app_fd)
+        return None
+    finally:
+        for f in (fd, app_fd, ks_fd):
+            if f >= 0:
+                os.close(f)
 
 
 def main(argv: list[str]) -> int:
@@ -219,13 +306,14 @@ def main(argv: list[str]) -> int:
         # including re-hashing the actual evidence artifacts — independently
         # of the registry event itself. A validator whose appointment
         # artifacts stop verifying stops being trusted.
-        retained_dir = Path(args.keystore) / APPOINTMENTS_DIR_NAME
-        retained_dir.mkdir(parents=True, exist_ok=True)
-        retained_path = retained_dir / f"{event['appointment_binding']}.json"
-        retained_path.write_text(
-            json.dumps(appointment, sort_keys=True, ensure_ascii=False) + "\n",
-            encoding="utf-8",
+        retention_error = _retain_appointment(
+            Path(args.keystore),
+            event["appointment_binding"],
+            (json.dumps(appointment, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8"),
         )
+        if retention_error is not None:
+            print(f"FATAL: {retention_error}", file=sys.stderr)
+            return 2
         artifact_dir = Path(args.keystore) / APPOINTMENT_ARTIFACTS_DIR_NAME
         artifact_dir.mkdir(parents=True, exist_ok=True)
         for digest in required:
@@ -266,7 +354,11 @@ def main(argv: list[str]) -> int:
             tmp = artifact_dir / f".{digest}.tmp"
             tmp.write_bytes(data)
             os.replace(tmp, retained_artifact)
-        _append(registry, event)
+        try:
+            _append(registry, event)
+        except RegistryWriteError as exc:
+            print(f"FATAL: {exc}", file=sys.stderr)
+            return 2
 
     state = derive_ceremony_state(
         appointment,

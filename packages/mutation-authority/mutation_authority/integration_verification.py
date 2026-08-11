@@ -465,6 +465,27 @@ def attack_q_unsigned_receipt_laundering(base: Path) -> str:
     return "unsigned receipt in an injected DECISION cannot launder a COMMIT; gate FAIL"
 
 
+def attack_r_duplicate_commit_receipt_reuse(base: Path) -> str:
+    """The exported AuditLedger.append API can add a SECOND chain-valid COMMIT
+    referencing an already-committed receipt_id. Under last-wins selection
+    only the later COMMIT would remain in the receipt->COMMIT map, so ONE
+    signed evidence record satisfies the bijection while the earlier
+    evidence-less COMMIT is silently accepted — receipt replay. The gate must
+    detect the duplicate receipt id before building the map and fail."""
+    sb = IntegrationSandbox.build(base)
+    applied = sb.gateway.request_mutation(
+        sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 2\n"
+    )
+    _expect(applied.status == APPLIED, f"setup failed: {applied.status}: {applied.reason}")
+    _expect(sb.gate().passed, "gate not green before the replay")
+    commit = next(e for e in sb.kernel.ledger.events() if e.type == "COMMIT")
+    sb.kernel.ledger.append("COMMIT", dict(commit.payload), sb.kernel.tick())
+    gate = sb.gate()
+    _expect(not gate.passed, "gate accepted two COMMITs sharing one receipt")
+    _expect(any("reuses receipt" in f for f in gate.failures), str(gate.failures))
+    return "duplicate COMMIT for one receipt ⇒ receipt replay named; gate FAIL"
+
+
 def attack_l_malformed_evidence_projection(base: Path) -> str:
     """A corrupt evidence_graph.jsonl must block the mutation BEFORE the
     effect (fail closed, side effect did not run) instead of surfacing as an
@@ -634,6 +655,10 @@ INTEGRATION_CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     (
         "ATTACK Q: COMMIT laundering under an unsigned injected receipt",
         attack_q_unsigned_receipt_laundering,
+    ),
+    (
+        "ATTACK R: receipt replay via duplicate COMMIT events",
+        attack_r_duplicate_commit_receipt_reuse,
     ),
     ("compatibility: full kernel suite re-run", check_kernel_suite_compatibility),
 ]
