@@ -892,6 +892,47 @@ def test_probe_exemption_rejects_assignments_and_wrappers(command: str) -> None:
     assert event.facts["wrapped"] is True
 
 
+@pytest.mark.parametrize("command", ["node --help", "node -h", "node20 --version"])
+def test_probe_exemption_rejects_inherited_node_preload_environment(command: str) -> None:
+    """``node --help`` executes ``NODE_OPTIONS`` preload modules (``--require``/
+    ``--import``) before printing the banner, so an inherited preload variable
+    makes even an exact probe run attacker code with the genuine binary."""
+    event = classify_command(
+        command,
+        environ={"PATH": "/usr/bin:/bin", "NODE_OPTIONS": "--require /tmp/attacker.js"},
+    )
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("interpreter-probe-preload-env",)
+
+
+@pytest.mark.parametrize("node_options", [None, "", "   "])
+def test_node_probe_without_preload_environment_stays_decidable(
+    node_options: str | None,
+) -> None:
+    environ = {"PATH": "/usr/bin:/bin"}
+    if node_options is not None:
+        environ["NODE_OPTIONS"] = node_options
+
+    event = classify_command("node --help", environ=environ)
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is True
+    assert event.undecidable_reasons == ()
+
+
+def test_gate_escalates_node_probe_under_inherited_preload_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("NODE_OPTIONS", "--require /tmp/attacker.js")
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "node --help")
+
+    assert permission(response) == "ask"
+
+
 @pytest.mark.parametrize(
     "command",
     [
@@ -1143,6 +1184,56 @@ def test_disabled_gh_web_helper_is_allowed_and_receipted(tmp_path: Path, command
 
     assert permission(response) == "allow"
     assert response["gove_zone"]["receipts"]
+
+
+@pytest.mark.parametrize(
+    ("command", "environ"),
+    [
+        ("gh pr view 123", {"GH_PAGER": "/tmp/attacker-pager"}),
+        ("gh issue view 7", {"PAGER": "less"}),
+        ("gh repo view owner/name", {"GH_PAGER": "vim"}),
+    ],
+)
+def test_gh_reads_with_inherited_pager_are_undecidable(
+    command: str, environ: dict[str, str]
+) -> None:
+    """gh pipes read output through a configured pager, which is an executable
+    it launches: a ``gh pr view`` under an attacker-controlled ``GH_PAGER``
+    (or fallback ``PAGER``) runs arbitrary code despite being read-only."""
+    event = classify_command(command, environ=environ)
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("gh-pager-external-context",)
+
+
+@pytest.mark.parametrize(
+    "environ",
+    [
+        {},
+        {"GH_PAGER": ""},
+        # GH_PAGER takes precedence: empty string disables paging even when
+        # a fallback PAGER is configured.
+        {"GH_PAGER": "", "PAGER": "less"},
+    ],
+)
+def test_gh_reads_without_active_pager_stay_decidable(environ: dict[str, str]) -> None:
+    event = classify_command("gh pr view 123", environ=environ)
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is True
+    assert event.undecidable_reasons == ()
+
+
+def test_gate_escalates_gh_read_under_inherited_pager(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GH_PAGER", "/tmp/attacker-pager")
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "gh pr view 123")
+
+    assert permission(response) == "ask"
 
 
 @pytest.mark.parametrize(

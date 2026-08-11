@@ -715,6 +715,32 @@ _SAFE_INTERPRETER_PROBES: Mapping[str, frozenset[str]] = {
     "shell": frozenset({"--help", "--version"}),
 }
 
+#: Environment variables that inject a preload/startup program into an
+#: otherwise-benign help/version probe, keyed by interpreter family. Node
+#: honors ``NODE_OPTIONS`` (``--require``/``--import``) before printing help,
+#: so ``node --help`` under an inherited ``NODE_OPTIONS=--require=/tmp/x.js``
+#: executes arbitrary JavaScript with the genuine node binary; verified on
+#: Node 24. Only families with a documented preload channel are listed; a
+#: probe whose family is absent stays trusted.
+_PROBE_PRELOAD_ENV: Mapping[str, tuple[str, ...]] = {
+    "node": ("NODE_OPTIONS",),
+}
+
+
+def _interpreter_probe_preload_reason(family: str, environ: Mapping[str, str]) -> str:
+    """Why a declared probe is unsafe under the inherited environment, or ``""``.
+
+    A help/version probe is only benign if nothing runs before the banner.
+    An inherited preload variable (:data:`_PROBE_PRELOAD_ENV`) breaks that:
+    the genuine interpreter executes the injected module first, so the probe
+    must fail closed rather than mint a decidable allow.
+    """
+    for var in _PROBE_PRELOAD_ENV.get(family, ()):
+        if (environ.get(var) or "").strip():
+            return "interpreter-probe-preload-env"
+    return ""
+
+
 #: Long-form inline-program options are self-describing enough to fail closed
 #: even when the executable name is not a known interpreter family. Ambiguous
 #: short flags remain family-scoped so ordinary tools are not rejected merely
@@ -1079,6 +1105,21 @@ def _gh_external_helper_reason(argv: Sequence[str], subcommand: str, operation: 
     return ""
 
 
+def _gh_pager_external_context(environ: Mapping[str, str]) -> bool:
+    """Whether an inherited pager makes a gh read able to run a program.
+
+    GitHub CLI pipes read output through a pager (``gh help environment``):
+    ``GH_PAGER`` takes precedence over ``PAGER``, and either set to the empty
+    string disables paging. A non-empty configured pager is an executable gh
+    launches, so a ``gh pr view`` under an attacker-controlled ``GH_PAGER``
+    runs arbitrary code despite being a modeled read-only operation. An unset
+    pager leaves gh's built-in default, which is not environment-injectable,
+    so it stays trusted.
+    """
+    value = environ["GH_PAGER"] if "GH_PAGER" in environ else environ.get("PAGER", "")
+    return bool(value.strip())
+
+
 def _git_option_present(argv: Sequence[str], options: frozenset[str]) -> str:
     """The first token on a git argv whose option name is in *options*, or ``""``.
 
@@ -1326,6 +1367,7 @@ def classify_command(
     """
     text = command if isinstance(command, str) else ""
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    resolved_environ = environ if environ is not None else os.environ
     reasons: list[str] = []
 
     try:
@@ -1424,6 +1466,17 @@ def classify_command(
         and not invoked_by_absolute_path
         and _is_exact_interpreter_probe(interpreter_family, argv)
     )
+    if exact_probe:
+        # A probe is benign only if nothing runs before the banner. An
+        # inherited preload variable (NODE_OPTIONS --require) executes an
+        # injected module first with the genuine interpreter, so the probe
+        # must fail closed instead of falling through to a decidable allow.
+        probe_preload_reason = _interpreter_probe_preload_reason(
+            interpreter_family, resolved_environ
+        )
+        if probe_preload_reason:
+            reasons.append(probe_preload_reason)
+            exact_probe = False
     if not reasons and interpreter_family == "shell" and not exact_probe:
         # The real program is whatever the shell is handed — inline `-c` text,
         # a script, or stdin — none of which is recoverable from this argv.
@@ -1478,9 +1531,7 @@ def classify_command(
         # PATH-shadowing executable named `ls` runs arbitrary code while the
         # argv this classifier sees still reads `ls`, so a name-only
         # allowlist would mint a decidable allow for the replacement.
-        ambient_reason = _ambient_resolution_reason(
-            binary, environ if environ is not None else os.environ
-        )
+        ambient_reason = _ambient_resolution_reason(binary, resolved_environ)
         if ambient_reason:
             reasons.append(ambient_reason)
         else:
@@ -1692,6 +1743,11 @@ def classify_command(
             )
         if operation and operation in _GH_REMOTE_READ_ONLY.get(subcommand, frozenset()):
             helper_reason = _gh_external_helper_reason(argv, subcommand, operation)
+            if not helper_reason and _gh_pager_external_context(resolved_environ):
+                # A modeled read (`gh pr view`) still pipes stdout through the
+                # configured pager, so an inherited GH_PAGER/PAGER is a program
+                # gh launches; fail closed rather than mint a read-only allow.
+                helper_reason = "gh-pager-external-context"
             if helper_reason:
                 return ExecutionEvent(
                     action=ACTION_SHELL_EXEC,
