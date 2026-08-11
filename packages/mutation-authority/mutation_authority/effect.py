@@ -17,7 +17,7 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
-from .canonical import ABSENT, hash_file, sha256_hex
+from .canonical import ABSENT, sha256_hex
 from .engine import _verify_chain_root_binding
 from .ledger import EVENT_COMMIT, EVENT_GENESIS, AuditLedger
 from .receipt import MutationDecisionReceipt
@@ -43,11 +43,7 @@ def _open_parent_dir(repo_dir: Path, resource: str) -> tuple[int, str]:
     fd = os.open(repo_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for part in parts[:-1]:
-            try:
-                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
-            except FileNotFoundError:
-                os.mkdir(part, mode=0o755, dir_fd=fd)
-                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             os.close(fd)
             fd = child
         return fd, parts[-1]
@@ -196,73 +192,47 @@ class EffectBinder:
         if receipt.operation != "DELETE" and new_content is None:
             return CommitResult(REJECTED, f"{receipt.operation} requires new content")
 
-        # 6. Pre-state binding: the file must still be exactly the state
-        #    the decision was made against. Re-check containment at effect
-        #    time too: a symlink introduced after approval must not let the
-        #    write land outside the governed repository.
-        target = self.repo_dir / receipt.resource
-        repo_root = self.repo_dir.resolve()
-        resolved = target.resolve()
-        if resolved != repo_root and not resolved.is_relative_to(repo_root):
-            return CommitResult(
-                REJECTED, "resource resolves outside the governed repository (symlink escape)"
-            )
-        # The governance root and protected prefixes are rechecked against the
-        # RESOLVED path too: a symlink that stays inside the repository but
-        # lands on governance material must not bypass the policy decision.
-        root_dir = self.root.root_dir.resolve()
-        if resolved == root_dir or resolved.is_relative_to(root_dir):
-            return CommitResult(
-                REJECTED, "resource resolves into the governance root (symlink escape)"
-            )
-        rel = resolved.relative_to(repo_root).as_posix()
-        for prefix in self.root.protected_prefixes():
-            if rel == prefix or rel.startswith(prefix.rstrip("/") + "/"):
-                return CommitResult(
-                    REJECTED,
-                    "resource resolves into a protected prefix (symlink escape)",
-                )
-        # Governed-prefix and actor-scope authorization ran against the
-        # LEXICAL receipt.resource only. A symlink that stays inside the
-        # repository (and off protected prefixes) could still redirect the
-        # write to a file the actor was never authorized to touch, so the
-        # resolved target must be exactly the authorized path — symlinked
-        # resources are rejected rather than re-authorized here.
-        lexical = Path(os.path.normpath(repo_root / receipt.resource))
-        if resolved != lexical:
-            return CommitResult(
-                REJECTED,
-                "resource path traverses a symlink; resolved target is not the authorized path",
-            )
-        before_hash = hash_file(target)
-        if before_hash != receipt.previous_state_hash:
-            return CommitResult(
-                REJECTED,
-                "resource changed after approval (pre-state hash mismatch)",
-                before_hash=before_hash,
-            )
-
-        # 7. Apply the effect atomically. Snapshot the prior bytes and metadata
-        #    so an unrecordable effect can be rolled back completely.
+        # 6. Pin the authorized lexical parent before any effect-time path
+        #    resolution or state read. Every before/after hash, mutation,
+        #    rollback, and parent identity check below uses this same directory
+        #    fd; no pathname read can authorize an operation on a later tree.
         try:
             parent_fd, target_name = _open_parent_dir(self.repo_dir, receipt.resource)
         except OSError:
-            return CommitResult(REJECTED, "resource parent is not a verified directory")
+            return CommitResult(
+                REJECTED,
+                "resource parent is not a verified directory or resolves outside "
+                "the governed repository",
+            )
         try:
+            repo_root = self.repo_dir.resolve()
+            lexical = Path(os.path.normpath(repo_root / receipt.resource))
             try:
-                if not _parent_matches_path(parent_fd, resolved.parent):
+                rel = lexical.relative_to(repo_root).as_posix()
+            except ValueError:
+                return CommitResult(REJECTED, "resource resolves outside the governed repository")
+            root_dir = self.root.root_dir.resolve()
+            if lexical == root_dir or lexical.is_relative_to(root_dir):
+                return CommitResult(REJECTED, "resource resolves into the governance root")
+            for prefix in self.root.protected_prefixes():
+                if rel == prefix or rel.startswith(prefix.rstrip("/") + "/"):
+                    return CommitResult(REJECTED, "resource resolves into a protected prefix")
+
+            try:
+                if not _parent_matches_path(parent_fd, lexical.parent):
                     return CommitResult(REJECTED, "resource parent changed at effect time")
-                prior_bytes, secured_before_hash, prior_mode = _read_state_at(
-                    parent_fd, target_name
-                )
+                prior_bytes, before_hash, prior_mode = _read_state_at(parent_fd, target_name)
             except OSError:
                 return CommitResult(REJECTED, "resource is not a verified regular file")
-            if secured_before_hash != receipt.previous_state_hash:
+            if before_hash != receipt.previous_state_hash:
                 return CommitResult(
                     REJECTED,
                     "resource changed after approval (pre-state hash mismatch)",
-                    before_hash=secured_before_hash,
+                    before_hash=before_hash,
                 )
+
+            # 7. Apply the effect atomically. Snapshot the prior bytes and metadata
+            #    so an unrecordable effect can be rolled back completely.
             if receipt.operation == "DELETE":
                 os.unlink(target_name, dir_fd=parent_fd)
                 after_hash = ABSENT
@@ -283,7 +253,7 @@ class EffectBinder:
             # A validated ancestor can be renamed/replaced while the pinned fd
             # remains usable. Revalidate immediately before recording COMMIT;
             # rollback only through the pinned fd if the lexical path changed.
-            if not _parent_matches_path(parent_fd, resolved.parent):
+            if not _parent_matches_path(parent_fd, lexical.parent):
                 try:
                     _rollback_at(parent_fd, target_name, prior_bytes, prior_mode)
                 except OSError as exc:
@@ -316,7 +286,7 @@ class EffectBinder:
             # append() is an attacker-observable boundary. If the authorized
             # ancestor was exchanged while COMMIT was being recorded, rewind
             # both sides of the transaction before returning to the caller.
-            if not _parent_matches_path(parent_fd, resolved.parent):
+            if not _parent_matches_path(parent_fd, lexical.parent):
                 try:
                     _rollback_at(parent_fd, target_name, prior_bytes, prior_mode)
                     self.ledger.rollback_last(commit_event)

@@ -605,6 +605,59 @@ def attack_p_temp_symlink_race(base: Path) -> str:
     return "unique O_EXCL|O_NOFOLLOW temp creation left external/protected files unchanged"
 
 
+def attack_pre_state_path_swap(base: Path) -> str:
+    """A tree swap at the old hash-to-pin boundary must fail closed.
+
+    The open hook runs at the first effect-time filesystem boundary. The
+    implementation must already have pinned the original parent before the
+    hook exchanges the lexical tree, so the replacement tree cannot inherit
+    authorization merely by presenting identical approved bytes.
+    """
+    sb = Sandbox.build(base)
+    resource = "src/module_a.py"
+    original_src = sb.repo / "src"
+    original_bytes = (original_src / "module_a.py").read_bytes()
+    replacement_src = sb.base / "replacement-src"
+    replacement_src.mkdir()
+    replacement_target = replacement_src / "module_a.py"
+    replacement_target.write_bytes(original_bytes)
+    replacement_before = replacement_target.read_bytes()
+    moved_src = sb.base / "original-src"
+    decision = sb.engine.decide(sb.intent("agent-alpha", resource), sb.tick())
+    assert decision.receipt is not None
+    real_open = effect_module._open_parent_dir
+    swapped = False
+
+    def pin_then_swap(repo_dir: Path, requested_resource: str) -> tuple[int, str]:
+        nonlocal swapped
+        parent_fd, name = real_open(repo_dir, requested_resource)
+        if not swapped:
+            swapped = True
+            original_src.rename(moved_src)
+            replacement_src.rename(original_src)
+        return parent_fd, name
+
+    with patch("mutation_authority.effect._open_parent_dir", side_effect=pin_then_swap):
+        result = sb.binder.commit(decision.receipt, b"attacker-controlled\n", sb.tick())
+
+    _expect(swapped, "deterministic pre-state tree swap did not run")
+    _expect(result.status == REJECTED, "replacement tree inherited authorization")
+    _expect(
+        moved_src.joinpath("module_a.py").read_bytes() == original_bytes,
+        "original pinned tree changed",
+    )
+    _expect(
+        original_src.joinpath("module_a.py").read_bytes() == replacement_before,
+        "replacement lexical tree changed",
+    )
+    _expect(
+        decision.receipt.receipt_id not in sb.ledger.committed_receipt_ids(),
+        "pre-state tree swap left a COMMIT",
+    )
+    sb.ledger.verify_chain()
+    return "pre-state tree swap rejected; original/replacement unchanged and no COMMIT"
+
+
 def attack_q_parent_rename_during_effect(base: Path) -> str:
     """Renaming the verified parent during mutation must roll back via dirfd."""
 
@@ -801,6 +854,7 @@ CHECKS: list[tuple[str, Callable[[Path], str]]] = [
         attack_o_in_memory_root_mutation,
     ),
     ("ATTACK M: effect-time temporary symlink race", attack_p_temp_symlink_race),
+    ("ATTACK M2: pre-state pathname tree swap", attack_pre_state_path_swap),
     ("ATTACK N: ancestor rename during effect", attack_q_parent_rename_during_effect),
     ("ATTACK O: ancestor rename at audit append", attack_r_parent_rename_at_audit_append),
     ("CREATE respects restrictive umask", check_create_respects_restrictive_umask),
