@@ -24,6 +24,16 @@ on:
       - 'llms.txt'
       - 'docs/**'
       - '.github/workflows/pages.yml'
+  pull_request:
+    # Dry-run the Jekyll build (deploy is master-gated below) whenever site
+    # content or this workflow changes — Liquid parse failures surface on the
+    # PR instead of after merge.
+    paths:
+      - '_config.yml'
+      - '*.md'
+      - 'llms.txt'
+      - 'docs/**'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
@@ -64,6 +74,9 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
 
   deploy:
+    # Build runs on branches too (workflow_dispatch) as a dry-run gate;
+    # only master deploys.
+    if: github.ref == 'refs/heads/master'
     needs: build
     runs-on: ubuntu-latest
     environment:
