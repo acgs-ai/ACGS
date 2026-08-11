@@ -11,7 +11,10 @@ ledger COMMIT events and evidence records.
 
 from __future__ import annotations
 
+import fcntl
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +52,25 @@ class EvidenceEmitter:
     def __init__(self, path: Path):
         self.path = path
 
+    @contextmanager
+    def _write_lock(self) -> Iterator[None]:
+        """Exclusive cross-process lock serializing every evidence writer over
+        its whole read-check-append sequence. Emission and recovery both
+        decide what to append from a snapshot of the evidence file; two
+        writers (e.g. gateways committing mutations on different resources)
+        that snapshot the same file could both find the same COMMIT records
+        missing and append duplicates, which the CI gate's COMMIT-to-evidence
+        bijection then rejects. The lock lives in a sidecar file (never the
+        evidence file itself, so locking cannot create or truncate it), is
+        keyed by the evidence path so it serializes across emitter instances
+        and processes, and releases on close (and on process death). On-disk
+        state must be re-read while holding the lock."""
+        lock_path = self.path.with_name(self.path.name + ".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a", encoding="utf-8") as fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            yield
+
     # -- emission ---------------------------------------------------------
 
     def emit_for_receipt(
@@ -71,10 +93,13 @@ class EvidenceEmitter:
                 f"no COMMIT event for receipt {receipt.receipt_id}; refusing to fabricate evidence"
             )
         record = self._record_for_commit(root, commit)
-        for existing in self.records():
-            if existing.get("evidence_id") == record["evidence_id"]:
-                return existing
-        self._append(record)
+        with self._write_lock():
+            # Re-read under the lock: another emitter may have appended this
+            # record between our snapshot and acquiring the lock.
+            for existing in self.records():
+                if existing.get("evidence_id") == record["evidence_id"]:
+                    return existing
+            self._append(record)
         return record
 
     def recover_missing(self, root: GovernanceRoot, ledger: AuditLedger) -> list[dict[str, Any]]:
@@ -86,13 +111,18 @@ class EvidenceEmitter:
         read-only evidence filesystem, for example — is recoverable at any
         later time without re-running the effect. Restores the mandatory
         COMMIT-to-evidence bijection the CI gate enforces."""
-        existing = {r.get("receipt_id") for r in self.records()}
         recovered: list[dict[str, Any]] = []
-        for event in ledger.events():
-            if event.type == EVENT_COMMIT and event.payload.get("receipt_id") not in existing:
-                record = self._record_for_commit(root, event)
-                self._append(record)
-                recovered.append(record)
+        with self._write_lock():
+            # The gap scan and the appends are one serialized operation, and
+            # the on-disk state is read while holding the lock: two gateways
+            # recovering concurrently must not both decide the same COMMIT
+            # records are missing and append duplicates.
+            existing = {r.get("receipt_id") for r in self.records()}
+            for event in ledger.events():
+                if event.type == EVENT_COMMIT and event.payload.get("receipt_id") not in existing:
+                    record = self._record_for_commit(root, event)
+                    self._append(record)
+                    recovered.append(record)
         return recovered
 
     @staticmethod

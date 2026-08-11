@@ -97,7 +97,7 @@
         "authority_evidence_id": {"type": "string", "pattern": "^AE-[A-Za-z0-9_.:-]+$"},
         "authority_scope": {"$ref": "#/properties/authority_scope"},
         "evidence_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "substrate_identity": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "substrate_identity": {"type": "string", "pattern": "^[0-9a-f]{16}$", "description": "The 16-hex substrate_id from the canonical identity manifest (the first 16 hex characters of critical_set_digest, see _identity.build_manifest) — the value the real ingestion path copies into every transition receipt."},
         "substrate_critical_set_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "decision_inputs_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "policy_version": {"type": "string", "minLength": 1},

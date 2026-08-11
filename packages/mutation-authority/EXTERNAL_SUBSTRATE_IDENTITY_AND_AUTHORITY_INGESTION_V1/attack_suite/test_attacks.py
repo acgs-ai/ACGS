@@ -748,6 +748,12 @@ def test_route_denies_invalid_substrate_binding_before_receipt(identity, digest,
 
 
 def test_transition_receipt_v2_matches_schema_and_v1_fails_closed():
+    # substrate_identity carries the GENERATED substrate id: the canonical
+    # manifest builder sets substrate_id to the first 16 hex characters of
+    # critical_set_digest (_identity.build_manifest), and ingestion copies
+    # that value into every transition receipt. The committed schema must
+    # accept exactly that shape or every real-path receipt is rejected.
+    critical_set_digest = "d" * 64
     receipt = mint_receipt(
         KEY,
         request_id="R1",
@@ -757,8 +763,8 @@ def test_transition_receipt_v2_matches_schema_and_v1_fails_closed():
         authority_evidence_id="AE-1",
         evidence_digest="a" * 64,
         authority_scope={"asset_ids": "ALL", "requirement_ids": "ALL"},
-        substrate_identity="b" * 64,
-        substrate_critical_set_digest="d" * 64,
+        substrate_identity=critical_set_digest[:16],
+        substrate_critical_set_digest=critical_set_digest,
         decision="ALLOW",
         decision_reason="x",
         created_at=INSTANT,
@@ -768,6 +774,13 @@ def test_transition_receipt_v2_matches_schema_and_v1_fails_closed():
     receipt_schema["properties"] = dict(receipt_schema["properties"])
     receipt_schema["properties"]["authority_scope"] = schema["properties"]["authority_scope"]
     Draft7Validator(receipt_schema).validate(receipt)
+
+    # A substrate_identity that is NOT the generated 16-hex id (e.g. a full
+    # 64-hex digest) is a different value than the ingestion path produces
+    # and must not validate.
+    wrong_shape = dict(receipt, substrate_identity="b" * 64)
+    with pytest.raises(ValidationError):
+        Draft7Validator(receipt_schema).validate(wrong_shape)
 
     legacy = dict(receipt, schema="acgs_authority_transition_receipt/v1")
     legacy_body = {key: value for key, value in legacy.items() if key != "signature"}

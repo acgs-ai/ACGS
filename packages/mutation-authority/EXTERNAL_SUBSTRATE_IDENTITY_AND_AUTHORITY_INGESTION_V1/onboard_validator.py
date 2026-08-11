@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -228,9 +229,43 @@ def main(argv: list[str]) -> int:
         artifact_dir = Path(args.keystore) / APPOINTMENT_ARTIFACTS_DIR_NAME
         artifact_dir.mkdir(parents=True, exist_ok=True)
         for digest in required:
+            data = supplied[digest].read_bytes()
+            if sha256_hex(data) != digest:
+                # The artifact changed on disk between gate 2 and retention.
+                print(
+                    f"FATAL: evidence artifact {supplied[digest]} changed while "
+                    "onboarding — refusing to retain unverified bytes",
+                    file=sys.stderr,
+                )
+                return 2
             retained_artifact = artifact_dir / digest
-            if not retained_artifact.exists():
-                retained_artifact.write_bytes(supplied[digest].read_bytes())
+            if retained_artifact.exists():
+                # A preexisting digest-named artifact must actually verify:
+                # registering over incorrect or partial retained bytes would
+                # report the ceremony as active while
+                # _register_has_onboarding_provenance() later rejects all
+                # trust for this validator — and a retry is refused because
+                # the validator is already registered. A matching regular
+                # file is kept; anything else is replaced atomically with
+                # the verified supplied bytes (their content is uniquely
+                # determined by the digest). A non-regular path (symlink,
+                # directory) is never followed or overwritten — fail closed.
+                if retained_artifact.is_symlink() or not retained_artifact.is_file():
+                    print(
+                        f"FATAL: retained appointment artifact {retained_artifact} "
+                        "is not a regular file — refusing to register over it",
+                        file=sys.stderr,
+                    )
+                    return 2
+                try:
+                    existing = retained_artifact.read_bytes()
+                except OSError:
+                    existing = None
+                if existing is not None and sha256_hex(existing) == digest:
+                    continue
+            tmp = artifact_dir / f".{digest}.tmp"
+            tmp.write_bytes(data)
+            os.replace(tmp, retained_artifact)
         _append(registry, event)
 
     state = derive_ceremony_state(

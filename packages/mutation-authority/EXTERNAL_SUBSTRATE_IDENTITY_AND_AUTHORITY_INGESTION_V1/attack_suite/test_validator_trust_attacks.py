@@ -478,6 +478,58 @@ def test_vt13_supersession_requires_verified_ingestion_receipt(tmp_path):
     assert dist2[ACTIVE] == 1
 
 
+def test_vt14_rejected_successor_cannot_supersede(tmp_path):
+    # A receipted successor carrying a validly SIGNED but REJECTED attestation
+    # must not deactivate the established predecessor: signature trust alone
+    # is not standing. The successor must itself derive governed-ACTIVE
+    # before its `supersedes` claim counts — otherwise appending a rejected
+    # successor would leave BOTH records unroutable (predecessor SUPERSEDED,
+    # successor INVALIDATED): a denial-of-authority primitive.
+    trust = fixture_trust(tmp_path)
+    events = load_validator_events(trust["registry"])
+    old = _attested(_evidence(ev_id="AE-OLD"))
+    rejected = _attested(dict(_evidence(ev_id="AE-NEW"), supersedes="AE-OLD"))
+    att = {
+        k: v
+        for k, v in dict(rejected["validation"], disposition="REJECTED").items()
+        if k != "attestation_signature"
+    }
+    rejected["validation"] = _sign_att(att)  # validly signed, affirmatively REJECTED
+    dist = governed_lifecycle_distribution(
+        [old, rejected],
+        INSTANT,
+        events=events,
+        keystore_dir=trust["keystore"],
+        policy=dict(DEFAULT_POLICY),
+        substrate_identity="fixture-substrate",
+        substrate_digest="d" * 64,
+        receipt_key=FIX_AUTH_KEY,
+    )
+    assert dist[SUPERSEDED] == 0  # the established record stands
+    assert dist[ACTIVE] == 1
+    assert dist[INVALIDATED] == 1  # the rejected successor never stands
+    # An out-of-effect successor (not yet in its validity period) must not
+    # supersede either: full ACTIVE eligibility, not just signature trust.
+    future = _attested(
+        dict(
+            _evidence(ev_id="AE-NEW3", effective_from="2027-01-01T00:00:00Z"),
+            supersedes="AE-OLD",
+        )
+    )
+    dist2 = governed_lifecycle_distribution(
+        [old, future],
+        INSTANT,
+        events=events,
+        keystore_dir=trust["keystore"],
+        policy=dict(DEFAULT_POLICY),
+        substrate_identity="fixture-substrate",
+        substrate_digest="d" * 64,
+        receipt_key=FIX_AUTH_KEY,
+    )
+    assert dist2[SUPERSEDED] == 0
+    assert dist2[ACTIVE] == 1
+
+
 def test_duplicate_register_bypasses_nothing(tmp_path):
     # An attacker who can APPEND a chain-linked registry line publishes a
     # SECOND REGISTER for the existing validator carrying their own key, then
@@ -571,7 +623,8 @@ def test_validator_revoked_after_issuance_requires_review(substrate, tmp_path):
             "schema": EVENT_SCHEMA,
             "event": "REVOKE",
             "validator_id": FIX_VALIDATOR,
-            "instant": "2026-08-15T00:00:00Z",  # AFTER validated_at 2026-08-10
+            # AFTER validated_at 2026-08-10T11:00 and effective by INSTANT
+            "instant": "2026-08-10T11:30:00Z",
         },
     )
     ev = _attested(_evidence())
@@ -579,6 +632,30 @@ def test_validator_revoked_after_issuance_requires_review(substrate, tmp_path):
     st = _compute(substrate, tmp_path, [ev], trust=trust)
     assert st["report"]["ready_to_send"] == 0
     assert st["report"]["lifecycle_distribution"][REQUIRES_REVIEW] == 1
+
+
+def test_future_scheduled_revocation_defers_until_effective(substrate, tmp_path):
+    # A REVOKE scheduled AFTER the current evaluation instant is not yet
+    # effective: it must not prematurely demote otherwise valid routing
+    # (consistent with authority_valid_at and key_retired, which both defer
+    # the same future revocation) — but it applies from its instant onward.
+    trust = fixture_trust(tmp_path)
+    _append_event(
+        trust,
+        {
+            "schema": EVENT_SCHEMA,
+            "event": "REVOKE",
+            "validator_id": FIX_VALIDATOR,
+            "instant": "2026-08-15T00:00:00Z",  # AFTER the evaluation INSTANT
+        },
+    )
+    ev = _attested(_evidence())
+    assert _gstate(ev, trust) == ACTIVE  # evaluated at INSTANT (2026-08-10)
+    assert _gstate(ev, trust, instant="2026-08-15T00:00:00Z") == REQUIRES_REVIEW
+    assert _gstate(ev, trust, instant="2026-09-01T00:00:00Z") == REQUIRES_REVIEW
+    st = _compute(substrate, tmp_path, [ev], trust=trust)  # evaluates at INSTANT
+    assert st["report"]["lifecycle_distribution"][ACTIVE] == 1
+    assert st["report"]["lifecycle_distribution"][REQUIRES_REVIEW] == 0
 
 
 def test_freshness_age_demotes_to_requires_review(tmp_path):

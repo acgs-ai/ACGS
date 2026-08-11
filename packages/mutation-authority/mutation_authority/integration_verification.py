@@ -9,6 +9,7 @@ check; logical clock; deterministic.
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -420,6 +421,48 @@ def attack_l_malformed_evidence_projection(base: Path) -> str:
     return "malformed evidence projection rejects the request before any effect"
 
 
+def attack_n_concurrent_evidence_recovery(base: Path) -> str:
+    """Two emitters recovering missing evidence concurrently (as two gateways
+    finishing commits would) must serialize the read-check-append sequence:
+    every COMMIT ends up with exactly ONE evidence record, never the
+    duplicates the CI gate's bijection rejects."""
+    sb = IntegrationSandbox.build(base)
+    for i, resource in enumerate(("src/module_a.py", "src/verify_readiness.py")):
+        res = sb.gateway.request_mutation(
+            sb.ctx("agent-alpha"), resource, "UPDATE", f"print({i})\n".encode()
+        )
+        _expect(res.status == APPLIED, f"setup failed: {res.status}: {res.reason}")
+    # Evidence appends failed after the COMMITs succeeded (e.g. full disk).
+    sb.evidence.path.unlink()
+
+    start = threading.Barrier(2)
+    errors: list[Exception] = []
+
+    def recoverer() -> None:
+        # A separate emitter instance per recoverer, as two processes would have.
+        emitter = EvidenceEmitter(sb.evidence.path)
+        start.wait()
+        try:
+            emitter.recover_missing(sb.kernel.root, sb.kernel.ledger)
+        except Exception as exc:  # surfaced below as a check failure
+            errors.append(exc)
+
+    threads = [threading.Thread(target=recoverer) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    _expect(not errors, f"concurrent recovery raised: {errors}")
+    receipt_ids = [r.get("receipt_id") for r in sb.evidence.records()]
+    _expect(
+        len(receipt_ids) == len(set(receipt_ids)) == 2,
+        f"concurrent recovery duplicated evidence records: {receipt_ids}",
+    )
+    gate = sb.gate()
+    _expect(gate.passed, f"CI gate failed after concurrent recovery: {gate.failures}")
+    return "racing recoveries serialized ⇒ one record per COMMIT, gate green"
+
+
 INTEGRATION_CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     (
         "integrated happy path: adapter → receipt → effect → evidence → gate",
@@ -444,6 +487,10 @@ INTEGRATION_CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     (
         "ATTACK M: COMMIT post-state laundering under an issued receipt",
         attack_m_commit_post_state_laundering,
+    ),
+    (
+        "ATTACK N: concurrent evidence recovery duplicates records",
+        attack_n_concurrent_evidence_recovery,
     ),
     ("compatibility: full kernel suite re-run", check_kernel_suite_compatibility),
 ]

@@ -39,6 +39,7 @@ from validator_trust import (
     _load_key,
     _parse_z,
     chain_intact,
+    rotations_authenticated,
 )
 
 # Ceremony states (derived only).
@@ -287,5 +288,15 @@ def derive_ceremony_state(
             if u is None or now >= u:
                 return REVOKED  # appointment period ended
     if any(e.get("event") == "ROTATE" for e in mine):
+        # A ROTATE only derives ROTATED when every rotation in the history
+        # was authorized by the key it retires. An append-capable attacker
+        # can add a correctly chain-linked ROTATE without a valid predecessor
+        # authorization; the trust path rejects that history
+        # (rotations_authenticated), so the ceremony must not report a
+        # successful rotation while every attestation is unusable. Fall back
+        # to KEY_BOUND: the key is owned, but no trusted registration state
+        # is provable on top of an unauthenticated rotation.
+        if not rotations_authenticated(mine, keystore_dir):
+            return KEY_BOUND
         return ROTATED
     return ACTIVE

@@ -12,6 +12,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -77,6 +78,12 @@ class AuditLedger:
             )
         self.path = path
         self.anchor_path = anchor_path
+        # Reentrancy state for _write_lock/transaction: an RLock serializes
+        # threads sharing this instance, and the depth counter lets a
+        # transaction() holder append without re-flocking the sidecar (a
+        # second flock on a fresh fd would deadlock against our own lock).
+        self._tx_guard = threading.RLock()
+        self._tx_depth = 0
 
     # -- construction -----------------------------------------------------
 
@@ -120,11 +127,38 @@ class AuditLedger:
         other writer's already-fsynced event, leaving an ACCEPTED effect
         unrecorded. The lock lives in a sidecar file (never the ledger itself,
         so locking cannot create or truncate it) and releases on close (and on
-        process death)."""
-        lock_path = self.path.with_name(self.path.name + ".lock")
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with lock_path.open("a", encoding="utf-8") as fh:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        process death).
+
+        Reentrant: a caller already inside transaction() (which holds this
+        same lock) may append without deadlocking on a second flock of the
+        sidecar. The RLock additionally serializes threads that share this
+        ledger instance, since flock cannot arbitrate between them."""
+        with self._tx_guard:
+            if self._tx_depth:
+                self._tx_depth += 1
+                try:
+                    yield
+                finally:
+                    self._tx_depth -= 1
+                return
+            lock_path = self.path.with_name(self.path.name + ".lock")
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            with lock_path.open("a", encoding="utf-8") as fh:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                self._tx_depth = 1
+                try:
+                    yield
+                finally:
+                    self._tx_depth = 0
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Exclusive cross-process ledger transaction for a read-check-append
+        sequence that spans more than one call (e.g. DecisionEngine.decide's
+        open-receipt conflict check followed by the ALLOW append). Holding
+        this lock guarantees no other writer can append between the caller's
+        reads of ledger state and its own append."""
+        with self._write_lock():
             yield
 
     def append(self, event_type: str, payload: dict[str, Any], timestamp: int) -> LedgerEvent:

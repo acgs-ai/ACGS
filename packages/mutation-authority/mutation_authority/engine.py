@@ -142,6 +142,18 @@ class DecisionEngine:
         self.repo_dir = repo_dir
 
     def decide(self, signed: SignedIntent, now: int) -> Decision:
+        # The whole decision is one ledger transaction: the open-receipt
+        # conflict check (step 9) reads ledger state that the ALLOW append
+        # below extends, so two concurrent decide() calls for the same
+        # resource must not both observe "no open receipt" before either
+        # records its decision — that would mint two live receipts bound to
+        # the same pre-state and let both effects COMMIT. Holding the ledger
+        # write lock from the first read through the append makes the
+        # read-check-append sequence atomic across processes and threads.
+        with self.ledger.transaction():
+            return self._decide_locked(signed, now)
+
+    def _decide_locked(self, signed: SignedIntent, now: int) -> Decision:
         # Fail closed: a tampered governance root refuses ALL decisions.
         self.root.verify_integrity()
         self.ledger.verify_chain()

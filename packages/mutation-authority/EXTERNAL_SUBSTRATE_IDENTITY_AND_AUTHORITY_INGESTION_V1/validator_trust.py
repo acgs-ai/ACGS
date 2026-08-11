@@ -487,18 +487,30 @@ def rotations_authenticated(evts: list[dict[str, Any]], keystore_dir: Path) -> b
     return True
 
 
-def revoked_after(evts: list[dict[str, Any]], validated_at: str) -> bool:
+def revoked_after(evts: list[dict[str, Any]], validated_at: str, at: Any = None) -> bool:
     """True if the validator was revoked AFTER this attestation was made — the
     attestation was valid when issued, but the trust behind it is now in doubt
-    (derives REQUIRES_REVIEW, not silent continuation)."""
+    (derives REQUIRES_REVIEW, not silent continuation).
+
+    A revocation applies only from its effective instant: a REVOKE scheduled
+    for a FUTURE instant relative to the evaluation instant `at` must not
+    demote earlier attestations yet (consistent with authority_valid_at and
+    key_retired, which both defer the same future revocation). An unparseable
+    revocation instant — or no usable evaluation instant to place a
+    later-than-attestation revocation against — fails closed as revoked."""
     v_dt = _parse_z(validated_at)
     if v_dt is None:
         return True
+    at_dt = _parse_z(at)
     for e in evts:
         if e.get("event") == "REVOKE":
             rev = _parse_z(e.get("instant"))
-            if rev is None or rev > v_dt:
+            if rev is None:
                 return True
+            if rev <= v_dt:
+                continue  # at-or-before issuance: authority_valid_at's domain
+            if at_dt is None or rev <= at_dt:
+                return True  # effective (or unplaceable) revocation after issuance
     return False
 
 
@@ -858,8 +870,11 @@ def derive_governed_state(
         return VALIDATED
     if not in_effect(record, instant):
         return INGESTED
+    # Revocation-after-issuance is evaluated at `instant`: a REVOKE scheduled
+    # for the future does not demote today's otherwise valid attestations.
     if any(
-        revoked_after(_events_for(events or [], a["validator_id"]), a["validated_at"]) for a in atts
+        revoked_after(_events_for(events or [], a["validator_id"]), a["validated_at"], instant)
+        for a in atts
     ):
         return REQUIRES_REVIEW
     # An attestation resting on a since-retired key (rotated away / revoked)
@@ -884,33 +899,38 @@ def _trusted_superseded_ids(
     *,
     events: list[dict[str, Any]] | None,
     keystore_dir: Path,
+    policy: dict[str, Any] | None,
     substrate_identity: str,
     substrate_digest: str,
     receipt_key: bytes | None = None,
 ) -> set[str]:
-    """Ids displaced by a successor whose attestations are all trust-verified.
-    `supersedes` is attacker-writable, so only a successor that would itself
-    stand under full validator-trust verification may deactivate a record.
-    The successor's ingestion receipt is verified CRYPTOGRAPHICALLY against
-    the authority receipt key — the base layer's structural check accepts any
-    non-empty receipt string, which a registry writer can invent."""
+    """Ids displaced by a successor that would itself derive governed-ACTIVE.
+    `supersedes` is attacker-writable, so only a successor that stands under
+    the COMPLETE governed eligibility rules — trust-verified attestations,
+    cryptographically verified ingestion receipt, no REJECTED disposition or
+    scope/period conflict, in effect, no post-issuance revocation or retired
+    key, fresh under policy — may deactivate a record. Signature trust alone
+    is not enough: a receipted successor carrying a validly signed REJECTED
+    attestation would otherwise mark the established predecessor SUPERSEDED
+    while itself deriving INVALIDATED, leaving neither record routable (a
+    denial-of-authority primitive). The successor's own state is derived with
+    an empty superseded set (it is judged on its own standing here)."""
 
     def successor_trusted(r: dict[str, Any]) -> bool:
-        atts = _attestations(r)
-        if not atts:
-            return False
-        if not ingestion_receipt_verified(
-            r,
-            receipt_key,
-            substrate_identity=substrate_identity,
-            substrate_digest=substrate_digest,
-        ):
-            return False
-        return all(
-            verify_attestation_trust(
-                r, a, events=events, keystore_dir=keystore_dir, instant=instant
-            )[0]
-            for a in atts
+        return (
+            derive_governed_state(
+                r,
+                instant=instant,
+                superseded_ids=set(),
+                in_registry=True,
+                events=events,
+                keystore_dir=keystore_dir,
+                policy=policy,
+                receipt_key=receipt_key,
+                substrate_identity=substrate_identity,
+                substrate_digest=substrate_digest,
+            )
+            == ACTIVE
         )
 
     return superseded_ids_of(records, instant, successor_trusted=successor_trusted)
@@ -937,6 +957,7 @@ def governed_active_records(
         instant,
         events=events,
         keystore_dir=keystore_dir,
+        policy=policy,
         substrate_identity=substrate_identity,
         substrate_digest=substrate_digest,
         receipt_key=receipt_key,
@@ -980,6 +1001,7 @@ def governed_lifecycle_distribution(
         instant,
         events=events,
         keystore_dir=keystore_dir,
+        policy=policy,
         substrate_identity=substrate_identity,
         substrate_digest=substrate_digest,
         receipt_key=receipt_key,

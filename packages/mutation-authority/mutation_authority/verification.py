@@ -1136,6 +1136,51 @@ def check_concurrent_ledger_appends_serialized(base: Path) -> str:
     return "16 racing appends from 2 writers ⇒ intact chain, anchored head, none lost"
 
 
+def check_concurrent_decisions_serialized(base: Path) -> str:
+    """Two decide() calls for the same resource racing through the open-receipt
+    conflict check must serialize: the check and the ALLOW append are one
+    ledger transaction, so exactly one receipt is minted and the loser is
+    DENIED as an in-flight conflict — never two live receipts bound to the
+    same pre-state."""
+    sb = Sandbox.build(base)
+    resource = "src/verify_readiness.py"
+    intents = [
+        sb.intent("agent-alpha", resource, new_content=b"print('alpha')\n"),
+        sb.intent("agent-beta", resource, new_content=b"print('beta')\n"),
+    ]
+    now = sb.tick()
+    start = threading.Barrier(2)
+    decisions: list = [None, None]
+    errors: list[Exception] = []
+
+    def racer(k: int) -> None:
+        # A separate ledger/engine instance per racer, as two processes would have.
+        ledger = AuditLedger(sb.ledger.path, anchor_path=sb.ledger.anchor_path)
+        engine = DecisionEngine(sb.root, ledger, sb.repo)
+        start.wait()
+        try:
+            decisions[k] = engine.decide(intents[k], now)
+        except Exception as exc:  # surfaced below as a check failure
+            errors.append(exc)
+
+    threads = [threading.Thread(target=racer, args=(k,)) for k in (0, 1)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    _expect(not errors, f"concurrent decide raised: {errors}")
+    verdicts = sorted(d.decision for d in decisions if d is not None)
+    _expect(verdicts == [ALLOW, DENY], f"expected one ALLOW and one DENY, got {verdicts}")
+    loser = next(d for d in decisions if d.decision == DENY)
+    _expect("in flight" in loser.reason, loser.reason)
+    sb.ledger.verify_chain()
+    _expect(
+        len(sb.ledger.open_receipts_for(resource, now)) == 1,
+        "race minted more than one live receipt for the resource",
+    )
+    return "racing decisions serialized ⇒ one ALLOW receipt, one in-flight DENY"
+
+
 CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     ("happy-path: intent → decision → receipt → effect → audit", check_happy_path),
     ("deterministic verifier", check_deterministic_verifier),
@@ -1199,6 +1244,7 @@ CHECKS: list[tuple[str, Callable[[Path], str]]] = [
         attack_v_unreadable_governed_subtree,
     ),
     ("concurrent ledger appends are serialized", check_concurrent_ledger_appends_serialized),
+    ("concurrent decisions on one resource are serialized", check_concurrent_decisions_serialized),
 ]
 
 

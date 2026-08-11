@@ -39,7 +39,9 @@ from validator_onboarding import (  # noqa: E402
     validate_appointment,
 )
 from validator_trust import (  # noqa: E402
+    EVENT_SCHEMA,
     chain_intact,
+    event_binding,
     load_validator_events,
     verify_attestation_trust,
 )
@@ -475,3 +477,56 @@ def test_appointment_binding_content_sensitive(tmp_path):
     assert b == appointment_binding(json.loads(json.dumps(app)))  # deterministic
     assert b != appointment_binding(dict(app, subject_identity="other"))
     assert b != appointment_binding(dict(app, authorized_classes=[]))
+
+
+def test_preexisting_corrupt_artifact_replaced_before_registration(tmp_path):
+    # A digest-named artifact planted in the retention directory BEFORE
+    # onboarding must never poison the registration: the retained bytes are
+    # verified against the digest, and a mismatching regular file is replaced
+    # atomically with the verified supplied bytes so the ceremony derives
+    # ACTIVE with provenance that keeps verifying.
+    app, deed = fixture_appointment(tmp_path)
+    digest = sha256_hex(deed.read_bytes())
+    artifact_dir = tmp_path / "vks" / ".appointment_artifacts"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    (artifact_dir / digest).write_text("[POISON] wrong bytes under the right name")
+    assert _onboard(tmp_path, app, deed) == 0
+    assert sha256_hex((artifact_dir / digest).read_bytes()) == digest
+    assert _ceremony(app, tmp_path) == ACTIVE
+
+
+def test_preexisting_non_regular_artifact_refuses_registration(tmp_path):
+    # A non-regular path (directory/symlink) squatting on the digest name is
+    # never followed or overwritten: onboarding fails closed with nothing
+    # appended to the registry.
+    app, deed = fixture_appointment(tmp_path)
+    digest = sha256_hex(deed.read_bytes())
+    artifact_dir = tmp_path / "vks" / ".appointment_artifacts"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    (artifact_dir / digest).mkdir()
+    assert _onboard(tmp_path, app, deed) == 2
+    assert not (tmp_path / "vreg.jsonl").exists()
+
+
+def test_unauthenticated_rotation_never_derives_rotated(tmp_path):
+    # A chain-linked ROTATE forged WITHOUT a predecessor-signed
+    # rotation_authorization must not derive ROTATED: the ceremony falls back
+    # to KEY_BOUND (never a trusted state) instead of reporting a successful
+    # key ceremony for a rotation the trust layer rejects.
+    app, deed = fixture_appointment(tmp_path)
+    assert _onboard(tmp_path, app, deed) == 0
+    assert _ceremony(app, tmp_path) == ACTIVE
+    events = load_validator_events(tmp_path / "vreg.jsonl")
+    forged = {
+        "schema": EVENT_SCHEMA,
+        "event": "ROTATE",
+        "validator_id": EXT_VALIDATOR,
+        "key_id": "ext-k-attacker",
+        "key_fingerprint": sha256_hex(b"a" * 32),
+        "instant": "2026-08-01T00:00:00Z",
+        "prev_event_binding": events[-1]["event_binding"],
+    }
+    forged["event_binding"] = event_binding(forged)
+    with (tmp_path / "vreg.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(forged, sort_keys=True) + "\n")
+    assert _ceremony(app, tmp_path) == KEY_BOUND
