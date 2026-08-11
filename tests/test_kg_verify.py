@@ -33,6 +33,7 @@ def run_verify(monkeypatch):
         *,
         catalog_hits: int = len(verify.CATALOG),
         absent_lock_entries: int = 0,
+        snapshot_rows: int = 1,
         argv: tuple[str, ...] = (),
     ):
         catalog_queries = [q for _, q in verify.CATALOG]
@@ -43,6 +44,8 @@ def run_verify(monkeypatch):
                 return [join_row]
             if query == verify.SEALED_ABSENT_Q:
                 return [{"absent": absent_lock_entries}]
+            if query.startswith("MATCH (s:Snapshot)"):
+                return [{"head": "abc123", "branch": "main"}] * snapshot_rows
             if query in answered:
                 return [{"col": "value"}]
             if query in catalog_queries:
@@ -127,6 +130,26 @@ def test_a_graph_with_no_sealed_files_fails(run_verify, capsys):
 
     assert code == 1
     assert "FAIL: no sealed files linked" in capsys.readouterr().out
+
+
+def test_a_graph_without_a_snapshot_node_fails(run_verify, capsys):
+    """REGRESSION. An otherwise healthy graph with no Snapshot node printed an
+    empty snapshot table and still said VERIFY: PASS, then the documented next
+    step (reports.py) crashed on `s.run(SNAPSHOT_Q).single().data()` because
+    provenance could not be established at all."""
+    code, _ = run_verify(HEALTHY_JOIN, snapshot_rows=0)
+
+    assert code == 1
+    assert "FAIL: expected exactly 1 Snapshot node, found 0" in capsys.readouterr().out
+
+
+def test_a_graph_with_multiple_snapshot_nodes_fails(run_verify, capsys):
+    """Provenance must be unique: two Snapshot nodes mean two competing claims
+    about which commit the graph describes."""
+    code, _ = run_verify(HEALTHY_JOIN, snapshot_rows=2)
+
+    assert code == 1
+    assert "FAIL: expected exactly 1 Snapshot node, found 2" in capsys.readouterr().out
 
 
 def test_absent_marker_lock_entries_satisfy_the_sealed_check(run_verify, capsys):

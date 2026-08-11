@@ -427,6 +427,18 @@ def test_skipped_enumeration_count_is_reported_from_the_snapshot(run_reports):
     assert "7 such scopes were skipped" in tiers
 
 
+def test_caveats_name_semantic_refresh_as_a_source_of_new_evidence(run_reports):
+    """REGRESSION. The caveat claimed only adding code, tests, or an
+    attestation could raise a tier, but refreshing the semantic snapshot mints
+    TESTED_BY edges for files that already existed and promotes tier B
+    controls to tier C on the next run: the report handed readers a false
+    stability guarantee."""
+    _, _, tiers, _ = run_reports()
+
+    assert "refreshing the semantic snapshot" in tiers
+    assert "without any code, test, or attestation being added" in tiers
+
+
 # --------------------------------------------------------------------------- #
 # Hotspot report
 # --------------------------------------------------------------------------- #

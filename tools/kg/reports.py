@@ -538,9 +538,12 @@ listed" becomes a false implementation claim.
 2. **Tier C is bounded by the semantic snapshot.** `TESTED_BY` exists only for
    analyzed files ({cov["analyzed"]}/{cov["files"]}), so tier C is a floor, not
    a measurement.
-3. **No tier may be upgraded without new evidence in the repository.**
-   Re-running this report cannot raise a tier; only adding code, tests, or an
-   external attestation artifact can.
+3. **No tier may be upgraded without new graph evidence.** Re-running this
+   report against an unchanged graph cannot raise a tier. New evidence enters
+   the graph by adding code, tests, or an external attestation artifact, or by
+   refreshing the semantic snapshot: re-analysis can mint `TESTED_BY` edges for
+   tests and sources that already existed, promoting a control from tier B to
+   tier C without any code, test, or attestation being added.
 """
 
     (OUT_DIR / "cross-repo-hotspot-report.md").write_text(r1)

@@ -139,6 +139,15 @@ def main() -> int:
             rows = [r.data() for r in s.run(q)]
             print(f"\n== {title} ==")
             print(table(rows))
+            if title == "snapshot" and len(rows) != 1:
+                # An otherwise healthy graph with no (or several) Snapshot
+                # nodes has no provenance, and reports.py crashes on
+                # `s.run(SNAPSHOT_Q).single().data()`. Printing the empty
+                # table and passing would hide that.
+                failures.append(
+                    f"expected exactly 1 Snapshot node, found {len(rows)}: "
+                    "graph provenance cannot be established"
+                )
             if title.startswith("JOIN HEALTH"):
                 r = rows[0]
                 if r["files"] == 0:

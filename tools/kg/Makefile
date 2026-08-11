@@ -7,6 +7,9 @@ COMPOSE ?= docker compose
 # packages/acgs-lite has no pyproject.toml) before the script even starts.
 PY ?= uv run --no-project --with neo4j --with pyyaml python
 NEO4J_PASSWORD ?= acgs-kg-local
+# Recipes expand the exported value as "$$NEO4J_PASSWORD" (shell-time, quoted)
+# rather than $(NEO4J_PASSWORD) (make-time, unquoted): an override containing
+# whitespace or shell metacharacters must stay one cypher-shell argument.
 export NEO4J_PASSWORD
 
 .PHONY: help up down extract load verify reload all shell browser logs reset nuke
@@ -25,7 +28,7 @@ up:
 	$(COMPOSE) up -d
 	@echo "waiting for neo4j..."
 	@for i in $$(seq 1 60); do \
-		if docker exec acgs-kg-neo4j cypher-shell -u neo4j -p $(NEO4J_PASSWORD) 'RETURN 1' >/dev/null 2>&1; then \
+		if docker exec acgs-kg-neo4j cypher-shell -u neo4j -p "$$NEO4J_PASSWORD" 'RETURN 1' >/dev/null 2>&1; then \
 			echo "neo4j ready"; exit 0; fi; sleep 2; done; \
 	echo "neo4j did not become ready"; exit 1
 
@@ -43,7 +46,7 @@ reload: extract load verify
 all: up extract load verify
 
 shell:
-	docker exec -it acgs-kg-neo4j cypher-shell -u neo4j -p $(NEO4J_PASSWORD)
+	docker exec -it acgs-kg-neo4j cypher-shell -u neo4j -p "$$NEO4J_PASSWORD"
 
 browser:
 	@echo "http://localhost:7474  (neo4j / $(NEO4J_PASSWORD))"

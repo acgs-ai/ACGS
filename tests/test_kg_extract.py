@@ -866,11 +866,16 @@ def test_parse_history_records_binary_numstat_as_zero_churn(git_repo):
     assert latest["files"]["logo.png"] == (0, 0)
 
 
-def test_parse_history_returns_empty_for_a_non_repository(tmp_path, monkeypatch):
+def test_parse_history_aborts_when_git_history_cannot_be_read(tmp_path, monkeypatch):
+    """REGRESSION. A nonzero `git log` exit (partial/filtered checkout, missing
+    historical object) silently returned [], so extraction still succeeded and
+    published a graph with zero churn, contributor, Commit, and TOUCHED
+    evidence as if that were the real history."""
     monkeypatch.setattr(extract, "ROOT", tmp_path)
     (tmp_path / "not-a-repo").mkdir()
 
-    assert extract.parse_history("not-a-repo") == []
+    with pytest.raises(RuntimeError, match="git log failed for repo 'not-a-repo'"):
+        extract.parse_history("not-a-repo")
 
 
 def test_initialized_submodules_skips_uninitialised_gitlinks(monkeypatch):
@@ -922,6 +927,28 @@ def test_build_history_counts_contributors_by_the_graphs_stable_author_key():
     props = extract.G.nodes[("File", "packages/gove-zone/src/gove_zone/sandbox.py")]["props"]
     assert props["commit_count"] == 2
     assert props["author_count"] == 1
+
+
+def test_build_history_normalizes_hotspots_over_live_files_only():
+    """REGRESSION. A deleted historical path with the repository's largest
+    churn set max_churn even though the scoring loop skips it (no live File
+    node), so every live file's hotspot was scaled down by an unreachable
+    file and Q5's fixed `hotspot > 0.05` predicate could miss the actual
+    current hotspots."""
+    _files("live.py")
+    commit = {
+        "sha": "a" * 40,
+        "ts": 1_700_000_000,
+        "author": "A",
+        "email": "a@example.com",
+        "subject": "x",
+        "repo": ".",
+        "files": {"live.py": (5, 5), "deleted-long-ago.py": (500, 500)},
+    }
+
+    extract.build_history([commit])
+
+    assert extract.G.nodes[("File", "live.py")]["props"]["hotspot"] == 1.0
 
 
 # --------------------------------------------------------------------------- #
@@ -1341,6 +1368,43 @@ def test_build_controls_records_a_bare_basename_resolution_as_weaker_evidence(
     ]
     assert evidence["props"]["resolved_by"] == "basename"
     assert extract.CONTROL_STATS["evidence_by_basename"] == 1
+
+
+def test_build_controls_accumulates_citations_from_every_mapping_document(tmp_path, monkeypatch):
+    """REGRESSION. Two mapping documents citing the same file for the same
+    control share one EVIDENCED_BY identity, and each call overwrote the
+    scalar cited_in/cited_line/resolved_by props: the graph kept only
+    whichever sorted document was processed last while the extraction counter
+    still claimed both evidence links were recorded."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    docs = tmp_path / "docs"
+    docs.mkdir(parents=True)
+    # The weaker (basename) citation sorts first so the stronger (path)
+    # citation must upgrade the already-set scalars, not merely seed them.
+    (docs / "a-compliance-mapping.md").write_text("| Art. 12(1) | see `audit.py` |\n")
+    (docs / "z-compliance-mapping.md").write_text(
+        "| Art. 12(1) | implemented in `packages/gove-zone/audit.py:141` |\n"
+    )
+    _files(
+        "docs/a-compliance-mapping.md",
+        "docs/z-compliance-mapping.md",
+        "packages/gove-zone/audit.py",
+    )
+
+    extract.build_controls()
+
+    evidence = extract.G.rels[
+        ("EVIDENCED_BY", "Control", "EU AI Act Art 12(1)", "File", "packages/gove-zone/audit.py")
+    ]
+    assert evidence["props"]["citations"] == [
+        "docs/a-compliance-mapping.md",
+        "docs/z-compliance-mapping.md:141",
+    ]
+    # The scalars mirror the strongest citation, not the last-processed doc.
+    assert evidence["props"]["cited_in"] == "docs/z-compliance-mapping.md"
+    assert evidence["props"]["cited_line"] == 141
+    assert evidence["props"]["resolved_by"] == "path"
+    assert extract.CONTROL_STATS["evidence_links"] == 2
 
 
 def test_build_controls_refuses_to_bind_evidence_from_an_enumeration(tmp_path, monkeypatch):

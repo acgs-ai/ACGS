@@ -416,7 +416,14 @@ def parse_history(repo: str = ".", prefix: str = "") -> list[dict]:
         capture_output=True,
     )
     if proc.returncode != 0:
-        return []
+        # A partial/filtered checkout or a missing historical object makes
+        # `git log` emit what it can and then exit nonzero. Silently returning
+        # [] here published a history-free graph as a successful extraction,
+        # deleting all churn, contributor, Commit, and TOUCHED evidence.
+        raise RuntimeError(
+            f"git log failed for repo {repo!r} (exit {proc.returncode}): "
+            f"{proc.stderr.strip() or 'no stderr'}"
+        )
     raw = proc.stdout
     commits: list[dict] = []
     cur: dict | None = None
@@ -483,7 +490,17 @@ def build_history(commits: list[dict]) -> None:
                     pair_counts[(a, b)] += 1
 
     now = datetime.now(UTC).timestamp()
-    max_churn = max((s["add"] + s["dele"] for s in stats.values()), default=1) or 1
+    # Normalize over the population that actually receives hotspot scores:
+    # a deleted historical path with the largest churn has no live File node,
+    # and letting it set the denominator scaled every live file down until
+    # Q5's fixed `hotspot > 0.05` predicate missed the real current hotspots.
+    max_churn = (
+        max(
+            (s["add"] + s["dele"] for path, s in stats.items() if G.has("File", path)),
+            default=1,
+        )
+        or 1
+    )
     for path, s in stats.items():
         if not G.has("File", path):
             continue  # deleted / renamed-away path: no live spine node
@@ -1018,6 +1035,9 @@ CONTROL_PATTERNS = [
 MAX_CONTROLS_PER_EVIDENCE_SCOPE = 2
 # Filled by build_controls, published on the (:Snapshot) node for reports.
 CONTROL_STATS: dict[str, int] = {}
+# Resolution strength, strongest first: the scalar provenance on a shared
+# EVIDENCED_BY edge describes the strongest citation it carries.
+METHOD_RANK = {"path": 0, "basename-docscope": 1, "basename": 2}
 
 CONTROL_DOC_HINTS = (
     "mapping",
@@ -1093,17 +1113,30 @@ def build_controls() -> None:
                             by_basename += 1
                 for framework, cid in hits:
                     for tgt, (ln, method) in evidence.items():
-                        G.rel(
-                            "EVIDENCED_BY",
-                            "Control",
-                            cid,
-                            "File",
-                            tgt,
-                            cited_line=ln,
-                            cited_in=rel,
-                            resolved_by=method,
-                        )
-                        evidences += 1
+                        slot = G.rel("EVIDENCED_BY", "Control", cid, "File", tgt)
+                        if slot is None:
+                            continue
+                        props = slot["props"]
+                        # Two documents citing the same file for the same
+                        # control share one edge identity, and letting each
+                        # call overwrite the scalar provenance kept only
+                        # whichever sorted document was processed last. Every
+                        # cited location is accumulated on the edge; the
+                        # scalars mirror the strongest citation seen.
+                        cite = f"{rel}:{ln}" if ln is not None else rel
+                        cites = props.setdefault("citations", [])
+                        if cite not in cites:
+                            cites.append(cite)
+                            evidences += 1
+                        rank = METHOD_RANK.get(method, len(METHOD_RANK))
+                        seen = METHOD_RANK.get(props.get("resolved_by"), len(METHOD_RANK) + 1)
+                        if rank < seen:
+                            props["cited_in"] = rel
+                            props["resolved_by"] = method
+                            if ln is not None:
+                                props["cited_line"] = ln
+                            else:
+                                props.pop("cited_line", None)
     CONTROL_STATS.update(
         enumeration_scopes_skipped=enumerations,
         evidence_links=evidences,
