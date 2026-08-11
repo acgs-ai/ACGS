@@ -13,15 +13,19 @@ RETURN s.git_head AS head, s.git_branch AS branch, s.ua_commit AS semantic_commi
        s.generated_at AS generated_at;
 
 // --- Q1. Which CI workflows gate the file I am about to edit? -------------
-// Swap the path. Zero rows = the change ships with no path-filtered gate.
-MATCH (w:Workflow)-[:GATES]->(f:File {key: 'packages/gove-zone/src/gove_zone/gateway.py'})
+// Swap the path. Zero rows = the change ships with no path-filtered PR gate.
+MATCH (w:Workflow)-[g:GATES]->(f:File {key: 'packages/gove-zone/src/gove_zone/gateway.py'})
+WHERE 'pull_request' IN coalesce(g.events, [])
 RETURN w.name AS workflow, w.path_filters AS filters, w.jobs AS jobs;
 
-// --- Q2. Ungated source: code with no path-filtered CI workflow ------------
+// --- Q2. Ungated source: code with no path-filtered PR workflow ------------
 MATCH (f:File)
 WHERE f.tracked AND NOT f.is_test
   AND f.language IN ['Python', 'TypeScript', 'JavaScript']
-  AND NOT (:Workflow)-[:GATES]->(f)
+  AND NOT EXISTS {
+    MATCH (:Workflow)-[g:GATES]->(f)
+    WHERE 'pull_request' IN coalesce(g.events, [])
+  }
 RETURN f.package AS package, count(*) AS ungated_files,
        collect(f.key)[0..5] AS examples
 ORDER BY ungated_files DESC;

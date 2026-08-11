@@ -72,7 +72,8 @@ MATCH (f:File)
 WHERE f.tracked AND f.commit_count IS NOT NULL
 OPTIONAL MATCH (f)-[t:TESTED_BY]->()
 WITH f, count(t) AS test_edges
-OPTIONAL MATCH (w:Workflow)-[:GATES]->(f)
+OPTIONAL MATCH (w:Workflow)-[g:GATES]->(f)
+  WHERE 'pull_request' IN coalesce(g.events, [])
 WITH f, test_edges, count(w) AS gates
 OPTIONAL MATCH (a:ADR)-[:DECIDES_ON]->(f)
 WITH f, test_edges, gates, count(a) AS adrs
@@ -96,7 +97,8 @@ WHERE f.key STARTS WITH 'packages/acgs-control-plane/'
        OR f.key CONTAINS 'tenant' OR f.key CONTAINS 'native')
 OPTIONAL MATCH (f)-[t:TESTED_BY]->()
 WITH f, count(t) AS test_edges
-OPTIONAL MATCH (w:Workflow)-[:GATES]->(f)
+OPTIONAL MATCH (w:Workflow)-[g:GATES]->(f)
+  WHERE 'pull_request' IN coalesce(g.events, [])
 WITH f, test_edges, count(w) AS gates
 OPTIONAL MATCH (a:ADR)-[:DECIDES_ON]->(f)
 RETURN f.key AS path, coalesce(f.package,'.') AS package,
@@ -297,8 +299,8 @@ Test-evidence has **three** states, not two:
 | `no test edge (analyzed)` | Analyzed, no `TESTED_BY` edge found. A lead, not a verdict — `TESTED_BY` undercounts barrel and dynamic imports |
 | `not analyzed — outside semantic snapshot` | The summariser never saw this file. **Nothing at all is known** about its test coverage from this graph |
 
-Governance coverage lists observed controls: `CI×N` path-filtered workflows
-gating the file, `sealed` for a constitutional-hash marker, `ADR×N` for ADRs
+Governance coverage lists observed controls: `CI×N` path-filtered pull-request
+workflows gating the file, `sealed` for a constitutional-hash marker, `ADR×N` for ADRs
 citing it. `none observed` means no such edge exists — not that the file is
 ungoverned by other means.
 
