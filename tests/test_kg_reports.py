@@ -214,12 +214,15 @@ def test_report_queries_return_hash_drift_for_governance_coverage():
 
 @pytest.mark.parametrize("query", [reports.HOTSPOT_Q, reports.CONTROL_PLANE_Q])
 def test_report_gate_counts_only_include_unconditional_pr_workflows(query):
-    """GATES edges carry their triggering events. Governance coverage is PR
-    merge-gate evidence, so push-only and conditional workflows must not
-    increment it while an unconditional pull_request workflow must."""
+    """GATES edges carry their triggering events and per-event conditionality.
+    Governance coverage is PR merge-gate evidence, so push-only workflows and
+    workflows conditional for the pull_request event must not increment it
+    while a PR-guaranteed workflow must — the collapsed `conditional` boolean
+    misreads a mixed-event edge in both directions."""
     assert "[g:GATES]" in query
     assert "'pull_request' IN coalesce(g.events, [])" in query
-    assert "NOT coalesce(g.conditional, false)" in query
+    assert "NOT 'pull_request' IN coalesce(g.conditional_events, [])" in query
+    assert "coalesce(g.conditional," not in query
     assert "'push' IN coalesce(g.events, [])" not in query
 
 
@@ -233,9 +236,9 @@ def _catalog_query(number: int) -> str:
 
 def test_catalog_q1_and_q2_only_treat_unconditional_pr_edges_as_gates():
     """The interactive catalog must use the same PR-only interpretation as
-    generated reports: Q1 includes unconditional PR gates; Q2 treats
-    push-only and conditional edges as ungated for guaranteed merge
-    coverage."""
+    generated reports: Q1 includes PR-guaranteed gates; Q2 treats push-only
+    edges and edges conditional for the pull_request event as ungated for
+    guaranteed merge coverage."""
     catalog = (Path(reports.__file__).with_name("queries.cypher")).read_text()
     q1 = catalog.split("// --- Q1.", 1)[1].split("// --- Q2.", 1)[0]
     q2 = catalog.split("// --- Q2.", 1)[1].split("// --- Q3.", 1)[0]
@@ -243,8 +246,21 @@ def test_catalog_q1_and_q2_only_treat_unconditional_pr_edges_as_gates():
     for query in (q1, q2):
         assert "[g:GATES]" in query
         assert "'pull_request' IN coalesce(g.events, [])" in query
-        assert "NOT coalesce(g.conditional, false)" in query
+        assert "NOT 'pull_request' IN coalesce(g.conditional_events, [])" in query
+        assert "coalesce(g.conditional," not in query
         assert "'push' IN coalesce(g.events, [])" not in query
+
+
+def test_catalog_q2_covers_every_extractor_source_language():
+    """REGRESSION. Q2's language predicate admitted only Python and the
+    JavaScript variants, so a live tracked `.rs` or `.sh` source file without
+    a path-filtered PR gate could never appear in the "ungated source" result
+    even though the extractor classifies Rust and Shell as source languages
+    and the other source-oriented queries include them."""
+    q2 = _catalog_query(2)
+
+    for language in ("Python", "TypeScript", "JavaScript", "Rust", "Shell"):
+        assert f"'{language}'" in q2, f"Q2 omits {language}:\n{q2}"
 
 
 def test_catalog_q5_and_q13_ignore_test_edges_to_deleted_targets():

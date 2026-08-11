@@ -20,7 +20,7 @@ RETURN s.git_head AS head, s.git_branch AS branch, s.ua_commit AS semantic_commi
 // beside a PR-only filter with no way to tell which event gates the path).
 MATCH (w:Workflow)-[g:GATES]->(f:File {key: 'packages/gove-zone/src/gove_zone/gateway.py'})
 WHERE 'pull_request' IN coalesce(g.events, [])
-  AND NOT coalesce(g.conditional, false)
+  AND NOT 'pull_request' IN coalesce(g.conditional_events, [])
 RETURN w.name AS workflow, g.events AS gating_events,
        w.path_filters_pull_request AS pull_request_filters, w.jobs AS jobs;
 
@@ -28,13 +28,16 @@ RETURN w.name AS workflow, g.events AS gating_events,
 // tracked alone is not "live": build_spine() keeps tracked=true for an
 // unstaged deletion and records present=false. A deleted file cannot be
 // edited, so it has no business in working-tree findings (same in Q5/Q8/Q10).
+// The language set is every language the extractor classifies as source
+// (matching Q10 and the tier report's source extensions): omitting Rust and
+// Shell hid the repository's tracked Rust trees from the "ungated" result.
 MATCH (f:File)
 WHERE f.tracked AND coalesce(f.present, true) AND NOT f.is_test
-  AND f.language IN ['Python', 'TypeScript', 'JavaScript']
+  AND f.language IN ['Python', 'TypeScript', 'JavaScript', 'Rust', 'Shell']
   AND NOT EXISTS {
     MATCH (:Workflow)-[g:GATES]->(f)
     WHERE 'pull_request' IN coalesce(g.events, [])
-      AND NOT coalesce(g.conditional, false)
+      AND NOT 'pull_request' IN coalesce(g.conditional_events, [])
   }
 RETURN f.package AS package, count(*) AS ungated_files,
        collect(f.key)[0..5] AS examples
@@ -142,7 +145,7 @@ ORDER BY imports DESC LIMIT 20;
 
 // --- Q10. Semantic blind spots: tracked code the summariser never saw -----
 // "Code" is the source-language set the other code-oriented queries use
-// (Q2/Q5, plus Rust and Shell to mirror the tier report's source extensions).
+// (same full set as Q2, mirroring the tier report's source extensions).
 // `language <> 'Other'` also admitted Markdown/JSON/YAML/TOML/lock files,
 // which dominate a checkout without a semantic snapshot.
 MATCH (f:File)

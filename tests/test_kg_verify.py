@@ -333,13 +333,16 @@ def test_every_check_and_catalog_entry_is_a_title_query_pair():
 
 
 def test_catalog_q1_only_proves_unconditional_pull_request_gates():
-    """Verifier proof must not count push-only or conditional workflow edges
-    as guaranteed pull-request merge coverage."""
+    """Verifier proof must not count push-only edges, or edges conditional
+    for the pull_request event, as guaranteed pull-request merge coverage —
+    and the per-event list is the authority, since the collapsed
+    `conditional` boolean misreads mixed-event edges."""
     q1 = dict(verify.CATALOG)["Q1 CI gates on gove-zone gateway.py"]
 
     assert "[g:GATES]" in q1
     assert "'pull_request' IN coalesce(g.events, [])" in q1
-    assert "NOT coalesce(g.conditional, false)" in q1
+    assert "NOT 'pull_request' IN coalesce(g.conditional_events, [])" in q1
+    assert "coalesce(g.conditional," not in q1
     assert "'push' IN coalesce(g.events, [])" not in q1
 
 

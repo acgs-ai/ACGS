@@ -92,7 +92,7 @@ CATALOG = [
         "MATCH (w:Workflow)-[g:GATES]->(f:File "
         "{key:'packages/gove-zone/src/gove_zone/gateway.py'}) "
         "WHERE 'pull_request' IN coalesce(g.events, []) "
-        "AND NOT coalesce(g.conditional, false) "
+        "AND NOT 'pull_request' IN coalesce(g.conditional_events, []) "
         "RETURN w.name AS workflow, w.jobs AS jobs",
     ),
     (

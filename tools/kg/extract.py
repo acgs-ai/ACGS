@@ -545,18 +545,27 @@ def build_history(commits: list[dict]) -> None:
         slot["props"]["hotspot"] = round((churn / max_churn) * cw, 4)
 
     for c in commits[:RECENT_COMMITS]:
-        ckey = c["sha"][:12]
+        repo = c.get("repo", ".")
+        # Commit identity is repo-scoped: submodules are independent
+        # histories, and a forked or split repository can contain the very
+        # same commit object as another. Keying on the SHA alone collapsed
+        # such entries into one node — the later G.node() overwrote repo,
+        # file_count, and churn while both repositories' TOUCHED edges stayed
+        # unioned on it, so REPO_Q and commit provenance described neither
+        # repository. The repository plus the full SHA is the graph identity;
+        # short_sha stays display-only.
+        ckey = f"{repo}:{c['sha']}"
         G.node(
             "Commit",
             ckey,
             sha=c["sha"],
-            short_sha=ckey,
+            short_sha=c["sha"][:12],
             subject=c["subject"],
             author=c["author"],
             date=datetime.fromtimestamp(c["ts"], UTC).isoformat(),
             file_count=len(c["files"]),
             churn=sum(a + d for a, d in c["files"].values()),
-            repo=c.get("repo", "."),
+            repo=repo,
         )
         G.node("Author", c["email"], name=c["author"], email=c["email"])
         G.rel("AUTHORED", "Author", c["email"], "Commit", ckey)
@@ -1262,6 +1271,26 @@ def match_path_filters(path: str, filters: list[tuple[re.Pattern, bool]]) -> boo
     return verdict
 
 
+# A job-level `if:` that is exactly an event-name equality is decidable at
+# extraction time: `github.event_name == 'pull_request'` always passes for a
+# pull_request run, so it must not mark that event's coverage conditional.
+# saas-beta-p0-evidence.yml pairs such a hosted PR lane with a manual-only
+# exact-proof job, and counting raw `if:` fields marked every edge
+# conditional, discarding the real hosted PR gate from Q1/Q2. Any other
+# expression stays undecidable and therefore conditional.
+EVENT_NAME_EQ = re.compile(
+    r"^\s*(?:\$\{\{\s*)?github\.event_name\s*==\s*['\"]([\w-]+)['\"]\s*(?:\}\}\s*)?$"
+)
+
+
+def job_guaranteed_for_event(cfg: object, event: str) -> bool:
+    """True when a workflow job is guaranteed to execute for a run of ``event``."""
+    if not isinstance(cfg, dict) or cfg.get("if") is None:
+        return True
+    m = EVENT_NAME_EQ.match(str(cfg["if"]))
+    return bool(m) and m.group(1) == event
+
+
 def build_workflows(files: list[str]) -> None:
     try:
         import yaml
@@ -1302,8 +1331,13 @@ def build_workflows(files: list[str]) -> None:
         # A job-level `if:` can skip the job even when the trigger paths
         # match (tests-root.yml skips its sole job on fork PRs), so a
         # workflow whose every job is conditional does not necessarily
-        # execute for a matching change. The conditions are recorded and the
-        # GATES edges marked so Q1/Q2 and the reports can separate
+        # execute for a matching change. But conditions are classified per
+        # triggering event, not counted syntactically: a job gated on
+        # `github.event_name == 'pull_request'` is guaranteed for the
+        # pull_request event, and treating it as conditional discarded the
+        # real hosted PR gate whenever an event-specific sibling job (a
+        # manual-only lane) also declared an `if:`. Each event's verdict is
+        # recorded on the GATES edges so Q1/Q2 and the reports can separate
         # guaranteed coverage from coverage that depends on the run context.
         conditional_jobs = sorted(
             name
@@ -1311,6 +1345,11 @@ def build_workflows(files: list[str]) -> None:
             if isinstance(cfg, dict) and cfg.get("if") is not None
         )
         all_jobs_conditional = bool(jobs) and len(conditional_jobs) == len(jobs)
+        conditional_by_event = {
+            ev: bool(jobs)
+            and not any(job_guaranteed_for_event(cfg, ev) for cfg in job_cfgs.values())
+            for ev in filters_by_event
+        }
         # The graph key is the repository-relative workflow path: two workflow
         # files may share one display `name:`, and keying on the name made the
         # second file overwrite the first's node (path, jobs, filters) while
@@ -1359,6 +1398,14 @@ def build_workflows(files: list[str]) -> None:
                 ev for ev, filters in compiled.items() if match_path_filters(path, filters)
             )
             if events:
+                # conditional_events lists the matching events with no job
+                # guaranteed to run; `conditional` summarises the edge (every
+                # matching event is conditional). Consumers that prove one
+                # event's coverage (Q1/Q2, the reports, the verifier) must
+                # test their event against conditional_events, not the
+                # summary — a push+pull_request edge whose only guaranteed
+                # job is PR-gated is unconditional for PRs but not for push.
+                conditional_events = [ev for ev in events if conditional_by_event[ev]]
                 G.rel(
                     "GATES",
                     "Workflow",
@@ -1366,7 +1413,8 @@ def build_workflows(files: list[str]) -> None:
                     "File",
                     path,
                     events=events,
-                    conditional=all_jobs_conditional,
+                    conditional=len(conditional_events) == len(events),
+                    conditional_events=conditional_events,
                 )
                 gates += 1
     log(

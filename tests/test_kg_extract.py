@@ -673,6 +673,7 @@ def test_build_workflows_marks_coverage_conditional_when_every_job_carries_an_if
     assert props["all_jobs_conditional"] is True
     gate = extract.G.rels[("GATES", "Workflow", wkey, "File", "src/main.py")]
     assert gate["props"]["conditional"] is True
+    assert gate["props"]["conditional_events"] == ["pull_request"]
 
 
 def test_build_workflows_keeps_gates_unconditional_while_any_job_always_runs(tmp_path, monkeypatch):
@@ -704,6 +705,82 @@ def test_build_workflows_keeps_gates_unconditional_while_any_job_always_runs(tmp
     assert props["conditional_jobs"] == ["test"]
     assert props["all_jobs_conditional"] is False
     gate = extract.G.rels[("GATES", "Workflow", wkey, "File", "src/main.py")]
+    assert gate["props"]["conditional"] is False
+    assert gate["props"]["conditional_events"] == []
+
+
+def test_build_workflows_treats_event_matched_if_as_guaranteed_for_that_event(
+    tmp_path, monkeypatch
+):
+    """REGRESSION. Conditions were counted syntactically: when a workflow's
+    event-specific jobs all declare an `if:`, every GATES edge was marked
+    conditional even though one condition is guaranteed by the matching event.
+    saas-beta-p0-evidence.yml is the live shape — `hosted-contract` uses
+    `if: github.event_name == 'pull_request'` and therefore always runs for a
+    matching PR, while `exact-proof` is manual-only — yet Q1/Q2 discarded the
+    real hosted PR gate."""
+    pytest.importorskip("yaml")
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "evidence.yml").write_text(
+        "name: evidence\n"
+        "on:\n"
+        "  pull_request:\n"
+        "    paths:\n"
+        "      - 'src/**'\n"
+        "  workflow_dispatch: {}\n"
+        "jobs:\n"
+        "  hosted-contract:\n"
+        "    if: github.event_name == 'pull_request'\n"
+        "    steps: []\n"
+        "  exact-proof:\n"
+        "    if: github.event_name == 'workflow_dispatch' &&\n"
+        "      github.event.pull_request.head.repo.full_name == github.repository\n"
+        "    steps: []\n"
+    )
+    _files(".github/workflows/evidence.yml", "src/main.py")
+
+    extract.build_workflows(["src/main.py"])
+
+    wkey = ".github/workflows/evidence.yml"
+    props = extract.G.nodes[("Workflow", wkey)]["props"]
+    assert props["all_jobs_conditional"] is True  # syntactic summary, unchanged
+    gate = extract.G.rels[("GATES", "Workflow", wkey, "File", "src/main.py")]
+    assert gate["props"]["conditional"] is False
+    assert gate["props"]["conditional_events"] == []
+
+
+def test_build_workflows_classifies_conditions_per_edge_event(tmp_path, monkeypatch):
+    """A push+pull_request edge whose only job is PR-gated is unconditional
+    for pull_request runs but conditional for push runs, so the edge must
+    publish the per-event verdict instead of one collapsed boolean."""
+    pytest.importorskip("yaml")
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "mixed.yml").write_text(
+        "name: mixed\n"
+        "on:\n"
+        "  push:\n"
+        "    paths:\n"
+        "      - 'src/**'\n"
+        "  pull_request:\n"
+        "    paths:\n"
+        "      - 'src/**'\n"
+        "jobs:\n"
+        "  test:\n"
+        "    if: github.event_name == 'pull_request'\n"
+        "    steps: []\n"
+    )
+    _files(".github/workflows/mixed.yml", "src/main.py")
+
+    extract.build_workflows(["src/main.py"])
+
+    wkey = ".github/workflows/mixed.yml"
+    gate = extract.G.rels[("GATES", "Workflow", wkey, "File", "src/main.py")]
+    assert gate["props"]["events"] == ["pull_request", "push"]
+    assert gate["props"]["conditional_events"] == ["push"]
     assert gate["props"]["conditional"] is False
 
 
@@ -1343,6 +1420,50 @@ def test_build_history_counts_contributors_by_the_graphs_stable_author_key():
     props = extract.G.nodes[("File", "packages/gove-zone/src/gove_zone/sandbox.py")]["props"]
     assert props["commit_count"] == 2
     assert props["author_count"] == 1
+
+
+def test_build_history_namespaces_commit_nodes_by_repository():
+    """REGRESSION. Commit nodes were keyed on the short SHA alone, but two
+    initialized repositories can share a commit object (a forked or split
+    history), so parse_history() entries with the same SHA and different
+    repos collapsed into one node: the later G.node() overwrote repo,
+    file_count, and churn while both repositories' TOUCHED edges stayed
+    unioned on it, and REPO_Q described neither repository correctly. The
+    repository plus the full SHA is the graph identity."""
+    _files("kernel.py", "packages/fork/kernel.py")
+    sha = "c" * 40
+    base = {"ts": 1_700_000_000, "author": "A", "email": "a@example.com", "subject": "x"}
+    commits = [
+        {**base, "sha": sha, "repo": ".", "files": {"kernel.py": (3, 1)}},
+        {
+            **base,
+            "sha": sha,
+            "repo": "packages/fork",
+            "files": {"packages/fork/kernel.py": (7, 2)},
+        },
+    ]
+
+    extract.build_history(commits)
+
+    parent = extract.G.nodes[("Commit", f".:{sha}")]["props"]
+    fork = extract.G.nodes[("Commit", f"packages/fork:{sha}")]["props"]
+    assert parent["repo"] == "." and parent["churn"] == 4
+    assert fork["repo"] == "packages/fork" and fork["churn"] == 9
+    assert ("TOUCHED", "Commit", f".:{sha}", "File", "kernel.py") in extract.G.rels
+    assert (
+        "TOUCHED",
+        "Commit",
+        f".:{sha}",
+        "File",
+        "packages/fork/kernel.py",
+    ) not in extract.G.rels
+    assert (
+        "TOUCHED",
+        "Commit",
+        f"packages/fork:{sha}",
+        "File",
+        "packages/fork/kernel.py",
+    ) in extract.G.rels
 
 
 def test_build_history_normalizes_hotspots_over_live_files_only():

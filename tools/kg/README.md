@@ -137,11 +137,17 @@ The graph carries its own caveats as data rather than hiding them:
   `socket-security.yml` are in that group. They live on the `:Workflow` node
   with `path_filtered: false`. Q2's "ungated" means *no path-filtered gate*,
   not unprotected.
-- **`GATES` edges can be conditional.** A job-level `if:` skips the job even
-  when the trigger paths match (`tests-root.yml` skips its sole job on fork
-  PRs), so every edge carries `conditional: true` when *all* of the
-  workflow's jobs declare an `if:`. The `:Workflow` node publishes the job
-  names in `conditional_jobs`. Treat a conditional edge as coverage that
+- **`GATES` edges can be conditional — per event.** A job-level `if:` skips
+  the job even when the trigger paths match (`tests-root.yml` skips its sole
+  job on fork PRs), but conditions are classified in the context of each
+  edge's event: an `if:` that is exactly `github.event_name == '<event>'` is
+  guaranteed for that event's runs (`saas-beta-p0-evidence.yml`'s hosted PR
+  lane), while any other expression stays conditional. Each edge carries
+  `conditional_events` (its matching events with no job guaranteed to run)
+  and `conditional: true` when *every* matching event is conditional;
+  event-scoped consumers (Q1/Q2, the reports, the verifier) test their event
+  against `conditional_events`. The `:Workflow` node publishes the syntactic
+  job names in `conditional_jobs`. Treat a conditional event as coverage that
   depends on the run context, not as an executed gate for every matching PR.
 - **`.understandignore` exists**, so Q10's blind spots mix deliberately
   excluded paths (fixtures, archives, `.omc/` state) with genuinely new code.
