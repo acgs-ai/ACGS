@@ -71,6 +71,12 @@ POLICY_NAME = "revalidation_policy.json"
 # appointment_binding digest. Lives with the keystore (same privilege tier,
 # outside the registry file an attacker may be able to append to).
 APPOINTMENTS_DIR_NAME = ".appointments"
+# Immutable appointment-artifact BYTES retained by the onboarding ceremony,
+# keyed by sha256 digest. Trust evaluation re-hashes these on every read —
+# an appointment whose evidence artifacts are deleted, replaced, or no longer
+# match their digests stops being trusted (same defense as authority-evidence
+# source artifacts).
+APPOINTMENT_ARTIFACTS_DIR_NAME = ".appointment_artifacts"
 
 EVENT_SCHEMA = "acgs_validator_registry_event/v1"
 EVENTS = ("REGISTER", "ROTATE", "REVOKE")
@@ -239,7 +245,24 @@ def _register_has_onboarding_provenance(reg: dict[str, Any], keystore_dir: Path)
         for e in appointment.get("appointment_evidence") or []
         if isinstance(e, dict)
     )
-    return sorted(digests) == app_digests
+    if sorted(digests) != app_digests:
+        return False
+    # The appointment artifacts themselves must remain verifiable: the
+    # ceremony retained their bytes by digest, and a validator whose
+    # appointment evidence is deleted, replaced, or found not to match must
+    # not stay trusted on the strength of digest strings alone.
+    artifacts = keystore_dir / APPOINTMENT_ARTIFACTS_DIR_NAME
+    for d in app_digests:
+        p = artifacts / d
+        if not p.is_file():
+            return False
+        try:
+            data = p.read_bytes()
+        except OSError:
+            return False
+        if sha256_hex(data) != d:
+            return False
+    return True
 
 
 def authority_valid_at(evts: list[dict[str, Any]], at: str) -> bool:
@@ -308,15 +331,25 @@ def key_valid_at(evts: list[dict[str, Any]], key_id: str, at: str) -> bool:
     return False
 
 
-def key_retired(evts: list[dict[str, Any]], key_id: Any) -> bool:
-    """True when this key's signing window has ENDED (rotated away or the
-    validator revoked). validated_at is signer-supplied, so a holder of a
-    retired — possibly compromised — key could backdate new attestations into
-    the key's old window; records resting on a retired key must not stay
-    silently ACTIVE. Unknown key -> retired (fail closed)."""
+def key_retired(evts: list[dict[str, Any]], key_id: Any, at: Any = None) -> bool:
+    """True when this key's signing window has ENDED at instant `at` (rotated
+    away or the validator revoked). validated_at is signer-supplied, so a
+    holder of a retired — possibly compromised — key could backdate new
+    attestations into the key's old window; records resting on a retired key
+    must not stay silently ACTIVE.
+
+    A ROTATE scheduled for a FUTURE instant gives the current key a future
+    window end: that key is still current and must not be treated as retired
+    until the rotation actually takes effect. No usable evaluation instant ->
+    any non-null end counts as retired; unknown key -> retired (fail closed)."""
+    at_dt = _parse_z(at)
     for kid, _start, end in _key_windows(evts):
         if kid == key_id:
-            return end is not None
+            if end is None:
+                return False
+            if at_dt is None:
+                return True  # cannot place the instant — fail closed
+            return end <= at_dt
     return True
 
 
@@ -669,9 +702,12 @@ def derive_governed_state(
     # An attestation resting on a since-retired key (rotated away / revoked)
     # is doubt, not proof: validated_at is signer-supplied, so a retired-key
     # holder could backdate fresh attestations into the old window. Demote to
-    # review until revalidated under a current key.
+    # review until revalidated under a current key. Retirement is evaluated
+    # at `instant`: a rotation scheduled for the future does not retire the
+    # still-current key today.
     if any(
-        key_retired(_events_for(events or [], a["validator_id"]), a.get("key_id")) for a in atts
+        key_retired(_events_for(events or [], a["validator_id"]), a.get("key_id"), instant)
+        for a in atts
     ):
         return REQUIRES_REVIEW
     if is_stale(record, atts, instant, policy):

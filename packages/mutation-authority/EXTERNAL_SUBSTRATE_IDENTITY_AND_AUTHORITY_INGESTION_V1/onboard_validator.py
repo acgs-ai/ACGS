@@ -46,6 +46,7 @@ from validator_onboarding import (
     verify_key_ownership,
 )
 from validator_trust import (
+    APPOINTMENT_ARTIFACTS_DIR_NAME,
     APPOINTMENTS_DIR_NAME,
     ED25519,
     EVENT_SCHEMA,
@@ -194,9 +195,12 @@ def main(argv: list[str]) -> int:
     if kb["key_algorithm"] == ED25519:
         event["public_key"] = kb["public_key"]
 
-    # Retain the verified appointment record BEFORE appending: REGISTER
-    # provenance is only meaningful if later verification can re-validate the
-    # appointment material independently of the registry event itself.
+    # Retain the verified appointment record AND the immutable artifact bytes
+    # BEFORE appending: REGISTER provenance is only meaningful if later
+    # verification can re-validate the appointment material — including
+    # re-hashing the actual evidence artifacts — independently of the
+    # registry event itself. A validator whose appointment artifacts stop
+    # verifying stops being trusted.
     retained_dir = Path(args.keystore) / APPOINTMENTS_DIR_NAME
     retained_dir.mkdir(parents=True, exist_ok=True)
     retained_path = retained_dir / f"{event['appointment_binding']}.json"
@@ -204,6 +208,12 @@ def main(argv: list[str]) -> int:
         json.dumps(appointment, sort_keys=True, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    artifact_dir = Path(args.keystore) / APPOINTMENT_ARTIFACTS_DIR_NAME
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    for digest in required:
+        retained_artifact = artifact_dir / digest
+        if not retained_artifact.exists():
+            retained_artifact.write_bytes(supplied[digest].read_bytes())
     _append(registry, event)
 
     state = derive_ceremony_state(

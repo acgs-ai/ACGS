@@ -48,6 +48,7 @@
     "verification_method": {"type": ["string", "null"]},
     "ingested_by": {"type": ["string", "null"]},
     "ingestion_receipt": {"type": ["string", "null"], "description": "receipt_id minted at ingestion."},
+    "ingestion_receipt_record": {"$ref": "#/definitions/transition_receipt"},
     "supersedes": {"type": ["string", "null"], "description": "authority_evidence_id this record replaces."},
     "revoked_at": {"type": ["string", "null"], "description": "ISO-8601 revocation instant; a revoked record fails closed (I12)."},
     "notes": {"type": ["string", "null"]},
@@ -64,6 +65,47 @@
     "verification_epoch": {"type": ["integer", "null"], "description": "Monotonic revalidation epoch. A record verified in an epoch below the policy minimum derives REQUIRES_REVIEW."}
   },
   "definitions": {
+    "transition_receipt": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "receipt_id",
+        "request_id",
+        "prior_state",
+        "new_state",
+        "authority_subject",
+        "authority_evidence_id",
+        "authority_scope",
+        "evidence_digest",
+        "substrate_identity",
+        "decision_inputs_digest",
+        "policy_version",
+        "decision",
+        "decision_reason",
+        "created_at",
+        "signature"
+      ],
+      "properties": {
+        "schema": {"const": "acgs_authority_transition_receipt/v1"},
+        "receipt_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "request_id": {"type": "string", "minLength": 1},
+        "prior_state": {"type": "string", "minLength": 1},
+        "new_state": {"type": "string", "minLength": 1},
+        "authority_subject": {"type": "string", "minLength": 1},
+        "authority_evidence_id": {"type": "string", "pattern": "^AE-[A-Za-z0-9_.:-]+$"},
+        "authority_scope": {"$ref": "#/properties/authority_scope"},
+        "evidence_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "substrate_identity": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "decision_inputs_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "policy_version": {"type": "string", "minLength": 1},
+        "decision": {"type": "string", "minLength": 1},
+        "decision_reason": {"type": "string"},
+        "created_at": {"type": "string"},
+        "signature": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "description": "The FULL signed authority-transition receipt minted at ingestion (authority_receipt.mint_receipt), retained on the record so downstream trust derivation can re-verify it against the authority receipt key instead of trusting a bare receipt-id string. Every bound field must match the record it sits on (validator_trust.ingestion_receipt_verified)."
+    },
     "attestation": {
       "type": ["object", "null"],
       "additionalProperties": false,

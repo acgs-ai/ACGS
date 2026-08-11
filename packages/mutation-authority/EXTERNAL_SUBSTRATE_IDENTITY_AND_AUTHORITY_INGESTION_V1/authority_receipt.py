@@ -14,6 +14,7 @@ so receipts are reproducible.
 
 from __future__ import annotations
 
+import fcntl
 import os
 import secrets
 from pathlib import Path
@@ -183,11 +184,27 @@ class ReplayLedger:
         if receipt_id in self._seen:
             raise ReceiptError(f"receipt replay: {receipt_id} already consumed")
         if self._path is not None:
+            # The uniqueness check and the append must be ONE atomic
+            # operation across processes: two ReplayLedger instances loaded
+            # before either consumed would otherwise both pass a process-
+            # local check and both append the same id. An exclusive file
+            # lock serializes consumers; the on-disk state is re-read under
+            # the lock so any id another process consumed since load is seen.
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            with self._path.open("a", encoding="utf-8") as fh:
+            with self._path.open("a+", encoding="utf-8") as fh:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                fh.seek(0)
+                for line in fh.read().splitlines():
+                    rid = line.strip()
+                    if rid:
+                        self._seen.add(rid)
+                if receipt_id in self._seen:
+                    raise ReceiptError(f"receipt replay: {receipt_id} already consumed")
+                fh.seek(0, os.SEEK_END)
                 fh.write(receipt_id + "\n")
                 fh.flush()
                 os.fsync(fh.fileno())
+                # flock releases on close
         self._seen.add(receipt_id)
 
     def has(self, receipt_id: str) -> bool:

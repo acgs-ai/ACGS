@@ -13,6 +13,7 @@ Fail-closed contract: every decision and every effect binding calls
 from __future__ import annotations
 
 import json
+import os
 import secrets
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,32 @@ class RootIntegrityError(Exception):
 
 class UnknownActorError(Exception):
     """No key material registered for the requested actor."""
+
+
+def _create_key_file(path: Path) -> None:
+    """Create a signing-key file atomically with owner-read-only permissions.
+
+    O_CREAT|O_EXCL with mode 0400 makes creation and permission-restriction a
+    single operation: the key bytes are never observable through a
+    umask-derived window, and an interrupted bootstrap can never leave a
+    readable key behind for a later ``initialize()`` to silently accept. Any
+    permission/IO error fails closed instead of falling back to
+    create-then-chmod."""
+    if path.exists():
+        return
+    key = secrets.token_bytes(32)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
+    except FileExistsError:
+        return  # concurrently bootstrapped; the existing key wins
+    except OSError as exc:
+        raise RootIntegrityError(
+            f"cannot create key file with owner-only permissions: {exc}"
+        ) from exc
+    try:
+        os.write(fd, key)
+    finally:
+        os.close(fd)
 
 
 @dataclass(frozen=True)
@@ -63,15 +90,10 @@ class GovernanceRoot:
         keystore_dir.mkdir(parents=True, exist_ok=True)
 
         root_key_path = keystore_dir / ROOT_KEY_FILE
-        if not root_key_path.exists():
-            root_key_path.write_bytes(secrets.token_bytes(32))
-            root_key_path.chmod(0o400)
+        _create_key_file(root_key_path)
 
         for actor_id in actors:
-            actor_key_path = keystore_dir / f"actor_{actor_id}.key"
-            if not actor_key_path.exists():
-                actor_key_path.write_bytes(secrets.token_bytes(32))
-                actor_key_path.chmod(0o400)
+            _create_key_file(keystore_dir / f"actor_{actor_id}.key")
 
         (root_dir / POLICY_FILE).write_text(canonical_json(policy) + "\n")
         (root_dir / ACTORS_FILE).write_text(canonical_json(actors) + "\n")

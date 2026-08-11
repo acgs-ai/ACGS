@@ -92,7 +92,14 @@ def attestation_binding(record: dict[str, Any]) -> str:
     breaks the binding, so the record drops back to DISCOVERED (fail closed)
     instead of routing on a stale attestation. verification_state is inside the
     binding because upgrading IDENTITY_EVIDENCED to AUTHORITY_EVIDENCED after
-    validation is exactly the promotion a validator must re-review."""
+    validation is exactly the promotion a validator must re-review.
+
+    Also bound, because they are authorization-bearing and registry-writable:
+    `supersedes` (an unsigned supersession claim must not deactivate an
+    established record — adding/altering it demands re-validation) and the
+    freshness fields `verification_epoch` / `last_verified_at` (the
+    revalidation policy trusts them, so a registry writer must not be able to
+    forge freshness without the validator re-signing)."""
     return hash_obj(
         {
             "authority_evidence_id": record.get("authority_evidence_id"),
@@ -103,6 +110,9 @@ def attestation_binding(record: dict[str, Any]) -> str:
             "effective_from": record.get("effective_from"),
             "effective_until": record.get("effective_until"),
             "verification_state": record.get("verification_state"),
+            "supersedes": record.get("supersedes"),
+            "verification_epoch": record.get("verification_epoch"),
+            "last_verified_at": record.get("last_verified_at"),
         }
     )
 

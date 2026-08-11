@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import stat
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -124,6 +125,19 @@ class EffectBinder:
                     REJECTED,
                     "resource resolves into a protected prefix (symlink escape)",
                 )
+        # Governed-prefix and actor-scope authorization ran against the
+        # LEXICAL receipt.resource only. A symlink that stays inside the
+        # repository (and off protected prefixes) could still redirect the
+        # write to a file the actor was never authorized to touch, so the
+        # resolved target must be exactly the authorized path — symlinked
+        # resources are rejected rather than re-authorized here.
+        lexical = Path(os.path.normpath(repo_root / receipt.resource))
+        if resolved != lexical:
+            return CommitResult(
+                REJECTED,
+                "resource path traverses a symlink; "
+                "resolved target is not the authorized path",
+            )
         before_hash = hash_file(target)
         if before_hash != receipt.previous_state_hash:
             return CommitResult(
@@ -132,23 +146,22 @@ class EffectBinder:
                 before_hash=before_hash,
             )
 
-        # 7. Apply the effect atomically. Snapshot the prior bytes first so
-        #    an effect that cannot be recorded (step 8) can be rolled back.
+        # 7. Apply the effect atomically. Snapshot the prior bytes AND the
+        #    prior file metadata first so an effect that cannot be recorded
+        #    (step 8) can be rolled back completely — restoring content but
+        #    dropping the executable bit would itself be an unauthorized
+        #    (metadata) mutation.
         prior_bytes = target.read_bytes() if before_hash != ABSENT else None
+        prior_mode = (
+            stat.S_IMODE(os.lstat(resolved).st_mode) if before_hash != ABSENT else None
+        )
         if receipt.operation == "DELETE":
             target.unlink()
             after_hash = ABSENT
         else:
             assert new_content is not None
             resolved.parent.mkdir(parents=True, exist_ok=True)
-            tmp = resolved.with_name(resolved.name + ".mutation-authority.tmp")
-            tmp.write_bytes(new_content)
-            if before_hash != ABSENT:
-                # An UPDATE replaces content, not file metadata: preserve the
-                # pre-existing permission bits (e.g. the executable bit) that
-                # os.replace with a fresh temp file would silently drop.
-                os.chmod(tmp, stat.S_IMODE(os.stat(resolved).st_mode))
-            os.replace(tmp, resolved)
+            self._stage_and_replace(resolved, new_content, prior_mode)
             # Re-hash from disk (not from the input bytes) so the recorded
             # after-state binds exactly what the repository now contains,
             # including file-metadata state (symlink/exec) — never a value
@@ -176,7 +189,9 @@ class EffectBinder:
             if prior_bytes is None:
                 target.unlink(missing_ok=True)
             else:
-                target.write_bytes(prior_bytes)
+                # Restore contents AND metadata atomically through the same
+                # exclusive staging path as the forward effect.
+                self._stage_and_replace(resolved, prior_bytes, prior_mode)
             raise EffectRecordingError(
                 "effect could not be bound to the audit chain; "
                 "filesystem change rolled back"
@@ -184,3 +199,33 @@ class EffectBinder:
         return CommitResult(
             ACCEPTED, "effect bound", before_hash=before_hash, after_hash=after_hash
         )
+
+    @staticmethod
+    def _stage_and_replace(resolved: Path, content: bytes, mode: int | None) -> None:
+        """Write `content` to `resolved` via a unique same-directory staging
+        file created with O_CREAT|O_EXCL (mkstemp), so a pre-planted symlink
+        at a predictable temp name can never be followed: an existing path —
+        symlink or not — makes the exclusive create pick a different name.
+
+        `mode` preserves the prior file's permission bits (an UPDATE replaces
+        content, not metadata); None means a fresh create, which gets the
+        ordinary umask-derived mode instead of mkstemp's 0600."""
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(resolved.parent),
+            prefix=f".{resolved.name}.",
+            suffix=".mutation-authority.tmp",
+        )
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(content)
+            if mode is None:
+                umask = os.umask(0)
+                os.umask(umask)
+                os.chmod(tmp, 0o666 & ~umask)
+            else:
+                os.chmod(tmp, mode)
+            os.replace(tmp, resolved)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise

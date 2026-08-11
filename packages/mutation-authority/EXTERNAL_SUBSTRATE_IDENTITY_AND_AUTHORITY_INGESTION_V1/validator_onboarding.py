@@ -211,8 +211,15 @@ def registration_provenance_ok(
     appointment: dict[str, Any], register_event: dict[str, Any]
 ) -> tuple[bool, str]:
     """Does a REGISTER event legitimately claim this appointment? Refuses
-    copied identities, scope expansion, and key swaps between appointment and
-    registration."""
+    copied identities, scope expansion, key swaps, and validity-period drift
+    between appointment and registration.
+
+    The validity period matters as much as identity and keys: verification
+    trusts the REGISTER event's effective_from/effective_until (see
+    validator_trust.authority_valid_at), so a REGISTER carrying a legitimate
+    appointment's binding but different period values would let a registry
+    writer make an expired appointment perpetual. Every authorization-bearing
+    field the event claims must match the retained appointment exactly."""
     if register_event.get("validator_id") != appointment.get("validator_id"):
         return False, "copied_validator_identity"
     if register_event.get("appointment_binding") != appointment_binding(appointment):
@@ -221,6 +228,12 @@ def registration_provenance_ok(
     app_classes = set(appointment.get("authorized_classes") or [])
     if not reg_classes or not reg_classes.issubset(app_classes):
         return False, "unauthorized_scope_expansion"
+    if register_event.get("effective_from") != appointment.get("effective_from"):
+        return False, "validity_period_mismatch"
+    if register_event.get("effective_until") != appointment.get("effective_until"):
+        return False, "validity_period_mismatch"
+    if register_event.get("appointment_authority") != appointment.get("appointment_authority"):
+        return False, "appointment_authority_mismatch"
     kb = appointment.get("key_binding") or {}
     if register_event.get("key_id") != kb.get("key_id"):
         return False, "key_substitution"

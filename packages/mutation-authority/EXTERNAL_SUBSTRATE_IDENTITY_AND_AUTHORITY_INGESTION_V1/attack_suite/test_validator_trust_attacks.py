@@ -355,8 +355,9 @@ def test_freshness_age_demotes_to_requires_review(tmp_path):
     ev = _attested(_evidence())  # validated_at 2026-08-10
     assert _gstate(ev, trust, instant=INSTANT, policy=policy) == ACTIVE  # 0 days old
     assert _gstate(ev, trust, instant="2026-10-10T12:00:00Z", policy=policy) == REQUIRES_REVIEW
-    # last_verified_at refreshes the basis without touching the attestation.
-    ev2 = dict(ev, last_verified_at="2026-10-01T00:00:00Z")
+    # Revalidation is a re-attestation: last_verified_at is attestation-bound,
+    # so refreshing the basis means attesting a record that carries it.
+    ev2 = _attested(dict(_evidence(), last_verified_at="2026-10-01T00:00:00Z"))
     assert _gstate(ev2, trust, instant="2026-10-10T12:00:00Z", policy=policy) == ACTIVE
 
 
@@ -365,8 +366,12 @@ def test_freshness_epoch_demotes_to_requires_review(tmp_path):
     policy = dict(DEFAULT_POLICY, minimum_epoch=2)
     ev = _attested(_evidence())
     assert _gstate(ev, trust, policy=policy) == REQUIRES_REVIEW  # no epoch recorded
-    assert _gstate(dict(ev, verification_epoch=1), trust, policy=policy) == REQUIRES_REVIEW
-    assert _gstate(dict(ev, verification_epoch=2), trust, policy=policy) == ACTIVE
+    # verification_epoch is attestation-bound: recording a new epoch is a
+    # re-attestation, not a post-hoc edit of the record.
+    ev1 = _attested(dict(_evidence(), verification_epoch=1))
+    assert _gstate(ev1, trust, policy=policy) == REQUIRES_REVIEW
+    ev2 = _attested(dict(_evidence(), verification_epoch=2))
+    assert _gstate(ev2, trust, policy=policy) == ACTIVE
 
 
 def test_malformed_policy_fails_closed(tmp_path):

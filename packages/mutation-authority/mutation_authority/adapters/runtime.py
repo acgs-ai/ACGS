@@ -118,7 +118,27 @@ class MutationGateway:
             return GatewayResult(REJECTED, result.reason, receipt=decision.receipt)
 
         # 5. Evidence emission, cross-linked to the ledger COMMIT event.
-        record = self.evidence.emit_for_receipt(self.root, self.ledger, decision.receipt)
+        #    The effect and its COMMIT are already durable at this point, so
+        #    an evidence-file write failure (full/read-only filesystem) must
+        #    not surface as a failed mutation: evidence is a deterministic
+        #    projection of the ledger and is re-emitted from it — here on the
+        #    next successful request, or explicitly via
+        #    EvidenceEmitter.recover_missing — restoring the COMMIT-to-
+        #    evidence bijection the CI gate enforces.
+        try:
+            # Heal any earlier deferred emissions first, then emit this one.
+            self.evidence.recover_missing(self.root, self.ledger)
+            record = self.evidence.emit_for_receipt(self.root, self.ledger, decision.receipt)
+        except OSError:
+            return GatewayResult(
+                APPLIED,
+                "mutation applied under receipt; evidence emission deferred "
+                "(recoverable from the committed ledger via "
+                "EvidenceEmitter.recover_missing)",
+                receipt=decision.receipt,
+                evidence_id=None,
+                after_hash=result.after_hash,
+            )
         return GatewayResult(
             APPLIED,
             "mutation applied under receipt",

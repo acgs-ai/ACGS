@@ -32,6 +32,7 @@ from validator_onboarding import (  # noqa: E402
     key_ownership_payload,
 )
 from validator_trust import (  # noqa: E402
+    APPOINTMENT_ARTIFACTS_DIR_NAME,
     APPOINTMENTS_DIR_NAME,
     ED25519,
     EVENT_SCHEMA,
@@ -99,6 +100,11 @@ def ed_trust(tmp_path):
     (app_dir / f"{binding}.json").write_text(
         json.dumps(appointment, sort_keys=True) + "\n", encoding="utf-8"
     )
+    # Retain the appointment artifact bytes by digest, as the ceremony does:
+    # provenance digests must re-verify against retained bytes.
+    art_dir = ks / APPOINTMENT_ARTIFACTS_DIR_NAME
+    art_dir.mkdir(exist_ok=True)
+    (art_dir / sha256_hex(FIXTURE_DOC)).write_bytes(FIXTURE_DOC)
     ev = {
         "schema": EVENT_SCHEMA,
         "event": "REGISTER",

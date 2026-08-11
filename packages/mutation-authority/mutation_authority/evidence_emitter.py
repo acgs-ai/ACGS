@@ -61,20 +61,49 @@ class EvidenceEmitter:
 
         Looks the COMMIT event up in the ledger (never trusts caller-supplied
         hashes) so the record is guaranteed to describe an effect that the
-        audit chain actually contains.
+        audit chain actually contains. Idempotent: if the record already
+        exists (e.g. re-emitted by ``recover_missing``), the existing record
+        is returned instead of appending a duplicate.
         """
         commit = self._commit_event_for(ledger, receipt.receipt_id)
         if commit is None:
             raise EvidenceError(
                 f"no COMMIT event for receipt {receipt.receipt_id}; refusing to fabricate evidence"
             )
+        record = self._record_for_commit(root, commit)
+        for existing in self.records():
+            if existing.get("evidence_id") == record["evidence_id"]:
+                return existing
+        self._append(record)
+        return record
+
+    def recover_missing(self, root: GovernanceRoot, ledger: AuditLedger) -> list[dict[str, Any]]:
+        """Re-emit evidence for committed mutations whose records are missing.
+
+        Evidence is a deterministic projection of the ledger (every body field
+        and the signature derive from the COMMIT event and the root key), so a
+        record whose append failed AFTER the COMMIT succeeded — a full or
+        read-only evidence filesystem, for example — is recoverable at any
+        later time without re-running the effect. Restores the mandatory
+        COMMIT-to-evidence bijection the CI gate enforces."""
+        existing = {r.get("receipt_id") for r in self.records()}
+        recovered: list[dict[str, Any]] = []
+        for event in ledger.events():
+            if event.type == EVENT_COMMIT and event.payload.get("receipt_id") not in existing:
+                record = self._record_for_commit(root, event)
+                self._append(record)
+                recovered.append(record)
+        return recovered
+
+    @staticmethod
+    def _record_for_commit(root: GovernanceRoot, commit: LedgerEvent) -> dict[str, Any]:
         body = {
             "actor": commit.payload["actor"],
             "resource": commit.payload["resource"],
             "previous_hash": commit.payload["before_hash"],
             "new_hash": commit.payload["after_hash"],
             "decision": commit.payload["decision"],
-            "receipt_id": receipt.receipt_id,
+            "receipt_id": commit.payload["receipt_id"],
             "policy_version": policy_version(root),
             "authority_chain_ref": {
                 "ledger_seq": commit.seq,
@@ -89,10 +118,11 @@ class EvidenceEmitter:
         # authenticity anchor the CI gate actually trusts.
         evidence_id = hash_obj(body)
         signature = hmac_sign(_evidence_key(root), evidence_id)
-        record = {**body, "evidence_id": evidence_id, "signature": signature}
+        return {**body, "evidence_id": evidence_id, "signature": signature}
+
+    def _append(self, record: dict[str, Any]) -> None:
         with self.path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, sort_keys=True) + "\n")
-        return record
 
     @staticmethod
     def verify_record(root: GovernanceRoot, record: dict[str, Any]) -> bool:

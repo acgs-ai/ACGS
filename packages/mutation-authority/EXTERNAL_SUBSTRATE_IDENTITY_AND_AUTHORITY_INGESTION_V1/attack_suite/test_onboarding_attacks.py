@@ -57,6 +57,7 @@ from validator_onboarding import (  # noqa: E402
     key_ownership_payload,
 )
 from validator_trust import (  # noqa: E402
+    APPOINTMENT_ARTIFACTS_DIR_NAME,
     APPOINTMENTS_DIR_NAME,
     EVENT_SCHEMA,
     GENESIS,
@@ -127,6 +128,12 @@ def fixture_trust(tmp_path, *, classes=("COUNSEL_OR_RIGHTS_AUTHORITY", "DATA_CON
     (app_dir / f"{binding}.json").write_text(
         json.dumps(appointment, sort_keys=True) + "\n", encoding="utf-8"
     )
+    # Retain the underlying appointment artifact bytes by digest, the way the
+    # onboarding ceremony does: provenance digests must re-verify against
+    # retained bytes, not merely look digest-shaped.
+    art_dir = ks / APPOINTMENT_ARTIFACTS_DIR_NAME
+    art_dir.mkdir(exist_ok=True)
+    (art_dir / sha256_hex(FIXTURE_DOC)).write_bytes(FIXTURE_DOC)
     ev = {
         "schema": EVENT_SCHEMA,
         "event": "REGISTER",
@@ -277,8 +284,9 @@ def test_ob2_expired_appointment_never_routes(substrate, tmp_path):
 
 def test_ob3_superseded_controller_never_routes(substrate, tmp_path):
     old = _attested(_evidence(ev_id="AE-OLD"))
-    newer = _attested(_evidence(ev_id="AE-NEW"))
-    newer["supersedes"] = "AE-OLD"
+    # supersedes is attestation-bound: it must be present when the validator
+    # attests, not spliced in afterwards.
+    newer = _attested(dict(_evidence(ev_id="AE-NEW"), supersedes="AE-OLD"))
     assert _state(old, sids={"AE-OLD"}) == SUPERSEDED
     st = _compute(substrate, tmp_path, [old, newer])
     # AE-OLD superseded; AE-NEW is ACTIVE and routes the controller pair only.
