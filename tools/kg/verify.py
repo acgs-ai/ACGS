@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Verify the loaded knowledge graph: shape, join health, and live answers.
+
+Passing here means the layers actually joined — not merely that the container
+is up. Exit code 1 if any hard check fails.
+
+    uv run --with neo4j python tools/kg/verify.py
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+
+CHECKS = [
+    (
+        "constraints",
+        "SHOW CONSTRAINTS YIELD name, labelsOrTypes, properties "
+        "RETURN name, labelsOrTypes AS on, properties AS props "
+        "ORDER BY name",
+    ),
+    (
+        "node labels",
+        "MATCH (n) UNWIND labels(n) AS l RETURN l AS label, count(*) AS n ORDER BY n DESC",
+    ),
+    ("relationships", "MATCH ()-[r]->() RETURN type(r) AS rel_type, count(*) AS n ORDER BY n DESC"),
+    (
+        "JOIN HEALTH (the load-bearing check)",
+        "MATCH (f:File) RETURN count(*) AS files, "
+        "count(f.summary) AS with_semantic, count(f.commit_count) AS with_git, "
+        "sum(CASE WHEN f.summary IS NOT NULL AND f.commit_count IS NOT NULL "
+        "THEN 1 ELSE 0 END) AS joined_both, "
+        "sum(CASE WHEN f.sealed THEN 1 ELSE 0 END) AS sealed",
+    ),
+    (
+        "orphan nodes (no relationships)",
+        "MATCH (n) WHERE NOT (n)--() RETURN labels(n)[0] AS label, count(*) AS n ORDER BY n DESC",
+    ),
+    (
+        "snapshot",
+        "MATCH (s:Snapshot) RETURN s.git_head AS head, s.git_branch AS branch, "
+        "s.ua_commit AS semantic_commit, s.semantic_layer_is_stale AS stale, "
+        "s.dirty_count AS dirty",
+    ),
+]
+
+CATALOG = [
+    (
+        "Q1 CI gates on gove-zone gateway.py",
+        "MATCH (w:Workflow)-[:GATES]->(f:File "
+        "{key:'packages/gove-zone/src/gove_zone/gateway.py'}) "
+        "RETURN w.name AS workflow, w.jobs AS jobs",
+    ),
+    (
+        "Q4 cross-package co-change (architecture erosion)",
+        "MATCH (a:File)-[c:CO_CHANGED]->(b:File) WHERE a.package <> b.package "
+        "AND c.count >= 4 "
+        "WITH CASE WHEN a.package < b.package THEN a.package ELSE b.package END AS pkg_a, "
+        "CASE WHEN a.package < b.package THEN b.package ELSE a.package END AS pkg_b, c "
+        "RETURN pkg_a, pkg_b, count(*) AS pairs, sum(c.count) AS joint_commits "
+        "ORDER BY joint_commits DESC LIMIT 5",
+    ),
+    (
+        "Q5 hotspots with no test edge",
+        "MATCH (f:File) WHERE f.tracked AND NOT f.is_test AND f.hotspot > 0.05 "
+        "AND f.language IN ['Python','TypeScript'] AND NOT (f)-[:TESTED_BY]->() "
+        "RETURN f.key AS file, f.hotspot AS hotspot, f.commit_count AS commits "
+        "ORDER BY hotspot DESC LIMIT 5",
+    ),
+    (
+        "Q6 compliance controls with no code evidence",
+        "MATCH (d:File)-[:MAPS_TO]->(c:Control) WHERE NOT (c)-[:EVIDENCED_BY]->() "
+        "RETURN c.framework AS framework, count(DISTINCT c) AS no_evidence "
+        "ORDER BY no_evidence DESC",
+    ),
+    (
+        "Q3 sealed files changed in recent history",
+        "MATCH (c:Commit)-[:TOUCHED]->(f:File {sealed:true}) "
+        "RETURN f.key AS sealed_file, count(c) AS commits, max(c.date) AS last "
+        "ORDER BY commits DESC LIMIT 5",
+    ),
+]
+
+
+def table(rows: list[dict]) -> str:
+    if not rows:
+        return "    (no rows)"
+    cols = list(rows[0].keys())
+
+    def cell(v):
+        s = str(v)
+        return s if len(s) <= 60 else s[:57] + "..."
+
+    widths = {c: max(len(c), *(len(cell(r[c])) for r in rows)) for c in cols}
+    out = [
+        "    " + "  ".join(c.ljust(widths[c]) for c in cols),
+        "    " + "  ".join("-" * widths[c] for c in cols),
+    ]
+    out += ["    " + "  ".join(cell(r[c]).ljust(widths[c]) for c in cols) for r in rows]
+    return "\n".join(out)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--uri", default=os.environ.get("NEO4J_URI", "bolt://localhost:7687"))
+    ap.add_argument("--user", default=os.environ.get("NEO4J_USER", "neo4j"))
+    ap.add_argument("--password", default=os.environ.get("NEO4J_PASSWORD", "acgs-kg-local"))
+    ap.add_argument("--database", default=os.environ.get("NEO4J_DATABASE", "neo4j"))
+    args = ap.parse_args()
+
+    from neo4j import GraphDatabase
+
+    driver = GraphDatabase.driver(args.uri, auth=(args.user, args.password))
+    driver.verify_connectivity()
+    failures: list[str] = []
+
+    with driver.session(database=args.database) as s:
+        for title, q in CHECKS:
+            rows = [r.data() for r in s.run(q)]
+            print(f"\n== {title} ==")
+            print(table(rows))
+            if title.startswith("JOIN HEALTH"):
+                r = rows[0]
+                if r["files"] == 0:
+                    failures.append("no File nodes")
+                if r["joined_both"] < 0.25 * r["files"]:
+                    failures.append(
+                        f"join health: only {r['joined_both']}/{r['files']} files carry "
+                        "both semantic and git facts — path keys are not unifying"
+                    )
+                if r["sealed"] == 0:
+                    failures.append("no sealed files linked")
+
+        print("\n\n########## CATALOG QUERIES ##########")
+        nonempty = 0
+        for title, q in CATALOG:
+            rows = [r.data() for r in s.run(q)]
+            print(f"\n== {title} ==")
+            print(table(rows))
+            nonempty += bool(rows)
+        if nonempty < 3:
+            failures.append(f"only {nonempty}/{len(CATALOG)} catalog queries returned rows")
+
+    driver.close()
+    print("\n" + "=" * 60)
+    if failures:
+        for f in failures:
+            print(f"FAIL: {f}")
+        return 1
+    print("VERIFY: PASS")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

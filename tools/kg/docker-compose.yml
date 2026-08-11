@@ -1,0 +1,29 @@
+# Local-only Neo4j for the govern-zone knowledge graph.
+# Data lives in a named docker volume (NOT a repo bind-mount): the container
+# runs as uid 7474 and would otherwise leave root-owned files in the worktree.
+services:
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: acgs-kg-neo4j
+    ports:
+      - "127.0.0.1:7474:7474"   # HTTP browser
+      - "127.0.0.1:7687:7687"   # bolt
+    environment:
+      # Set explicitly, otherwise the first connect forces a password change.
+      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:-acgs-kg-local}"
+      NEO4J_server_memory_heap_max__size: "1G"
+      NEO4J_server_memory_pagecache_size: "512M"
+      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
+    volumes:
+      - acgs-kg-data:/data
+      - acgs-kg-logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p ${NEO4J_PASSWORD:-acgs-kg-local} 'RETURN 1' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+volumes:
+  acgs-kg-data:
+  acgs-kg-logs:
