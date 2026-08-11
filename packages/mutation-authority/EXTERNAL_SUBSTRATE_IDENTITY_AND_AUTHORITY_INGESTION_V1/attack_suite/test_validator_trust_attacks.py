@@ -530,6 +530,63 @@ def test_vt14_rejected_successor_cannot_supersede(tmp_path):
     assert dist2[ACTIVE] == 1
 
 
+@pytest.mark.parametrize("artifact_state", ["missing", "tampered"])
+def test_vt15_unverifiable_successor_source_cannot_supersede(tmp_path, artifact_state):
+    """A successor excluded by source verification cannot displace a routable predecessor."""
+    trust = fixture_trust(tmp_path)
+    events = load_validator_events(trust["registry"])
+    old = _attested(_evidence(ev_id="AE-OLD"))
+    successor_source = b"[FIXTURE] successor appointment deed"
+    successor = _attested(
+        dict(
+            _evidence(
+                ev_id="AE-NEW-SOURCE",
+                source_digest=sha256_hex(successor_source),
+            ),
+            supersedes="AE-OLD",
+        )
+    )
+    assert ingestion_receipt_verified(
+        successor,
+        FIX_AUTH_KEY,
+        substrate_identity="fixture-substrate",
+        substrate_digest="d" * 64,
+    )
+    assert _gstate(successor, trust) == ACTIVE
+    artifact_dir = tmp_path / "authority-artifacts"
+    artifact_dir.mkdir()
+    (artifact_dir / old["source_digest"]).write_bytes(b"[FIXTURE] appointment deed")
+    if artifact_state == "tampered":
+        (artifact_dir / successor["source_digest"]).write_bytes(b"tampered")
+
+    routable = governed_active_records(
+        [old, successor],
+        INSTANT,
+        events=events,
+        keystore_dir=trust["keystore"],
+        policy=dict(DEFAULT_POLICY),
+        substrate_identity="fixture-substrate",
+        substrate_digest="d" * 64,
+        artifact_dir=artifact_dir,
+        receipt_key=FIX_AUTH_KEY,
+    )
+    assert [record["authority_evidence_id"] for record in routable] == ["AE-OLD"]
+
+    dist = governed_lifecycle_distribution(
+        [old, successor],
+        INSTANT,
+        events=events,
+        keystore_dir=trust["keystore"],
+        policy=dict(DEFAULT_POLICY),
+        substrate_identity="fixture-substrate",
+        substrate_digest="d" * 64,
+        artifact_dir=artifact_dir,
+        receipt_key=FIX_AUTH_KEY,
+    )
+    assert dist[SUPERSEDED] == 0
+    assert dist[ACTIVE] == 2
+
+
 def test_duplicate_register_bypasses_nothing(tmp_path):
     # An attacker who can APPEND a chain-linked registry line publishes a
     # SECOND REGISTER for the existing validator carrying their own key, then

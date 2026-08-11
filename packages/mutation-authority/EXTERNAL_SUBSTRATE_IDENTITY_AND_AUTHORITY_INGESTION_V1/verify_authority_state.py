@@ -142,6 +142,7 @@ def compute_state(
         events=events,
         keystore_dir=vkeystore,
         policy=policy,
+        artifact_dir=registry_path.parent / ".authority_artifacts",
         receipt_key=key,
         substrate_identity=manifest["substrate_id"],
         substrate_digest=manifest["critical_set_digest"],

@@ -902,6 +902,7 @@ def _trusted_superseded_ids(
     policy: dict[str, Any] | None,
     substrate_identity: str,
     substrate_digest: str,
+    artifact_dir: Path | None = None,
     receipt_key: bytes | None = None,
 ) -> set[str]:
     """Ids displaced by a successor that would itself derive governed-ACTIVE.
@@ -909,7 +910,8 @@ def _trusted_superseded_ids(
     the COMPLETE governed eligibility rules — trust-verified attestations,
     cryptographically verified ingestion receipt, no REJECTED disposition or
     scope/period conflict, in effect, no post-issuance revocation or retired
-    key, fresh under policy — may deactivate a record. Signature trust alone
+    key, fresh under policy, and an intact retained source artifact whenever
+    routing requires one — may deactivate a record. Signature trust alone
     is not enough: a receipted successor carrying a validly signed REJECTED
     attestation would otherwise mark the established predecessor SUPERSEDED
     while itself deriving INVALIDATED, leaving neither record routable (a
@@ -917,21 +919,19 @@ def _trusted_superseded_ids(
     an empty superseded set (it is judged on its own standing here)."""
 
     def successor_trusted(r: dict[str, Any]) -> bool:
-        return (
-            derive_governed_state(
-                r,
-                instant=instant,
-                superseded_ids=set(),
-                in_registry=True,
-                events=events,
-                keystore_dir=keystore_dir,
-                policy=policy,
-                receipt_key=receipt_key,
-                substrate_identity=substrate_identity,
-                substrate_digest=substrate_digest,
-            )
-            == ACTIVE
+        state = derive_governed_state(
+            r,
+            instant=instant,
+            superseded_ids=set(),
+            in_registry=True,
+            events=events,
+            keystore_dir=keystore_dir,
+            policy=policy,
+            receipt_key=receipt_key,
+            substrate_identity=substrate_identity,
+            substrate_digest=substrate_digest,
         )
+        return state == ACTIVE and (artifact_dir is None or source_artifact_intact(r, artifact_dir))
 
     return superseded_ids_of(records, instant, successor_trusted=successor_trusted)
 
@@ -960,6 +960,7 @@ def governed_active_records(
         policy=policy,
         substrate_identity=substrate_identity,
         substrate_digest=substrate_digest,
+        artifact_dir=artifact_dir,
         receipt_key=receipt_key,
     )
     out = []
@@ -994,6 +995,7 @@ def governed_lifecycle_distribution(
     policy: dict[str, Any] | None,
     substrate_identity: str,
     substrate_digest: str,
+    artifact_dir: Path | None = None,
     receipt_key: bytes | None = None,
 ) -> dict[str, int]:
     sids = _trusted_superseded_ids(
@@ -1004,6 +1006,7 @@ def governed_lifecycle_distribution(
         policy=policy,
         substrate_identity=substrate_identity,
         substrate_digest=substrate_digest,
+        artifact_dir=artifact_dir,
         receipt_key=receipt_key,
     )
     dist = dict.fromkeys(GOVERNED_STATES, 0)
