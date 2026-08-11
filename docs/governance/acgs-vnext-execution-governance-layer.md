@@ -229,7 +229,7 @@ existing `runtime.*` convention already present in the audit chain.
 | 2 | Package-manager invocation | `env.package.invoke` | `PATH` shim | `DENY` if manager ≠ declared `packageManager` | full at the shim |
 | 3 | Dependency installation | `env.package.install` | `PATH` shim, post-resolve pre-fetch | `ESCALATE` on new direct dependency | full at the shim |
 | 4 | Lifecycle-script enablement | `env.package.lifecycle_enable` | decision at surface 3 | scripts **disabled**; enablement escalates | **not a mediated execution point — see 2.2.2** |
-| 5 | Git mutation | `env.git.mutate` | `core.hooksPath` guard | tier-dependent; `ESCALATE` on control surfaces | full at commit time |
+| 5 | Git mutation | `env.git.mutate` | agent hook classification | `ESCALATE`; no receipt without sanitized Git config/hooks | decision/audit mediation only |
 | 6 | Artifact generation | `env.artifact.generate` | CI check on declared generators | `DENY` if a tracked artifact declares generated with no generator | **detective only — see 2.2.3** |
 | 7 | Release publication | `env.release.publish` | CI job | `ESCALATE` — always second-party | full |
 
@@ -259,21 +259,23 @@ Therefore surface 1 is scoped to what is decidable:
   are not promoted to a risk-bearing surface. The undecidable marker itself
   fails closed to `ESCALATE`, with no allow receipt.
 
-Git inspection is also not decidable from argv alone. Repository and ambient
-configuration can launch `core.fsmonitor`, `diff.external`, pager, signature,
-and content-filter helpers from commands whose visible form is only
-`git status`, `git diff`, or `git log`. The hook does not execute Git in a
-sanitized environment or bind trusted Git configuration into a receipt.
-Consequently every declared Git read-only command fails closed as undecidable;
-only Git mutations retain their explicit control-surface classification.
+Git execution is also not decidable from argv alone. Repository and ambient
+configuration can launch hooks, `core.fsmonitor`, diff, pager, signature,
+credential, remote, maintenance, and content-filter helpers from commands whose
+visible form appears ordinary. The hook does not execute Git in a sanitized
+environment or bind trusted Git configuration into a receipt. Consequently
+every declared Git command fails closed as undecidable. Mutations retain
+`env.git.mutate` attribution for policy and audit purposes, but that
+classification does not authorize execution.
 
-**Consequence, stated rather than engineered around:** a shell command whose
-effect is undecidable is recorded, attributed, and escalated without an allow
-receipt. Detection of its actual mutation still falls to surface 5 at commit
-time and to the control-surface inventory. Any claim that shell commands are
-"governed" must carry this qualifier. Substring matching over command text is
-explicitly rejected as the classifier — §1.3 documents two live false
-positives from exactly that technique.
+**Consequence, stated rather than engineered around:** a shell or Git command
+whose effect is undecidable is recorded, attributed, and escalated without an
+allow receipt. This hook mediates the host's decision and audit response; it is
+not a receipt-gated Git executor and does not itself prevent a host from
+ignoring that response. Any claim that these commands are "governed" must carry
+this qualifier. Substring matching over command text is explicitly rejected as
+the classifier — §1.3 documents two live false positives from exactly that
+technique.
 
 #### 2.2.2 Lifecycle scripts cannot be mediated at execution
 

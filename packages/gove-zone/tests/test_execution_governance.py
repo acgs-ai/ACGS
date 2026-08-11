@@ -23,6 +23,7 @@ import pytest
 
 from gove_zone.errors import ProductionProfileError
 from gove_zone.execution import (
+    _GIT_MUTATING,
     _GIT_READ_ONLY,
     ACTION_ARTIFACT_GENERATE,
     ACTION_GIT_MUTATE,
@@ -125,6 +126,8 @@ def test_quoted_argument_never_promotes_a_command() -> None:
 
     assert event.action == ACTION_GIT_MUTATE
     assert event.argv_prefix == ("git", "commit")
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("git-mutation-external-context",)
     assert event.facts["subcommand"] == "commit"
 
 
@@ -1266,14 +1269,14 @@ def test_operator_detection_ignores_quoted_operators() -> None:
     ],
 )
 def test_standalone_quoted_operator_arguments_stay_git_mutations(command: str) -> None:
-    """shlex strips quotes, so ``git commit -m ';'`` emits a bare ``;`` token —
-    a token-value test reads it as a separator and marks the explicitly
-    permitted commit undecidable, while bash passes the quoted punctuation as
-    data. Operator detection must read the RAW text's quoting instead."""
+    """Quoted punctuation is data, so the command remains attributed as one Git
+    mutation. It still fails closed because Git may execute ambient hooks and
+    helpers, not because the punctuation was mistaken for an operator."""
     event = classify_command(command)
 
     assert event.action == ACTION_GIT_MUTATE
-    assert event.decidable is True
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("git-mutation-external-context",)
     assert event.facts["operator_present"] is False
     assert event.facts["subcommand"] == "commit"
 
@@ -1376,12 +1379,14 @@ def test_literal_newlines_separate_commands_and_are_undecidable(separator: str) 
 
 
 def test_quoted_newlines_are_arguments_not_separators() -> None:
-    """Positive control: a newline inside quotes survives into its token and is
-    data — a multi-line commit message is one command."""
+    """A quoted newline stays data and preserves Git mutation attribution; the
+    ambient Git execution context is the independent fail-closed reason."""
     event = classify_command('git commit -m "first line\nsecond line"')
 
     assert event.action == ACTION_GIT_MUTATE
-    assert event.decidable is True
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("git-mutation-external-context",)
+    assert event.facts["operator_present"] is False
     assert event.facts["subcommand"] == "commit"
 
 
@@ -1548,20 +1553,21 @@ def test_canonical_manager_with_ambiguous_options_still_requires_a_human(
     assert f"RISK_TIER:{TIER_DEPENDENCY}" in event["matched_rules"]
 
 
-def test_quoted_operator_argument_does_not_block_a_permitted_git_commit(
+def test_quoted_operator_argument_does_not_bypass_git_mutation_escalation(
     tmp_path: Path,
 ) -> None:
-    """``git commit -m ';'`` is one command with a punctuation argument; the
-    gate must not override the explicitly permitted commit flow with an
-    undecidable ask."""
+    """Quoted punctuation is not an operator, but a commit can still execute
+    repository hooks and must not receive an allow receipt."""
     gateway = make_execution_gateway(tmp_path)
 
     response = decide(gateway, "git commit -m ';'")
 
-    assert permission(response) == "allow"
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
     event = audit_events(tmp_path)[-1]
     assert event["tool"] == ACTION_GIT_MUTATE
-    assert event["decision"] == "allow"
+    assert event["decision"] == "escalate"
+    assert "escalate-undecidable-git-mutation" in event["matched_rules"]
 
 
 def test_canonical_manager_escalates_rather_than_denying(tmp_path: Path) -> None:
@@ -1633,11 +1639,63 @@ def test_bare_plain_executable_is_allowed_and_receipted(tmp_path: Path, command:
     assert anchors[0]["policy_hash"]
 
 
-def test_git_control_surface_escalates(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git commit -m work",
+        "git commit --amend --no-edit",
+        "git am change.patch",
+        "git merge topic",
+        "git checkout topic",
+        "git add tracked.txt",
+        "git fetch origin",
+        "git gc",
+        "git worktree add ../review topic",
+    ],
+)
+def test_git_hook_and_helper_mutations_escalate_without_receipts(
+    tmp_path: Path, command: str
+) -> None:
+    event = classify_command(command)
+    assert event.action == ACTION_GIT_MUTATE
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("git-mutation-external-context",)
+
+    response = decide(make_execution_gateway(tmp_path), command)
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+    audit_event = audit_events(tmp_path)[-1]
+    assert audit_event["tool"] == ACTION_GIT_MUTATE
+    assert audit_event["decision"] == "escalate"
+    assert "escalate-undecidable-git-mutation" in audit_event["matched_rules"]
+
+
+def test_all_declared_git_mutations_preserve_attribution_but_fail_closed() -> None:
+    assert len(_GIT_MUTATING) == 26
+    for subcommand in sorted(_GIT_MUTATING):
+        event = classify_command(f"git {subcommand}")
+
+        assert event.action == ACTION_GIT_MUTATE, subcommand
+        assert event.decidable is False, subcommand
+        assert event.undecidable_reasons == ("git-mutation-external-context",), subcommand
+        assert event.facts["subcommand"] == subcommand
+
+
+def test_all_declared_git_mutations_escalate_without_receipts(tmp_path: Path) -> None:
     gateway = make_execution_gateway(tmp_path)
 
-    assert permission(decide(gateway, "git push origin main")) == "ask"
-    assert permission(decide(gateway, "git commit -m 'ordinary work'")) == "allow"
+    for subcommand in sorted(_GIT_MUTATING):
+        response = decide(gateway, f"git {subcommand}")
+
+        assert permission(response) == "ask", subcommand
+        assert "gove_zone" not in response, subcommand
+
+    events = audit_events(tmp_path)
+    assert len(events) == len(_GIT_MUTATING)
+    assert all(event["tool"] == ACTION_GIT_MUTATE for event in events)
+    assert all(event["decision"] == "escalate" for event in events)
+    assert all("escalate-undecidable-git-mutation" in event["matched_rules"] for event in events)
 
 
 def test_release_publication_escalates(tmp_path: Path) -> None:

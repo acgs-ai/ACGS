@@ -59,13 +59,13 @@ What this module deliberately does NOT claim
   :data:`ACTION_SHELL_EXEC`. Only package managers with a declared artifact
   grammar (``npm pack``, ``cargo package``, ``poetry build``, …) reach
   :data:`ACTION_ARTIFACT_GENERATE` — a named residual, not a claim of coverage.
-* **Git inspection inherits executable configuration.** Repository and ambient
-  Git configuration can launch fsmonitor, diff, pager, signature, and content
-  filter helpers even when the visible argv is only ``git status`` or
-  ``git diff``. This hook does not sanitize that configuration in a trusted
-  executor, so every declared Git read-only command is undecidable and
-  escalates without a receipt. Git mutations retain their explicit
-  control-surface classification.
+* **Git inherits executable configuration.** Repository and ambient Git
+  configuration can launch hooks, fsmonitor, diff, pager, signature, remote,
+  credential, and content-filter helpers even when the visible argv looks
+  ordinary. This hook does not sanitize that configuration in a trusted
+  executor, so every declared Git command is undecidable and escalates without
+  a receipt. Mutations retain explicit :data:`ACTION_GIT_MUTATE` attribution;
+  that attribution is not authorization to execute them.
 """
 
 from __future__ import annotations
@@ -1620,6 +1620,28 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
                 facts={**base_facts, "subcommand": subcommand},
                 command_sha256=digest,
             )
+        if mutating:
+            # A mutation's argv prefix identifies the governed surface but not
+            # every process Git may execute. Repository and ambient config can
+            # supply hooks, filters, signing programs, fsmonitor, credential
+            # and remote helpers, or maintenance commands. This adapter does
+            # not execute Git with sanitized config and hooks disabled, so the
+            # mutation remains attributed as env.git.mutate while failing
+            # closed before an allow receipt can be minted.
+            return ExecutionEvent(
+                action=ACTION_GIT_MUTATE,
+                binary=binary,
+                argv_prefix=argv_prefix,
+                tier_hint=TIER_SOURCE,
+                decidable=False,
+                undecidable_reasons=("git-mutation-external-context",),
+                facts={
+                    **base_facts,
+                    "subcommand": subcommand,
+                    "git_control_surface": subcommand in _GIT_CONTROL_SURFACE,
+                },
+                command_sha256=digest,
+            )
         return ExecutionEvent(
             action=ACTION_GIT_MUTATE if mutating else ACTION_SHELL_EXEC,
             binary=binary,
@@ -1873,6 +1895,17 @@ EXECUTION_RULE_BUNDLE: dict[str, Any] = {
             "reason": (
                 "install would run lifecycle scripts; script execution is irreversible "
                 "and unmediable once the manager starts (ADR-0010 D2)"
+            ),
+        },
+        {
+            "id": "escalate-undecidable-git-mutation",
+            "effect": "escalate",
+            "tools": [ACTION_GIT_MUTATE],
+            "state_equals": {"execution_decidable": False},
+            "reason": (
+                "Git may execute repository or ambient hooks and helpers that are not "
+                "recoverable from the argv prefix; an undecidable mutation requires "
+                "human approval"
             ),
         },
         {
