@@ -338,6 +338,13 @@ _COREPACK_INSTALL_SUBCOMMANDS = frozenset({"use", "install", "up"})
 #: falling through to an unclassified allow.
 _COREPACK_SHIM_SUBCOMMANDS = frozenset({"enable", "disable", "cache", "hydrate", "pack", "prepare"})
 
+#: Windows installs expose package tools through ``.cmd`` / ``.bat`` shims and
+#: sometimes ``.exe`` launchers. Strip those suffixes only when the remaining
+#: stem is a package executable whose grammar is declared below; arbitrary
+#: executable names keep their suffix and continue to fail closed. Path trust
+#: is determined from the original argv token before this normalization.
+_WINDOWS_PACKAGE_EXECUTABLE_SUFFIXES = (".cmd", ".bat", ".exe")
+
 #: Flags that disable lifecycle-script execution, per manager family. Absence is
 #: treated as "not disabled" — fail-closed, because an unknown manager cannot be
 #: assumed safe.
@@ -1093,6 +1100,24 @@ def _portable_basename(executable: str) -> str:
     return executable.replace("\\", "/").rsplit("/", 1)[-1]
 
 
+def _normalized_package_executable(binary: str) -> str:
+    """Normalize declared package-tool shims without trusting arbitrary names."""
+    folded = binary.casefold()
+    for suffix in _WINDOWS_PACKAGE_EXECUTABLE_SUFFIXES:
+        if not folded.endswith(suffix):
+            continue
+        candidate = folded.removesuffix(suffix)
+        if (
+            candidate == "corepack"
+            or candidate in _INSTALL_SUBCOMMANDS
+            or candidate in _PACKAGE_RUNNERS
+            or candidate in _MANAGER_EXECUTABLE_ALIASES
+        ):
+            return _MANAGER_EXECUTABLE_ALIASES.get(candidate, candidate)
+        break
+    return _MANAGER_EXECUTABLE_ALIASES.get(binary, binary)
+
+
 def _interpreter_family(binary: str) -> str:
     """Return the normalized family for a known delegating executable."""
     normalized = _normalized_executable(binary)
@@ -1288,10 +1313,11 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
 
     binary = _portable_basename(argv[0])
     invoked_by_absolute_path = argv[0] != binary
-    # A standard alias (`yarnpkg`) is the same manager under a second name;
-    # resolving it before any table lookup keeps the alias inside the manager
-    # contract instead of letting it fall to the undecidable-shell ask.
-    binary = _MANAGER_EXECUTABLE_ALIASES.get(binary, binary)
+    # Windows package-tool shims and standard aliases (`yarnpkg`) resolve to
+    # the declared package grammar only after path trust was determined from
+    # the original argv token. This preserves untrusted-context escalation for
+    # path-qualified shims while retaining their manager contract facts.
+    binary = _normalized_package_executable(binary)
     untrusted_invocation_context = bool(wrappers) or invoked_by_absolute_path
     if untrusted_invocation_context and not reasons:
         reasons.append("untrusted-execution-context")
@@ -1352,7 +1378,10 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
     elif not reasons and not interpreter_family and _has_generic_inline_delegation(binary, argv):
         reasons.append("inline-program-delegation")
 
-    if not reasons and binary == "corepack":
+    recoverable_package_context = reasons == ["untrusted-execution-context"] and (
+        binary in _INSTALL_SUBCOMMANDS or binary == "corepack"
+    )
+    if binary == "corepack" and (not reasons or recoverable_package_context):
         delegated, corepack_operation, corepack_reason = _corepack_argv(argv)
         if corepack_reason:
             reasons.append(corepack_reason)
@@ -2558,12 +2587,17 @@ def verify_execution_chain(
         # the unconditional-allow check. Only a list-like whose every member is
         # a string rule identifier is trusted; any other present shape is
         # reported as malformed rather than reinterpreted.
-        matched_valid = (
-            isinstance(matched, Sequence)
-            and not isinstance(matched, (str, bytes, bytearray))
-            and all(isinstance(member, str) for member in matched)
-        )
-        matched_list = list(matched) if matched_valid else []
+        matched_valid = False
+        matched_list: list[str] = []
+        if isinstance(matched, Sequence) and not isinstance(matched, (str, bytes, bytearray)):
+            candidate: list[str] = []
+            for member in matched:
+                if not isinstance(member, str):
+                    break
+                candidate.append(member)
+            else:
+                matched_valid = True
+                matched_list = candidate
         anchor = {
             "event_id": event.get("event_id", ""),
             "tool": tool,

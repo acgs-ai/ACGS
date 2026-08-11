@@ -1724,6 +1724,150 @@ def test_canonical_manager_with_untrusted_context_still_requires_a_human(
     assert f"RISK_TIER:{TIER_DEPENDENCY}" in event["matched_rules"]
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/usr/bin/corepack npm install --ignore-scripts",
+        "env corepack npm install --ignore-scripts",
+        r'"C:\Program Files\nodejs\corepack.cmd" npm install --ignore-scripts',
+    ],
+)
+def test_untrusted_corepack_noncanonical_delegate_remains_a_hard_deny(
+    tmp_path: Path, command: str
+) -> None:
+    event = classify_command(command, canonical_package_manager="pnpm")
+    assert event.action == ACTION_PACKAGE_INVOKE
+    assert event.binary == "npm"
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("untrusted-execution-context",)
+    assert event.facts["package_frontend"] == "corepack"
+    assert event.facts["manager"] == "npm"
+    assert event.facts["manager_contract_applies"] is True
+    assert event.facts["manager_is_canonical"] is False
+
+    response = decide(make_execution_gateway(tmp_path), command)
+
+    assert permission(response) == "deny"
+    assert "gove_zone" not in response
+    audit_event = audit_events(tmp_path)[-1]
+    assert audit_event["decision"] == "deny"
+    assert "deny-non-canonical-package-manager" in audit_event["matched_rules"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/usr/bin/corepack pnpm install --ignore-scripts",
+        "env corepack pnpm install --ignore-scripts",
+        r'"C:\Program Files\nodejs\corepack.cmd" pnpm install --ignore-scripts',
+    ],
+)
+def test_untrusted_corepack_canonical_delegate_still_escalates(
+    tmp_path: Path, command: str
+) -> None:
+    event = classify_command(command, canonical_package_manager="pnpm")
+    assert event.action == ACTION_PACKAGE_INVOKE
+    assert event.binary == "pnpm"
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("untrusted-execution-context",)
+    assert event.facts["package_frontend"] == "corepack"
+    assert event.facts["manager"] == "pnpm"
+    assert event.facts["manager_contract_applies"] is True
+    assert event.facts["manager_is_canonical"] is True
+
+    response = decide(make_execution_gateway(tmp_path), command)
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+    assert audit_events(tmp_path)[-1]["decision"] == "escalate"
+
+
+@pytest.mark.parametrize("suffix", ["cmd", "bat", "exe"])
+@pytest.mark.parametrize(
+    ("manager", "expected_permission", "is_canonical"),
+    [("npm", "deny", False), ("pnpm", "ask", True)],
+)
+def test_bare_corepack_windows_shims_preserve_manager_contract(
+    tmp_path: Path,
+    suffix: str,
+    manager: str,
+    expected_permission: str,
+    is_canonical: bool,
+) -> None:
+    command = f"corepack.{suffix} {manager} install --ignore-scripts"
+    event = classify_command(command, canonical_package_manager="pnpm")
+    assert event.action == ACTION_PACKAGE_INSTALL
+    assert event.binary == manager
+    assert event.decidable is True
+    assert event.facts["package_frontend"] == "corepack"
+    assert event.facts["manager_is_canonical"] is is_canonical
+
+    response = decide(make_execution_gateway(tmp_path), command)
+
+    assert permission(response) == expected_permission
+    assert "gove_zone" not in response
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_binary", "expected_permission"),
+    [
+        ("npm.cmd install --ignore-scripts", "npm", "deny"),
+        ("pnpm.bat install --ignore-scripts", "pnpm", "ask"),
+        ("yarnpkg.exe add left-pad --ignore-scripts", "yarn", "deny"),
+    ],
+)
+def test_windows_manager_shims_and_aliases_preserve_manager_contract(
+    tmp_path: Path, command: str, expected_binary: str, expected_permission: str
+) -> None:
+    event = classify_command(command, canonical_package_manager="pnpm")
+    assert event.action == ACTION_PACKAGE_INSTALL
+    assert event.binary == expected_binary
+    assert event.facts["manager_contract_applies"] is True
+
+    response = decide(make_execution_gateway(tmp_path), command)
+
+    assert permission(response) == expected_permission
+    assert "gove_zone" not in response
+
+
+@pytest.mark.parametrize(
+    ("command", "reason"),
+    [
+        ("/usr/bin/corepack --version", "corepack-option-ambiguity"),
+        ("env corepack completion", "undeclared-corepack-operation"),
+        ("/usr/bin/corepack install", "untrusted-execution-context"),
+        ("env corepack enable", "untrusted-execution-context"),
+    ],
+)
+def test_untrusted_corepack_ambiguous_and_own_operations_stay_undecidable(
+    tmp_path: Path, command: str, reason: str
+) -> None:
+    event = classify_command(command, canonical_package_manager="pnpm")
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert "untrusted-execution-context" in event.undecidable_reasons
+    assert reason in event.undecidable_reasons
+
+    response = decide(make_execution_gateway(tmp_path), command)
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+    assert audit_events(tmp_path)[-1]["decision"] == "escalate"
+
+
+@pytest.mark.parametrize("command", ["corepack.ps1 npm install", "npm.com install left-pad"])
+def test_unrecognized_package_suffixes_fail_closed(tmp_path: Path, command: str) -> None:
+    event = classify_command(command, canonical_package_manager="pnpm")
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("unknown-execution-grammar",)
+
+    response = decide(make_execution_gateway(tmp_path), command)
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+
+
 def test_quoted_operator_argument_does_not_bypass_git_mutation_escalation(
     tmp_path: Path,
 ) -> None:
