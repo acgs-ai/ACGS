@@ -16,8 +16,9 @@
 # is gated by the automatic hosted contract lane in
 # `saas-beta-p0-evidence.yml`; its exact proof remains authorized/manual. It is
 # not a generic root test. The five release-evidence / readiness tests use the dedicated
-# `readiness-evidence.yml` workflow (+ its hosted twin); the package-floor /
-# mypy-scope tests need initialized submodules and remain a follow-up.
+# `readiness-evidence.yml` workflow (+ its hosted twin); the package-floor
+# tests hard-require initialized submodules and stay excluded here (the swarm
+# mypy-gate test self-skips when the submodule is absent and is not excluded).
 
 name: tests-root
 
