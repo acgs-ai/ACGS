@@ -26,6 +26,7 @@ on:
     branches: [master]
     paths:
       - 'tests/**'
+      - 'tools/kg/**'
       - 'scripts/**'
       - '.github/workflows/**'
       - '.claude/settings.json'
@@ -34,10 +35,17 @@ on:
       - 'Makefile'
       - 'docs/PLAN-MONOREPO.md'
       - 'docs/constitutional-hashes.lock'
+      # The claim-safety gate validates these two documents directly
+      # (test_repository_documents_currently_pass); a docs-only edit to either
+      # must trigger this workflow or the gate is stale-green for the exact
+      # change it guards.
+      - 'docs/governance-stack-index.md'
+      - 'docs/integration-readiness-task-map.md'
   push:
     branches: [master]
     paths:
       - 'tests/**'
+      - 'tools/kg/**'
       - 'scripts/**'
       - '.github/workflows/**'
       - '.claude/settings.json'
@@ -46,6 +54,8 @@ on:
       - 'Makefile'
       - 'docs/PLAN-MONOREPO.md'
       - 'docs/constitutional-hashes.lock'
+      - 'docs/governance-stack-index.md'
+      - 'docs/integration-readiness-task-map.md'
 
 concurrency:
   group: tests-root-hosted-${{ github.ref }}
@@ -71,8 +81,11 @@ jobs:
 
       - name: Run root governance-invariant guards
         # Lockstep copy of tests-root.yml. `--no-project` skips the workspace
-        # sync; `--with` supplies the only deps these tests need (pytest +
-        # pyyaml). tests/conftest.py puts scripts/ on sys.path. EXCLUSIONS match
+        # sync; `--with` supplies the only deps these tests need (pytest,
+        # pyyaml, and cryptography: the signature-verification guards FAIL
+        # rather than skip without the Ed25519 backend, so omitting it here
+        # would bury the intended redundant signal under 58 unrelated
+        # failures). tests/conftest.py puts scripts/ on sys.path. EXCLUSIONS match
         # tests-root.yml exactly — tests/saas_beta uses the automatic hosted
         # contract lane; its exact proof remains authorized/manual. The five
         # readiness/evidence tests are gated
@@ -80,7 +93,7 @@ jobs:
         # stay out of this gate.
         run: |
           uv python install 3.11
-          uv run --no-project --python 3.11 --with pytest --with pyyaml \
+          uv run --no-project --python 3.11 --with pytest --with pyyaml --with cryptography \
             python -m pytest tests/ \
             --ignore=tests/docs \
             --ignore=tests/saas_beta \
