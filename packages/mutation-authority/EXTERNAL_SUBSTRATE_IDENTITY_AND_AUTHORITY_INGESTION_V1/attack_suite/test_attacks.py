@@ -878,6 +878,78 @@ def test_ingest_conflict_same_id_different_document(tmp_path):
     assert rc2 == 3  # same id, different document digest -> conflict
 
 
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("substrate_id", None),
+        ("substrate_id", 7),
+        ("substrate_id", ""),
+        ("substrate_id", "   "),
+        ("critical_set_digest", None),
+        ("critical_set_digest", 7),
+        ("critical_set_digest", ""),
+        ("critical_set_digest", "   "),
+    ],
+)
+def test_ingest_idempotent_revalidates_current_manifest(
+    tmp_path, monkeypatch, field, invalid_value
+):
+    import ingest_authority_evidence as ING
+    from _registry import append_record
+
+    valid_manifest = json.loads((ING.HERE / ING.MANIFEST_NAME).read_text(encoding="utf-8"))
+    document = tmp_path / "document"
+    document.write_bytes(b"existing authority document")
+    record = _evidence(
+        ev_id="AE-IDEMPOTENT-BINDING",
+        source_digest=sha256_hex(document.read_bytes()),
+    )
+    record_path = tmp_path / "record.json"
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    registry = tmp_path / "registry.jsonl"
+    append_record(registry, record)
+    registry_before = registry.read_bytes()
+    record_before = record_path.read_bytes()
+    document_before = document.read_bytes()
+
+    manifest_home = tmp_path / "manifest-home"
+    manifest_home.mkdir()
+    monkeypatch.setattr(ING, "HERE", manifest_home)
+    invalid_manifest = dict(valid_manifest)
+    invalid_manifest[field] = invalid_value
+    (manifest_home / ING.MANIFEST_NAME).write_text(json.dumps(invalid_manifest), encoding="utf-8")
+    keystore = tmp_path / "keystore"
+    args = [
+        "--record",
+        str(record_path),
+        "--document",
+        str(document),
+        "--registry",
+        str(registry),
+        "--keystore",
+        str(keystore),
+        "--instant",
+        INSTANT,
+    ]
+
+    assert ING.main(args) == 3
+    assert registry.read_bytes() == registry_before
+    assert record_path.read_bytes() == record_before
+    assert document.read_bytes() == document_before
+    assert not (tmp_path / ".authority_artifacts").exists()
+    assert not keystore.exists()
+    assert len(registry.read_text(encoding="utf-8").splitlines()) == 1
+    assert "ingestion_receipt" not in json.loads(
+        registry.read_text(encoding="utf-8").splitlines()[0]
+    )
+
+    (manifest_home / ING.MANIFEST_NAME).write_text(json.dumps(valid_manifest), encoding="utf-8")
+    assert ING.main(args) == 0
+    assert registry.read_bytes() == registry_before
+    assert not (tmp_path / ".authority_artifacts").exists()
+    assert not keystore.exists()
+
+
 def test_attack24_aggregate_counts_are_derived_not_stored():
     reqs = _requests()
     reqs_with_lie = [dict(r) for r in reqs]

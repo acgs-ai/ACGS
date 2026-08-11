@@ -33,6 +33,7 @@ from _canonical import sha256_hex
 from _identity import MANIFEST_NAME
 from _registry import REGISTRY_NAME, append_record, read_registry
 from authority_receipt import (
+    ReceiptError,
     load_or_create_key,
     mint_receipt,
     require_substrate_binding,
@@ -99,6 +100,20 @@ def main(argv: list[str]) -> int:
         print(f"REJECTED: {exc}", file=sys.stderr)
         return 3
 
+    # Identity authorization precedes every registry outcome, including an
+    # idempotent no-op. A malformed current manifest must never be reported as
+    # successful merely because matching evidence was already recorded.
+    try:
+        manifest = json.loads((HERE / MANIFEST_NAME).read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict):
+            raise ReceiptError("substrate identity manifest must be a JSON object")
+        require_substrate_binding(
+            manifest.get("substrate_id"), manifest.get("critical_set_digest")
+        )
+    except (OSError, json.JSONDecodeError, ReceiptError) as exc:
+        print(f"REJECTED: invalid substrate identity manifest: {exc}", file=sys.stderr)
+        return 3
+
     # The conflict check, receipt mint, artifact retention, and registry
     # append form ONE serialized critical section: without it, two concurrent
     # ingests of the same authority_evidence_id with different documents could
@@ -122,10 +137,6 @@ def main(argv: list[str]) -> int:
                 return 3
 
         key = load_or_create_key(Path(args.keystore))
-        manifest = json.loads((HERE / MANIFEST_NAME).read_text(encoding="utf-8"))
-        require_substrate_binding(
-            manifest.get("substrate_id"), manifest.get("critical_set_digest")
-        )
         receipt = mint_receipt(
             key,
             request_id=f"INGEST::{record['authority_evidence_id']}",
