@@ -827,6 +827,8 @@ def _trusted_superseded_ids(
     *,
     events: list[dict[str, Any]] | None,
     keystore_dir: Path,
+    substrate_identity: str,
+    substrate_digest: str,
     receipt_key: bytes | None = None,
 ) -> set[str]:
     """Ids displaced by a successor whose attestations are all trust-verified.
@@ -840,7 +842,12 @@ def _trusted_superseded_ids(
         atts = _attestations(r)
         if not atts:
             return False
-        if not ingestion_receipt_verified(r, receipt_key):
+        if not ingestion_receipt_verified(
+            r,
+            receipt_key,
+            substrate_identity=substrate_identity,
+            substrate_digest=substrate_digest,
+        ):
             return False
         return all(
             verify_attestation_trust(
@@ -869,7 +876,13 @@ def governed_active_records(
     `artifact_dir` is given, the retained source artifact must still hash to
     the record's source_digest — an unverifiable source document never routes."""
     sids = _trusted_superseded_ids(
-        records, instant, events=events, keystore_dir=keystore_dir, receipt_key=receipt_key
+        records,
+        instant,
+        events=events,
+        keystore_dir=keystore_dir,
+        substrate_identity=substrate_identity,
+        substrate_digest=substrate_digest,
+        receipt_key=receipt_key,
     )
     out = []
     for r in records:
@@ -906,7 +919,13 @@ def governed_lifecycle_distribution(
     receipt_key: bytes | None = None,
 ) -> dict[str, int]:
     sids = _trusted_superseded_ids(
-        records, instant, events=events, keystore_dir=keystore_dir, receipt_key=receipt_key
+        records,
+        instant,
+        events=events,
+        keystore_dir=keystore_dir,
+        substrate_identity=substrate_identity,
+        substrate_digest=substrate_digest,
+        receipt_key=receipt_key,
     )
     dist = dict.fromkeys(GOVERNED_STATES, 0)
     for r in records:

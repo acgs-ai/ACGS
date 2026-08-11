@@ -577,6 +577,8 @@ def attack_n_glob_prefix_rogue_artifacts(base: Path) -> str:
     _expect(violations[0]["resource"] == "src/dangling.py", str(violations[0]))
     _expect(violations[0]["kind"] == "unauthorized_create", "wrong violation kind")
     return "glob-prefix rogue file and dangling symlink surface as unauthorized_create"
+
+
 def attack_p_temp_symlink_race(base: Path) -> str:
     """A pre-planted temporary symlink must never be followed or replaced."""
     for label, victim_kind in (("external", "external"), ("protected", "protected")):

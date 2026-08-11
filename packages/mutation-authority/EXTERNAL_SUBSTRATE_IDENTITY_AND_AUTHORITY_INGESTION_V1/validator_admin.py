@@ -260,8 +260,7 @@ def main(argv: list[str]) -> int:
             else:
                 if not pred_key_path.is_file():
                     print(
-                        "REFUSED: predecessor key not in keystore — cannot "
-                        "authorize this rotation",
+                        "REFUSED: predecessor key not in keystore — cannot authorize this rotation",
                         file=sys.stderr,
                     )
                     return 3

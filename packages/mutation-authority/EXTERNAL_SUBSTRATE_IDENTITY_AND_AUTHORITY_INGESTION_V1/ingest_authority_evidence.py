@@ -107,9 +107,7 @@ def main(argv: list[str]) -> int:
         manifest = json.loads((HERE / MANIFEST_NAME).read_text(encoding="utf-8"))
         if not isinstance(manifest, dict):
             raise ReceiptError("substrate identity manifest must be a JSON object")
-        require_substrate_binding(
-            manifest.get("substrate_id"), manifest.get("critical_set_digest")
-        )
+        require_substrate_binding(manifest.get("substrate_id"), manifest.get("critical_set_digest"))
     except (OSError, json.JSONDecodeError, ReceiptError) as exc:
         print(f"REJECTED: invalid substrate identity manifest: {exc}", file=sys.stderr)
         return 3
@@ -125,8 +123,7 @@ def main(argv: list[str]) -> int:
             if e.get("authority_evidence_id") == record["authority_evidence_id"]:
                 if e.get("source_digest") == record["source_digest"]:
                     print(
-                        f"IDEMPOTENT: {record['authority_evidence_id']} already ingested; "
-                        "no change"
+                        f"IDEMPOTENT: {record['authority_evidence_id']} already ingested; no change"
                     )
                     return 0
                 print(

@@ -568,6 +568,7 @@ def test_attack19b_paired_receipts_consume_atomically(tmp_path):
             authority_evidence_id="AE-1",
             evidence_digest="a" * 64,
             authority_scope={"asset_ids": "ALL", "requirement_ids": "ALL"},
+            substrate_identity="fixture-substrate",
             substrate_critical_set_digest="d" * 64,
             decision="ALLOW",
             decision_reason="x",

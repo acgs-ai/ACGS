@@ -435,6 +435,8 @@ def test_vt13_supersession_requires_verified_ingestion_receipt(tmp_path):
         events=events,
         keystore_dir=trust["keystore"],
         policy=dict(DEFAULT_POLICY),
+        substrate_identity="fixture-substrate",
+        substrate_digest="d" * 64,
         receipt_key=FIX_AUTH_KEY,
     )
     assert dist[SUPERSEDED] == 0  # the established record stands
@@ -448,6 +450,8 @@ def test_vt13_supersession_requires_verified_ingestion_receipt(tmp_path):
         events=events,
         keystore_dir=trust["keystore"],
         policy=dict(DEFAULT_POLICY),
+        substrate_identity="fixture-substrate",
+        substrate_digest="d" * 64,
         receipt_key=FIX_AUTH_KEY,
     )
     assert dist2[SUPERSEDED] == 1
