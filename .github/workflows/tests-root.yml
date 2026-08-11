@@ -26,6 +26,7 @@ on:
     branches: [master]
     paths:
       - 'tests/**'
+      - 'tools/kg/**'
       - 'scripts/**'
       - '.github/workflows/**'
       - '.claude/settings.json'
@@ -38,6 +39,7 @@ on:
     branches: [master]
     paths:
       - 'tests/**'
+      - 'tools/kg/**'
       - 'scripts/**'
       - '.github/workflows/**'
       - '.claude/settings.json'

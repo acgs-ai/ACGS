@@ -312,7 +312,9 @@ never analyzed it.
     detail_rows: list[list[str]] = []
     for c in controls:
         fw = c["framework"]
-        acc = by_fw.setdefault(fw, {"A": 0, "B": 0, "C": 0, "D": 0, "doc_only": 0, "none": 0})
+        acc = by_fw.setdefault(
+            fw, {"A": 0, "B": 0, "C": 0, "D": 0, "cfg_only": 0, "doc_only": 0, "none": 0}
+        )
         ev = [e for e in c["ev"] if e.get("key")]
         code_ev = [e for e in ev if (e["ext"] or "") in CODE_EXT]
         cfg_ev = [e for e in ev if (e["ext"] or "") in CONFIG_EXT]
@@ -331,8 +333,15 @@ never analyzed it.
             acc["none"] += 1
             tier = "A referenced (no evidence target)"
         elif not code_ev:
-            acc["doc_only"] += 1
-            tier = "A referenced (evidence target is a document)"
+            # Config-only evidence is not a document and not source: it stays
+            # below tier B (source code remains required for "implemented")
+            # but is classified as what it is, not mislabelled a document.
+            if cfg_ev:
+                acc["cfg_only"] += 1
+                tier = "A referenced (evidence target is configuration)"
+            else:
+                acc["doc_only"] += 1
+                tier = "A referenced (evidence target is a document)"
 
         detail_rows.append(
             [
@@ -355,6 +364,7 @@ never analyzed it.
             v["B"],
             v["C"],
             "UNKNOWN",
+            v["cfg_only"],
             v["doc_only"],
             v["none"],
         ]
@@ -379,11 +389,14 @@ framework requirement is satisfied.
 | **C tested** | That source file also carries a test edge | B, and the target has `(:File)-[:TESTED_BY]->()` |
 | **D externally verified** | Independent third-party attestation | **UNKNOWN for every control.** No artifact in this repository records external verification, so this tier cannot be computed and is never inferred |
 
-Two failure modes are reported explicitly rather than being folded into a tier:
+Three failure modes are reported explicitly rather than being folded into a tier:
 
 - **evidence target is a document** — the control cites another `.md`, not an
   implementation. Counting these as "implemented" is the single easiest way to
   overclaim compliance, so they are broken out.
+- **evidence target is configuration**: the control cites only configuration
+  (`{"`, `".join(sorted(CONFIG_EXT))}`). Real evidence of *something*, but not
+  source code, so it stays below tier B and is not mislabelled a document.
 - **no evidence target** — cited in prose with no resolvable file reference.
 
 ## Per-framework summary
@@ -396,6 +409,7 @@ Two failure modes are reported explicitly rather than being folded into a tier:
                 "B implemented",
                 "C tested",
                 "D externally verified",
+                "cited, config-only evidence",
                 "cited, doc-only evidence",
                 "cited, no evidence",
             ],

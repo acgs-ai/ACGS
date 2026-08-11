@@ -212,6 +212,62 @@ def test_glob_to_regex_double_star_prefix_also_matches_the_root_level():
     assert extract.glob_to_regex("**/x.py").match("x.py")
 
 
+def test_negative_path_filters_exclude_explicitly_negated_paths():
+    """REGRESSION. `!` patterns were discarded before matching, so files a
+    workflow explicitly excludes (e.g. `acgi-ai/infra/**`) still received
+    GATES edges and the governance reports claimed CI coverage that will
+    never run for those changes."""
+    filters = extract.compile_path_filters(
+        ["acgi-ai/**", "!acgi-ai/infra/**", "!acgi-ai/DEPLOY.md"]
+    )
+
+    assert extract.match_path_filters("acgi-ai/src/App.tsx", filters) is True
+    assert extract.match_path_filters("acgi-ai/infra/main.tf", filters) is False
+    assert extract.match_path_filters("acgi-ai/DEPLOY.md", filters) is False
+
+
+def test_path_filters_are_evaluated_in_order_with_the_last_match_winning():
+    """GitHub Actions semantics: a positive pattern after a negative one
+    re-includes the path."""
+    filters = extract.compile_path_filters(["src/**", "!src/vendor/**", "src/vendor/keep.py"])
+
+    assert extract.match_path_filters("src/vendor/keep.py", filters) is True
+    assert extract.match_path_filters("src/vendor/other.py", filters) is False
+    assert extract.match_path_filters("unrelated.py", filters) is False
+
+
+def test_build_workflows_applies_negative_filters_when_minting_gates_edges(
+    tmp_path, monkeypatch
+):
+    pytest.importorskip("yaml")
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "marketing.yml").write_text(
+        "name: marketing\n"
+        "on:\n"
+        "  push:\n"
+        "    paths:\n"
+        "      - 'acgi-ai/**'\n"
+        "      - '!acgi-ai/infra/**'\n"
+        "jobs:\n"
+        "  build:\n"
+        "    steps: []\n"
+    )
+    _files(".github/workflows/marketing.yml", "acgi-ai/src/App.tsx", "acgi-ai/infra/main.tf")
+
+    extract.build_workflows(["acgi-ai/src/App.tsx", "acgi-ai/infra/main.tf"])
+
+    assert ("GATES", "Workflow", "marketing", "File", "acgi-ai/src/App.tsx") in extract.G.rels
+    assert (
+        "GATES",
+        "Workflow",
+        "marketing",
+        "File",
+        "acgi-ai/infra/main.tf",
+    ) not in extract.G.rels
+
+
 # --------------------------------------------------------------------------- #
 # Compliance control ids
 # --------------------------------------------------------------------------- #
@@ -341,6 +397,27 @@ def test_resolve_token_extracts_a_trailing_line_number():
         139,
         "path",
     )
+
+
+def test_code_token_captures_the_line_suffix_inside_the_token():
+    """REGRESSION. The `:line` suffix sat outside the capture group, so
+    findall() returned only `receipt.py` and every EVIDENCED_BY.cited_line
+    was None; range citations failed to match at all."""
+    text = "see `receipt.py:141`, `receipt.py:132\u2013133`, `plain.py:10-12` and `audit.py`"
+
+    assert extract.CODE_TOKEN.findall(text) == [
+        "receipt.py:141",
+        "receipt.py:132\u2013133",
+        "plain.py:10-12",
+        "audit.py",
+    ]
+
+
+@pytest.mark.parametrize("token", ["src/receipt.py:132\u2013133", "src/receipt.py:132-133"])
+def test_resolve_token_reads_a_line_range_as_its_starting_line(token):
+    _files("src/receipt.py")
+
+    assert extract.resolve_token("docs/x.md", token) == ("src/receipt.py", 132, "path")
 
 
 def test_resolve_token_gives_up_on_an_unresolvable_explicit_path():
@@ -573,6 +650,30 @@ def test_initialized_submodules_tolerates_a_git_failure(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# Dirty-path snapshot parsing
+# --------------------------------------------------------------------------- #
+def test_porcelain_paths_selects_the_destination_of_a_rename():
+    """REGRESSION. Slicing the space-separated v1 line at character three
+    turned a rename record into `old.py -> new.py`, a key matching no File
+    node, so the renamed destination never received dirty_at_extract and Q7
+    silently omitted ADRs governing that changed file."""
+    raw = "R  new.py\0old.py\0 M other.py\0?? untracked.txt\0"
+
+    assert extract.porcelain_paths(raw) == ["new.py", "other.py", "untracked.txt"]
+
+
+def test_porcelain_paths_reads_nul_terminated_paths_with_spaces_unquoted():
+    raw = "?? some dir/a file.txt\0M  src/plain.py\0"
+
+    assert extract.porcelain_paths(raw) == ["some dir/a file.txt", "src/plain.py"]
+
+
+def test_porcelain_paths_handles_copies_and_empty_output():
+    assert extract.porcelain_paths("") == []
+    assert extract.porcelain_paths("C  copy.py\0original.py\0") == ["copy.py"]
+
+
+# --------------------------------------------------------------------------- #
 # ADR layer
 # --------------------------------------------------------------------------- #
 def test_build_adrs_extracts_title_status_and_date(tmp_path, monkeypatch):
@@ -729,6 +830,21 @@ def test_build_controls_binds_a_control_to_the_code_cited_beside_it(tmp_path, mo
     ]
     assert evidence["props"]["resolved_by"] == "path"
     assert extract.CONTROL_STATS["evidence_links"] == 1
+
+
+def test_build_controls_preserves_the_cited_line_on_the_evidence_edge(tmp_path, monkeypatch):
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    doc = tmp_path / "docs" / "compliance-mapping.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text("| Art. 12(1) | implemented in `packages/gove-zone/audit.py:141` |\n")
+    _files("docs/compliance-mapping.md", "packages/gove-zone/audit.py")
+
+    extract.build_controls()
+
+    evidence = extract.G.rels[
+        ("EVIDENCED_BY", "Control", "EU AI Act Art 12(1)", "File", "packages/gove-zone/audit.py")
+    ]
+    assert evidence["props"]["cited_line"] == 141
 
 
 def test_build_controls_records_a_bare_basename_resolution_as_weaker_evidence(

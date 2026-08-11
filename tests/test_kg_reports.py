@@ -226,7 +226,10 @@ def test_control_with_no_evidence_target_says_so(run_reports):
     assert "| SOC 2 CC7.2 | SOC 2 | A referenced (no evidence target) |" in tiers
 
 
-def test_config_evidence_is_counted_separately_from_source(run_reports):
+def test_config_only_evidence_is_labelled_configuration_not_document(run_reports):
+    """A cited `.yml` is neither a `.md` target nor source code. Calling it a
+    document contradicts the report's own definition of document evidence; it
+    still stays below tier B because source code remains required."""
     _, _, tiers, _ = run_reports(
         controls=[
             _control(
@@ -237,8 +240,10 @@ def test_config_evidence_is_counted_separately_from_source(run_reports):
         ]
     )
 
-    # config-only evidence is not source, so the control stays doc-only tiered
-    assert "A referenced (evidence target is a document)" in tiers
+    assert "| SOC 2 CC7.2 | SOC 2 | A referenced (evidence target is configuration) |" in tiers
+    detail = tiers.split("## Per-control detail")[1]
+    assert "evidence target is a document" not in detail
+    assert "B implemented" not in detail
 
 
 def test_evidence_rows_without_a_key_are_discarded(run_reports):
@@ -273,14 +278,16 @@ def test_per_framework_summary_counts_each_tier(run_reports):
             _control("EU AI Act Art 12(1)", [_ev("a.py", ".py")]),
             _control("EU AI Act Art 14(4)", [_ev("b.py", ".py")]),
             _control("EU AI Act Art 15(1)", [_ev("docs/x.md", ".md")]),
-            _control("EU AI Act Art 16(1)", []),
+            _control("EU AI Act Art 16(1)", [_ev("configs/policy.yaml", ".yaml")]),
+            _control("EU AI Act Art 17(1)", []),
         ],
         tested=["a.py"],
     )
 
     summary = tiers.split("## Per-framework summary")[1].split("## Per-control detail")[0]
-    # A referenced=4, B implemented=2, C tested=1, D UNKNOWN, doc-only=1, no evidence=1
-    assert "| EU AI Act | 4 | 2 | 1 | UNKNOWN | 1 | 1 |" in summary
+    # A=5, B implemented=2, C tested=1, D UNKNOWN,
+    # config-only=1, doc-only=1, no evidence=1
+    assert "| EU AI Act | 5 | 2 | 1 | UNKNOWN | 1 | 1 | 1 |" in summary
 
 
 def test_detail_rows_are_sorted_by_framework_then_control(run_reports):

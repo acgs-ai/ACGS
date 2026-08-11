@@ -12,6 +12,18 @@ from __future__ import annotations
 import argparse
 import os
 
+# "Code evidence" means source code. Keep in lockstep with CODE_EXT in
+# reports.py and the Q6/Q6b filters in queries.cypher.
+SOURCE_EXT = "['.py', '.pyi', '.ts', '.tsx', '.js', '.mjs', '.cjs', '.rs', '.sh']"
+
+# build_sealed() records lock entries for uninitialized submodules as
+# Package.sealed_files_absent instead of minting phantom :File nodes, so a
+# non-recursive checkout legitimately has zero sealed File nodes.
+SEALED_ABSENT_Q = (
+    "MATCH (p:Package) WHERE p.sealed_files_absent IS NOT NULL "
+    "RETURN sum(p.sealed_files_absent) AS absent"
+)
+
 CHECKS = [
     (
         "constraints",
@@ -69,7 +81,9 @@ CATALOG = [
     ),
     (
         "Q6 compliance controls with no code evidence",
-        "MATCH (d:File)-[:MAPS_TO]->(c:Control) WHERE NOT (c)-[:EVIDENCED_BY]->() "
+        "MATCH (d:File)-[:MAPS_TO]->(c:Control) "
+        "WHERE NOT EXISTS { MATCH (c)-[:EVIDENCED_BY]->(e:File) "
+        f"WHERE e.ext IN {SOURCE_EXT} }} "
         "RETURN c.framework AS framework, count(DISTINCT c) AS no_evidence "
         "ORDER BY no_evidence DESC",
     ),
@@ -123,13 +137,29 @@ def main() -> int:
                 r = rows[0]
                 if r["files"] == 0:
                     failures.append("no File nodes")
-                if r["joined_both"] < 0.25 * r["files"]:
+                if r["with_semantic"] == 0:
+                    # build_semantic() skips when no snapshot is tracked (fresh
+                    # clone: .understand-anything/ is ignored). That is a
+                    # declared absence, not a broken path-key join.
+                    print("    (no semantic snapshot loaded: join threshold not applicable)")
+                elif r["joined_both"] < 0.25 * r["files"]:
                     failures.append(
                         f"join health: only {r['joined_both']}/{r['files']} files carry "
                         "both semantic and git facts — path keys are not unifying"
                     )
                 if r["sealed"] == 0:
-                    failures.append("no sealed files linked")
+                    # A non-recursive checkout has no live markers: the lock
+                    # entries live on Package.sealed_files_absent instead of
+                    # :File nodes. Only fail when neither state is present.
+                    row = s.run(SEALED_ABSENT_Q).single()
+                    absent = (row["absent"] if row else 0) or 0
+                    if absent:
+                        print(
+                            f"    (0 sealed File nodes; {absent} lock entries recorded "
+                            "as absent markers on uninitialized submodules)"
+                        )
+                    else:
+                        failures.append("no sealed files linked")
 
         print("\n\n########## CATALOG QUERIES ##########")
         nonempty = 0

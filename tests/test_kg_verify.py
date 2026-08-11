@@ -28,7 +28,11 @@ def run_verify(monkeypatch):
     """Run ``verify.main()`` with canned join-health rows and catalog hits."""
 
     def _run(
-        join_row: dict, *, catalog_hits: int = len(verify.CATALOG), argv: tuple[str, ...] = ()
+        join_row: dict,
+        *,
+        catalog_hits: int = len(verify.CATALOG),
+        absent_lock_entries: int = 0,
+        argv: tuple[str, ...] = (),
     ):
         catalog_queries = [q for _, q in verify.CATALOG]
         answered = set(catalog_queries[:catalog_hits])
@@ -36,6 +40,8 @@ def run_verify(monkeypatch):
         def responder(query: str) -> list[dict]:
             if query.startswith("MATCH (f:File) RETURN count(*) AS files"):
                 return [join_row]
+            if query == verify.SEALED_ABSENT_Q:
+                return [{"absent": absent_lock_entries}]
             if query in answered:
                 return [{"col": "value"}]
             if query in catalog_queries:
@@ -120,6 +126,34 @@ def test_a_graph_with_no_sealed_files_fails(run_verify, capsys):
 
     assert code == 1
     assert "FAIL: no sealed files linked" in capsys.readouterr().out
+
+
+def test_absent_marker_lock_entries_satisfy_the_sealed_check(run_verify, capsys):
+    """A non-recursive checkout has zero sealed :File nodes by design:
+    build_sealed records the lock entries as Package.sealed_files_absent.
+    Failing on sealed == 0 would fail every ordinary `make all` run."""
+    code, _ = run_verify({**HEALTHY_JOIN, "sealed": 0}, absent_lock_entries=17)
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "17 lock entries recorded" in out
+    assert "VERIFY: PASS" in out
+
+
+def test_a_declared_absent_semantic_layer_skips_the_join_threshold(run_verify, capsys):
+    """build_semantic() skips when no knowledge-graph.json is tracked (fresh
+    clone). joined_both is then necessarily zero, which is a declared absence,
+    not broken path-key joins; the gate must not fail `make all` for it."""
+    code, _ = run_verify({**HEALTHY_JOIN, "with_semantic": 0, "joined_both": 0})
+
+    assert code == 0
+    assert "join threshold not applicable" in capsys.readouterr().out
+
+
+def test_a_present_semantic_layer_still_enforces_the_join_threshold(run_verify):
+    """The skip is only for a declared absence: one analyzed file with a bad
+    join ratio is exactly the failure this script exists to catch."""
+    assert run_verify({**HEALTHY_JOIN, "with_semantic": 1, "joined_both": 1})[0] == 1
 
 
 def test_mostly_empty_catalog_queries_fail(run_verify, capsys):

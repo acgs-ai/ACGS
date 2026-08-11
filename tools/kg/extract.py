@@ -734,7 +734,10 @@ PATH_TOKEN = re.compile(r"`([\w./@-]+/[\w./@-]+)`")
 MD_LINK = re.compile(r"\[[^\]]*\]\(([^)\s#]+)")
 
 
-CODE_TOKEN = re.compile(r"`([\w./@-]+\.[A-Za-z0-9]{1,6})(?::\d+)?`")
+# The optional `:line` / `:start-end` suffix is INSIDE the capture group so
+# findall() returns the full token and resolve_token() can record the cited
+# line. Mapping docs write ranges with a hyphen or an en dash (\u2013).
+CODE_TOKEN = re.compile(r"`([\w./@-]+\.[A-Za-z0-9]{1,6}(?::\d+(?:[-\u2013]\d+)?)?)`")
 _BASENAME_INDEX: dict[str, list[str]] = {}
 
 
@@ -782,7 +785,9 @@ def resolve_token(src: str, token: str) -> tuple[str | None, int | None, str | N
     same document names elsewhere). None when unresolved.
     """
     line = None
-    m = re.match(r"^(.*?):(\d+)$", token)
+    # A range citation ("receipt.py:132-133", en dash included) resolves to
+    # its first line: cited_line points at where the evidence starts.
+    m = re.match(r"^(.*?):(\d+)(?:[-\u2013]\d+)?$", token)
     if m:
         token, line = m.group(1), int(m.group(2))
     hit = resolve_link(src, token)
@@ -1058,6 +1063,25 @@ def glob_to_regex(g: str) -> re.Pattern:
     return re.compile("".join(out))
 
 
+def compile_path_filters(patterns: list[str]) -> list[tuple[re.Pattern, bool]]:
+    """Compile a workflow `paths` list, keeping `!` exclusions and their order."""
+    return [
+        (glob_to_regex(p[1:] if p.startswith("!") else p), p.startswith("!")) for p in patterns
+    ]
+
+
+def match_path_filters(path: str, filters: list[tuple[re.Pattern, bool]]) -> bool:
+    """GitHub Actions `paths` semantics: patterns are evaluated in order and
+    the LAST matching pattern wins. Dropping the negative patterns (the old
+    behavior) minted GATES edges for paths a workflow explicitly excludes,
+    e.g. `acgi-ai/infra/**` under a filter list that negates it."""
+    verdict = False
+    for pattern, negated in filters:
+        if pattern.match(path):
+            verdict = not negated
+    return verdict
+
+
 def build_workflows(files: list[str]) -> None:
     try:
         import yaml
@@ -1082,12 +1106,14 @@ def build_workflows(files: list[str]) -> None:
         if isinstance(on, list):
             on = {k: {} for k in on}
         triggers = sorted(str(k) for k in on)
-        globs: list[str] = []
+        # One ordered filter list per triggering event: push and pull_request
+        # may declare different filters, and order matters within each.
+        filter_lists: list[list[str]] = []
         for ev in ("push", "pull_request"):
             cfg = on.get(ev) or {}
-            if isinstance(cfg, dict):
-                globs += [g for g in (cfg.get("paths") or []) if not g.startswith("!")]
-        globs = sorted(set(globs))
+            if isinstance(cfg, dict) and cfg.get("paths"):
+                filter_lists.append([str(g) for g in cfg["paths"]])
+        globs = sorted({g for fl in filter_lists for g in fl})
         jobs = sorted((doc.get("jobs") or {}).keys())
         wkey = doc.get("name") or f.stem
         G.node(
@@ -1103,11 +1129,11 @@ def build_workflows(files: list[str]) -> None:
             path_filtered=bool(globs),
         )
         G.rel("DEFINED_IN", "Workflow", wkey, "File", rel)
-        if not globs:
+        if not filter_lists:
             continue
-        pats = [glob_to_regex(g) for g in globs]
+        compiled = [compile_path_filters(fl) for fl in filter_lists]
         for path in files:
-            if any(p.match(path) for p in pats):
+            if any(match_path_filters(path, filters) for filters in compiled):
                 G.rel("GATES", "Workflow", wkey, "File", path)
                 gates += 1
     log(
@@ -1142,11 +1168,34 @@ def build_policies() -> None:
     log(f"E6. policies: {n}")
 
 
+def porcelain_paths(raw: str) -> list[str]:
+    """Working-tree paths from ``git status --porcelain -z``.
+
+    The NUL-terminated form is the machine-readable one: paths are never
+    quoted, and a rename/copy record is ``XY <destination>`` NUL ``<origin>``
+    NUL. Slicing the space-separated v1 line at character three produced
+    ``old.py -> new.py``, a string matching no ``File.key``, so the renamed
+    destination silently never received ``dirty_at_extract``. The destination
+    pathname is the one that exists in the working tree, so it is the one
+    recorded; the origin record is consumed and dropped.
+    """
+    paths: list[str] = []
+    entries = iter(raw.split("\0"))
+    for entry in entries:
+        if not entry:
+            continue
+        status, path = entry[:2], entry[3:]
+        paths.append(path)
+        if "R" in status or "C" in status:
+            next(entries, None)  # the origin path of a rename/copy record
+    return paths
+
+
 # --------------------------------------------------------------------------- #
 def main() -> int:
     head = run("git", "rev-parse", "HEAD").strip()
     branch = run("git", "rev-parse", "--abbrev-ref", "HEAD").strip()
-    dirty = [l[3:] for l in run("git", "status", "--porcelain").splitlines()]
+    dirty = porcelain_paths(run("git", "status", "--porcelain", "-z"))
     ua_meta = json.loads(UA_META.read_text()) if UA_META.exists() else {}
     snapshot_key = head[:12]
     G.node(

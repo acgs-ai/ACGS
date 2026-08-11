@@ -62,17 +62,29 @@ RETURN f.key AS file, f.hotspot AS hotspot, f.churn AS churn,
 ORDER BY hotspot DESC LIMIT 20;
 
 // --- Q6. Compliance chain breaks: control cited but no code evidence ------
+// "Code evidence" means a source-code target (same extension set as the tier
+// report in reports.py). A control whose only evidence is a .md or config
+// file has no source implementation and must still surface here.
 MATCH (d:File)-[:MAPS_TO]->(ctl:Control)
-WHERE NOT (ctl)-[:EVIDENCED_BY]->()
+WHERE NOT EXISTS {
+  MATCH (ctl)-[:EVIDENCED_BY]->(e:File)
+  WHERE e.ext IN ['.py', '.pyi', '.ts', '.tsx', '.js', '.mjs', '.cjs', '.rs', '.sh']
+}
 RETURN ctl.framework AS framework, count(DISTINCT ctl) AS controls_without_evidence,
        collect(DISTINCT ctl.key)[0..8] AS examples
 ORDER BY controls_without_evidence DESC;
 
 // --- Q6b. Full evidence chain for one framework ---------------------------
+// code_evidence_files is restricted to source targets; doc/config citations
+// are collected separately so they cannot masquerade as implementations.
 MATCH (doc:File)-[:MAPS_TO]->(ctl:Control {framework: 'EU AI Act'})
 OPTIONAL MATCH (ctl)-[:EVIDENCED_BY]->(code:File)
+  WHERE code.ext IN ['.py', '.pyi', '.ts', '.tsx', '.js', '.mjs', '.cjs', '.rs', '.sh']
+OPTIONAL MATCH (ctl)-[:EVIDENCED_BY]->(other:File)
+  WHERE NOT other.ext IN ['.py', '.pyi', '.ts', '.tsx', '.js', '.mjs', '.cjs', '.rs', '.sh']
 RETURN ctl.key AS control, collect(DISTINCT doc.key) AS mapping_docs,
-       collect(DISTINCT code.key) AS evidence_files
+       collect(DISTINCT code.key) AS code_evidence_files,
+       collect(DISTINCT other.key) AS non_code_evidence_files
 ORDER BY control;
 
 // --- Q7. ADR reach: decisions touching code that is dirty right now --------
