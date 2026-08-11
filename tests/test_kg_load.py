@@ -4,7 +4,8 @@ The loader never runs in CI, so nothing else pins its behaviour. Three things
 here are easy to break silently: the schema splitter (prose comments in
 ``schema.cypher`` legitimately contain ``;``, so comments must be stripped
 *before* splitting), the label grouping that turns extra labels into a
-``SET n:`X``` suffix, and the ``--wipe`` drain loop. A stub driver stands in for
+``SET n:`X``` suffix, and the wipe drain loop — which must run by DEFAULT,
+because MERGE/SET never remove stale graph data. A stub driver stands in for
 Neo4j; no live service is required.
 """
 
@@ -87,7 +88,7 @@ def test_schema_comments_are_stripped_before_splitting_on_semicolons(run_load):
         "CREATE INDEX file_pkg IF NOT EXISTS FOR (n:File) ON (n.package);\n"
     )
 
-    _, driver, _ = run_load(_graph(), schema=schema)
+    _, driver, _ = run_load(_graph(), "--no-wipe", schema=schema)
 
     statements = [q for q, _ in driver.sessions[0].calls]
     assert len(statements) == 2
@@ -96,7 +97,7 @@ def test_schema_comments_are_stripped_before_splitting_on_semicolons(run_load):
 
 
 def test_blank_statements_between_semicolons_are_skipped(run_load):
-    _, driver, _ = run_load(_graph(), schema="CREATE CONSTRAINT a;\n\n;\n")
+    _, driver, _ = run_load(_graph(), "--no-wipe", schema="CREATE CONSTRAINT a;\n\n;\n")
 
     assert [q for q, _ in driver.sessions[0].calls] == ["CREATE CONSTRAINT a"]
 
@@ -164,8 +165,20 @@ def test_wipe_drains_until_the_delete_batch_returns_zero(run_load):
     assert "LIMIT 20000" in deletes[0]
 
 
-def test_wipe_is_not_run_without_the_flag(run_load):
-    _, driver, _ = run_load(_graph())
+def test_a_default_load_wipes_the_existing_graph_first(run_load):
+    """REGRESSION. MERGE and SET += only add or update: a default (flagless)
+    reload after moving to another commit left the previous Snapshot node
+    alongside the new one — while reports.py assumes exactly one — and
+    retained deleted files and obsolete governance edges indefinitely.
+    Replacement must be the default, not an opt-in."""
+    _, driver, _ = run_load(_graph(), wipe_counts=[42, 0])
+
+    deletes = [q for q, _ in driver.sessions[0].calls if "DETACH DELETE" in q]
+    assert len(deletes) == 2
+
+
+def test_no_wipe_opts_out_of_the_default_replacement(run_load):
+    _, driver, _ = run_load(_graph(), "--no-wipe")
 
     assert not any("DETACH DELETE" in q for q, _ in driver.sessions[0].calls)
 

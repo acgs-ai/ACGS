@@ -4,7 +4,7 @@
 Passing here means the layers actually joined — not merely that the container
 is up. Exit code 1 if any hard check fails.
 
-    uv run --with neo4j python tools/kg/verify.py
+    uv run --no-project --with neo4j python tools/kg/verify.py
 """
 
 from __future__ import annotations

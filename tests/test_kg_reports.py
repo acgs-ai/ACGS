@@ -17,6 +17,7 @@ in this one module, and all of them fail silently if broken —
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -433,6 +434,30 @@ def test_control_plane_section_derives_its_wording_from_analyzed_rows(run_report
     assert "Every row above is" not in hotspot
     assert "1 of the 2 rows above are" in hotspot
     assert "The other 1\n  rows carry semantic analysis" in hotspot
+
+
+def test_test_evidence_queries_ignore_deleted_targets():
+    """REGRESSION. When the semantic snapshot predates a test file's deletion,
+    the TESTED_BY edge survives pointing at a File marked present=false. The
+    unfiltered edge counts classified the source as tested in both reports and
+    could promote compliance evidence to Tier C on a test the extracted
+    working tree no longer contains. Every test-evidence query must restrict
+    to live targets (nodes without the flag, e.g. Symbols, stay countable)."""
+    for query in (reports.HOTSPOT_Q, reports.CONTROL_PLANE_Q, reports.TESTED_Q):
+        match = re.search(r"TESTED_BY]->\((\w+)\)", query)
+        assert match, f"query no longer binds its TESTED_BY target:\n{query}"
+        assert f"coalesce({match.group(1)}.present, true)" in query
+
+
+def test_regenerate_guidance_isolates_uv_from_the_root_workspace(run_reports):
+    """REGRESSION. Without --no-project, `uv run` discovers the root uv
+    workspace and fails in a non-recursive checkout on uninitialized submodule
+    members (packages/acgs-lite has no pyproject.toml there) before reports.py
+    even starts — the documented regeneration path led to an error."""
+    _, hotspot, tiers, _ = run_reports()
+
+    for document in (hotspot, tiers):
+        assert "uv run --no-project --with neo4j python reports.py" in document
 
 
 def test_provenance_names_the_commit_branch_and_staleness(run_reports):

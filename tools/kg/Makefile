@@ -2,7 +2,10 @@
 # All targets are local-only; nothing here touches CI or the parent gates.
 SHELL := /bin/bash
 COMPOSE ?= docker compose
-PY ?= uv run --with neo4j --with pyyaml python
+# --no-project keeps uv out of the root workspace: in a non-recursive checkout
+# workspace discovery fails on uninitialized submodule members (e.g.
+# packages/acgs-lite has no pyproject.toml) before the script even starts.
+PY ?= uv run --no-project --with neo4j --with pyyaml python
 NEO4J_PASSWORD ?= acgs-kg-local
 export NEO4J_PASSWORD
 

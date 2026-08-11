@@ -5,7 +5,7 @@ Deterministic: same graph in, same bytes out. Nothing is stamped from the wall
 clock — provenance comes from the (:Snapshot) node, so a report can always be
 traced to the commit and extraction it was computed from.
 
-    uv run --with neo4j python tools/kg/reports.py
+    uv run --no-project --with neo4j python tools/kg/reports.py
 
 Writes:
     docs/governance/reports/cross-repo-hotspot-report.md
@@ -67,10 +67,16 @@ def governance_coverage(rec: dict) -> str:
     return ", ".join(bits) if bits else "none observed"
 
 
+# Test evidence must point at a live target: a semantic snapshot predating a
+# test file's deletion keeps the TESTED_BY edge, but its target carries
+# present=false and the extracted working tree no longer contains the test.
+# Counting it would report deleted tests as coverage (and, in the tier report,
+# promote compliance evidence to Tier C on the strength of a deleted file).
 HOTSPOT_Q = """
 MATCH (f:File)
 WHERE f.tracked AND f.commit_count IS NOT NULL
-OPTIONAL MATCH (f)-[t:TESTED_BY]->()
+OPTIONAL MATCH (f)-[t:TESTED_BY]->(tt)
+  WHERE coalesce(tt.present, true)
 WITH f, count(t) AS test_edges
 OPTIONAL MATCH (w:Workflow)-[g:GATES]->(f)
   WHERE 'pull_request' IN coalesce(g.events, [])
@@ -95,7 +101,8 @@ MATCH (f:File)
 WHERE f.key STARTS WITH 'packages/acgs-control-plane/'
   AND (f.key CONTAINS 'migration' OR f.key CONTAINS '/app.py'
        OR f.key CONTAINS 'tenant' OR f.key CONTAINS 'native')
-OPTIONAL MATCH (f)-[t:TESTED_BY]->()
+OPTIONAL MATCH (f)-[t:TESTED_BY]->(tt)
+  WHERE coalesce(tt.present, true)
 WITH f, count(t) AS test_edges
 OPTIONAL MATCH (w:Workflow)-[g:GATES]->(f)
   WHERE 'pull_request' IN coalesce(g.events, [])
@@ -148,7 +155,9 @@ ORDER BY framework ASC, control ASC
 """
 
 TESTED_Q = """
-MATCH (f:File)-[:TESTED_BY]->() RETURN collect(DISTINCT f.key) AS tested
+MATCH (f:File)-[:TESTED_BY]->(tt)
+WHERE coalesce(tt.present, true)
+RETURN collect(DISTINCT f.key) AS tested
 """
 
 RESOLUTION_Q = """
@@ -216,7 +225,7 @@ def main() -> int:
         f"{cov['analyzed']}/{cov['files']} tracked files analyzed. "
         f"{submodule_note}\n>\n"
         f"> Regenerate: `cd tools/kg && make reload && "
-        f"uv run --with neo4j python reports.py`\n"
+        f"uv run --no-project --with neo4j python reports.py`\n"
     )
 
     # ---------------- Report 1: cross-repo hotspots ----------------

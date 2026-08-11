@@ -469,7 +469,11 @@ def build_history(commits: list[dict]) -> None:
             s["commits"] += 1
             s["add"] += add
             s["dele"] += dele
-            s["authors"].add(c["author"])
+            # The same stable key Author nodes use below: display names are
+            # not identities (one email has committed here as both MartinLyu
+            # and dislovelhl), and counting names inflated author_count and
+            # hid single-author files from the bus-factor query (Q11).
+            s["authors"].add(c["email"])
             s["last"] = max(s["last"] or 0, c["ts"])
             s["first"] = min(s["first"] or c["ts"], c["ts"])
         if 1 < len(c["files"]) <= COCHANGE_MAX_FILES:
@@ -920,6 +924,11 @@ def build_adrs() -> None:
             "Unknown",
         )
         dt = re.search(r"^##\s+Date\s*\n+([0-9]{4}-[0-9]{2}-[0-9]{2})", text, re.M)
+        # The list-style metadata block pairs `- Status:` with `- Date:`
+        # (e.g. docs/adr/0008). Recognising only the `## Date` heading kept
+        # extracting the corrected status while silently dropping the date.
+        if not dt:
+            dt = re.search(r"^\s*[-*]\s*Date:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})", text, re.M)
         num = re.match(r"(\d{4})", f.stem)
         akey = f"ADR-{num.group(1)}" if num else f.stem
         G.node(
@@ -1170,6 +1179,13 @@ def build_workflows(files: list[str]) -> None:
         globs = sorted({g for fl in filters_by_event.values() for g in fl})
         jobs = sorted((doc.get("jobs") or {}).keys())
         wkey = doc.get("name") or f.stem
+        # path_filters is a sorted union kept for cross-event overviews; it
+        # loses both event association and pattern order, so each event's
+        # filter list is also published verbatim (path_filters_push,
+        # path_filters_pull_request). Without those, Q1 showed a push-only
+        # deploy filter beside a PR-only filter with no way to tell which
+        # event actually gates a given path.
+        per_event = {f"path_filters_{ev}": fl for ev, fl in filters_by_event.items()}
         G.node(
             "Workflow",
             wkey,
@@ -1181,6 +1197,7 @@ def build_workflows(files: list[str]) -> None:
             jobs=jobs,
             job_count=len(jobs),
             path_filtered=bool(globs),
+            **per_event,
         )
         G.rel("DEFINED_IN", "Workflow", wkey, "File", rel)
         if not filters_by_event:

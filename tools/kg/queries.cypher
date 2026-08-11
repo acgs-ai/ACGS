@@ -14,9 +14,14 @@ RETURN s.git_head AS head, s.git_branch AS branch, s.ua_commit AS semantic_commi
 
 // --- Q1. Which CI workflows gate the file I am about to edit? -------------
 // Swap the path. Zero rows = the change ships with no path-filtered PR gate.
+// The edge's `events` says which trigger(s) actually gate THIS path, and the
+// per-event filter list keeps declaration order (the sorted union in
+// w.path_filters loses both, so a push-only deploy filter was displayed
+// beside a PR-only filter with no way to tell which event gates the path).
 MATCH (w:Workflow)-[g:GATES]->(f:File {key: 'packages/gove-zone/src/gove_zone/gateway.py'})
 WHERE 'pull_request' IN coalesce(g.events, [])
-RETURN w.name AS workflow, w.path_filters AS filters, w.jobs AS jobs;
+RETURN w.name AS workflow, g.events AS gating_events,
+       w.path_filters_pull_request AS pull_request_filters, w.jobs AS jobs;
 
 // --- Q2. Ungated source: code with no path-filtered PR workflow ------------
 MATCH (f:File)

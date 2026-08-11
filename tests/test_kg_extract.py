@@ -351,6 +351,43 @@ def test_build_workflows_preserves_the_triggering_event_on_each_gates_edge(
     assert pr_gate["props"]["events"] == ["pull_request"]
 
 
+def test_build_workflows_publishes_each_events_filter_list_in_declaration_order(
+    tmp_path, monkeypatch
+):
+    """REGRESSION. Workflow.path_filters is a sorted union across events, so
+    when push and pull_request declare different filters the published catalog
+    lost both the event association and the pattern order (order decides which
+    `!` exclusion wins). Each event's list must also ship verbatim."""
+    pytest.importorskip("yaml")
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "deploy.yml").write_text(
+        "name: deploy\n"
+        "on:\n"
+        "  push:\n"
+        "    paths:\n"
+        "      - 'packages/analyzer/**'\n"
+        "      - '!packages/analyzer/docs/**'\n"
+        "  pull_request:\n"
+        "    paths:\n"
+        "      - 'deploy/**'\n"
+        "jobs:\n"
+        "  build:\n"
+        "    steps: []\n"
+    )
+    _files(".github/workflows/deploy.yml")
+
+    extract.build_workflows([])
+
+    props = extract.G.nodes[("Workflow", "deploy")]["props"]
+    assert props["path_filters_push"] == [
+        "packages/analyzer/**",
+        "!packages/analyzer/docs/**",
+    ]
+    assert props["path_filters_pull_request"] == ["deploy/**"]
+
+
 # --------------------------------------------------------------------------- #
 # Compliance control ids
 # --------------------------------------------------------------------------- #
@@ -804,6 +841,33 @@ def test_initialized_submodules_tolerates_a_git_failure(monkeypatch):
     assert extract.initialized_submodules() == []
 
 
+def test_build_history_counts_contributors_by_the_graphs_stable_author_key():
+    """REGRESSION. author_count accumulated display names while Author nodes
+    key on email, so one identity that changed its name (hello@acgs.ai has
+    commits as both MartinLyu and dislovelhl) counted as two contributors,
+    inflating the count and hiding the file from the single-author bus-factor
+    query (Q11)."""
+    _files("packages/gove-zone/src/gove_zone/sandbox.py")
+    commit = {
+        "sha": "a" * 40,
+        "ts": 1_700_000_000,
+        "subject": "x",
+        "repo": ".",
+        "files": {"packages/gove-zone/src/gove_zone/sandbox.py": (1, 0)},
+    }
+
+    extract.build_history(
+        [
+            {**commit, "author": "MartinLyu", "email": "hello@acgs.ai"},
+            {**commit, "sha": "b" * 40, "author": "dislovelhl", "email": "hello@acgs.ai"},
+        ]
+    )
+
+    props = extract.G.nodes[("File", "packages/gove-zone/src/gove_zone/sandbox.py")]["props"]
+    assert props["commit_count"] == 2
+    assert props["author_count"] == 1
+
+
 # --------------------------------------------------------------------------- #
 # Dirty-path snapshot parsing
 # --------------------------------------------------------------------------- #
@@ -1062,6 +1126,27 @@ def test_build_adrs_reads_a_list_style_status(tmp_path, monkeypatch):
     props = extract.G.nodes[("ADR", "ADR-0008")]["props"]
     assert props["status"] == "Accepted"
     assert props["status_text"] == "Accepted"
+
+
+def test_build_adrs_reads_a_list_style_date(tmp_path, monkeypatch):
+    """REGRESSION. The list-style metadata block pairs `- Status:` with
+    `- Date:` (docs/adr/0008: `- Date: 2026-06-23`), but only a `## Date`
+    heading was recognised: the corrected status was extracted while the date
+    from the very same block was silently dropped."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    adr_dir = tmp_path / "docs" / "adr"
+    adr_dir.mkdir(parents=True)
+    (adr_dir / "0008-authz.md").write_text(
+        "# 0008. Kernel-side principal authz enforcement\n\n"
+        "- Status: Accepted\n"
+        "- Date: 2026-06-23\n\n"
+        "## Context\n\nx\n"
+    )
+    _files("docs/adr/0008-authz.md")
+
+    extract.build_adrs()
+
+    assert extract.G.nodes[("ADR", "ADR-0008")]["props"]["date"] == "2026-06-23"
 
 
 def test_build_adrs_defaults_unknown_status(tmp_path, monkeypatch):
