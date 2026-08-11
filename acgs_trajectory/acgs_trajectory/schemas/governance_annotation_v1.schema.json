@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acgs.ai/schemas/governance_annotation/v1",
+  "title": "governance_annotation/v1",
+  "description": "Deterministic Phase 2 governance annotation. A SEPARATE, rebuildable artifact that references a frozen governance_trajectory/v2 record by digest and never mutates it. Every score, label, and tier carries evidence refs to real trajectory ids. Phase 2 tier ceiling is HARD 'B'.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "annotation_id", "trajectory_ref", "evaluator_version", "scores", "labels", "tier", "evidence", "checks", "integrity"],
+  "properties": {
+    "schema_version": { "const": "governance_annotation/v1" },
+    "annotation_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+
+    "trajectory_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trajectory_id", "normalized_sha256"],
+      "properties": {
+        "trajectory_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "normalized_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+
+    "evaluator_version": { "type": "string" },
+
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engineering_quality_score", "governance_score", "risk_score", "trajectory_score"],
+      "properties": {
+        "engineering_quality_score": { "$ref": "#/$defs/score" },
+        "governance_score": { "$ref": "#/$defs/score" },
+        "risk_score": { "$ref": "#/$defs/score" },
+        "trajectory_score": { "$ref": "#/$defs/score" }
+      }
+    },
+
+    "labels": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engineering", "governance"],
+      "properties": {
+        "engineering": { "type": "array", "items": { "$ref": "#/$defs/label" } },
+        "governance": { "type": "array", "items": { "$ref": "#/$defs/label" } }
+      }
+    },
+
+    "tier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assigned", "ceiling", "candidate_for", "reasons", "evidence"],
+      "properties": {
+        "assigned": { "enum": ["C", "B"] },
+        "ceiling": { "const": "B" },
+        "candidate_for": { "enum": ["S", "A", null] },
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "evidence": { "$ref": "#/$defs/evidence_array" }
+      }
+    },
+
+    "evidence": {
+      "$ref": "#/$defs/evidence_array",
+      "description": "ADR 0003 §1 top-level aggregate: the deterministic union of every evidence ref cited by scores, labels, tier, and checks."
+    },
+
+    "checks": {
+      "type": "object",
+      "description": "Per-check deterministic results (ADR 0003 §3), each with its examined evidence.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["value", "passed", "grounded", "evidence"],
+        "properties": {
+          "value": { "type": "number", "minimum": 0, "maximum": 1 },
+          "passed": { "type": "boolean" },
+          "grounded": { "type": "boolean", "description": "Fix 1: true iff this check's positive signal derives from git-joined code_changes.files (grounded), not author-controlled transcript content." },
+          "evidence": { "$ref": "#/$defs/evidence_array" }
+        }
+      }
+    },
+
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["annotation_sha256", "evaluator_version", "inputs_verified"],
+      "properties": {
+        "annotation_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "evaluator_version": { "type": "string" },
+        "inputs_verified": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["trajectory_status", "normalized_sha256"],
+          "properties": {
+            "trajectory_status": { "enum": ["complete", "incomplete", "quarantined"] },
+            "normalized_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        }
+      }
+    }
+  },
+
+  "$defs": {
+    "evidence_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "ref"],
+      "properties": {
+        "kind": { "enum": ["node", "tool_event", "hook_event", "trajectory"] },
+        "ref": { "type": "string" },
+        "seq": { "type": ["integer", "null"], "minimum": 0 },
+        "raw_line": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "evidence_array": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/evidence_ref" }
+    },
+    "score": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "grounded", "evidence"],
+      "properties": {
+        "value": { "type": "number", "minimum": 0, "maximum": 1 },
+        "grounded": { "type": "boolean", "description": "Fix 1: true iff any grounded (git-joined code_changes.files) check contributed a positive value to this score. false = transcript-influenced only." },
+        "evidence": { "$ref": "#/$defs/evidence_array" }
+      }
+    },
+    "label": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "evidence"],
+      "properties": {
+        "label": { "type": "string" },
+        "evidence": { "$ref": "#/$defs/evidence_array" }
+      }
+    }
+  }
+}

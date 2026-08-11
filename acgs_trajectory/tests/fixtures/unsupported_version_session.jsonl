@@ -1,0 +1,2 @@
+{"sessionId": "sess-0001", "version": "9.9.9", "entrypoint": "cli", "cwd": "/repo", "gitBranch": "master", "userType": "external", "isSidechain": false, "type": "user", "uuid": "u1", "parentUuid": null, "timestamp": "2026-08-06T16:00:00Z", "message": {"role": "user", "content": [{"type": "text", "text": "hi"}]}}
+{"type": "last-prompt", "sessionId": "sess-0001", "lastPrompt": "continue", "leafUuid": "u1"}

@@ -4212,12 +4212,20 @@ def test_environment_identities_exactly_match_assignment(
             validate_environment_identities._validate_marker(
                 "UI", forged_ctime, identity_path, "P6-CONSOLE-002", ui_repo
             )
-    marker_path.write_text(json.dumps(captured["bootstrap_record"]) + "\n", encoding="utf-8")
-    identity_path.write_text(json.dumps(captured) + "\n", encoding="utf-8")
-    (node_modules / "ctime-drift").write_text("drift", encoding="utf-8")
+    # Forge a recorded ctime one nanosecond ahead of the live directory ctime
+    # instead of creating a real file in node_modules: directory timestamps use
+    # the kernel's coarse clock, so a real drift file written within the same
+    # tick as the bootstrap marker leaves st_ctime_ns unchanged and the
+    # mismatch branch would nondeterministically not fire.
+    drifted = copy.deepcopy(captured)
+    drifted["bootstrap_record"]["runtime_ctime_ns"] = str(
+        node_modules.stat().st_ctime_ns + 1
+    )
+    marker_path.write_text(json.dumps(drifted["bootstrap_record"]) + "\n", encoding="utf-8")
+    identity_path.write_text(json.dumps(drifted) + "\n", encoding="utf-8")
     with pytest.raises(_common.EvidenceError, match="ctime changed"):
         validate_environment_identities._validate_marker(
-            "UI", captured, identity_path, "P6-CONSOLE-002", ui_repo
+            "UI", drifted, identity_path, "P6-CONSOLE-002", ui_repo
         )
 
 

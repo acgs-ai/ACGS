@@ -1,0 +1,22 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+# operational artifacts (never commit archives / provenance stores)
+/store/
+*.store/
+.omc/
+# foreign / environment files present at this path — NOT part of this project
+.bashrc
+.bash_profile
+.profile
+.zshrc
+.zprofile
+.gitconfig
+.ripgreprc
+.gitmodules
+.idea/
+.vscode/
+.mcp.json
+.claude/

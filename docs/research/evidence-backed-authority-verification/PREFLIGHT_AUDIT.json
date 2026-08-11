@@ -1,0 +1,253 @@
+{
+ "docker": {
+  "containerd_sock": {
+   "acl": [
+    "user::rw-",
+    "group::rw-",
+    "other::---"
+   ],
+   "agent_writable": false,
+   "exists": true,
+   "mode": "0o660",
+   "owned_by_authority_uid": false,
+   "owner_gid": 0,
+   "owner_group": "root",
+   "owner_uid": 0,
+   "owner_user": "root",
+   "path": "/run/containerd/containerd.sock",
+   "type": "socket"
+  },
+  "docker_info": {
+   "argv": [
+    "docker",
+    "info",
+    "--format",
+    "{{.Name}}|{{.SecurityOptions}}"
+   ],
+   "rc": 0,
+   "stderr": "",
+   "stdout": "fedora|[name=seccomp,profile=builtin name=selinux name=cgroupns]"
+  },
+  "podman_present": true,
+  "rootless": false,
+  "socket": {
+   "acl": [
+    "user::rw-",
+    "group::rw-",
+    "other::---"
+   ],
+   "agent_writable": true,
+   "exists": true,
+   "mode": "0o660",
+   "owned_by_authority_uid": false,
+   "owner_gid": 969,
+   "owner_group": "docker",
+   "owner_uid": 0,
+   "owner_user": "root",
+   "path": "/var/run/docker.sock",
+   "type": "socket"
+  },
+  "socket_connect_reachable": true
+ },
+ "identity": {
+  "cap_effective": {
+   "argv": [
+    "sh",
+    "-c",
+    "grep CapEff /proc/self/status"
+   ],
+   "rc": 0,
+   "stderr": "",
+   "stdout": "CapEff:\t0000000000000000"
+  },
+  "docker_group": {
+   "agent_has_gid_in_kernel_credential": true,
+   "agent_in_roster": true,
+   "exists": true,
+   "gid": 969,
+   "roster_members": [
+    "agent-user"
+   ]
+  },
+  "euid": 1000,
+  "id_nG": {
+   "argv": [
+    "id",
+    "-nG"
+   ],
+   "rc": 0,
+   "stderr": "",
+   "stdout": "agent-user wheel docker"
+  },
+  "no_new_privs": {
+   "argv": [
+    "sh",
+    "-c",
+    "grep NoNewPrivs /proc/self/status"
+   ],
+   "rc": 0,
+   "stderr": "",
+   "stdout": "NoNewPrivs:\t0"
+  },
+  "supplementary_gids_kernel": [
+   10,
+   969,
+   1000
+  ],
+  "supplementary_groups_kernel": [
+   "docker",
+   "agent-user",
+   "wheel"
+  ],
+  "uid": 1000,
+  "username": "agent-user",
+  "wheel_in_kernel_credential": true
+ },
+ "identity_reservation": {
+  "940_inside_any_delegation": false,
+  "941_inside_any_delegation": false,
+  "agent_delegated_ranges": [
+   "agent-user:524288:65536"
+  ],
+  "authority_uid_940": {
+   "allocated": false
+  },
+  "decision_uid_941": {
+   "allocated": false
+  },
+  "subgid": [
+   "agent-user:524288:65536"
+  ],
+  "subuid": [
+   "agent-user:524288:65536"
+  ]
+ },
+ "kernel": {
+  "ptrace_scope": "0",
+  "selinux": {
+   "argv": [
+    "getenforce"
+   ],
+   "rc": 0,
+   "stderr": "",
+   "stdout": "Enforcing"
+  },
+  "unprivileged_userns_clone": "UNREADABLE: [Errno 2] No such file or directory: '/proc/sys/kernel/unprivileged_userns_clone'",
+  "userns_max": "513820"
+ },
+ "mutations_performed": [],
+ "paths": {
+  "audit_script_dir": "<collection-tool-root>",
+  "cutover_targets": {
+   "authority_store": {
+    "exists": false,
+    "path": "/var/lib/promotion-authority"
+   },
+   "governed_code": {
+    "exists": false,
+    "path": "/usr/libexec/promotion-authority"
+   },
+   "ipc_directory": {
+    "exists": false,
+    "path": "/run/promotion-authority"
+   }
+  },
+  "stray_demo_runtimes": []
+ },
+ "read_only": true,
+ "sudo": {
+  "classification": "UNKNOWN_PASSWORD_GATED",
+  "note": "not exercised: escalating through an interactive authentication gate is outside this task's authority; UNKNOWN is not a pass",
+  "pkexec_mode": {
+   "acl": [
+    "user::rwx",
+    "group::r-x",
+    "other::r-x"
+   ],
+   "agent_writable": false,
+   "exists": true,
+   "mode": "0o4755",
+   "owned_by_authority_uid": false,
+   "owner_gid": 0,
+   "owner_group": "root",
+   "owner_uid": 0,
+   "owner_user": "root",
+   "path": "/usr/bin/pkexec",
+   "type": "file"
+  },
+  "pkexec_present": true,
+  "sudo_n_l": {
+   "argv": [
+    "sudo",
+    "-n",
+    "-l"
+   ],
+   "rc": 1,
+   "stderr": "sudo: a password is required",
+   "stdout": ""
+  },
+  "sudoers_d_readable": false,
+  "sudoers_readable": false
+ },
+ "systemd": {
+  "containerd.service": {
+   "ActiveState": "active",
+   "ExecStart": "{ path=/usr/bin/containerd ; argv[]=/usr/bin/containerd ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+   "FragmentPath": "/usr/lib/systemd/system/containerd.service",
+   "Group": "",
+   "LoadState": "loaded",
+   "User": ""
+  },
+  "docker.service": {
+   "ActiveState": "active",
+   "ExecStart": "{ path=/usr/bin/dockerd ; argv[]=/usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock --selinux-enabled --userland-proxy-path /usr/bin/docker-proxy --init-path /usr/bin/tini-static ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+   "FragmentPath": "/usr/lib/systemd/system/docker.service",
+   "Group": "",
+   "LoadState": "loaded",
+   "User": ""
+  },
+  "docker.socket": {
+   "ActiveState": "active",
+   "FragmentPath": "/usr/lib/systemd/system/docker.socket",
+   "Group": "",
+   "LoadState": "loaded",
+   "User": ""
+  },
+  "present": true,
+  "promotion-authority.service": {
+   "ActiveState": "inactive",
+   "FragmentPath": "",
+   "Group": "",
+   "LoadState": "not-found",
+   "User": ""
+  },
+  "promotion-broker.service": {
+   "ActiveState": "inactive",
+   "FragmentPath": "",
+   "Group": "",
+   "LoadState": "not-found",
+   "User": ""
+  },
+  "promotion-decision.service": {
+   "ActiveState": "inactive",
+   "FragmentPath": "",
+   "Group": "",
+   "LoadState": "not-found",
+   "User": ""
+  },
+  "user_units_promotion": {
+   "argv": [
+    "systemctl",
+    "--user",
+    "list-units",
+    "--all",
+    "--no-legend",
+    "promotion-*"
+   ],
+   "rc": 0,
+   "stderr": "",
+   "stdout": ""
+  }
+ },
+ "v3_package": "<evidence-root>"
+}

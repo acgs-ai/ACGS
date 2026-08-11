@@ -1,0 +1,218 @@
+{
+  "agent_uid": 1000,
+  "agent_user": "agent-user",
+  "allocated_in_range": {
+    "959": "ollama",
+    "960": "malcontent-webd",
+    "961": "malcontent-timerd",
+    "962": "malcontent-timer-ext-agent",
+    "964": "pcscd",
+    "965": "lemonade",
+    "966": "pihole",
+    "967": "epmd",
+    "973": "passim",
+    "974": "vboxadd",
+    "976": "gnome-remote-desktop",
+    "978": "dnsmasq",
+    "979": "colord",
+    "980": "sssd",
+    "981": "geoclue",
+    "982": "flatpak",
+    "984": "pipewire",
+    "985": "rtkit",
+    "986": "nm-openconnect",
+    "987": "wsdd",
+    "989": "nm-openvpn",
+    "990": "openvpn",
+    "991": "gluster",
+    "992": "clevis",
+    "993": "unbound",
+    "996": "chrony",
+    "997": "systemd-timesync",
+    "998": "systemd-coredump",
+    "999": "systemd-oom"
+  },
+  "evaluations": {
+    "524288": {
+      "all_criteria_met": false,
+      "criteria": {
+        "1_not_uid_0": true,
+        "2_not_agent_uid": true,
+        "3_not_in_agent_subuid": false,
+        "4_not_in_agent_subgid": false,
+        "5_no_group_grants_agent_write": true,
+        "6_no_transition_path": false,
+        "7_not_reused_by_unrelated_service": true,
+        "8_agent_cannot_alter_account": true,
+        "9_readable_but_not_mutable_supported": true
+      },
+      "evidence": {
+        "agent_reachable_ranges": [
+          [
+            1000,
+            1
+          ],
+          [
+            524288,
+            65536
+          ]
+        ],
+        "agent_subgid_ranges": [
+          [
+            524288,
+            65536
+          ]
+        ],
+        "agent_subuid_ranges": [
+          [
+            524288,
+            65536
+          ]
+        ],
+        "criterion_5_basis": "the authority's state is mode 0755 owned by the authority uid with group = the authority gid; the agent is in no such group (checked below)",
+        "criterion_9_basis": "DAC grants read via other-read while withholding write; measured directly by the carrier matrix"
+      },
+      "existing_account": null,
+      "newuidmap_probe": {
+        "mappable": true,
+        "returncode": 0,
+        "stderr": ""
+      },
+      "uid": 524288
+    },
+    "940": {
+      "all_criteria_met": true,
+      "criteria": {
+        "1_not_uid_0": true,
+        "2_not_agent_uid": true,
+        "3_not_in_agent_subuid": true,
+        "4_not_in_agent_subgid": true,
+        "5_no_group_grants_agent_write": true,
+        "6_no_transition_path": true,
+        "7_not_reused_by_unrelated_service": true,
+        "8_agent_cannot_alter_account": true,
+        "9_readable_but_not_mutable_supported": true
+      },
+      "evidence": {
+        "agent_reachable_ranges": [
+          [
+            1000,
+            1
+          ],
+          [
+            524288,
+            65536
+          ]
+        ],
+        "agent_subgid_ranges": [
+          [
+            524288,
+            65536
+          ]
+        ],
+        "agent_subuid_ranges": [
+          [
+            524288,
+            65536
+          ]
+        ],
+        "criterion_5_basis": "the authority's state is mode 0755 owned by the authority uid with group = the authority gid; the agent is in no such group (checked below)",
+        "criterion_9_basis": "DAC grants read via other-read while withholding write; measured directly by the carrier matrix"
+      },
+      "existing_account": null,
+      "newuidmap_probe": {
+        "mappable": false,
+        "returncode": 1,
+        "stderr": "newuidmap: uid range [0-1) -> [940-941) not allowed"
+      },
+      "uid": 940
+    },
+    "999": {
+      "all_criteria_met": false,
+      "criteria": {
+        "1_not_uid_0": true,
+        "2_not_agent_uid": true,
+        "3_not_in_agent_subuid": true,
+        "4_not_in_agent_subgid": true,
+        "5_no_group_grants_agent_write": true,
+        "6_no_transition_path": true,
+        "7_not_reused_by_unrelated_service": false,
+        "8_agent_cannot_alter_account": true,
+        "9_readable_but_not_mutable_supported": true
+      },
+      "evidence": {
+        "agent_reachable_ranges": [
+          [
+            1000,
+            1
+          ],
+          [
+            524288,
+            65536
+          ]
+        ],
+        "agent_subgid_ranges": [
+          [
+            524288,
+            65536
+          ]
+        ],
+        "agent_subuid_ranges": [
+          [
+            524288,
+            65536
+          ]
+        ],
+        "criterion_5_basis": "the authority's state is mode 0755 owned by the authority uid with group = the authority gid; the agent is in no such group (checked below)",
+        "criterion_9_basis": "DAC grants read via other-read while withholding write; measured directly by the carrier matrix"
+      },
+      "existing_account": "systemd-oom",
+      "newuidmap_probe": {
+        "mappable": false,
+        "returncode": 1,
+        "stderr": "newuidmap: uid range [0-1) -> [999-1000) not allowed"
+      },
+      "uid": 999
+    }
+  },
+  "not_created_here": "No account is created and no host identity file is modified. Reserving the uid is an administrative action and appears in HOST_CUTOVER_PLAN.md.",
+  "search_range": [
+    940,
+    999
+  ],
+  "selected_authority_uid": 940,
+  "selection_rationale": "uid 940 is unallocated on this host, outside every range delegated to 'agent-user' in /etc/subuid and /etc/subgid, and newuidmap refuses to map it. V2's uid 999 satisfies the non-delegability requirement but is 'systemd-oom', an unrelated system service -- sharing an identity with a running daemon would hand canonical mutation authority to anything that compromised it.",
+  "unallocated_in_range": [
+    940,
+    941,
+    942,
+    943,
+    944,
+    945,
+    946,
+    947,
+    948,
+    949,
+    950,
+    951,
+    952,
+    953,
+    954,
+    955,
+    956,
+    957,
+    958,
+    963,
+    968,
+    969,
+    970,
+    971,
+    972,
+    975,
+    977,
+    983,
+    988,
+    994,
+    995
+  ]
+}

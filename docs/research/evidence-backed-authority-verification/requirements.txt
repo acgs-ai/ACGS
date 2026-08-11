@@ -1,0 +1,4 @@
+# Renderer dependencies for render_pdf.py, pinned to the versions sealed in
+# RENDERER.lock.json. render_pdf.py refuses any other versions.
+markdown==3.10.2
+weasyprint==68.1

@@ -1,0 +1,160 @@
+{
+  "closure": {
+    "closed": false,
+    "conditions": {
+      "authorized_path_exists": {
+        "holds": true,
+        "path": [
+          "agent_principal --can_send_authorized_request--> broker_ipc",
+          "broker_ipc --can_delegate--> authority_process",
+          "authority_process --can_write--> canonical_store (authorized)"
+        ]
+      },
+      "no_path_to_authority_principal": {
+        "holds": false,
+        "path": [
+          "agent_principal --can_control--> rootful_container_root",
+          "rootful_container_root --can_impersonate--> host_root",
+          "host_root --can_impersonate--> authority_principal"
+        ]
+      },
+      "no_path_to_host_root": {
+        "holds": false,
+        "path": [
+          "agent_principal --can_control--> rootful_container_root",
+          "rootful_container_root --can_impersonate--> host_root"
+        ]
+      },
+      "no_unauthorized_path_to_canonical_mutation": {
+        "holds": false,
+        "path": [
+          "agent_principal --can_control--> rootful_container_root",
+          "rootful_container_root --can_impersonate--> host_root",
+          "host_root --can_write--> canonical_store"
+        ]
+      }
+    },
+    "reachable_without_authorization": [
+      "agent_principal",
+      "agent_userns_root",
+      "authority_principal",
+      "authority_process",
+      "broker_ipc",
+      "canonical_store",
+      "host_root",
+      "rootful_container_root",
+      "rootless_container_root",
+      "workspace"
+    ]
+  },
+  "edges": [
+    {
+      "authorized": false,
+      "demonstrated": true,
+      "evidence": "the agent may ask; asking is not authority",
+      "from": "agent_principal",
+      "relation": "can_send_authorized_request",
+      "to": "broker_ipc"
+    },
+    {
+      "authorized": false,
+      "demonstrated": true,
+      "evidence": "requests are validated before any effect",
+      "from": "broker_ipc",
+      "relation": "can_delegate",
+      "to": "authority_process"
+    },
+    {
+      "authorized": true,
+      "demonstrated": true,
+      "evidence": "authorized promotion f387304a8cf5 -> 98bfd34b23f5",
+      "from": "authority_process",
+      "relation": "can_write",
+      "to": "canonical_store"
+    },
+    {
+      "authorized": false,
+      "demonstrated": true,
+      "evidence": "newuidmap maps the delegated range",
+      "from": "agent_principal",
+      "relation": "can_map_uid",
+      "to": "agent_userns_root"
+    },
+    {
+      "authorized": false,
+      "demonstrated": true,
+      "evidence": "rootless container runtime available to the agent",
+      "from": "agent_principal",
+      "relation": "can_control",
+      "to": "rootless_container_root"
+    },
+    {
+      "authorized": false,
+      "demonstrated": true,
+      "evidence": "writable rootful docker socket: [\"group membership: agent is in group 'docker'\"]",
+      "from": "agent_principal",
+      "relation": "can_control",
+      "to": "rootful_container_root"
+    },
+    {
+      "authorized": false,
+      "demonstrated": true,
+      "evidence": "identity uid_map inside the container; chown to an arbitrary uid succeeded on a host file",
+      "from": "rootful_container_root",
+      "relation": "can_impersonate",
+      "to": "host_root"
+    },
+    {
+      "authorized": false,
+      "demonstrated": true,
+      "evidence": "container root wrote and chowned canonical",
+      "from": "host_root",
+      "relation": "can_write",
+      "to": "canonical_store"
+    },
+    {
+      "authorized": false,
+      "demonstrated": false,
+      "evidence": "root may setuid to any principal",
+      "from": "host_root",
+      "relation": "can_impersonate",
+      "to": "authority_principal"
+    },
+    {
+      "authorized": false,
+      "demonstrated": true,
+      "evidence": "docker cp overwrote the authority's code inside the container",
+      "from": "rootful_container_root",
+      "relation": "can_replace",
+      "to": "authority_process"
+    },
+    {
+      "authorized": false,
+      "demonstrated": true,
+      "evidence": "docker exec ran a command inside the authority container",
+      "from": "rootful_container_root",
+      "relation": "can_control",
+      "to": "authority_process"
+    },
+    {
+      "authorized": false,
+      "demonstrated": true,
+      "evidence": "the workspace is agent-owned",
+      "from": "agent_principal",
+      "relation": "can_write",
+      "to": "workspace"
+    }
+  ],
+  "nodes": [
+    "agent_principal",
+    "authority_principal",
+    "host_root",
+    "agent_userns_root",
+    "rootless_container_root",
+    "rootful_container_root",
+    "authority_process",
+    "canonical_store",
+    "broker_ipc",
+    "workspace"
+  ]
+}

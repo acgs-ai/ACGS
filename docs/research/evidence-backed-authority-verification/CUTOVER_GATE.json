@@ -1,0 +1,286 @@
+{
+ "blocking_checks": [
+  "no_root_equivalent_mechanism",
+  "no_unresolved_escalation_mechanism",
+  "no_root_equivalent_path_in_topology",
+  "agent_not_in_docker_group",
+  "rootful_daemon_unreachable",
+  "sudo_resolved",
+  "authority_principal_reserved",
+  "store_code_ipc_owned_by_authority",
+  "services_run_under_authority_uid"
+ ],
+ "checks": [
+  {
+   "blocks": "BLOCKED_ROOT_EQUIVALENCE",
+   "check": "no_root_equivalent_mechanism",
+   "detail": {
+    "root_equivalent_paths": [
+     "docker_rootful"
+    ],
+    "routes": [
+     "group membership: agent is in group 'docker'"
+    ]
+   },
+   "state": "BLOCKED"
+  },
+  {
+   "blocks": null,
+   "check": "no_authority_equivalent_mechanism",
+   "detail": {
+    "authority_equivalent_paths": []
+   },
+   "state": "MET"
+  },
+  {
+   "blocks": "BLOCKED_PRIVILEGE_UNCERTAIN",
+   "check": "no_unresolved_escalation_mechanism",
+   "detail": {
+    "count": 19,
+    "from_registry": [
+     "sudo_polkit_interactive"
+    ],
+    "from_topology": [],
+    "requires_operator_evidence": [
+     "container_runtimes:libvirt_ro_socket",
+     "container_runtimes:libvirt_socket",
+     "groups:membership_wheel",
+     "polkit:dbus_system_bus",
+     "polkit:pkexec",
+     "setuid:/opt/1Password/chrome-sandbox",
+     "setuid:/usr/bin/chfn",
+     "setuid:/usr/bin/chsh",
+     "setuid:/usr/bin/gpasswd",
+     "setuid:/usr/bin/pkexec",
+     "setuid:/usr/bin/su",
+     "setuid:/usr/bin/sudo",
+     "setuid:/usr/bin/userhelper",
+     "setuid:/usr/bin/vmware-user-suid-wrapper",
+     "setuid:/usr/libexec/dbus-1/dbus-daemon-launch-helper",
+     "setuid:/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper",
+     "sudo:sudo",
+     "systemd:systemd_run"
+    ],
+    "unknown": [
+     "sudo_polkit_interactive"
+    ],
+    "unresolved_privilege_paths": [
+     "container_runtimes:libvirt_ro_socket",
+     "container_runtimes:libvirt_socket",
+     "groups:membership_wheel",
+     "polkit:dbus_system_bus",
+     "polkit:pkexec",
+     "setuid:/opt/1Password/chrome-sandbox",
+     "setuid:/usr/bin/chfn",
+     "setuid:/usr/bin/chsh",
+     "setuid:/usr/bin/gpasswd",
+     "setuid:/usr/bin/pkexec",
+     "setuid:/usr/bin/su",
+     "setuid:/usr/bin/sudo",
+     "setuid:/usr/bin/userhelper",
+     "setuid:/usr/bin/vmware-user-suid-wrapper",
+     "setuid:/usr/libexec/dbus-1/dbus-daemon-launch-helper",
+     "setuid:/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper",
+     "sudo:sudo",
+     "sudo_polkit_interactive",
+     "systemd:systemd_run"
+    ],
+    "why": "condition 19 now consumes these in verify_v3.py; before the hardening they were recorded and consumed by nothing, so a host whose only remaining path was UNKNOWN would have verified. REQUIRES_OPERATOR_EVIDENCE blocks identically -- renaming an UNKNOWN does not resolve it."
+   },
+   "state": "UNRESOLVED"
+  },
+  {
+   "blocks": null,
+   "check": "every_inventory_host_measured",
+   "detail": {
+    "admissibility": {
+     "PRIVILEGE_TOPOLOGY": true,
+     "ROOT_EQUIVALENCE_REGISTRY": true
+    },
+    "surfaces_covered": [
+     "container_runtimes",
+     "filecaps",
+     "groups",
+     "polkit",
+     "setuid",
+     "sudo",
+     "systemd"
+    ],
+    "surfaces_missing": [],
+    "surfaces_required": [
+     "container_runtimes",
+     "filecaps",
+     "groups",
+     "polkit",
+     "setuid",
+     "sudo",
+     "systemd"
+    ],
+    "topology_source": "PRIVILEGE_TOPOLOGY_FINAL.json",
+    "why": "two conditions, both required. Admissibility: an inventory taken inside a sandbox reports root_equivalent_paths == [] with no host change. Coverage: an inventory that measured only one surface is silent about the rest. Silence is not absence in either case"
+   },
+   "state": "MET"
+  },
+  {
+   "blocks": null,
+   "check": "privilege_topology_inventory_present",
+   "detail": {
+    "counts": {
+     "blocking": 20,
+     "non_root_equivalent": 37,
+     "not_present": 0,
+     "requires_operator_evidence": 18,
+     "root_equivalent": 2,
+     "total": 57,
+     "unknown": 0
+    },
+    "path": "<evidence-root>/PRIVILEGE_TOPOLOGY_FINAL.json",
+    "root_equivalent_paths": [
+     "container_runtimes:docker_rootful_socket",
+     "groups:membership_docker"
+    ]
+   },
+   "state": "MET"
+  },
+  {
+   "blocks": "BLOCKED_ROOT_EQUIVALENCE",
+   "check": "no_root_equivalent_path_in_topology",
+   "detail": {
+    "as_recorded_in_inventory": [
+     "container_runtimes:docker_rootful_socket",
+     "groups:membership_docker"
+    ],
+    "inventory_admissible": true,
+    "root_equivalent_paths": [
+     "container_runtimes:docker_rootful_socket",
+     "groups:membership_docker"
+    ]
+   },
+   "state": "BLOCKED"
+  },
+  {
+   "blocks": "BLOCKED_ROOT_EQUIVALENCE",
+   "check": "agent_not_in_docker_group",
+   "detail": {
+    "kernel_credential_contains_docker_gid": true,
+    "roster": [
+     "agent-user"
+    ]
+   },
+   "state": "BLOCKED"
+  },
+  {
+   "blocks": "BLOCKED_ROOT_EQUIVALENCE",
+   "check": "rootful_daemon_unreachable",
+   "detail": {
+    "rootless": false,
+    "socket_connect_reachable": true
+   },
+   "state": "BLOCKED"
+  },
+  {
+   "blocks": "BLOCKED_PRIVILEGE_UNCERTAIN",
+   "check": "sudo_resolved",
+   "detail": {
+    "classification": "UNKNOWN_PASSWORD_GATED",
+    "pkexec_present": true,
+    "wheel_in_kernel_credential": true,
+    "who_resolves": "administrator; requires reading /etc/sudoers and /etc/sudoers.d, both unreadable by the agent"
+   },
+   "state": "UNRESOLVED"
+  },
+  {
+   "blocks": "BLOCKED_OTHER",
+   "check": "authority_principal_reserved",
+   "detail": {
+    "inside_delegation": {
+     "940": false,
+     "941": false
+    },
+    "uid_940": {
+     "allocated": false
+    },
+    "uid_941": {
+     "allocated": false
+    }
+   },
+   "state": "PENDING"
+  },
+  {
+   "blocks": "BLOCKED_OTHER",
+   "check": "store_code_ipc_owned_by_authority",
+   "detail": {
+    "note": "absent is not owned; the V3 demonstration runtime is ephemeral (/tmp/cspa3-*), so at-rest ownership of the IPC endpoints cannot be observed between runs",
+    "paths": {
+     "authority_store": {
+      "exists": false,
+      "path": "/var/lib/promotion-authority"
+     },
+     "governed_code": {
+      "exists": false,
+      "path": "/usr/libexec/promotion-authority"
+     },
+     "ipc_directory": {
+      "exists": false,
+      "path": "/run/promotion-authority"
+     }
+    }
+   },
+   "state": "PENDING"
+  },
+  {
+   "blocks": "BLOCKED_OTHER",
+   "check": "services_run_under_authority_uid",
+   "detail": {
+    "loaded_units_with_User": [],
+    "note": "while no unit exists the authority is started by the agent's own Docker socket, which is itself the blocker"
+   },
+   "state": "PENDING"
+  },
+  {
+   "blocks": null,
+   "check": "verifier_last_verdict",
+   "detail": {
+    "caveat": "would_hold_after_cutover is computed from the Docker delta alone; it does not account for unknown_paths",
+    "evidence_digest": "ab4ae6bcb450971214b4e4e6a34be75147653826400ccd09c5e3786415e1c9ac",
+    "failed_conditions": [
+     "06",
+     "07",
+     "12",
+     "17",
+     "19"
+    ],
+    "verdict": "BLOCKED_ROOT_EQUIVALENCE",
+    "would_hold_after_cutover": true
+   },
+   "state": "INFORMATIONAL"
+  }
+ ],
+ "inputs": {
+  "PREFLIGHT_AUDIT.json": {
+   "bytes": 5522,
+   "mtime": 1786449989,
+   "sha256": "d474008e3165e625a6626d85c329fd9e7d91e4f973c2df99748e3c5bedfeffd5"
+  },
+  "PRIVILEGE_TOPOLOGY_FINAL.json": {
+   "bytes": 86182,
+   "mtime": 1786449877,
+   "sha256": "f7ab728ba8b5f9c92989aa4563953150144f7cbdbc06a0e3fe3b5697eedc4435"
+  },
+  "ROOT_EQUIVALENCE_REGISTRY.json": {
+   "bytes": 13435,
+   "mtime": 1786449474,
+   "sha256": "8160ac2c7cd3672041083b18c9898ad3b8d80db4573f80fd82e5c17aa269d74a"
+  },
+  "verification_result.json": {
+   "bytes": 21989,
+   "mtime": 1786446414,
+   "sha256": "4310a3c5dce5c2f613fb880b9e4f6f1829b3c89c80096b430dfa4551123663f2"
+  }
+ },
+ "meaning": "a root-equivalent path is still measured present",
+ "read_only": true,
+ "specific_reason": "BLOCKED_ROOT_EQUIVALENCE_DOCKER",
+ "unenforced_coupling": "verify_v3.py contains no reference to this gate and will print a verdict whether or not the gate cleared. A VERIFIED_EXCLUSIVE_AUTHORITY from it is closure only if this gate returned rc=0 against the same host state -- compare inputs.PREFLIGHT_AUDIT.json.sha256 with the audit in force when the verifier ran. The coupling is disclosed, not enforced.",
+ "verdict": "BLOCKED_ROOT_EQUIVALENCE"
+}
