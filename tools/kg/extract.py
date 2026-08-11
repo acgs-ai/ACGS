@@ -1450,12 +1450,29 @@ def build_workflows(files: list[str]) -> None:
         # matching event(s) are preserved on every GATES edge — collapsing
         # them with any() reported a deploy workflow whose push filter matches
         # ordinary source paths as PR coverage for those paths.
-        filters_by_event: dict[str, list[str]] = {}
+        #
+        # `paths-ignore` is the complementary filter: GitHub skips the run
+        # only when EVERY changed path matches the ignore patterns, so any
+        # change touching a non-ignored file triggers the workflow — that
+        # file's coverage is exactly as real as under a positive `paths`
+        # match. Recording only `paths` marked such workflows unfiltered
+        # (no GATES edges at all), and Q1/Q2 plus the generated reports
+        # underreported coverage for every non-ignored file. GitHub rejects a
+        # workflow declaring both filters for one event, so the kinds are
+        # mutually exclusive per event.
+        filters_by_event: dict[str, tuple[str, list[str]]] = {}
         for ev in ("push", "pull_request"):
             cfg = on.get(ev) or {}
-            if isinstance(cfg, dict) and cfg.get("paths"):
-                filters_by_event[ev] = [str(g) for g in cfg["paths"]]
-        globs = sorted({g for fl in filters_by_event.values() for g in fl})
+            if not isinstance(cfg, dict):
+                continue
+            if cfg.get("paths"):
+                filters_by_event[ev] = ("paths", [str(g) for g in cfg["paths"]])
+            elif cfg.get("paths-ignore"):
+                filters_by_event[ev] = ("paths-ignore", [str(g) for g in cfg["paths-ignore"]])
+        globs = sorted({g for kind, fl in filters_by_event.values() if kind == "paths" for g in fl})
+        ignore_globs = sorted(
+            {g for kind, fl in filters_by_event.values() if kind == "paths-ignore" for g in fl}
+        )
         job_cfgs = doc.get("jobs") or {}
         jobs = sorted(job_cfgs.keys())
         # A job-level `if:` can skip the job even when the trigger paths
@@ -1487,13 +1504,18 @@ def build_workflows(files: list[str]) -> None:
         # undercounting distinct gates in Q1/Q2. `name` stays display-only.
         wkey = rel
         wname = doc.get("name") or f.stem
-        # path_filters is a sorted union kept for cross-event overviews; it
-        # loses both event association and pattern order, so each event's
-        # filter list is also published verbatim (path_filters_push,
-        # path_filters_pull_request). Without those, Q1 showed a push-only
-        # deploy filter beside a PR-only filter with no way to tell which
-        # event actually gates a given path.
-        per_event = {f"path_filters_{ev}": fl for ev, fl in filters_by_event.items()}
+        # path_filters / path_ignore_filters are sorted unions kept for
+        # cross-event overviews; they lose both event association and pattern
+        # order, so each event's filter list is also published verbatim under
+        # a kind-specific key (path_filters_push, path_ignore_filters_push,
+        # ...). Without those, Q1 showed a push-only deploy filter beside a
+        # PR-only filter with no way to tell which event actually gates a
+        # given path — and an ignore list rendered as if it were a positive
+        # match list would invert the filter's meaning.
+        per_event = {
+            (f"path_filters_{ev}" if kind == "paths" else f"path_ignore_filters_{ev}"): fl
+            for ev, (kind, fl) in filters_by_event.items()
+        }
         G.node(
             "Workflow",
             wkey,
@@ -1502,9 +1524,10 @@ def build_workflows(files: list[str]) -> None:
             path=rel,
             triggers=triggers,
             path_filters=globs,
+            path_ignore_filters=ignore_globs,
             jobs=jobs,
             job_count=len(jobs),
-            path_filtered=bool(globs),
+            path_filtered=bool(filters_by_event),
             conditional_jobs=conditional_jobs,
             all_jobs_conditional=all_jobs_conditional,
             **per_event,
@@ -1512,7 +1535,9 @@ def build_workflows(files: list[str]) -> None:
         G.rel("DEFINED_IN", "Workflow", wkey, "File", rel)
         if not filters_by_event:
             continue
-        compiled = {ev: compile_path_filters(fl) for ev, fl in filters_by_event.items()}
+        compiled = {
+            ev: (kind, compile_path_filters(fl)) for ev, (kind, fl) in filters_by_event.items()
+        }
         for path in files:
             # Parent workflows gate only ordinary parent-tracked paths. A
             # file inside an initialized submodule's own repository can never
@@ -1524,8 +1549,16 @@ def build_workflows(files: list[str]) -> None:
             slot = G.nodes.get(("File", path))
             if slot is not None and slot["props"].get("in_submodule"):
                 continue
+            # A `paths` event gates the paths its patterns match; a
+            # `paths-ignore` event gates every path its patterns do NOT
+            # match (a change touching such a path always triggers the
+            # workflow). An ignored path gets no edge: a PR touching only
+            # ignored paths skips the workflow, so per-file guaranteed
+            # coverage — what GATES models — does not exist for it.
             events = sorted(
-                ev for ev, filters in compiled.items() if match_path_filters(path, filters)
+                ev
+                for ev, (kind, filters) in compiled.items()
+                if match_path_filters(path, filters) == (kind == "paths")
             )
             if events:
                 # conditional_events lists the matching events with no job

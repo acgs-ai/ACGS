@@ -132,12 +132,15 @@ The graph carries its own caveats as data rather than hiding them:
   `MATCH (f:File {sealed:true, hash_gated:false}) RETURN f.key`
 - **`CO_CHANGED` is stored once per path-sorted pair.** Canonicalise the pair
   before aggregating by package, or couplings appear twice (Q4 does this).
-- **`GATES` only sees path-filtered workflows.** A workflow with no `paths:`
-  (or only `paths-ignore:`) runs on *every* PR and therefore produces zero
-  `GATES` edges — `constitutional-hash.yml`, `gitguardian.yml` and
-  `socket-security.yml` are in that group. They live on the `:Workflow` node
-  with `path_filtered: false`. Q2's "ungated" means *no path-filtered gate*,
-  not unprotected.
+- **`GATES` only sees path-filtered workflows** — filtered by `paths:` or by
+  `paths-ignore:`. An ignore list is complementary: GitHub skips the run only
+  when *every* changed path matches it, so the workflow gates each
+  non-ignored path (ignored paths get no edge — a PR touching only them may
+  skip the run). A workflow with neither filter runs on *every* PR and
+  therefore produces zero `GATES` edges — `constitutional-hash.yml`,
+  `gitguardian.yml` and `socket-security.yml` are in that group. They live on
+  the `:Workflow` node with `path_filtered: false`. Q2's "ungated" means
+  *no path-filtered gate*, not unprotected.
 - **`GATES` edges can be conditional — per event.** A job-level `if:` skips
   the job even when the trigger paths match (`tests-root.yml` skips its sole
   job on fork PRs), but conditions are classified in the context of each

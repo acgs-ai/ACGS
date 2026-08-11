@@ -597,6 +597,84 @@ def test_build_workflows_publishes_each_events_filter_list_in_declaration_order(
     assert props["path_filters_pull_request"] == ["deploy/**"]
 
 
+def test_build_workflows_gates_non_ignored_paths_under_paths_ignore(tmp_path, monkeypatch):
+    """REGRESSION. Only `paths` was recorded, so a `paths-ignore` workflow was
+    published as universally unfiltered (path_filtered=false) with zero GATES
+    edges — yet GitHub skips such a workflow only when EVERY changed path is
+    ignored, so for each non-ignored file it is real PR coverage. Q1/Q2 and
+    the generated reports underreported coverage for all of those files. The
+    ignore list is the complementary filter: non-ignored paths get GATES
+    edges, ignored paths get none (a PR touching only them may skip the run)."""
+    pytest.importorskip("yaml")
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "tests.yml").write_text(
+        "name: tests\n"
+        "on:\n"
+        "  pull_request:\n"
+        "    paths-ignore:\n"
+        "      - 'docs/**'\n"
+        "      - '**.md'\n"
+        "jobs:\n"
+        "  build:\n"
+        "    steps: []\n"
+    )
+    _files(".github/workflows/tests.yml", "src/main.py", "docs/guide.md", "README.md")
+
+    extract.build_workflows(["src/main.py", "docs/guide.md", "README.md"])
+
+    wkey = ".github/workflows/tests.yml"
+    gate = extract.G.rels[("GATES", "Workflow", wkey, "File", "src/main.py")]
+    assert gate["props"]["events"] == ["pull_request"]
+    assert ("GATES", "Workflow", wkey, "File", "docs/guide.md") not in extract.G.rels
+    assert ("GATES", "Workflow", wkey, "File", "README.md") not in extract.G.rels
+
+    props = extract.G.nodes[("Workflow", wkey)]["props"]
+    assert props["path_filtered"] is True
+    assert props["path_ignore_filters_pull_request"] == ["docs/**", "**.md"]
+    assert props["path_ignore_filters"] == ["**.md", "docs/**"]
+    assert props["path_filters"] == []
+
+
+def test_build_workflows_keeps_paths_and_paths_ignore_events_complementary(tmp_path, monkeypatch):
+    """A push `paths` list and a pull_request `paths-ignore` list on the same
+    workflow must keep their opposite semantics per event: the ignore list
+    gates what it does NOT match, the positive list gates what it DOES."""
+    pytest.importorskip("yaml")
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "mixed.yml").write_text(
+        "name: mixed\n"
+        "on:\n"
+        "  push:\n"
+        "    paths:\n"
+        "      - 'src/**'\n"
+        "  pull_request:\n"
+        "    paths-ignore:\n"
+        "      - 'docs/**'\n"
+        "jobs:\n"
+        "  build:\n"
+        "    steps: []\n"
+    )
+    _files(".github/workflows/mixed.yml", "src/main.py", "docs/guide.md")
+
+    extract.build_workflows(["src/main.py", "docs/guide.md"])
+
+    wkey = ".github/workflows/mixed.yml"
+    both = extract.G.rels[("GATES", "Workflow", wkey, "File", "src/main.py")]
+    assert both["props"]["events"] == ["pull_request", "push"]
+    # docs/guide.md: outside the push `paths` list AND ignored for PRs.
+    assert ("GATES", "Workflow", wkey, "File", "docs/guide.md") not in extract.G.rels
+
+    props = extract.G.nodes[("Workflow", wkey)]["props"]
+    assert props["path_filters_push"] == ["src/**"]
+    assert props["path_ignore_filters_pull_request"] == ["docs/**"]
+    assert "path_filters_pull_request" not in props
+    assert "path_ignore_filters_push" not in props
+
+
 def test_build_workflows_does_not_gate_submodule_internal_paths(tmp_path, monkeypatch):
     """REGRESSION. build_spine() appends every initialized submodule's inner
     paths to the tracked list, and matching them against the parent

@@ -1,11 +1,13 @@
 """Guards for ``gove_zone.adapters.langgraph`` when langchain-core is absent.
 
-Scope note, stated rather than hidden: ``langchain-core`` is not a declared
-extra of this package, so in the standard test environment
+Scope note, stated rather than hidden: the main package gate installs the
+package without the declared ``langchain`` extra, so here
 ``LANGCHAIN_AVAILABLE`` is ``False`` and the wrapping behaviour of
 ``GovernedTool`` — attribute mapping, ``_run``/``_arun`` dispatch through the
-kernel — is **not reachable here** and is not covered by this file. Adding the
-dependency is a packaging decision, not a test-writing one.
+kernel — is **not reachable** and is not covered by this file. That installed
+path is covered by the positive and deny-path tests in
+``test_framework_adapters.py``, which CI exercises in a dedicated lane that
+installs the extra (see ``.github/workflows/python-gove-zone.yml``).
 
 What is reachable, and what matters most, is the fallback posture: with the
 dependency missing the module still imports (so nothing downstream breaks at

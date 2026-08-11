@@ -22,6 +22,15 @@ from typing import Any
 
 from gove_zone.errors import GoveZoneError
 
+# The runner shares stdout with the tool it executes: a tool that logs
+# progress (or writes a trailing unterminated line) leaves its output in
+# front of the runner's JSON envelope, so parsing the whole stream as JSON
+# failed for exactly those tools. The envelope is therefore emitted as the
+# final line, prefixed by this marker after a fresh newline, giving the
+# parent an unambiguous channel to find it on. json.dumps never emits raw
+# newlines, so the envelope always occupies exactly one line.
+_ENVELOPE_MARKER = "GOVE_ZONE_ENVELOPE_V1:"
+
 # Static runner executed inside the sandbox. It reads a JSON spec
 # ({"module", "func", "args"}) from the path given as argv[1]. No caller- or
 # tool-controlled data is ever interpolated into this source, so untrusted
@@ -34,11 +43,32 @@ _RUNNER_SCRIPT = (
     "    _mod = importlib.import_module(_spec['module'])\n"
     "    _func = getattr(_mod, _spec['func'])\n"
     "    _res = _func(**_spec['args'])\n"
-    "    print(json.dumps({'status': 'success', 'result': _res}))\n"
+    "    _env, _code = json.dumps({'status': 'success', 'result': _res}), 0\n"
     "except Exception as _e:\n"
-    "    print(json.dumps({'status': 'error', 'error': str(_e)}))\n"
-    "    sys.exit(1)\n"
+    "    _env, _code = json.dumps({'status': 'error', 'error': str(_e)}), 1\n"
+    "print('\\nGOVE_ZONE_ENVELOPE_V1:' + _env)\n"
+    "sys.exit(_code)\n"
 )
+
+
+def _extract_envelope(stdout: str) -> dict[str, Any] | None:
+    """Extract the runner's envelope from stdout it shares with the tool.
+
+    The runner emits the envelope as the final line, prefixed with
+    :data:`_ENVELOPE_MARKER` after a fresh newline, so any tool output that
+    precedes it (including an unterminated partial line) is skipped by
+    scanning for the marker's last occurrence. A bare-JSON payload without
+    the marker is still accepted for compatibility with envelopes produced
+    outside the current runner. Returns ``None`` when no JSON object
+    envelope can be located.
+    """
+    idx = stdout.rfind(_ENVELOPE_MARKER)
+    candidate = stdout[idx + len(_ENVELOPE_MARKER) :] if idx != -1 else stdout
+    try:
+        payload = json.loads(candidate.strip())
+    except ValueError:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 class SandboxError(GoveZoneError):
@@ -242,37 +272,40 @@ class LocalProcessSandbox(SandboxProvider):
             # Prefer the runner's own error envelope — it carries the tool's
             # exception message, which is the only useful diagnostic here (the
             # runner writes the envelope to stdout and exits 1, so stderr is
-            # normally empty). Fall back to exit status + stderr only when no
-            # envelope was produced, e.g. the interpreter died before the
-            # runner's own try block.
+            # normally empty). The envelope is located via its marker, not by
+            # parsing the whole stream: a tool that logged progress to stdout
+            # before raising left its output in front of the envelope, the
+            # whole-stream parse failed, and the tool's message was lost to
+            # the generic exit-status fallback. Fall back to exit status +
+            # stderr only when no envelope was produced, e.g. the interpreter
+            # died before the runner's own try block.
             #
             # The raise MUST stay outside the parsing block: raising a
             # SandboxError inside a `try`/`except Exception` swallowed it and
             # discarded the tool's message on every failure.
-            tool_error: str | None = None
-            with contextlib.suppress(ValueError, TypeError, KeyError):
-                payload = json.loads(res.stdout.strip())
-                if isinstance(payload, dict) and payload.get("status") == "error":
-                    tool_error = str(payload["error"])
-            if tool_error is not None:
-                raise SandboxError(tool_error)
+            payload = _extract_envelope(res.stdout)
+            if payload is not None and payload.get("status") == "error" and "error" in payload:
+                raise SandboxError(str(payload["error"]))
             raise SandboxError(
                 f"Sandbox process failed with exit status {res.returncode}: {res.stderr.strip()}"
             )
 
-        try:
-            data = json.loads(res.stdout.strip())
-            if not isinstance(data, dict):
-                # A JSON scalar/array is not an envelope. Without this guard the
-                # subscript below raised a bare TypeError straight through
-                # run_tool, breaking the contract that every sandbox failure
-                # surfaces as SandboxError.
-                raise TypeError(f"expected a JSON object envelope, got {type(data).__name__}")
-            if data["status"] == "error":
-                raise SandboxError(data["error"])
-            return data["result"]
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
-            raise SandboxError(f"Failed to parse sandbox output: {res.stdout.strip()}") from e
+        # Same marker-based extraction on the success path: tool stdout ahead
+        # of the envelope must not turn a successful run into a parse failure.
+        # A JSON scalar/array (or a missing status/result key) is not an
+        # envelope; without these guards a subscript raised a bare TypeError
+        # straight through run_tool, breaking the contract that every sandbox
+        # failure surfaces as SandboxError.
+        data = _extract_envelope(res.stdout)
+        if data is None or "status" not in data:
+            raise SandboxError(f"Failed to parse sandbox output: {res.stdout.strip()}")
+        if data["status"] == "error":
+            if "error" in data:
+                raise SandboxError(str(data["error"]))
+            raise SandboxError(f"Failed to parse sandbox output: {res.stdout.strip()}")
+        if "result" not in data:
+            raise SandboxError(f"Failed to parse sandbox output: {res.stdout.strip()}")
+        return data["result"]
 
     def __del__(self) -> None:
         if self._temp_dir:
@@ -349,9 +382,17 @@ class E2BSandbox(SandboxProvider):
                 box.close()
 
             if execution.exit_code != 0:
+                # Same marker-based extraction as LocalProcessSandbox: the
+                # shared runner emits its envelope as a marker-prefixed final
+                # line so tool stdout ahead of it cannot mask the diagnostic.
+                payload = _extract_envelope(execution.stdout)
+                if payload is not None and payload.get("status") == "error" and "error" in payload:
+                    raise SandboxError(str(payload["error"]))
                 raise SandboxError(f"Remote E2B execution failed: {execution.stderr}")
 
-            data = json.loads(execution.stdout.strip())
+            data = _extract_envelope(execution.stdout)
+            if data is None:
+                raise SandboxError(f"Failed to parse sandbox output: {execution.stdout.strip()}")
             if data["status"] == "error":
                 raise SandboxError(data["error"])
             return data["result"]

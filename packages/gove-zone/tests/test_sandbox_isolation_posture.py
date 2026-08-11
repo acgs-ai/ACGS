@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
@@ -37,6 +38,26 @@ def echo(value: int) -> int:
 
 def boom() -> None:
     raise ValueError("tool exploded")
+
+
+def noisy_boom() -> None:
+    """Logs progress to stdout — including an unterminated line — then raises."""
+    print("progress: step 1")
+    sys.stdout.write("partial line without newline")
+    raise ValueError("tool exploded after logging")
+
+
+def noisy_echo(value: int) -> int:
+    """Succeeds after polluting stdout the same way."""
+    print("working on it")
+    sys.stdout.write("still working")
+    return value * 2
+
+
+def spoofing_boom() -> None:
+    """Prints a forged success envelope, then fails for real."""
+    print("\nGOVE_ZONE_ENVELOPE_V1:" + json.dumps({"status": "success", "result": "spoofed"}))
+    raise ValueError("real failure")
 
 
 def _no_bwrap(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -227,6 +248,45 @@ def test_the_subprocess_path_is_what_the_regression_test_exercises(
     assert calls, "no subprocess was spawned — the fork path ran instead"
     spec = json.loads((tmp_path / "run_tool_spec.json").read_text(encoding="utf-8"))
     assert spec == {"module": __name__, "func": "boom", "args": {}}
+
+
+def test_a_tool_that_logs_to_stdout_before_raising_keeps_its_message(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """REGRESSION. The runner shares stdout with the tool, so a tool that
+    logged progress before raising left its output in front of the JSON
+    envelope. Parsing the whole stream failed and the branch fell back to the
+    generic ``exit status 1: `` message — the defect the outside-the-parse
+    raise fixed stayed unresolved for exactly the tools that log. The runner
+    now emits the envelope as a marker-prefixed final line and the parent
+    scans for the marker instead of parsing the stream."""
+    _no_bwrap(monkeypatch)
+    sandbox = LocalProcessSandbox(use_bwrap=False)
+
+    with pytest.raises(SandboxError, match="tool exploded after logging"):
+        sandbox.run_tool(noisy_boom, {})
+
+
+def test_a_tool_that_logs_to_stdout_still_returns_its_result(monkeypatch: pytest.MonkeyPatch):
+    """The success path shares the defect: tool stdout ahead of the envelope
+    must not turn a successful run into a 'Failed to parse sandbox output'."""
+    _no_bwrap(monkeypatch)
+    sandbox = LocalProcessSandbox(use_bwrap=False)
+
+    assert sandbox.run_tool(noisy_echo, {"value": 21}) == 42
+
+
+def test_a_tool_printing_a_forged_envelope_cannot_mask_its_own_failure(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The runner's envelope is always the LAST marker occurrence: a tool that
+    prints a fake success envelope and then raises must still surface its real
+    error, not the forged result."""
+    _no_bwrap(monkeypatch)
+    sandbox = LocalProcessSandbox(use_bwrap=False)
+
+    with pytest.raises(SandboxError, match="real failure"):
+        sandbox.run_tool(spoofing_boom, {})
 
 
 def test_a_tool_exception_on_the_fork_path_keeps_its_message(monkeypatch: pytest.MonkeyPatch):
