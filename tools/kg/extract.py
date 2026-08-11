@@ -843,8 +843,18 @@ def build_adrs() -> None:
         text = f.read_text(errors="replace")
         m = re.search(r"^#\s+(.+)$", text, re.M)
         title = m.group(1).strip() if m else f.stem
-        st = re.search(r"^##\s+Status\s*\n+(.+?)(?:\n\s*\n|\n##)", text, re.M | re.S)
+        # A section ends at a blank line, at the next heading, or at end of file.
+        # Without the \Z alternative an ADR whose Status is its last section
+        # parsed as "Unknown" — a silent field loss, not an error.
+        st = re.search(r"^##\s+Status\s*\n+(.+?)(?:\n\s*\n|\n##|\Z)", text, re.M | re.S)
         status_raw = " ".join(st.group(1).split()) if st else "Unknown"
+        # An EMPTY Status section runs straight into the next heading, and the
+        # capture then holds that heading's text ("## Context"). The derived
+        # status is "Unknown" either way, but status_raw is published verbatim
+        # as ADR.status_text — recording a neighbouring heading there is
+        # fabricated metadata, so treat a heading capture as no status at all.
+        if status_raw.startswith("#"):
+            status_raw = "Unknown"
         status = next(
             (
                 w

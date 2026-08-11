@@ -239,23 +239,39 @@ class LocalProcessSandbox(SandboxProvider):
             raise SandboxError("Local process sandbox execution timed out after 30 seconds") from e
 
         if res.returncode != 0:
-            # Parse error payload if printed, else throw stderr
-            try:
-                data = json.loads(res.stdout.strip())
-                if data.get("status") == "error":
-                    raise SandboxError(data["error"])
-            except Exception:
-                pass
+            # Prefer the runner's own error envelope — it carries the tool's
+            # exception message, which is the only useful diagnostic here (the
+            # runner writes the envelope to stdout and exits 1, so stderr is
+            # normally empty). Fall back to exit status + stderr only when no
+            # envelope was produced, e.g. the interpreter died before the
+            # runner's own try block.
+            #
+            # The raise MUST stay outside the parsing block: raising a
+            # SandboxError inside a `try`/`except Exception` swallowed it and
+            # discarded the tool's message on every failure.
+            tool_error: str | None = None
+            with contextlib.suppress(ValueError, TypeError, KeyError):
+                payload = json.loads(res.stdout.strip())
+                if isinstance(payload, dict) and payload.get("status") == "error":
+                    tool_error = str(payload["error"])
+            if tool_error is not None:
+                raise SandboxError(tool_error)
             raise SandboxError(
                 f"Sandbox process failed with exit status {res.returncode}: {res.stderr.strip()}"
             )
 
         try:
             data = json.loads(res.stdout.strip())
+            if not isinstance(data, dict):
+                # A JSON scalar/array is not an envelope. Without this guard the
+                # subscript below raised a bare TypeError straight through
+                # run_tool, breaking the contract that every sandbox failure
+                # surfaces as SandboxError.
+                raise TypeError(f"expected a JSON object envelope, got {type(data).__name__}")
             if data["status"] == "error":
                 raise SandboxError(data["error"])
             return data["result"]
-        except (json.JSONDecodeError, KeyError) as e:
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
             raise SandboxError(f"Failed to parse sandbox output: {res.stdout.strip()}") from e
 
     def __del__(self) -> None:
