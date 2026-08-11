@@ -30,8 +30,11 @@ ROOT = Path(__file__).resolve().parents[2]
 OUT_DIR = ROOT / "docs" / "governance" / "reports"
 
 # "Implemented" evidence must point at code. A compliance doc citing another
-# compliance doc is a citation, not an implementation.
-CODE_EXT = {".py", ".pyi", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".rs", ".sh"}
+# compliance doc is a citation, not an implementation. Kept in lockstep with
+# extract.py's source-language classification (Python, TypeScript, JavaScript,
+# Rust, Shell): omitting .jsx and .bash dropped extensions those languages
+# cover, so a control citing such an implementation fell below tier B.
+CODE_EXT = {".py", ".pyi", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".rs", ".sh", ".bash"}
 CONFIG_EXT = {".yaml", ".yml", ".json", ".toml", ".cfg", ".ini"}
 
 HOTSPOT_LIMIT = 30
@@ -579,10 +582,12 @@ listed" becomes a false implementation claim.
    a measurement.
 3. **No tier may be upgraded without new graph evidence.** Re-running this
    report against an unchanged graph cannot raise a tier. New evidence enters
-   the graph by adding code, tests, or an external attestation artifact, or by
-   refreshing the semantic snapshot: re-analysis can mint `TESTED_BY` edges for
-   tests and sources that already existed, promoting a control from tier B to
-   tier C without any code, test, or attestation being added.
+   the graph by adding code or tests, or by refreshing the semantic snapshot:
+   re-analysis can mint `TESTED_BY` edges for tests and sources that already
+   existed, promoting a control from tier B to tier C without any code or test
+   being added. Tier D has **no ingestion path at all**: the extractor defines
+   no attestation artifact, so no file added to the repository can raise it,
+   and it stays UNKNOWN as defined above.
 """  # noqa: E501
 
     (OUT_DIR / "cross-repo-hotspot-report.md").write_text(r1)

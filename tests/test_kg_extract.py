@@ -40,6 +40,7 @@ def _clean_graph(monkeypatch):
     monkeypatch.setattr(extract, "G", extract.Graph())
     monkeypatch.setattr(extract, "_BASENAME_INDEX", {})
     monkeypatch.setattr(extract, "_DOC_SCOPE", {})
+    monkeypatch.setattr(extract, "SEALED_STATS", {})
 
 
 def _files(*paths: str) -> None:
@@ -1779,6 +1780,100 @@ def test_build_sealed_reports_a_missing_live_marker_as_drift(tmp_path, monkeypat
     assert props["pinned_hash"] == "0123456789abcdef"
     assert props["hash_drift"] is True
     assert ("SEALED_WITH", "File", "plain.md", "Hash", "0123456789abcdef") in extract.G.rels
+
+
+def test_build_sealed_waives_an_absent_lock_entry_for_an_uninitialized_submodule(
+    tmp_path, monkeypatch
+):
+    """A lock entry naming a path inside a submodule that is genuinely not
+    checked out here says nothing about the seal: it is counted on the
+    Package node, never published as missing."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    monkeypatch.setattr(extract, "run", lambda *a: "-deadbeef packages/acgs-lite\n")
+    _lock(tmp_path, {"packages/acgs-lite/rust/src/lib.rs": "0123456789abcdef"})
+    extract.G.node("Package", "packages/acgs-lite", path="packages/acgs-lite")
+
+    extract.build_sealed([])
+
+    assert extract.G.nodes[("Package", "packages/acgs-lite")]["props"]["sealed_files_absent"] == 1
+    assert extract.SEALED_STATS == {}
+
+
+def test_build_sealed_reports_a_lock_entry_missing_from_an_initialized_submodule(
+    tmp_path, monkeypatch
+):
+    """REGRESSION. A lock entry absent from the File spine was attributed to
+    its package by prefix and counted as sealed_files_absent without checking
+    whether that package is an uninitialized submodule, so a sealed file
+    removed from an *initialized* submodule's index read as "unavailable
+    submodule" and verify.py said VERIFY: PASS over a genuinely missing
+    sealed file. Only an actually-uninitialized submodule waives the absence;
+    every other absence is published for verify.py to fail on."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    # The submodule IS checked out: no '-' prefix in `git submodule status`.
+    monkeypatch.setattr(extract, "run", lambda *a: " deadbeef packages/acgs-lite (v1.0)\n")
+    _lock(tmp_path, {"packages/acgs-lite/rust/src/lib.rs": "0123456789abcdef"})
+    extract.G.node("Package", "packages/acgs-lite", path="packages/acgs-lite")
+
+    extract.build_sealed([])
+
+    props = extract.G.nodes[("Package", "packages/acgs-lite")]["props"]
+    assert "sealed_files_absent" not in props
+    assert extract.SEALED_STATS["sealed_lock_missing"] == ["packages/acgs-lite/rust/src/lib.rs"]
+    assert extract.SEALED_STATS["sealed_lock_missing_count"] == 1
+
+
+def test_build_sealed_reports_a_parent_tree_lock_entry_with_no_file_node_as_missing(
+    tmp_path, monkeypatch
+):
+    """A pinned parent-tree path with no File node at all (removed from the
+    index and the spine) is missing, not waivable: it belongs to no
+    submodule, initialized or otherwise."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    monkeypatch.setattr(extract, "run", lambda *a: "")
+    _lock(tmp_path, {"docs/SECURITY_MODEL.md": "0123456789abcdef"})
+
+    extract.build_sealed([])
+
+    assert extract.SEALED_STATS["sealed_lock_missing"] == ["docs/SECURITY_MODEL.md"]
+
+
+# --------------------------------------------------------------------------- #
+# Policies
+# --------------------------------------------------------------------------- #
+def test_build_policies_requires_live_tracked_sources(tmp_path, monkeypatch):
+    """REGRESSION. build_policies scanned the filesystem directly, so an
+    untracked local draft minted a current Policy node, and a policy removed
+    from the index but left on disk (tracked=false) could even mint
+    DEFINED_IN via its semantic-retained File node — a policy inventory
+    depending on local-only files that will not exist in a checkout. The
+    same live-and-tracked source predicate as workflows, ADRs, links, and
+    mapping documents applies."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    pol = tmp_path / "automation" / "policies"
+    pol.mkdir(parents=True)
+    (pol / "tracked.yaml").write_text("rule: a\n")
+    (pol / "draft.yaml").write_text("rule: b\n")  # untracked: no File node
+    (pol / "removed.yaml").write_text("rule: c\n")  # index-removed remnant
+    _files("automation/policies/tracked.yaml")
+    extract.G.node("File", "automation/policies/removed.yaml", tracked=False, present=True)
+
+    extract.build_policies()
+
+    assert extract.G.has("Policy", "automation/policies/tracked.yaml")
+    assert not extract.G.has("Policy", "automation/policies/draft.yaml")
+    assert not extract.G.has("Policy", "automation/policies/removed.yaml")
+    assert (
+        "DEFINED_IN",
+        "Policy",
+        "automation/policies/tracked.yaml",
+        "File",
+        "automation/policies/tracked.yaml",
+    ) in extract.G.rels
+    assert not any(
+        src == "Policy" and key != "automation/policies/tracked.yaml"
+        for (_, src, key, *_rest) in extract.G.rels
+    )
 
 
 # --------------------------------------------------------------------------- #

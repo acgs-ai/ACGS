@@ -17,6 +17,7 @@ in this one module, and all of them fail silently if broken —
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -263,6 +264,35 @@ def test_catalog_q2_covers_every_extractor_source_language():
         assert f"'{language}'" in q2, f"Q2 omits {language}:\n{q2}"
 
 
+def test_code_evidence_extensions_cover_every_extractor_source_extension():
+    """REGRESSION. CODE_EXT — and verify.py's SOURCE_EXT and the Q6/Q6b
+    extension filters, which must stay in lockstep — omitted `.jsx` and
+    `.bash` even though extract.py classifies them as JavaScript and Shell,
+    languages Q2/Q10 treat as source. A control citing a tracked `.jsx` or
+    `.bash` implementation was counted as doc-only evidence, kept below
+    tier B, and reported as having no code evidence."""
+    extract = load_kg_module("extract")
+    verify = load_kg_module("verify")
+    source_exts = {
+        ext
+        for ext, lang in extract.LANG_BY_EXT.items()
+        if lang in {"Python", "TypeScript", "JavaScript", "Rust", "Shell"}
+    }
+
+    assert reports.CODE_EXT == source_exts
+    assert set(ast.literal_eval(verify.SOURCE_EXT)) == source_exts
+
+    catalog = Path(reports.__file__).with_name("queries.cypher").read_text()
+    source_lists = [
+        {e.strip().strip("'") for e in m.split(",")}
+        for m in re.findall(r"ext IN \[([^\]]+)\]", catalog)
+    ]
+    source_lists = [s for s in source_lists if ".py" in s]
+    assert source_lists, "queries.cypher lost its source-extension filters"
+    for exts in source_lists:
+        assert exts == source_exts
+
+
 def test_catalog_q5_and_q13_ignore_test_edges_to_deleted_targets():
     """REGRESSION. When the semantic snapshot predates a test file's deletion,
     its TESTED_BY edge survives pointing at a target with present=false. Q5's
@@ -363,6 +393,22 @@ def test_control_cited_with_source_evidence_reaches_tier_b(run_reports):
     )
 
     assert "| EU AI Act Art 12(1) | EU AI Act | B implemented |" in tiers
+
+
+def test_jsx_and_bash_evidence_reach_tier_b(run_reports):
+    """REGRESSION. `.jsx` and `.bash` targets — JavaScript and Shell source by
+    the extractor's classification — were excluded from CODE_EXT, so controls
+    implemented in them landed in doc_ev and stayed below tier B."""
+    _, _, tiers, _ = run_reports(
+        controls=[
+            _control("EU AI Act Art 12(1)", [_ev("acgi-ai/src/App.jsx", ".jsx")]),
+            _control("EU AI Act Art 14(4)", [_ev("scripts/rotate.bash", ".bash")]),
+        ]
+    )
+
+    assert "| EU AI Act Art 12(1) | EU AI Act | B implemented |" in tiers
+    assert "| EU AI Act Art 14(4) | EU AI Act | B implemented |" in tiers
+    assert "evidence target is a document" not in tiers.split("## Per-control detail")[1]
 
 
 def test_control_whose_source_evidence_is_tested_reaches_tier_c(run_reports):
@@ -530,8 +576,24 @@ def test_caveats_name_semantic_refresh_as_a_source_of_new_evidence(run_reports):
     stability guarantee."""
     _, _, tiers, _ = run_reports()
 
-    assert "refreshing the semantic snapshot" in tiers
-    assert "without any code, test, or attestation being added" in tiers
+    flat = " ".join(tiers.split())
+    assert "refreshing the semantic snapshot" in flat
+    assert "without any code or test being added" in flat
+
+
+def test_caveats_do_not_advertise_an_attestation_ingestion_path(run_reports):
+    """REGRESSION. The caveats claimed an "external attestation artifact"
+    enters the graph as new evidence, but the extractor defines no
+    attestation node or relationship and this report hardcodes every
+    control's external state to UNKNOWN: adding such an artifact changes
+    nothing, so the claim advertised a regeneration path that does not exist
+    and contradicted the Tier D criterion above it."""
+    _, _, tiers, _ = run_reports()
+
+    flat = " ".join(tiers.split())
+    assert "external attestation artifact" not in flat
+    assert "no ingestion path at all" in flat
+    assert "the extractor defines no attestation artifact" in flat
 
 
 # --------------------------------------------------------------------------- #

@@ -43,6 +43,7 @@ def run_verify(monkeypatch):
         *,
         catalog_hits: int = len(verify.CATALOG),
         absent_lock_entries: int = 0,
+        missing_lock_entries: list[str] | None = None,
         snapshot_rows: int = 1,
         semantic_declared_loaded: bool = False,
         constraint_names: tuple[str, ...] | None = None,
@@ -70,6 +71,8 @@ def run_verify(monkeypatch):
                 return [join_row]
             if query == verify.SEALED_ABSENT_Q:
                 return [{"absent": absent_lock_entries}]
+            if query == verify.SEALED_MISSING_Q:
+                return [{"missing": list(missing_lock_entries or [])}]
             if query == verify.SEMANTIC_DECLARED_Q:
                 return [{"loaded": 1 if semantic_declared_loaded else 0}]
             if query.startswith("MATCH (s:Snapshot)"):
@@ -287,6 +290,37 @@ def test_absent_marker_lock_entries_satisfy_the_sealed_check(run_verify, capsys)
     out = capsys.readouterr().out
     assert "17 lock entries recorded" in out
     assert "VERIFY: PASS" in out
+
+
+def test_lock_entries_missing_outside_uninitialized_submodules_fail(run_verify, capsys):
+    """REGRESSION. The sealed check accepted any positive absent count and
+    described it as an unavailable submodule, so a sealed file genuinely
+    missing from the spine — e.g. removed from an initialized submodule's
+    index — hid behind VERIFY: PASS. build_sealed now publishes those as
+    Snapshot.sealed_lock_missing, and they must fail hard."""
+    code, _ = run_verify(
+        HEALTHY_JOIN,
+        missing_lock_entries=["packages/acgs-lite/rust/src/lib.rs"],
+    )
+
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "FAIL: 1 hash-lock entries are missing from the tracked spine" in out
+    assert "packages/acgs-lite/rust/src/lib.rs" in out
+
+
+def test_missing_lock_entries_fail_even_when_absent_waivers_exist(run_verify, capsys):
+    """The waiver for uninitialized submodules must not bleed over: absent
+    counts on other packages and missing entries can coexist, and the missing
+    ones still fail."""
+    code, _ = run_verify(
+        {**HEALTHY_JOIN, "sealed": 0},
+        absent_lock_entries=17,
+        missing_lock_entries=["docs/SECURITY_MODEL.md"],
+    )
+
+    assert code == 1
+    assert "docs/SECURITY_MODEL.md" in capsys.readouterr().out
 
 
 def test_a_declared_absent_semantic_layer_skips_the_join_threshold(run_verify, capsys):

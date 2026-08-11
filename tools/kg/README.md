@@ -126,8 +126,9 @@ The graph carries its own caveats as data rather than hiding them:
   buried mid-file is prose, not a declaration.
   `hash_gated: false` means "real marker, in a file type the gate does not
   scan" — i.e. an enforcement gap. It is the check that found the 26 Rust
-  files in `packages/acgs-lite/rust/` (closed 2026-08-10, ADR-0012; the gate
-  now pins 248). Keep it at zero:
+  files in `packages/acgs-lite/rust/` (closed 2026-08-10, ADR-0012; those
+  files are now pinned — `docs/constitutional-hashes.lock` is the
+  authoritative count). Keep it at zero:
   `MATCH (f:File {sealed:true, hash_gated:false}) RETURN f.key`
 - **`CO_CHANGED` is stored once per path-sorted pair.** Canonicalise the pair
   before aggregating by package, or couplings appear twice (Q4 does this).

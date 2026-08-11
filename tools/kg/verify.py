@@ -34,8 +34,9 @@ REQUIRED_CONSTRAINT_SCHEMAS: dict[str, tuple[str, str]] = {
 REQUIRED_CONSTRAINTS = frozenset(REQUIRED_CONSTRAINT_SCHEMAS)
 
 # "Code evidence" means source code. Keep in lockstep with CODE_EXT in
-# reports.py and the Q6/Q6b filters in queries.cypher.
-SOURCE_EXT = "['.py', '.pyi', '.ts', '.tsx', '.js', '.mjs', '.cjs', '.rs', '.sh']"
+# reports.py, the Q6/Q6b filters in queries.cypher, and extract.py's
+# source-language extensions (.jsx is JavaScript, .bash is Shell).
+SOURCE_EXT = "['.py', '.pyi', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.rs', '.sh', '.bash']"
 
 # build_sealed() records lock entries for uninitialized submodules as
 # Package.sealed_files_absent instead of minting phantom :File nodes, so a
@@ -43,6 +44,16 @@ SOURCE_EXT = "['.py', '.pyi', '.ts', '.tsx', '.js', '.mjs', '.cjs', '.rs', '.sh'
 SEALED_ABSENT_Q = (
     "MATCH (p:Package) WHERE p.sealed_files_absent IS NOT NULL "
     "RETURN sum(p.sealed_files_absent) AS absent"
+)
+
+# The absence waiver above covers ONLY uninitialized submodules. A lock entry
+# absent from the spine for any other reason — e.g. a sealed file removed
+# from an initialized submodule's index or from the parent tree — is a
+# genuinely missing sealed file, published by build_sealed() as
+# Snapshot.sealed_lock_missing, and must fail, never pass as "unavailable".
+SEALED_MISSING_Q = (
+    "MATCH (s:Snapshot) UNWIND coalesce(s.sealed_lock_missing, []) AS path "
+    "RETURN collect(path) AS missing"
 )
 
 # extract.py publishes Snapshot.semantic_layer_loaded as the authoritative
@@ -269,6 +280,17 @@ def main() -> int:
                         )
                     else:
                         failures.append("no sealed files linked")
+
+        row = s.run(SEALED_MISSING_Q).single()
+        lock_missing = list(row["missing"]) if row else []
+        if lock_missing:
+            failures.append(
+                f"{len(lock_missing)} hash-lock entries are missing from the "
+                "tracked spine outside uninitialized submodules — genuinely "
+                "missing sealed files, not unavailable checkouts: "
+                + ", ".join(lock_missing[:5])
+                + (" ..." if len(lock_missing) > 5 else "")
+            )
 
         print("\n\n########## CATALOG QUERIES ##########")
         nonempty = 0

@@ -198,6 +198,20 @@ def initialized_submodules() -> list[str]:
     return out
 
 
+def uninitialized_submodules() -> list[str]:
+    """Registered submodule paths with no checkout here — the '-' rows of
+    `git submodule status`. Only these can legitimately explain a hash-lock
+    entry that is absent from the File spine."""
+    out = []
+    try:
+        for line in run("git", "submodule", "status").splitlines():
+            if line.strip() and line[0] == "-":
+                out.append(line[1:].strip().split(" ")[1])
+    except subprocess.CalledProcessError:
+        pass
+    return out
+
+
 def build_spine() -> list[str]:
     """Parent-tracked paths plus, for each checked-out submodule, its own
     tracked paths prefixed with the submodule path. `git ls-files` in the
@@ -759,6 +773,11 @@ except ImportError:  # degrade loudly, never silently
 # The gate's own fixture exclusions, plus the lock file itself (it is the
 # inventory, not a sealed declaration).
 HASH_SKIP = set(_GATE_SKIP_FILES) | {"docs/constitutional-hashes.lock"}
+
+# Filled by build_sealed, published on the (:Snapshot) node: lock entries
+# absent from the File spine whose owner is NOT an uninitialized submodule.
+# These are genuinely missing sealed files and verify.py fails hard on them.
+SEALED_STATS: dict = {}
 BINARY_EXT = {
     ".png",
     ".jpg",
@@ -819,6 +838,8 @@ def build_sealed(tracked: list[str]) -> None:
             ungated += 1
 
     absent: Counter = Counter()
+    missing: list[str] = []
+    uninit: list[str] | None = None  # resolved lazily: only absences need it
     lock = ROOT / "docs" / "constitutional-hashes.lock"
     if lock.exists():
         data = json.loads(lock.read_text())
@@ -848,18 +869,33 @@ def build_sealed(tracked: list[str]) -> None:
                     G.node("File", path, hash_drift=live != value)
                 G.rel("SEALED_WITH", "File", path, "Hash", value)
             else:
-                pkg = next(
-                    (p for (lbl, p) in G.nodes if lbl == "Package" and path.startswith(p + "/")),
-                    None,
-                )
-                absent[pkg or "?"] += 1
+                # An absent lock entry is waived only when its owner is a
+                # submodule that is genuinely not checked out here — that is
+                # the one case where the file's absence says nothing about
+                # the seal. Attributing every absence to a package by prefix
+                # let a sealed file removed from an initialized submodule's
+                # index (or from the parent spine) count as "unavailable
+                # submodule", and verify.py then hid a genuinely missing
+                # sealed file behind VERIFY: PASS.
+                if uninit is None:
+                    uninit = uninitialized_submodules()
+                sm = next((s for s in uninit if path.startswith(s + "/")), None)
+                if sm is not None:
+                    absent[sm] += 1
+                else:
+                    missing.append(path)
         for pkg, n in absent.items():
             if G.has("Package", pkg):
                 G.node("Package", pkg, sealed_files_absent=n)
+    SEALED_STATS.clear()
+    if missing:
+        SEALED_STATS["sealed_lock_missing"] = sorted(missing)
+        SEALED_STATS["sealed_lock_missing_count"] = len(missing)
     log(
         f"E1. sealed: {present} live markers in the working tree "
         f"({ungated} in file types the hash gate never scans), "
-        f"{sum(absent.values())} lock entries in uninitialized submodules"
+        f"{sum(absent.values())} lock entries in uninitialized submodules, "
+        f"{len(missing)} lock entries MISSING outside uninitialized submodules"
     )
 
 
@@ -1474,6 +1510,13 @@ def build_policies() -> None:
     seen += [p for p in extra if p.is_file()]
     for p in seen:
         rel = p.relative_to(ROOT).as_posix()
+        # Same live-and-tracked source predicate as workflows, ADRs, links,
+        # and mapping documents: an untracked local draft, or a policy
+        # removed from the index but left on disk, will not exist in a
+        # checkout, so this filesystem scan must not mint a current Policy
+        # node (or DEFINED_IN, via a semantic-retained File node) for it.
+        if not (G.has("File", rel) and file_is_live(rel)):
+            continue
         pkey = rel
         G.node(
             "Policy",
@@ -1634,7 +1677,7 @@ def main() -> int:
     build_workflows(tracked)
     build_policies()
 
-    G.node("Snapshot", snapshot_key, **CONTROL_STATS)
+    G.node("Snapshot", snapshot_key, **CONTROL_STATS, **SEALED_STATS)
 
     # dirty-vs-snapshot honesty flag
     for p in dirty:

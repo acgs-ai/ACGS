@@ -100,7 +100,7 @@ ORDER BY hotspot DESC LIMIT 20;
 MATCH (d:File)-[:MAPS_TO]->(ctl:Control)
 WHERE NOT EXISTS {
   MATCH (ctl)-[:EVIDENCED_BY]->(e:File)
-  WHERE e.ext IN ['.py', '.pyi', '.ts', '.tsx', '.js', '.mjs', '.cjs', '.rs', '.sh']
+  WHERE e.ext IN ['.py', '.pyi', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.rs', '.sh', '.bash']
 }
 RETURN ctl.framework AS framework, count(DISTINCT ctl) AS controls_without_evidence,
        collect(DISTINCT ctl.key)[0..8] AS examples
@@ -111,9 +111,9 @@ ORDER BY controls_without_evidence DESC;
 // are collected separately so they cannot masquerade as implementations.
 MATCH (doc:File)-[:MAPS_TO]->(ctl:Control {framework: 'EU AI Act'})
 OPTIONAL MATCH (ctl)-[:EVIDENCED_BY]->(code:File)
-  WHERE code.ext IN ['.py', '.pyi', '.ts', '.tsx', '.js', '.mjs', '.cjs', '.rs', '.sh']
+  WHERE code.ext IN ['.py', '.pyi', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.rs', '.sh', '.bash']
 OPTIONAL MATCH (ctl)-[:EVIDENCED_BY]->(other:File)
-  WHERE NOT other.ext IN ['.py', '.pyi', '.ts', '.tsx', '.js', '.mjs', '.cjs', '.rs', '.sh']
+  WHERE NOT other.ext IN ['.py', '.pyi', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.rs', '.sh', '.bash']
 RETURN ctl.key AS control, collect(DISTINCT doc.key) AS mapping_docs,
        collect(DISTINCT code.key) AS code_evidence_files,
        collect(DISTINCT other.key) AS non_code_evidence_files
