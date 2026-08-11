@@ -17,6 +17,7 @@ with real ``git log --numstat`` output.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -169,6 +170,34 @@ def test_ua_ref_maps_endpoints():
 def test_ua_ref_returns_none_for_unmappable_types():
     assert extract.ua_ref("ua-4", {"ua-4": "concept"}, {}) is None
     assert extract.ua_ref("unknown", {}, {}) is None
+
+
+def test_build_semantic_records_filesystem_presence_for_snapshot_only_paths(
+    tmp_path, monkeypatch
+):
+    """REGRESSION. A semantic snapshot predating a file deletion minted a File
+    node with present=True for a path that is neither tracked nor on disk, so
+    a control citing deleted source could still be reported as implemented."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    (tmp_path / "live.py").write_text("x = 1\n")
+    ua = tmp_path / "knowledge-graph.json"
+    ua.write_text(
+        json.dumps(
+            {
+                "nodes": [
+                    {"id": "n1", "type": "file", "filePath": "live.py", "name": "live.py"},
+                    {"id": "n2", "type": "file", "filePath": "gone.py", "name": "gone.py"},
+                ],
+                "edges": [],
+            }
+        )
+    )
+    monkeypatch.setattr(extract, "UA_GRAPH", ua)
+
+    extract.build_semantic("snap")
+
+    assert extract.G.nodes[("File", "live.py")]["props"]["present"] is True
+    assert extract.G.nodes[("File", "gone.py")]["props"]["present"] is False
 
 
 # --------------------------------------------------------------------------- #
@@ -376,6 +405,14 @@ def test_resolve_link_returns_none_when_the_target_is_not_tracked():
     assert extract.resolve_link("docs/x.md", "does/not/exist.py") is None
 
 
+def test_resolve_link_excludes_files_recorded_as_absent():
+    """A semantic-only node for a deleted path must not resolve as live
+    evidence: it is neither tracked nor on disk."""
+    extract.G.node("File", "gone.py", path="gone.py", present=False)
+
+    assert extract.resolve_link("docs/x.md", "gone.py") is None
+
+
 # --------------------------------------------------------------------------- #
 # Token resolution (path / basename / doc-scope tiers)
 # --------------------------------------------------------------------------- #
@@ -442,6 +479,19 @@ def test_resolve_token_carries_the_line_number_through_a_basename_hit():
     _files("src/receipt.py")
 
     assert extract.resolve_token("docs/x.md", "receipt.py:42")[1] == 42
+
+
+def test_resolve_token_basename_lookup_skips_absent_semantic_only_files():
+    """An absent snapshot-only node neither wins the basename lookup nor
+    poisons it into ambiguity: only live files count as candidates."""
+    extract.G.node("File", "old/receipt.py", path="old/receipt.py", present=False)
+    _files("packages/gove-zone/receipt.py")
+
+    assert extract.resolve_token("docs/x.md", "receipt.py") == (
+        "packages/gove-zone/receipt.py",
+        None,
+        "basename",
+    )
 
 
 def test_ambiguous_basename_is_dropped_without_document_context(tmp_path, monkeypatch):
@@ -608,6 +658,57 @@ def test_parse_history_follows_directory_renames(git_repo):
     assert list(latest["files"]) == ["pkg/a.py"]
 
 
+def test_parse_history_attributes_pre_rename_commits_to_the_live_path(git_repo):
+    """REGRESSION. Rewriting only the rename commit's numstat path left every
+    older commit keyed on the origin path, which build_history() drops because
+    it is absent from the live spine: the advertised full-history churn and
+    commit counts silently excluded everything before a rename."""
+    (git_repo / "a.py").write_text("one\ntwo\nthree\n")
+    _git(git_repo, "commit", "-aqm", "grow")
+    _git(git_repo, "mv", "a.py", "b.py")
+    _git(git_repo, "commit", "-qm", "rename")
+
+    commits = extract.parse_history("repo")
+
+    assert len(commits) == 3
+    assert all(list(c["files"]) == ["b.py"] for c in commits)
+
+
+def test_parse_history_collapses_chained_renames_onto_the_final_path(git_repo):
+    _git(git_repo, "mv", "a.py", "b.py")
+    _git(git_repo, "commit", "-qm", "first rename")
+    _git(git_repo, "mv", "b.py", "c.py")
+    _git(git_repo, "commit", "-qm", "second rename")
+
+    commits = extract.parse_history("repo")
+
+    assert all(list(c["files"]) == ["c.py"] for c in commits)
+
+
+def test_parse_history_carries_directory_rename_ancestry(git_repo):
+    (git_repo / "pkg").mkdir()
+    _git(git_repo, "mv", "a.py", "pkg/a.py")
+    _git(git_repo, "commit", "-qm", "move into pkg")
+
+    oldest = extract.parse_history("repo")[-1]
+
+    assert oldest["subject"] == "first commit"
+    assert list(oldest["files"]) == ["pkg/a.py"]
+
+
+@pytest.mark.parametrize(
+    ("record", "expected"),
+    [
+        ("old.py => new.py", ("old.py", "new.py")),
+        ("a/{old => new}/c.py", ("a/old/c.py", "a/new/c.py")),
+        ("dir/{ => sub}/f.py", ("dir/f.py", "dir/sub/f.py")),
+        ("dir/{sub => }/f.py", ("dir/sub/f.py", "dir/f.py")),
+    ],
+)
+def test_split_rename_reconstructs_both_sides_of_every_numstat_shape(record, expected):
+    assert extract.split_rename(record) == expected
+
+
 def test_parse_history_records_binary_numstat_as_zero_churn(git_repo):
     (git_repo / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x01\x02")
     _git(git_repo, "add", "logo.png")
@@ -671,6 +772,40 @@ def test_porcelain_paths_reads_nul_terminated_paths_with_spaces_unquoted():
 def test_porcelain_paths_handles_copies_and_empty_output():
     assert extract.porcelain_paths("") == []
     assert extract.porcelain_paths("C  copy.py\0original.py\0") == ["copy.py"]
+
+
+def test_collect_dirty_paths_descends_into_initialized_submodules(monkeypatch):
+    """REGRESSION. The parent porcelain reports a change inside a submodule
+    only as the gitlink path, so the inner file never received
+    dirty_at_extract and Q7 omitted ADRs governing that change."""
+    monkeypatch.setattr(extract, "run", lambda *a: " M packages/acgs-lite\0 M top.py\0")
+    monkeypatch.setattr(extract, "initialized_submodules", lambda: ["packages/acgs-lite"])
+
+    class _Proc:
+        returncode = 0
+        stdout = " M src/receipt.py\0R  new.py\0old.py\0"
+
+    monkeypatch.setattr(extract.subprocess, "run", lambda *a, **k: _Proc())
+
+    assert extract.collect_dirty_paths() == [
+        "packages/acgs-lite",
+        "top.py",
+        "packages/acgs-lite/src/receipt.py",
+        "packages/acgs-lite/new.py",
+    ]
+
+
+def test_collect_dirty_paths_tolerates_a_failing_submodule_status(monkeypatch):
+    monkeypatch.setattr(extract, "run", lambda *a: " M top.py\0")
+    monkeypatch.setattr(extract, "initialized_submodules", lambda: ["packages/acgs-lite"])
+
+    class _Proc:
+        returncode = 128
+        stdout = ""
+
+    monkeypatch.setattr(extract.subprocess, "run", lambda *a, **k: _Proc())
+
+    assert extract.collect_dirty_paths() == ["top.py"]
 
 
 # --------------------------------------------------------------------------- #

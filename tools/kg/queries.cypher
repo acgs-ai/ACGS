@@ -130,7 +130,10 @@ RETURN f.key AS file, f.package AS package, f.commit_count AS commits,
 ORDER BY churn DESC LIMIT 20;
 
 // --- Q12. Most-referenced knowledge: doc authority ranking ----------------
+// LINKS_TO can target any tracked file; without the extension filter this
+// "doc authority" ranking surfaces source, config, and lock files too.
 MATCH (f:File)<-[l:LINKS_TO]-()
+WHERE f.ext IN ['.md', '.mdx']
 RETURN f.key AS doc, count(l) AS inbound_refs, f.summary AS summary
 ORDER BY inbound_refs DESC LIMIT 20;
 

@@ -37,7 +37,7 @@ SNAPSHOT = {
     "dirty": 3,
     "enumeration_scopes_skipped": 7,
 }
-COVERAGE = {"files": 200, "analyzed": 120, "in_submodules": 40}
+COVERAGE = {"files": 200, "analyzed": 120, "in_submodules": 40, "analyzed_in_submodules": 0}
 
 
 def _hot(path: str, **over) -> dict:
@@ -358,6 +358,31 @@ def test_control_plane_focus_section_counts_test_files_by_path_convention(run_re
     assert "carrying 5 commits" in hotspot
 
 
+def test_control_plane_section_keeps_the_no_claim_wording_when_nothing_is_analyzed(run_reports):
+    _, hotspot, _, _ = run_reports(
+        cplane=[_hot("packages/acgs-control-plane/app.py", ua_covered=False, test_edges=0)]
+    )
+
+    assert "the semantic snapshot has never analyzed it" in hotspot
+    assert "Every row above is `not analyzed — outside semantic snapshot`." in hotspot
+
+
+def test_control_plane_section_derives_its_wording_from_analyzed_rows(run_reports):
+    """REGRESSION. The section asserted every row was unanalyzed even when its
+    own table reported analyzed/tested evidence for some rows."""
+    _, hotspot, _, _ = run_reports(
+        cplane=[
+            _hot("packages/acgs-control-plane/app.py", ua_covered=True, test_edges=2),
+            _hot("packages/acgs-control-plane/tenant.py", ua_covered=False, test_edges=0),
+        ]
+    )
+
+    assert "the semantic snapshot covers 1 of these 2 focus-area paths" in hotspot
+    assert "Every row above is" not in hotspot
+    assert "1 of the 2 rows above are" in hotspot
+    assert "The other 1\n  rows carry semantic analysis" in hotspot
+
+
 def test_provenance_names_the_commit_branch_and_staleness(run_reports):
     _, hotspot, tiers, _ = run_reports()
 
@@ -374,6 +399,41 @@ def test_provenance_reports_a_current_semantic_layer_when_not_stale(run_reports)
 
     assert "is current:" in hotspot
     assert "STALE relative to HEAD" not in hotspot
+
+
+def test_provenance_survives_a_missing_semantic_commit(run_reports):
+    """REGRESSION. A fresh clone extracts no semantic layer, so
+    Snapshot.ua_commit is null; slicing it raised TypeError before either
+    report was written. The absence must render as an explicit state."""
+    code, hotspot, tiers, _ = run_reports(
+        snapshot={**SNAPSHOT, "ua_commit": None},
+        coverage={"files": 200, "analyzed": 0, "in_submodules": 40, "analyzed_in_submodules": 0},
+    )
+
+    assert code == 0
+    for document in (hotspot, tiers):
+        assert "**absent**" in document
+        assert "recorded no semantic snapshot" in document
+        assert "0/200 tracked files analyzed" in document
+        assert "STALE relative to HEAD" not in document
+
+
+def test_provenance_derives_submodule_coverage_from_the_graph(run_reports):
+    """REGRESSION. The provenance hard-coded 'all submodule files are
+    unanalyzed', which becomes false the moment the semantic layer is
+    refreshed with submodules initialized."""
+    _, hotspot, _, _ = run_reports(
+        coverage={"files": 200, "analyzed": 120, "in_submodules": 40, "analyzed_in_submodules": 15}
+    )
+
+    assert "15 of the 40 submodule files are analyzed" in hotspot
+    assert "the other 25 are outside the snapshot" in hotspot
+
+
+def test_provenance_reports_zero_submodule_coverage_as_none_analyzed(run_reports):
+    _, hotspot, _, _ = run_reports()
+
+    assert "None of the 40 submodule files are analyzed." in hotspot
 
 
 def test_commit_node_distribution_lists_every_repo(run_reports):

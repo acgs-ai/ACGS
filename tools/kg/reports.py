@@ -127,7 +127,9 @@ COVERAGE_Q = """
 MATCH (f:File) WHERE f.tracked
 RETURN count(*) AS files,
        sum(CASE WHEN f.ua_covered THEN 1 ELSE 0 END) AS analyzed,
-       sum(CASE WHEN f.in_submodule THEN 1 ELSE 0 END) AS in_submodules
+       sum(CASE WHEN f.in_submodule THEN 1 ELSE 0 END) AS in_submodules,
+       sum(CASE WHEN f.in_submodule AND f.ua_covered THEN 1 ELSE 0 END)
+           AS analyzed_in_submodules
 """
 
 CONTROL_Q = """
@@ -177,17 +179,39 @@ def main() -> int:
         tested = set(s.run(TESTED_Q).single()["tested"])
         resolutions = {r["how"]: r["n"] for r in s.run(RESOLUTION_Q)}
 
+    # Both statements below are derived from the graph, never hard-coded:
+    # a refreshed semantic layer can cover submodule files, and a fresh clone
+    # extracts no semantic layer at all (Snapshot.ua_commit is null; slicing
+    # it would raise TypeError before either report is written).
+    sub_total = cov["in_submodules"]
+    sub_analyzed = cov["analyzed_in_submodules"]
+    if sub_analyzed:
+        submodule_note = (
+            f"{sub_analyzed} of the {sub_total} submodule files are analyzed; "
+            f"the other {sub_total - sub_analyzed} are outside the snapshot."
+        )
+    else:
+        submodule_note = f"None of the {sub_total} submodule files are analyzed."
+    if snap["ua_commit"]:
+        semantic_note = (
+            f"Semantic layer (understand-anything) is pinned at "
+            f"`{snap['ua_commit'][:12]}` and is "
+            f"{'STALE relative to HEAD' if snap['stale'] else 'current'}"
+        )
+    else:
+        semantic_note = (
+            "Semantic layer (understand-anything) is **absent** "
+            "(this extraction recorded no semantic snapshot)"
+        )
+
     provenance = (
         f"> **Provenance.** Computed from the knowledge graph at "
         f"`tools/kg`, extraction `{snap['generated_at']}`, "
         f"parent commit `{snap['head'][:12]}` on `{snap['branch']}`, "
         f"{snap['dirty']} uncommitted paths present.\n>\n"
-        f"> Semantic layer (understand-anything) is pinned at "
-        f"`{snap['ua_commit'][:12]}` and is "
-        f"{'STALE relative to HEAD' if snap['stale'] else 'current'}: "
+        f"> {semantic_note}: "
         f"{cov['analyzed']}/{cov['files']} tracked files analyzed. "
-        f"The snapshot predates the submodule checkout, so all "
-        f"{cov['in_submodules']} submodule files are unanalyzed.\n>\n"
+        f"{submodule_note}\n>\n"
         f"> Regenerate: `cd tools/kg && make reload && "
         f"uv run --with neo4j python reports.py`\n"
     )
@@ -220,6 +244,37 @@ def main() -> int:
     _cp_tests = [r for r in cplane if "/tests/" in r["path"] or "test_" in r["path"]]
     cp_test_files = len(_cp_tests)
     cp_test_commits = sum(r["commits"] for r in _cp_tests)
+
+    # Derived, not hard-coded: once the semantic layer is refreshed with
+    # submodules initialized, focus-area rows can carry ua_covered=true and
+    # asserting "never analyzed" would contradict the table right above it.
+    cp_analyzed = sum(1 for r in cplane if r["ua_covered"])
+    cp_unanalyzed = len(cplane) - cp_analyzed
+    if cp_analyzed:
+        cp_semantic_claim = (
+            f"the semantic snapshot covers {cp_analyzed} of these "
+            f"{len(cplane)} focus-area paths"
+        )
+        cp_claim_bullet = (
+            f"- {cp_unanalyzed} of the {len(cplane)} rows above are `not analyzed —\n"
+            f"  outside semantic snapshot`; for those rows this report makes **no\n"
+            f"  claim** about whether the files are tested. The other {cp_analyzed}\n"
+            f"  rows carry semantic analysis and report their observed test-edge state."
+        )
+        cp_link_note = (
+            "Where either side is unanalyzed, the graph cannot\n"
+            "  link a test file to the modules it exercises."
+        )
+    else:
+        cp_semantic_claim = "the semantic snapshot has never analyzed it"
+        cp_claim_bullet = (
+            "- Every row above is `not analyzed — outside semantic snapshot`. This report\n"
+            "  therefore makes **no claim** about whether these files are tested."
+        )
+        cp_link_note = (
+            "The graph cannot link them to the modules they exercise\n"
+            "  because neither side was analyzed."
+        )
 
     r1 = f"""# Cross-repo hotspot report
 
@@ -271,8 +326,7 @@ so their test-evidence state is unknown rather than absent.
 ## Focus: `packages/acgs-control-plane` (migrations, app.py, tenant*, native*)
 
 Requested focus area. This submodule is **not** initialized by
-`.github/workflows/constitutional-hash.yml`, and the semantic snapshot has
-never analyzed it.
+`.github/workflows/constitutional-hash.yml`, and {cp_semantic_claim}.
 
 {
         md_table(
@@ -282,13 +336,11 @@ never analyzed it.
     }
 ### Observable statements only
 
-- Every row above is `not analyzed — outside semantic snapshot`. This report
-  therefore makes **no claim** about whether these files are tested.
+{cp_claim_bullet}
 - Separately observable, and stated so the row above is not misread as
   "no tests exist": {cp_test_files} of the {len(cp_rows)} focus-area paths are
   themselves test files by path convention, carrying {cp_test_commits} commits
-  between them. The graph cannot link them to the modules they exercise
-  because neither side was analyzed.
+  between them. {cp_link_note}
 - `governance coverage` for these files reflects parent-repo controls only.
   Any gate defined inside the submodule's own CI is invisible to this graph.
 - To convert the unknowns into observations, re-run the semantic layer with

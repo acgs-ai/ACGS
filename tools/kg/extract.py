@@ -292,7 +292,11 @@ def build_semantic(snapshot_key: str) -> None:
                 ua_covered=True,
             )
             slot["props"].setdefault("tracked", False)
-            slot["props"].setdefault("present", True)
+            # The snapshot can predate a deletion. A semantic-only path is
+            # "present" only if it still exists on disk; assuming True minted
+            # live-looking nodes for deleted files, which resolve_link() then
+            # bound as compliance evidence.
+            slot["props"].setdefault("present", (ROOT / path).is_file())
             slot["props"].setdefault("is_test", is_test_path(path))
             slot["props"].setdefault("sealed", False)
             if "ext" not in slot["props"]:
@@ -371,6 +375,23 @@ def build_semantic(snapshot_key: str) -> None:
 # --------------------------------------------------------------------------- #
 # C. Git history
 # --------------------------------------------------------------------------- #
+def split_rename(path: str) -> tuple[str, str]:
+    """A ``--numstat`` rename record -> (origin, destination) full paths.
+
+    Two shapes exist: the brace form ``dir/{old => new}/c.py`` (either side may
+    be empty, e.g. ``dir/{ => sub}/c.py``) and the plain form ``old => new``.
+    """
+    m = re.match(r"^(.*)\{(.*) => (.*)\}(.*)$", path)
+    if m:
+        pre, old_mid, new_mid, post = m.groups()
+        return (
+            f"{pre}{old_mid}{post}".replace("//", "/"),
+            f"{pre}{new_mid}{post}".replace("//", "/"),
+        )
+    old, new = path.split(" => ", 1)
+    return old, new
+
+
 def parse_history(repo: str = ".", prefix: str = "") -> list[dict]:
     """Commits of one repo. Submodules are separate histories, so this is
     called once per repo and paths are prefixed back onto the parent's spine."""
@@ -394,6 +415,12 @@ def parse_history(repo: str = ".", prefix: str = "") -> list[dict]:
     raw = proc.stdout
     commits: list[dict] = []
     cur: dict | None = None
+    # historical path -> the path it lives at today. The log is newest-first,
+    # so a rename record teaches us how every OLDER commit's path maps forward.
+    # Rewriting only the rename commit itself dropped all pre-rename commits
+    # in build_history() (the old path is absent from the live spine), which
+    # materially understated the advertised full-history churn metrics.
+    alias: dict[str, str] = {}
     for line in raw.split("\n"):
         if line.startswith("\x01"):
             sha, ts, an, ae, subject = line[1:].split("\x1f", 4)
@@ -413,10 +440,11 @@ def parse_history(repo: str = ".", prefix: str = "") -> list[dict]:
                 continue
             add, dele, path = parts
             if " => " in path:  # rename: a/{old => new}/c.py  or  old => new
-                path = re.sub(r"\{[^}]*=> ([^}]*)\}", r"\1", path)
-                if " => " in path:
-                    path = path.split(" => ")[-1]
-                path = path.replace("//", "/")
+                old, new = split_rename(path)
+                path = alias.get(new, new)
+                alias[old] = path  # chained renames collapse onto the live path
+            else:
+                path = alias.get(path, path)
             cur["files"][prefix + path] = (
                 int(add) if add.isdigit() else 0,
                 int(dele) if dele.isdigit() else 0,
@@ -796,7 +824,7 @@ def resolve_token(src: str, token: str) -> tuple[str | None, int | None, str | N
     if "/" in token:
         return None, None, None
 
-    cands = basename_index().get(token, [])
+    cands = [c for c in basename_index().get(token, []) if file_is_live(c)]
     if len(cands) == 1:
         return cands[0], line, "basename"
     if len(cands) > 1:
@@ -810,6 +838,14 @@ def resolve_token(src: str, token: str) -> tuple[str | None, int | None, str | N
         if len(near) == 1:
             return near[0], line, "basename-docscope"
     return None, None, None
+
+
+def file_is_live(key: str) -> bool:
+    """A File node is usable as live evidence unless it is explicitly recorded
+    as absent: a semantic-only path whose file was since deleted is neither
+    tracked nor on disk, and binding doc links or compliance evidence to it
+    would report deleted source as an implementation."""
+    return bool(G.nodes[("File", key)]["props"].get("present", True))
 
 
 def resolve_link(src: str, target: str) -> str | None:
@@ -833,7 +869,7 @@ def resolve_link(src: str, target: str) -> str | None:
         ]
     for cand in cands:
         cand = cand.replace("\\", "/")
-        if G.has("File", cand):
+        if G.has("File", cand) and file_is_live(cand):
             return cand
     return None
 
@@ -1191,11 +1227,29 @@ def porcelain_paths(raw: str) -> list[str]:
     return paths
 
 
+def collect_dirty_paths() -> list[str]:
+    """Working-tree dirt across the parent repo AND every initialized
+    submodule. The parent's porcelain reports a change inside a submodule only
+    as the gitlink path; without descending, the inner File node never receives
+    ``dirty_at_extract`` and Q7 silently omits ADRs governing that change."""
+    dirty = porcelain_paths(run("git", "status", "--porcelain", "-z"))
+    for sm in initialized_submodules():
+        sub = subprocess.run(
+            ["git", "-C", str(ROOT / sm), "status", "--porcelain", "-z"],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        if sub.returncode == 0:
+            dirty.extend(f"{sm}/{p}" for p in porcelain_paths(sub.stdout))
+    return dirty
+
+
 # --------------------------------------------------------------------------- #
 def main() -> int:
     head = run("git", "rev-parse", "HEAD").strip()
     branch = run("git", "rev-parse", "--abbrev-ref", "HEAD").strip()
-    dirty = porcelain_paths(run("git", "status", "--porcelain", "-z"))
+    dirty = collect_dirty_paths()
     ua_meta = json.loads(UA_META.read_text()) if UA_META.exists() else {}
     snapshot_key = head[:12]
     G.node(
