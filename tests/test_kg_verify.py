@@ -293,14 +293,17 @@ def test_catalog_q5_ignores_test_edges_to_deleted_targets():
     """REGRESSION. The verifier's Q5 kept the unqualified
     `NOT (f)-[:TESTED_BY]->()` after the report queries were fixed, so a stale
     snapshot's edge to a deleted test file (present=false) still hid a hotspot
-    from the catalog check. It must restrict to live targets like reports.py
-    (nodes without the flag, e.g. Symbols, stay countable)."""
+    from the catalog check. It must restrict to live tracked targets like
+    reports.py: an index-removed test left on disk (tracked=false,
+    present=true) is not coverage either (nodes without the flags, e.g.
+    Symbols, stay countable)."""
     q5 = dict(verify.CATALOG)["Q5 hotspots with no test edge"]
 
     assert "TESTED_BY]->()" not in q5
     match = re.search(r"TESTED_BY]->\((\w+)", q5)
     assert match, f"query no longer binds its TESTED_BY target:\n{q5}"
     assert f"coalesce({match.group(1)}.present, true)" in q5
+    assert f"coalesce({match.group(1)}.tracked, true)" in q5
 
 
 def test_catalog_q5_excludes_absent_hotspot_subjects():

@@ -99,14 +99,16 @@ CATALOG = [
     ),
     (
         "Q5 hotspots with no test edge",
-        # Test evidence must be live: a stale snapshot keeps TESTED_BY edges
-        # to deleted test files (present=false), which are not coverage. The
-        # hotspot itself must be live too — tracked stays true for an
-        # unstaged deletion (build_spine records present=false).
+        # Test evidence must be live AND tracked: a stale snapshot keeps
+        # TESTED_BY edges to deleted test files (present=false) and to tests
+        # removed from the index but left on disk (tracked=false), which are
+        # not coverage. The hotspot itself must be live too — tracked stays
+        # true for an unstaged deletion (build_spine records present=false).
         "MATCH (f:File) WHERE f.tracked AND coalesce(f.present, true) "
         "AND NOT f.is_test AND f.hotspot > 0.05 "
         "AND f.language IN ['Python','TypeScript'] "
-        "AND NOT EXISTS { MATCH (f)-[:TESTED_BY]->(tt) WHERE coalesce(tt.present, true) } "
+        "AND NOT EXISTS { MATCH (f)-[:TESTED_BY]->(tt) "
+        "WHERE coalesce(tt.present, true) AND coalesce(tt.tracked, true) } "
         "RETURN f.key AS file, f.hotspot AS hotspot, f.commit_count AS commits "
         "ORDER BY hotspot DESC LIMIT 5",
     ),

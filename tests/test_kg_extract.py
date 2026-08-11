@@ -529,6 +529,49 @@ def test_build_workflows_publishes_each_events_filter_list_in_declaration_order(
     assert props["path_filters_pull_request"] == ["deploy/**"]
 
 
+def test_build_workflows_does_not_gate_submodule_internal_paths(tmp_path, monkeypatch):
+    """REGRESSION. build_spine() appends every initialized submodule's inner
+    paths to the tracked list, and matching them against the parent
+    repository's workflow filters minted GATES edges for files a parent PR
+    can never change (only the gitlink moves). Those edges suppressed the
+    inner files from Q2 and reported false CI×N coverage. The gitlink itself
+    is an ordinary parent-tracked path and must keep matching."""
+    pytest.importorskip("yaml")
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "swarm.yml").write_text(
+        "name: swarm\n"
+        "on:\n"
+        "  pull_request:\n"
+        "    paths:\n"
+        "      - 'packages/swarm'\n"
+        "      - 'packages/swarm/**'\n"
+        "jobs:\n"
+        "  test:\n"
+        "    steps: []\n"
+    )
+    _files(".github/workflows/swarm.yml")
+    extract.G.node("File", "packages/swarm", path="packages/swarm", in_submodule=False)
+    extract.G.node(
+        "File",
+        "packages/swarm/src/main.py",
+        path="packages/swarm/src/main.py",
+        in_submodule=True,
+    )
+
+    extract.build_workflows(["packages/swarm", "packages/swarm/src/main.py"])
+
+    assert ("GATES", "Workflow", "swarm", "File", "packages/swarm") in extract.G.rels
+    assert (
+        "GATES",
+        "Workflow",
+        "swarm",
+        "File",
+        "packages/swarm/src/main.py",
+    ) not in extract.G.rels
+
+
 # --------------------------------------------------------------------------- #
 # Compliance control ids
 # --------------------------------------------------------------------------- #
@@ -1121,6 +1164,32 @@ def test_build_history_normalizes_hotspots_over_live_files_only():
     assert extract.G.nodes[("File", "live.py")]["props"]["hotspot"] == 1.0
 
 
+def test_build_history_normalizes_hotspots_over_live_tracked_nodes_only():
+    """REGRESSION. build_semantic() deliberately retains a File node for a
+    path deleted after the snapshot (present=false, possibly tracked=false),
+    so the node-existence check alone still let that dead node's churn set
+    max_churn, scaling every live file's hotspot down until Q5's fixed
+    `hotspot > 0.05` predicate missed the actual current hotspots. The
+    denominator and the scoring loop must share the live-and-tracked
+    predicate, so the dead node receives no hotspot either."""
+    _files("live.py")
+    extract.G.node("File", "stale.py", path="stale.py", present=False, tracked=False)
+    commit = {
+        "sha": "a" * 40,
+        "ts": 1_700_000_000,
+        "author": "A",
+        "email": "a@example.com",
+        "subject": "x",
+        "repo": ".",
+        "files": {"live.py": (5, 5), "stale.py": (500, 500)},
+    }
+
+    extract.build_history([commit])
+
+    assert extract.G.nodes[("File", "live.py")]["props"]["hotspot"] == 1.0
+    assert "hotspot" not in extract.G.nodes[("File", "stale.py")]["props"]
+
+
 # --------------------------------------------------------------------------- #
 # Dirty-path snapshot parsing
 # --------------------------------------------------------------------------- #
@@ -1287,9 +1356,13 @@ def test_build_sealed_records_no_drift_when_lock_and_marker_agree(tmp_path, monk
     assert props["hash_drift"] is False
 
 
-def test_build_sealed_seals_a_marker_less_file_from_the_lock_pin(tmp_path, monkeypatch):
-    """With no live marker observed, the pin is the only hash — and the source
-    must say so instead of implying the value was seen in the working tree."""
+def test_build_sealed_reports_a_missing_live_marker_as_drift(tmp_path, monkeypatch):
+    """REGRESSION. When a tracked file stays pinned in the lock but its
+    working-tree marker has been removed, the lock pass restored the pin into
+    sealed_hash, so Q3 showed the file as sealed with no hash_drift, hiding
+    exactly the marker-removal drift the graph exists to expose. The absent
+    observation must stay absent (no sealed_hash) and the file must be
+    flagged as drifted."""
     monkeypatch.setattr(extract, "ROOT", tmp_path)
     (tmp_path / "plain.md").write_text("no marker here\n")
     _lock(tmp_path, {"plain.md": "0123456789abcdef"})
@@ -1299,10 +1372,11 @@ def test_build_sealed_seals_a_marker_less_file_from_the_lock_pin(tmp_path, monke
 
     props = extract.G.nodes[("File", "plain.md")]["props"]
     assert props["sealed"] is True
-    assert props["sealed_hash"] == "0123456789abcdef"
+    assert "sealed_hash" not in props
     assert props["sealed_source"] == "hash-lock"
     assert props["pinned_hash"] == "0123456789abcdef"
-    assert "hash_drift" not in props
+    assert props["hash_drift"] is True
+    assert ("SEALED_WITH", "File", "plain.md", "Hash", "0123456789abcdef") in extract.G.rels
 
 
 # --------------------------------------------------------------------------- #

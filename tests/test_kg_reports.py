@@ -228,13 +228,16 @@ def test_catalog_q5_and_q13_ignore_test_edges_to_deleted_targets():
     its TESTED_BY edge survives pointing at a target with present=false. Q5's
     unqualified `NOT (f)-[:TESTED_BY]->()` suppressed the source from the
     hotspot list on stale evidence alone, and Q13 counted the dead edge as
-    test status. Both must restrict to live targets, like the generated
-    reports (nodes without the flag, e.g. Symbols, stay countable)."""
+    test status. Both must restrict to live tracked targets, like the
+    generated reports: an index-removed test left on disk (tracked=false,
+    present=true) is not coverage either (nodes without the flags, e.g.
+    Symbols, stay countable)."""
     for query in (_catalog_query(5), _catalog_query(13)):
         assert "TESTED_BY]->()" not in query
         match = re.search(r"TESTED_BY]->\((\w+)", query)
         assert match, f"query no longer binds its TESTED_BY target:\n{query}"
         assert f"coalesce({match.group(1)}.present, true)" in query
+        assert f"coalesce({match.group(1)}.tracked, true)" in query
 
 
 def test_working_tree_queries_exclude_files_recorded_as_absent():
@@ -531,6 +534,20 @@ def test_test_evidence_queries_ignore_deleted_targets():
         match = re.search(r"TESTED_BY]->\((\w+)\)", query)
         assert match, f"query no longer binds its TESTED_BY target:\n{query}"
         assert f"coalesce({match.group(1)}.present, true)" in query
+
+
+def test_test_evidence_queries_ignore_untracked_targets():
+    """REGRESSION. A test removed from the Git index but left on disk keeps
+    its semantic-retained File node with tracked=false and present=true, so
+    presence-only filtering still classified its sources as tested, and the
+    tier report promoted controls evidenced by those sources to Tier C on a
+    test that will not exist in a checkout. Every test-evidence query must
+    also require a tracked target (nodes without the flag, e.g. Symbols,
+    stay countable)."""
+    for query in (reports.HOTSPOT_Q, reports.CONTROL_PLANE_Q, reports.TESTED_Q):
+        match = re.search(r"TESTED_BY]->\((\w+)\)", query)
+        assert match, f"query no longer binds its TESTED_BY target:\n{query}"
+        assert f"coalesce({match.group(1)}.tracked, true)" in query
 
 
 def test_regenerate_guidance_isolates_uv_from_the_root_workspace(run_reports):

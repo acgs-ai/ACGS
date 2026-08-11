@@ -72,6 +72,9 @@ def governance_coverage(rec: dict) -> str:
 # present=false and the extracted working tree no longer contains the test.
 # Counting it would report deleted tests as coverage (and, in the tier report,
 # promote compliance evidence to Tier C on the strength of a deleted file).
+# The target must also be tracked: a test removed from the index but left on
+# disk (tracked=false, present=true) will not exist in a checkout, so it is
+# not evidence either. Nodes without the flags (e.g. Symbols) stay countable.
 # The subject file must be live as well: build_spine() keeps tracked=true for
 # an unstaged deletion and records present=false, and a deleted file is not a
 # hotspot anyone can edit or gate.
@@ -79,7 +82,7 @@ HOTSPOT_Q = """
 MATCH (f:File)
 WHERE f.tracked AND coalesce(f.present, true) AND f.commit_count IS NOT NULL
 OPTIONAL MATCH (f)-[t:TESTED_BY]->(tt)
-  WHERE coalesce(tt.present, true)
+  WHERE coalesce(tt.present, true) AND coalesce(tt.tracked, true)
 WITH f, count(t) AS test_edges
 OPTIONAL MATCH (w:Workflow)-[g:GATES]->(f)
   WHERE 'pull_request' IN coalesce(g.events, [])
@@ -106,7 +109,7 @@ WHERE f.key STARTS WITH 'packages/acgs-control-plane/'
   AND (f.key CONTAINS 'migration' OR f.key CONTAINS '/app.py'
        OR f.key CONTAINS 'tenant' OR f.key CONTAINS 'native')
 OPTIONAL MATCH (f)-[t:TESTED_BY]->(tt)
-  WHERE coalesce(tt.present, true)
+  WHERE coalesce(tt.present, true) AND coalesce(tt.tracked, true)
 WITH f, count(t) AS test_edges
 OPTIONAL MATCH (w:Workflow)-[g:GATES]->(f)
   WHERE 'pull_request' IN coalesce(g.events, [])
@@ -161,7 +164,7 @@ ORDER BY framework ASC, control ASC
 
 TESTED_Q = """
 MATCH (f:File)-[:TESTED_BY]->(tt)
-WHERE coalesce(tt.present, true)
+WHERE coalesce(tt.present, true) AND coalesce(tt.tracked, true)
 RETURN collect(DISTINCT f.key) AS tested
 """
 

@@ -40,8 +40,9 @@ ORDER BY ungated_files DESC;
 
 // --- Q3. Sealed-file drift: hash-sealed files changed recently ------------
 // sealed_hash is the marker observed in the working tree; pinned_hash is the
-// docs/constitutional-hashes.lock entry. hash_drift=true is the mismatch this
-// graph exists to expose (only set when both sources cover the file).
+// docs/constitutional-hashes.lock entry. hash_drift=true is the drift this
+// graph exists to expose: a live marker differing from the pin, or a pinned
+// marker missing from the working tree (live_hash null).
 MATCH (c:Commit)-[t:TOUCHED]->(f:File {sealed: true})
 RETURN f.key AS sealed_file, f.sealed_hash AS live_hash, f.pinned_hash AS pinned_hash,
        f.hash_drift AS drift, count(c) AS recent_commits,
@@ -69,14 +70,15 @@ ORDER BY joint_commits DESC LIMIT 20;
 // --- Q5. Hotspots with no test edge ---------------------------------------
 // hotspot = normalised churn x complexity weight. TESTED_BY undercounts
 // barrel/dynamic imports — treat as leads, not verdicts. A stale snapshot
-// keeps TESTED_BY edges to deleted test files (present=false); only a live
-// target counts as test evidence, matching the generated reports.
+// keeps TESTED_BY edges to deleted test files (present=false) and to tests
+// removed from the index but left on disk (tracked=false); only a live
+// tracked target counts as test evidence, matching the generated reports.
 MATCH (f:File)
 WHERE f.tracked AND coalesce(f.present, true) AND NOT f.is_test AND f.hotspot > 0.05
   AND f.language IN ['Python', 'TypeScript']
   AND NOT EXISTS {
     MATCH (f)-[:TESTED_BY]->(tt)
-    WHERE coalesce(tt.present, true)
+    WHERE coalesce(tt.present, true) AND coalesce(tt.tracked, true)
   }
 RETURN f.key AS file, f.hotspot AS hotspot, f.churn AS churn,
        f.commit_count AS commits, f.complexity AS complexity, f.summary AS summary
@@ -165,12 +167,13 @@ RETURN f.key AS doc, count(l) AS inbound_refs, f.summary AS summary
 ORDER BY inbound_refs DESC LIMIT 20;
 
 // --- Q13. Kernel symbols by complexity, with test status ------------------
-// Like Q5, test evidence must be live: an edge to a deleted test file
-// (present=false) left by a stale snapshot is not test status.
+// Like Q5, test evidence must be live AND tracked: an edge to a deleted test
+// file (present=false) or an index-removed one (tracked=false) left by a
+// stale snapshot is not test status.
 MATCH (s:Symbol)<-[:CONTAINS]-(f:File)
 WHERE f.package = 'packages/gove-zone' AND s.complexity = 'complex'
 OPTIONAL MATCH (f)-[:TESTED_BY]->(t:File)
-  WHERE coalesce(t.present, true)
+  WHERE coalesce(t.present, true) AND coalesce(t.tracked, true)
 RETURN s.name AS symbol, f.key AS file, s.line_start AS line,
        count(t) AS test_files, s.summary AS summary
 ORDER BY test_files ASC, symbol LIMIT 25;

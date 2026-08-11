@@ -495,16 +495,24 @@ def build_history(commits: list[dict]) -> None:
     # a deleted historical path with the largest churn has no live File node,
     # and letting it set the denominator scaled every live file down until
     # Q5's fixed `hotspot > 0.05` predicate missed the real current hotspots.
+    # Node existence alone is not enough: build_semantic() deliberately
+    # retains a File node for a path deleted (or index-removed) after the
+    # snapshot, with present/tracked recording the truth; that dead node's
+    # churn must not set the denominator either, so both the denominator and
+    # the scoring loop use the same live-and-tracked predicate.
+    def _scores_hotspot(path: str) -> bool:
+        return G.has("File", path) and file_is_live(path)
+
     max_churn = (
         max(
-            (s["add"] + s["dele"] for path, s in stats.items() if G.has("File", path)),
+            (s["add"] + s["dele"] for path, s in stats.items() if _scores_hotspot(path)),
             default=1,
         )
         or 1
     )
     for path, s in stats.items():
-        if not G.has("File", path):
-            continue  # deleted / renamed-away path: no live spine node
+        if not _scores_hotspot(path):
+            continue  # deleted / renamed-away / semantic-retained dead path
         churn = s["add"] + s["dele"]
         slot = G.node(
             "File",
@@ -779,8 +787,13 @@ def build_sealed(tracked: list[str]) -> None:
                 )
                 G.node("File", path, sealed=True, pinned_hash=value, in_hash_lock=True)
                 if live is None:
-                    # No live marker observed here: the pin is the only hash.
-                    G.node("File", path, sealed_hash=value, sealed_source="hash-lock")
+                    # No live marker observed: the working tree no longer
+                    # carries the seal the lock pins. Copying the pin into
+                    # sealed_hash made Q3 show the file as sealed with no
+                    # drift, hiding exactly the marker-removal drift this
+                    # graph exists to expose. Preserve the absence (no
+                    # sealed_hash) and record the drift instead.
+                    G.node("File", path, sealed_source="hash-lock", hash_drift=True)
                 else:
                     # Keep the observed working-tree marker as sealed_hash and
                     # record the mismatch. Overwriting it with the pin hid
@@ -1273,6 +1286,16 @@ def build_workflows(files: list[str]) -> None:
             continue
         compiled = {ev: compile_path_filters(fl) for ev, fl in filters_by_event.items()}
         for path in files:
+            # Parent workflows gate only ordinary parent-tracked paths. A
+            # file inside an initialized submodule's own repository can never
+            # appear in a parent PR (the parent only ever changes the
+            # gitlink, which is itself a parent-tracked path matched on its
+            # own line), so a filter that happens to cover the inner path
+            # (packages/Acgs-Swarm/src/...) minted GATES edges that hid the
+            # file from Q2 and reported false CI×N coverage.
+            slot = G.nodes.get(("File", path))
+            if slot is not None and slot["props"].get("in_submodule"):
+                continue
             events = sorted(
                 ev for ev, filters in compiled.items() if match_path_filters(path, filters)
             )
