@@ -32,7 +32,7 @@ from __future__ import annotations
 import fcntl
 import json
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +49,7 @@ from authority_lifecycle import (
     OnboardingError,
     attestation_binding,
     has_valid_attestation,
+    revoked_ids_of,
     superseded_ids_of,
     validate_onboarding_record,
 )
@@ -748,7 +749,11 @@ def is_stale(
             # the negative age below count as "fresh" until that future
             # instant plus max_age. Not comparable — fail closed.
             return True
-        if (now - basis_dt).days > max_age:
+        # Compare the COMPLETE duration, not the truncated .days component:
+        # `.days` discards up to 23:59:59 of age, so a 30-day policy would
+        # keep evidence routable for almost a 31st day (30d23h -> .days == 30
+        # -> "fresh"). Expiry must occur at the actual boundary.
+        if (now - basis_dt) > timedelta(days=max_age):
             return True
     return False
 
@@ -820,6 +825,7 @@ def derive_governed_state(
     substrate_identity: str,
     substrate_digest: str,
     receipt_key: bytes | None = None,
+    revoked_ids: set[str] = frozenset(),
 ) -> str:
     """Trust-governed lifecycle state. Extends (never bypasses) the onboarding
     derivation: everything the intrinsic layer refuses, this layer refuses too,
@@ -828,8 +834,11 @@ def derive_governed_state(
     Precedence (fail-closed): REVOKED > SUPERSEDED > DISCOVERED (no/broken
     primary attestation) > INVALIDATED (untrustworthy attestation) >
     CONFLICTED > registry/temporal gates > REQUIRES_REVIEW > ACTIVE.
+    `revoked_ids` (see `revoked_ids_of`) makes revocation terminal by LOGICAL
+    id under the append-only registry: a row without `revoked_at` still
+    derives REVOKED when any registry row revoked the same evidence id.
     """
-    if record.get("revoked_at"):
+    if record.get("revoked_at") or record.get("authority_evidence_id") in revoked_ids:
         return REVOKED
     if record.get("authority_evidence_id") in superseded_ids:
         return SUPERSEDED
@@ -918,6 +927,8 @@ def _trusted_superseded_ids(
     denial-of-authority primitive). The successor's own state is derived with
     an empty superseded set (it is judged on its own standing here)."""
 
+    rids = revoked_ids_of(records)
+
     def successor_trusted(r: dict[str, Any]) -> bool:
         state = derive_governed_state(
             r,
@@ -930,6 +941,7 @@ def _trusted_superseded_ids(
             receipt_key=receipt_key,
             substrate_identity=substrate_identity,
             substrate_digest=substrate_digest,
+            revoked_ids=rids,
         )
         return state == ACTIVE and (artifact_dir is None or source_artifact_intact(r, artifact_dir))
 
@@ -963,6 +975,7 @@ def governed_active_records(
         artifact_dir=artifact_dir,
         receipt_key=receipt_key,
     )
+    rids = revoked_ids_of(records)
     out = []
     for r in records:
         try:
@@ -980,6 +993,7 @@ def governed_active_records(
             receipt_key=receipt_key,
             substrate_identity=substrate_identity,
             substrate_digest=substrate_digest,
+            revoked_ids=rids,
         )
         if state == ACTIVE and (artifact_dir is None or source_artifact_intact(r, artifact_dir)):
             out.append(r)
@@ -1009,6 +1023,7 @@ def governed_lifecycle_distribution(
         artifact_dir=artifact_dir,
         receipt_key=receipt_key,
     )
+    rids = revoked_ids_of(records)
     dist = dict.fromkeys(GOVERNED_STATES, 0)
     for r in records:
         try:
@@ -1026,6 +1041,7 @@ def governed_lifecycle_distribution(
             receipt_key=receipt_key,
             substrate_identity=substrate_identity,
             substrate_digest=substrate_digest,
+            revoked_ids=rids,
         )
         dist[state] += 1
     return dist

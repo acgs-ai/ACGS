@@ -1309,3 +1309,127 @@ def test_invariant_I14_no_corpus_migration_needed(manifest):
     # Identity + routing operate with only the 15-object critical set, never a
     # copy of the corpus.
     assert len(CRITICAL_OBJECTS) == 15 == manifest["critical_object_count"]
+
+
+# --------------------------------------------------------------------------- #
+# Regressions: request scope binding, registry no-follow, replay framing,
+# required onboarding instant.
+# --------------------------------------------------------------------------- #
+_SCOPE_REMOVED = object()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("covered_asset_ids", _SCOPE_REMOVED),
+        ("covered_asset_ids", None),
+        ("covered_asset_ids", []),
+        ("covered_asset_ids", ["asset:1", ""]),
+        ("covered_asset_ids", "asset:1"),
+        ("requirement_id", _SCOPE_REMOVED),
+        ("requirement_id", None),
+        ("requirement_id", ""),
+        ("requirement_id", "   "),
+    ],
+)
+def test_request_missing_scope_binding_never_routes(manifest, field, value):
+    # A missing/empty covered_asset_ids collapses to the empty set — a subset
+    # of EVERY evidence asset list — and with "ALL" scopes a request missing
+    # both dimensions would route outright. A request that cannot prove its
+    # scope binding must stay ROUTING_REQUIRED (fail closed).
+    reqs = _requests()
+    if value is _SCOPE_REMOVED:
+        reqs[0].pop(field, None)
+    else:
+        reqs[0][field] = value
+    res = _route(reqs, [_evidence()])  # "ALL"/"ALL" evidence — the worst case
+    assert res.request_final_state["R1"] == "ROUTING_REQUIRED"
+    assert res.request_final_state["R2"] == "READY_TO_SEND"  # intact sibling still routes
+
+
+def test_registry_symlink_refused_read_and_append(tmp_path):
+    # A registry path swapped for a symlink to a writable external file must
+    # be refused on BOTH paths: read (planted external records would enter
+    # the trust derivation) and append (an authenticated ingestion would
+    # corrupt a file outside the configured registry store).
+    from _registry import RegistryError, append_record, read_registry
+
+    external = tmp_path / "outside.jsonl"
+    external.write_text(json.dumps(_evidence(ev_id="AE-PLANTED")) + "\n", encoding="utf-8")
+    before = external.read_bytes()
+    reg = tmp_path / "reg.jsonl"
+    reg.symlink_to(external)
+    with pytest.raises(RegistryError):
+        read_registry(reg)
+    with pytest.raises(RegistryError):
+        append_record(reg, _evidence(ev_id="AE-INJECTED"))
+    assert external.read_bytes() == before  # nothing written through the link
+    # Positive control: a regular registry file still round-trips.
+    real = tmp_path / "real.jsonl"
+    append_record(real, _evidence(ev_id="AE-OK"))
+    assert [r["authority_evidence_id"] for r in read_registry(real)] == ["AE-OK"]
+
+
+def test_replay_ledger_refuses_unterminated_tail(tmp_path):
+    # An interrupted append that leaves the final line unterminated must be
+    # an explicit error: silently loading the fragment forgets the real
+    # consumed receipt id (replays accepted), and the next append would
+    # concatenate a fresh id onto the fragment.
+    path = tmp_path / "replay.jsonl"
+    ledger = ReplayLedger(path)
+    ledger.consume_many(["receipt-1"])
+    path.write_bytes(path.read_bytes()[:-1])  # simulate the interrupted append
+    corrupt = path.read_bytes()
+    with pytest.raises(ReceiptError):
+        ReplayLedger(path)  # restart refuses to trust the broken framing
+    with pytest.raises(ReceiptError):
+        ledger.consume_many(["receipt-2"])  # and refuses to extend it
+    assert path.read_bytes() == corrupt  # nothing concatenated onto the fragment
+    # After the fragment is restored (terminated), the consumed id is
+    # remembered and replay is still refused.
+    path.write_bytes(corrupt + b"\n")
+    with pytest.raises(ReceiptError):
+        ReplayLedger(path).consume_many(["receipt-1"])
+
+
+def test_onboard_requires_evaluation_instant(tmp_path, capsys):
+    # Gate 3b forwards --instant to verify_attestation_trust, where the
+    # attestation_future_dated check only runs when an instant exists:
+    # without one, a signed attestation claiming a future validation time
+    # would be ingested. Ingestion without a valid instant must be refused
+    # before anything is written.
+    import onboard_authority_evidence as OB
+
+    doc = tmp_path / "doc"
+    doc.write_text("appointment")
+    rec = tmp_path / "rec.json"
+    rec.write_text(
+        json.dumps(
+            dict(
+                _evidence(ev_id="AE-NO-INSTANT", source_digest=""),
+                issuer_or_appointing_party="[FIXTURE] Board",
+            )
+        )
+    )
+    reg = tmp_path / "reg.jsonl"
+    base = [
+        "--record",
+        str(rec),
+        "--document",
+        str(doc),
+        "--registry",
+        str(reg),
+        "--keystore",
+        str(tmp_path / "ks"),
+        "--validator-registry",
+        str(tmp_path / "vreg.jsonl"),
+        "--validator-keystore",
+        str(tmp_path / "vks"),
+    ]
+    assert OB.main(list(base)) == 2  # no --instant
+    assert OB.main([*base, "--instant", "not-a-time"]) == 2  # unparseable
+    assert not reg.exists()  # registry untouched either way
+    # --emit-binding computes a binding only (no ingest, no trust
+    # evaluation) and legitimately needs no instant.
+    assert OB.main([*base, "--emit-binding"]) == 0
+    assert not reg.exists()

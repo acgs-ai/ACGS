@@ -1277,6 +1277,52 @@ def attack_x_ledger_symlink_swap(base: Path) -> str:
     return "symlinked ledger ⇒ writer fails closed, no bytes written through the link"
 
 
+def attack_y_ledger_rename_detach(base: Path) -> str:
+    """Rename the ledger away after fd pinning and install a byte-identical
+    regular copy at the configured path: the transaction must prove its
+    pinned descriptor still NAMES the ledger path before accepting, never
+    commit the event to a detached chain that the configured ledger misses."""
+    sb = Sandbox.build(base)
+    sb.governed_mutation("agent-alpha", "src/module_a.py", b"VALUE = 2\n")
+    detached = base / "detached-ledger.jsonl"
+    assert sb.ledger.anchor_path is not None
+    anchor_before = sb.ledger.anchor_path.read_bytes()
+    ledger_before = sb.ledger.path.read_bytes()
+
+    real_pin = AuditLedger._pin_ledger_fd
+
+    def pin_then_rename(self: AuditLedger) -> None:
+        real_pin(self)
+        # Attacker wins the race after the pin: rename the ledger away and
+        # install a regular copy of it at the configured path.
+        os.replace(self.path, detached)
+        self.path.write_bytes(detached.read_bytes())
+
+    with patch.object(AuditLedger, "_pin_ledger_fd", pin_then_rename):
+        try:
+            sb.ledger.append("DECISION", {"decision": "DENY", "reason": "detach"}, sb.tick())
+        except LedgerIntegrityError:
+            pass
+        else:
+            raise CheckFailure(
+                "append committed to a renamed-away ledger — the configured "
+                "ledger path silently misses the accepted event"
+            )
+    _expect(
+        sb.ledger.anchor_path.read_bytes() == anchor_before,
+        "anchor advanced for an event the configured ledger does not contain",
+    )
+    _expect(
+        detached.read_bytes() == ledger_before,
+        "detached chain retained the rejected append (rollback failed)",
+    )
+    _expect(
+        sb.ledger.path.read_bytes() == ledger_before,
+        "the swapped-in copy at the ledger path gained the event",
+    )
+    return "renamed-away ledger ⇒ accept-time revalidation fails closed, append rolled back"
+
+
 CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     ("happy-path: intent → decision → receipt → effect → audit", check_happy_path),
     ("deterministic verifier", check_deterministic_verifier),
@@ -1347,6 +1393,7 @@ CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     ),
     ("concurrent commits of one receipt are single-use", check_concurrent_commits_single_use),
     ("ATTACK X: ledger swapped for a symlink", attack_x_ledger_symlink_swap),
+    ("ATTACK Y: ledger renamed away mid-transaction", attack_y_ledger_rename_detach),
 ]
 
 

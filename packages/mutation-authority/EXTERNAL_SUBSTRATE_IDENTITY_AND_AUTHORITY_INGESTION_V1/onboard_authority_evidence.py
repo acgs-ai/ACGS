@@ -47,6 +47,7 @@ from authority_lifecycle import (
     OnboardingError,
     attestation_binding,
     has_valid_attestation,
+    revoked_ids_of,
     superseded_ids_of,
     validate_onboarding_record,
 )
@@ -63,13 +64,33 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--keystore", default=str(HERE / ".authority_keystore"))
     ap.add_argument("--validator-registry", default=str(HERE / VT.VALIDATOR_REGISTRY_NAME))
     ap.add_argument("--validator-keystore", default=str(HERE / VT.VALIDATOR_KEYSTORE_NAME))
-    ap.add_argument("--instant", default=None, help="logical instant (ISO-8601 Z)")
+    ap.add_argument(
+        "--instant",
+        default=None,
+        help="logical evaluation instant (ISO-8601 Z) — required for ingestion",
+    )
     ap.add_argument(
         "--emit-binding",
         action="store_true",
         help="print the attestation record_binding digest and exit (no ingest)",
     )
     args = ap.parse_args(argv)
+
+    # Ingestion REQUIRES a valid evaluation instant (fail closed). Gate 3b
+    # passes the instant through to verify_attestation_trust(), where the
+    # attestation_future_dated check only runs when an instant exists — with
+    # None, a signed attestation claiming a future validation time would be
+    # ingested and could become ACTIVE later without another validation
+    # ceremony. Only --emit-binding (no ingest, no trust evaluation) may run
+    # without one.
+    if not args.emit_binding and VT._parse_z(args.instant) is None:
+        print(
+            "FATAL: --instant (ISO-8601 Z, e.g. 2026-01-01T00:00:00Z) is required: "
+            "attestation future-dating and freshness cannot be evaluated without "
+            "an evaluation instant.",
+            file=sys.stderr,
+        )
+        return 2
 
     rec_path, doc_path = Path(args.record), Path(args.document)
     if not rec_path.is_file():
@@ -194,6 +215,7 @@ def main(argv: list[str]) -> int:
         receipt_key=load_or_create_key(Path(args.keystore)),
         substrate_identity=manifest["substrate_id"],
         substrate_digest=manifest["critical_set_digest"],
+        revoked_ids=revoked_ids_of(registry),
     )
     print(f"lifecycle_state = {state}")
     if state != "ACTIVE":

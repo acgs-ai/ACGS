@@ -667,6 +667,8 @@ def test_pipeline_tampered_document_exits_3(tmp_path):
     doc.write_text("[FIXTURE] original")
     rec = dict(_evidence(source_digest="a" * 64))  # names a different document
     rec["issuer_or_appointing_party"] = "[FIXTURE] Board"
+    # A missing --instant is refused BEFORE the digest gate (fail closed).
     args = _pipeline_args(tmp_path, rec, doc, trust)
-    rc = OB.main(args[:-2])  # no --instant needed for the digest gate
+    assert OB.main(args[:-2]) == 2
+    rc = OB.main(args)
     assert rc == 3

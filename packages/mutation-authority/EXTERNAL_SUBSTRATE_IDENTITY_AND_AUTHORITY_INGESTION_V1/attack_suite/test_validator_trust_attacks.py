@@ -954,3 +954,94 @@ def test_governed_derivation_is_deterministic(tmp_path):
     events = load_validator_events(trust["registry"])
     states = {_gstate(dict(ev), trust, events=events) for _ in range(5)}
     assert states == {ACTIVE}
+
+
+# --------------------------------------------------------------------------- #
+# Regressions: terminal revocation by logical id, freshness boundary, and a
+# verifiable trust root behind every READY verdict.
+# --------------------------------------------------------------------------- #
+
+
+def test_revocation_is_terminal_for_the_logical_id(substrate, tmp_path):
+    # The registry is append-only: revoking evidence appends a COPY of the
+    # record carrying revoked_at. Lifecycle is derived per row, so without a
+    # registry-wide revoked-id set the ORIGINAL row (no revoked_at) keeps
+    # deriving ACTIVE and keeps routing — a fully revoked authority that
+    # still transitions requests. Revocation must be terminal for the id.
+    from authority_lifecycle import active_records, lifecycle_distribution
+
+    trust = fixture_trust(tmp_path)
+    ev = _attested(_evidence())
+    assert _gstate(ev, trust) == ACTIVE  # positive control: the row alone routes
+    revoked_copy = dict(ev, revoked_at="2026-08-10T11:30:00Z")
+    # Intrinsic lifecycle layer: every representation of the id is REVOKED.
+    assert active_records([ev, revoked_copy], INSTANT) == []
+    dist = lifecycle_distribution([ev, revoked_copy], INSTANT)
+    assert dist[REVOKED] == 2
+    assert dist[ACTIVE] == 0
+    # Governed layer + verifier: nothing routes, nothing transitions.
+    st = _compute(substrate, tmp_path, [ev, revoked_copy], trust=trust)
+    assert st["report"]["ready_to_send"] == 0
+    assert st["report"]["lifecycle_distribution"][REVOKED] == 2
+    assert st["report"]["lifecycle_distribution"][ACTIVE] == 0
+
+
+def test_junk_revocation_row_cannot_revoke_an_established_id(tmp_path):
+    # Only rows satisfying the onboarding contract count toward the revoked-id
+    # set: a bare junk line naming an established id must not become a
+    # denial-of-authority primitive.
+    trust = fixture_trust(tmp_path)
+    ev = _attested(_evidence())
+    junk = {
+        "authority_evidence_id": ev["authority_evidence_id"],
+        "revoked_at": "2026-08-10T11:30:00Z",
+    }
+    from authority_lifecycle import revoked_ids_of
+
+    assert revoked_ids_of([ev, junk]) == set()
+    assert _gstate(ev, trust) == ACTIVE
+
+
+def test_freshness_expires_at_the_exact_day_boundary(tmp_path):
+    # `.days` truncation discarded up to 23:59:59 of age: at 30 days + 12
+    # hours the truncated age is still "30 days", so a 30-day policy kept the
+    # evidence routable for almost a full 31st day. Staleness must compare
+    # the complete duration.
+    trust = fixture_trust(tmp_path)
+    policy = dict(DEFAULT_POLICY, max_age_days=30)
+    ev = _attested(_evidence())  # freshness basis: validated_at 2026-08-10T11:00:00Z
+    # Exactly 30 days old — at the boundary, not yet past it.
+    assert _gstate(ev, trust, instant="2026-09-09T11:00:00Z", policy=policy) == ACTIVE
+    # 30 days + 12 hours — past the boundary; must demote, not stay "fresh".
+    assert _gstate(ev, trust, instant="2026-09-09T23:00:00Z", policy=policy) == REQUIRES_REVIEW
+
+
+def test_malformed_validator_registry_blocks_integration(substrate, tmp_path):
+    # A validator registry that cannot be parsed correctly makes every record
+    # non-routable — but "nothing routes" must not read as a HEALTHY
+    # AUTHORITY_LAYER_READY. An unverifiable trust root is INTEGRATION_BLOCKED.
+    bad = tmp_path / "vreg_bad.jsonl"
+    bad.write_text("{ not json\n", encoding="utf-8")
+    trust = {"registry": bad, "keystore": tmp_path / "vks_bad"}
+    st = _compute(substrate, tmp_path, [_attested(_evidence())], trust=trust)
+    assert st["report"]["validator_trust_root_intact"] is False
+    assert st["report"]["ready_to_send"] == 0
+    assert st["verdict"] == "INTEGRATION_BLOCKED"
+
+
+def test_broken_validator_chain_blocks_integration(substrate, tmp_path):
+    # A bound field edited post-hoc breaks the GENESIS-rooted hash chain: the
+    # trust root is tainted, so the verdict must be INTEGRATION_BLOCKED —
+    # never READY-because-nothing-routes.
+    trust = fixture_trust(tmp_path)
+    lines = trust["registry"].read_text(encoding="utf-8").splitlines()
+    first = json.loads(lines[0])
+    first["validator_id"] = "[FIXTURE] vld-hijacked"
+    lines[0] = json.dumps(first, sort_keys=True)
+    trust["registry"].write_text("\n".join(lines) + "\n", encoding="utf-8")
+    events = load_validator_events(trust["registry"])
+    assert events is not None and not chain_intact(events)
+    st = _compute(substrate, tmp_path, [_attested(_evidence())], trust=trust)
+    assert st["report"]["validator_trust_root_intact"] is False
+    assert st["report"]["ready_to_send"] == 0
+    assert st["verdict"] == "INTEGRATION_BLOCKED"

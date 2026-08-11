@@ -238,6 +238,18 @@ def compute_state(
         "receipt_verification_failures": receipt_failures,
     }
 
+    # --- validator trust root must itself be verifiable ---
+    # A malformed validator registry (events is None) or a broken hash chain
+    # correctly makes every record non-routable, but "nothing routes" must
+    # not read as a HEALTHY ready state: with ready == 0 the verdict below
+    # would otherwise report AUTHORITY_LAYER_READY on an unreadable or
+    # tainted trust root. Same for an unreadable revalidation policy. An
+    # EMPTY registry (no events) with an intact (empty) chain and a
+    # default/readable policy is the legitimate trusts-nobody baseline and
+    # stays READY.
+    trust_root_ok = events is not None and VT.chain_intact(events) and policy is not None
+    report["validator_trust_root_intact"] = trust_root_ok
+
     # --- verdict (Section 25) ---
     total = live_counts.get("requests", 0)
     identity_ok = identity["state"] == IDENTITY_CONFIRMED
@@ -246,7 +258,7 @@ def compute_state(
     )
     if not identity_ok:
         verdict = SUBSTRATE_DIVERGED
-    elif not (counts_ok and invariants_hold and receipt_failures == 0):
+    elif not (counts_ok and invariants_hold and receipt_failures == 0 and trust_root_ok):
         verdict = INTEGRATION_BLOCKED
     elif ready == 0:
         verdict = AUTHORITY_LAYER_READY

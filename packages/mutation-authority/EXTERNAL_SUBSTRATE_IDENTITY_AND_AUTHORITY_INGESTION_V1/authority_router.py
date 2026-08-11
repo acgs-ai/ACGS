@@ -177,12 +177,27 @@ def _scope_covers(record: dict[str, Any], request: dict[str, Any]) -> bool:
     scope = record["authority_scope"]
     assets = scope["asset_ids"]
     reqs = scope["requirement_ids"]
-    req_assets = set(request.get("covered_asset_ids", []))
+    # The request must PROVE its scope binding before any subset check: a
+    # missing/empty `covered_asset_ids` would otherwise collapse to the empty
+    # set, which is a subset of EVERY evidence asset list (and with "ALL"
+    # scopes a request missing both dimensions would pass outright). A
+    # malformed request never advances to READY_TO_SEND — fail closed.
+    req_assets_raw = request.get("covered_asset_ids")
+    if (
+        not isinstance(req_assets_raw, list)
+        or not req_assets_raw
+        or not all(isinstance(a, str) and a.strip() for a in req_assets_raw)
+    ):
+        return False
+    requirement = request.get("requirement_id")
+    if not isinstance(requirement, str) or not requirement.strip():
+        return False
+    req_assets = set(req_assets_raw)
     if assets != "ALL":
         if not isinstance(assets, list) or not req_assets.issubset(set(assets)):
             return False
     if reqs != "ALL":
-        if not isinstance(reqs, list) or request.get("requirement_id") not in reqs:
+        if not isinstance(reqs, list) or requirement not in reqs:
             return False
     return True
 

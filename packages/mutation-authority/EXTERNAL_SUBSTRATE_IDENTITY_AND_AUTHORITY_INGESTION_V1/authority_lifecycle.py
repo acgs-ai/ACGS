@@ -194,20 +194,50 @@ def validate_onboarding_record(record: dict[str, Any]) -> None:
         )
 
 
+def revoked_ids_of(records: list[dict[str, Any]]) -> set[str]:
+    """Logical evidence ids terminally revoked ANYWHERE in the registry.
+
+    Revocation under the append-only registry is recorded by appending a copy
+    of the record carrying `revoked_at`. Lifecycle state is derived per row,
+    so without this set the appended copy derives REVOKED while the original
+    row keeps deriving ACTIVE and keeps routing. Revocation is terminal for
+    the logical evidence id: every representation of a revoked id is REVOKED
+    (fail closed — a revocation can only remove authority, never grant it).
+    Only rows that satisfy the onboarding contract count, so a junk line
+    naming an established id cannot be used as a denial-of-authority
+    primitive."""
+    out: set[str] = set()
+    for r in records:
+        if not r.get("revoked_at"):
+            continue
+        try:
+            validate_onboarding_record(r)
+        except OnboardingError:
+            continue
+        rid = r.get("authority_evidence_id")
+        if isinstance(rid, str) and rid.strip():
+            out.add(rid)
+    return out
+
+
 def derive_lifecycle_state(
     record: dict[str, Any],
     *,
     instant: str | None,
     superseded_ids: set[str],
     in_registry: bool,
+    revoked_ids: set[str] = frozenset(),
 ) -> str:
     """Deterministically derive the lifecycle state from stored facts. Never
     reads a stored `lifecycle_state` field — state is a function, not a value.
 
     Order matters: revocation and supersession dominate; then the attestation
-    gate; then registry membership; then temporal effect.
+    gate; then registry membership; then temporal effect. `revoked_ids`
+    (see `revoked_ids_of`) makes revocation terminal by LOGICAL id: a row
+    without `revoked_at` still derives REVOKED when any registry row revoked
+    the same evidence id.
     """
-    if record.get("revoked_at"):
+    if record.get("revoked_at") or record.get("authority_evidence_id") in revoked_ids:
         return REVOKED
     if record.get("authority_evidence_id") in superseded_ids:
         return SUPERSEDED
@@ -268,13 +298,16 @@ def active_records(records: list[dict[str, Any]], instant: str | None) -> list[d
     that is DISCOVERED (no attestation), VALIDATED, INGESTED-but-inactive,
     SUPERSEDED, or REVOKED is excluded — fail closed."""
     sids = superseded_ids_of(records, instant)
+    rids = revoked_ids_of(records)
     out = []
     for r in records:
         try:
             validate_onboarding_record(r)
         except OnboardingError:
             continue  # malformed never routes
-        state = derive_lifecycle_state(r, instant=instant, superseded_ids=sids, in_registry=True)
+        state = derive_lifecycle_state(
+            r, instant=instant, superseded_ids=sids, in_registry=True, revoked_ids=rids
+        )
         if state == ACTIVE:
             out.append(r)
     return out
@@ -283,6 +316,7 @@ def active_records(records: list[dict[str, Any]], instant: str | None) -> list[d
 def lifecycle_distribution(records: list[dict[str, Any]], instant: str | None) -> dict[str, int]:
     """Count records by derived lifecycle state (registry members)."""
     sids = superseded_ids_of(records, instant)
+    rids = revoked_ids_of(records)
     dist = dict.fromkeys(LIFECYCLE_STATES, 0)
     for r in records:
         try:
@@ -291,6 +325,8 @@ def lifecycle_distribution(records: list[dict[str, Any]], instant: str | None) -
             # Malformed records are not counted as any lifecycle state; they are
             # rejected upstream. Count them separately by the caller if needed.
             continue
-        state = derive_lifecycle_state(r, instant=instant, superseded_ids=sids, in_registry=True)
+        state = derive_lifecycle_state(
+            r, instant=instant, superseded_ids=sids, in_registry=True, revoked_ids=rids
+        )
         dist[state] += 1
     return dist

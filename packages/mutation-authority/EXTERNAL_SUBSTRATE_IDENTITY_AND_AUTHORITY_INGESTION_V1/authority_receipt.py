@@ -350,10 +350,25 @@ class ReplayLedger:
             fd = self._open_pinned_ledger(os.O_RDONLY)
             if fd is not None:
                 with os.fdopen(fd, "r", encoding="utf-8") as fh:
-                    for line in fh.read().splitlines():
-                        rid = line.strip()
-                        if rid:
-                            self._seen.add(rid)
+                    self._seen.update(self._parse_ledger(fh.read()))
+
+    def _parse_ledger(self, content: str) -> set[str]:
+        """Parse ledger content, REFUSING broken framing (fail closed).
+
+        An unterminated tail — e.g. after an interrupted prior append — must
+        never be silently accepted: the fragment would be loaded as a bogus
+        id while the receipt id it truncated is forgotten, and the next
+        append would concatenate a fresh id onto the fragment, permanently
+        recording it as `fragment<receipt_id>`. Either way the persistent
+        single-use guarantee is erased for a real, already-consumed receipt
+        id, so a crash must surface as an explicit error, not as replay
+        acceptance."""
+        if content and not content.endswith("\n"):
+            raise ReceiptError(
+                f"replay ledger has an unterminated final line (interrupted "
+                f"append?) — refusing to trust or extend it: {self._path}"
+            )
+        return {line.strip() for line in content.splitlines() if line.strip()}
 
     def _open_pinned_ledger(self, flags: int) -> int | None:
         """Open the persistent ledger with no-follow, regular-file checks.
@@ -414,10 +429,11 @@ class ReplayLedger:
             with os.fdopen(fd, "r+", encoding="utf-8") as fh:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
                 fh.seek(0)
-                for line in fh.read().splitlines():
-                    rid = line.strip()
-                    if rid:
-                        self._seen.add(rid)
+                # Framing is validated UNDER the lock, before appending: an
+                # unterminated tail from a crashed writer must abort the
+                # consume instead of concatenating this batch's first id
+                # onto the fragment.
+                self._seen.update(self._parse_ledger(fh.read()))
                 for rid in receipt_ids:
                     if rid in self._seen:
                         raise ReceiptError(f"receipt replay: {rid} already consumed")

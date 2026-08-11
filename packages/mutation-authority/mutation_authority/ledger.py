@@ -92,6 +92,14 @@ class AuditLedger:
         # reopening by pathname between verify and append would let a
         # symlink/rename swap redirect the append to an unverified file.
         self._pinned_fd: int | None = None
+        # Parent directory descriptor retained alongside the pinned ledger
+        # fd: pinning proves the fd cannot be redirected, but not that it
+        # still NAMES self.path — a writer to the ledger directory could
+        # rename the ledger away mid-transaction and install a regular copy
+        # at the configured path, detaching the whole transaction. The
+        # directory entry is revalidated against this descriptor before any
+        # append is accepted.
+        self._pinned_parent_fd: int | None = None
         self._tx_owner: int | None = None
 
     # -- construction -----------------------------------------------------
@@ -165,6 +173,9 @@ class AuditLedger:
                     if self._pinned_fd is not None:
                         os.close(self._pinned_fd)
                         self._pinned_fd = None
+                    if self._pinned_parent_fd is not None:
+                        os.close(self._pinned_parent_fd)
+                        self._pinned_parent_fd = None
 
     def _pin_ledger_fd(self) -> None:
         """Open and identity-check the ledger ONCE per locked transaction.
@@ -172,8 +183,10 @@ class AuditLedger:
         The open is anchored to the parent directory fd and refuses to follow
         a symlink (O_NOFOLLOW) or accept a non-regular file, so a swapped-in
         link cannot redirect subsequent verified reads or appends to a file
-        outside the governed store. A missing ledger is legal only for the
-        genesis append, which creates it exclusively in _append_locked.
+        outside the governed store. The parent descriptor is RETAINED for the
+        transaction so the directory entry can be revalidated at accept time
+        (see _revalidate_pinned_entry). A missing ledger is legal only for
+        the genesis append, which creates it exclusively in _append_locked.
         """
         parent_fd = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
@@ -181,6 +194,8 @@ class AuditLedger:
                 fd = os.open(self.path.name, os.O_RDWR | os.O_NOFOLLOW, dir_fd=parent_fd)
             except FileNotFoundError:
                 self._pinned_fd = None
+                self._pinned_parent_fd = parent_fd
+                parent_fd = -1  # retained for genesis create + revalidation
                 return
             except OSError as exc:
                 raise LedgerIntegrityError(f"ledger is not a verified regular file: {exc}") from exc
@@ -188,8 +203,35 @@ class AuditLedger:
                 os.close(fd)
                 raise LedgerIntegrityError("ledger is not a verified regular file")
             self._pinned_fd = fd
+            self._pinned_parent_fd = parent_fd
+            parent_fd = -1  # ownership transferred to the transaction
         finally:
-            os.close(parent_fd)
+            if parent_fd != -1:
+                os.close(parent_fd)
+
+    def _revalidate_pinned_entry(self) -> None:
+        """Prove the pinned descriptor still names self.path before accepting.
+
+        Pinning the fd defeats symlink/rename swaps of the object being
+        written, but not detachment: after a rename-away plus a regular-file
+        copy installed at the configured path, the transaction would commit
+        to a detached chain while the configured ledger silently misses the
+        event. Re-stat the directory entry through the retained parent
+        descriptor and require the same (st_dev, st_ino) as the pinned fd."""
+        if self._pinned_fd is None or self._pinned_parent_fd is None:
+            raise LedgerIntegrityError("ledger transaction lost its pinned descriptors")
+        try:
+            named = os.stat(self.path.name, dir_fd=self._pinned_parent_fd, follow_symlinks=False)
+        except OSError as exc:
+            raise LedgerIntegrityError(
+                f"ledger directory entry vanished mid-transaction: {exc}"
+            ) from exc
+        pinned = os.fstat(self._pinned_fd)
+        if (named.st_dev, named.st_ino) != (pinned.st_dev, pinned.st_ino):
+            raise LedgerIntegrityError(
+                "ledger was renamed or replaced mid-transaction — the pinned "
+                "descriptor no longer names the configured ledger path"
+            )
 
     def _read_raw(self) -> bytes:
         """Raw ledger bytes: through the pinned fd inside a transaction the
@@ -239,12 +281,18 @@ class AuditLedger:
         event = LedgerEvent(**body, event_hash=hash_obj(body))
         if self._pinned_fd is None:
             # Genesis append: the ledger does not exist yet. Create it
-            # exclusively (O_EXCL) and without following links (O_NOFOLLOW)
-            # so a pre-planted symlink at the ledger path cannot redirect
-            # the new chain outside the governed store.
+            # exclusively (O_EXCL) and without following links (O_NOFOLLOW),
+            # relative to the RETAINED parent descriptor, so a pre-planted
+            # symlink at the ledger path cannot redirect the new chain
+            # outside the governed store.
+            if self._pinned_parent_fd is None:
+                raise LedgerIntegrityError("ledger transaction lost its pinned descriptors")
             try:
                 self._pinned_fd = os.open(
-                    self.path, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644
+                    self.path.name,
+                    os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o644,
+                    dir_fd=self._pinned_parent_fd,
                 )
             except OSError as exc:
                 raise LedgerIntegrityError(f"cannot create ledger: {exc}") from exc
@@ -260,6 +308,11 @@ class AuditLedger:
             view = view[os.write(fd, view) :]
         os.fsync(fd)
         try:
+            # Before ACCEPTING (advancing the anchor), prove the pinned
+            # descriptor still names the configured ledger path: a rename
+            # after _pin_ledger_fd would otherwise commit this event to a
+            # detached chain while the file at self.path misses it.
+            self._revalidate_pinned_entry()
             self._write_anchor(count=len(events) + 1, head_hash=event.event_hash)
         except Exception:
             # The ledger and its anchor must move together: an appended event
