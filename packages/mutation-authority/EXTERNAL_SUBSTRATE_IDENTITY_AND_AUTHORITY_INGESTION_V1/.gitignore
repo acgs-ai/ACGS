@@ -1,6 +1,8 @@
 # Runtime state — never committed.
 .authority_keystore
 .validator_keystore/
+.authority_artifacts/
+.authority_replay.jsonl
 .claude/
 .mcp.json
 .omc/

@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _ed25519  # noqa: E402
 from _canonical import sha256_hex  # noqa: E402
 from authority_lifecycle import ACTIVE, attestation_binding  # noqa: E402
-from test_attacks import INSTANT, _evidence, build_fixture_substrate  # noqa: E402
+from test_attacks import FIXTURE_DOC, INSTANT, _evidence, build_fixture_substrate  # noqa: E402
 from test_onboarding_attacks import _compute  # noqa: E402
 from validator_trust import (  # noqa: E402
     ED25519,
@@ -69,6 +69,9 @@ def ed_trust(tmp_path):
         "public_key": pub.hex(),
         "effective_from": "2026-01-01T00:00:00Z",
         "effective_until": None,
+        "onboarding": "EXTERNAL_VALIDATOR_ONBOARDING_V1",
+        "appointment_binding": sha256_hex(b"[FIXTURE] appointment binding"),
+        "appointment_evidence_digests": [sha256_hex(FIXTURE_DOC)],
         "prev_event_binding": GENESIS,
     }
     ev["event_binding"] = event_binding(ev)

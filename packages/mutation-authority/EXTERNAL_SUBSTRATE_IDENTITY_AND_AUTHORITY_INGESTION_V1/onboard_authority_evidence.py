@@ -129,7 +129,7 @@ def main(argv: list[str]) -> int:
             print(
                 "  the validator behind this attestation could not be authorized "
                 "(registration, class, validity window, key, or signature). "
-                "Register the validator via validator_admin.py first.",
+                "Onboard the validator via onboard_validator.py first.",
                 file=sys.stderr,
             )
             return 5
@@ -160,7 +160,7 @@ def main(argv: list[str]) -> int:
 
     # Report the derived post-ingest lifecycle state.
     registry = read_registry(Path(args.registry))
-    sids = superseded_ids_of(registry)
+    sids = superseded_ids_of(registry, args.instant)
     mine = next(
         (r for r in registry if r.get("authority_evidence_id") == record["authority_evidence_id"]),
         record,

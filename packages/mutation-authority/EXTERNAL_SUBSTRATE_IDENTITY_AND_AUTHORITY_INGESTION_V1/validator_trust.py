@@ -47,9 +47,15 @@ from authority_lifecycle import (
     OnboardingError,
     attestation_binding,
     has_valid_attestation,
+    superseded_ids_of,
     validate_onboarding_record,
 )
-from authority_router import in_effect
+from authority_router import in_effect, source_artifact_intact
+
+# Onboarding provenance a REGISTER event must carry (EXTERNAL_VALIDATOR_
+# ONBOARDING_V1). A REGISTER without evidence-backed appointment provenance is
+# an unonboarded validator and trusts nothing it signs.
+ONBOARDING_PROTOCOL = "EXTERNAL_VALIDATOR_ONBOARDING_V1"
 
 # Governed states added on top of the onboarding lifecycle. Derived only.
 INVALIDATED = "INVALIDATED"
@@ -170,6 +176,25 @@ def _register_event(evts: list[dict[str, Any]]) -> dict[str, Any] | None:
         if e.get("event") == "REGISTER":
             return e
     return None
+
+
+def _hex64(v: Any) -> bool:
+    return isinstance(v, str) and len(v) == 64 and all(c in "0123456789abcdef" for c in v)
+
+
+def _register_has_onboarding_provenance(reg: dict[str, Any]) -> bool:
+    """A REGISTER event must carry evidence-backed onboarding provenance:
+    the onboarding protocol marker, the appointment binding digest, and the
+    digests of the appointment evidence reviewed during the key ceremony.
+    A bare REGISTER (e.g. hand-appended) authorizes nothing — fail closed."""
+    if reg.get("onboarding") != ONBOARDING_PROTOCOL:
+        return False
+    if not _hex64(reg.get("appointment_binding")):
+        return False
+    digests = reg.get("appointment_evidence_digests")
+    if not isinstance(digests, list) or not digests:
+        return False
+    return all(_hex64(d) for d in digests)
 
 
 def authority_valid_at(evts: list[dict[str, Any]], at: str) -> bool:
@@ -376,6 +401,8 @@ def verify_attestation_trust(
     reg = _register_event(evts)
     if reg is None:
         return False, "validator_never_registered"
+    if not _register_has_onboarding_provenance(reg):
+        return False, "register_missing_onboarding_provenance"
     classes = reg.get("authorized_classes")
     if not isinstance(classes, list) or record.get("authority_type") not in classes:
         return False, "unauthorized_validator_class"
@@ -557,6 +584,29 @@ def derive_governed_state(
     return ACTIVE
 
 
+def _trusted_superseded_ids(
+    records: list[dict[str, Any]],
+    instant: str | None,
+    *,
+    events: list[dict[str, Any]] | None,
+    keystore_dir: Path,
+) -> set[str]:
+    """Ids displaced by a successor whose attestations are all trust-verified.
+    `supersedes` is attacker-writable, so only a successor that would itself
+    stand under full validator-trust verification may deactivate a record."""
+
+    def successor_trusted(r: dict[str, Any]) -> bool:
+        atts = _attestations(r)
+        if not atts:
+            return False
+        return all(
+            verify_attestation_trust(r, a, events=events, keystore_dir=keystore_dir)[0]
+            for a in atts
+        )
+
+    return superseded_ids_of(records, instant, successor_trusted=successor_trusted)
+
+
 def governed_active_records(
     records: list[dict[str, Any]],
     instant: str | None,
@@ -564,10 +614,13 @@ def governed_active_records(
     events: list[dict[str, Any]] | None,
     keystore_dir: Path,
     policy: dict[str, Any] | None,
+    artifact_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Routing-eligible subset under validator trust governance: governed-ACTIVE
-    only. INVALIDATED, CONFLICTED, and REQUIRES_REVIEW never route."""
-    sids = {r.get("supersedes") for r in records if r.get("supersedes")}
+    only. INVALIDATED, CONFLICTED, and REQUIRES_REVIEW never route. When
+    `artifact_dir` is given, the retained source artifact must still hash to
+    the record's source_digest — an unverifiable source document never routes."""
+    sids = _trusted_superseded_ids(records, instant, events=events, keystore_dir=keystore_dir)
     out = []
     for r in records:
         try:
@@ -583,7 +636,7 @@ def governed_active_records(
             keystore_dir=keystore_dir,
             policy=policy,
         )
-        if state == ACTIVE:
+        if state == ACTIVE and (artifact_dir is None or source_artifact_intact(r, artifact_dir)):
             out.append(r)
     return out
 
@@ -596,7 +649,7 @@ def governed_lifecycle_distribution(
     keystore_dir: Path,
     policy: dict[str, Any] | None,
 ) -> dict[str, int]:
-    sids = {r.get("supersedes") for r in records if r.get("supersedes")}
+    sids = _trusted_superseded_ids(records, instant, events=events, keystore_dir=keystore_dir)
     dist = dict.fromkeys(GOVERNED_STATES, 0)
     for r in records:
         try:

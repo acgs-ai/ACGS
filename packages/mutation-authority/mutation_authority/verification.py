@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .canonical import hash_file, sha256_hex
-from .effect import ACCEPTED, REJECTED, EffectBinder
+from .effect import ACCEPTED, REJECTED, EffectBinder, EffectRecordingError
 from .engine import ALLOW, DENY, DecisionEngine
 from .intent import MutationIntent, SignedIntent
 from .ledger import AuditLedger, LedgerIntegrityError
@@ -419,6 +419,119 @@ def attack_forged_receipt(base: Path) -> str:
     return "altered receipt fails root-key signature check ⇒ REJECTED"
 
 
+def attack_j_symlink_escape(base: Path) -> str:
+    """A symlinked directory must not let a governed-looking path write
+    outside the repository — at decide time or between approval and commit."""
+    sb = Sandbox.build(base)
+    outside = sb.base / "outside"
+    outside.mkdir(parents=True, exist_ok=True)
+
+    # (1) Decide time: the hostile symlink already exists.
+    (sb.repo / "src" / "sub").symlink_to(outside)
+    signed = sb.intent("agent-alpha", "src/sub/leak.txt", operation="CREATE")
+    decision = sb.engine.decide(signed, sb.tick())
+    _expect(decision.decision == DENY, "symlink-escaping path was allowed")
+    _expect("outside the governed repository" in decision.reason, decision.reason)
+
+    # (2) Effect time: symlink introduced AFTER approval.
+    signed2 = sb.intent("agent-alpha", "src/sub2/leak.txt", operation="CREATE")
+    decision2 = sb.engine.decide(signed2, sb.tick())
+    _expect(decision2.decision == ALLOW, f"clean CREATE denied: {decision2.reason}")
+    assert decision2.receipt is not None
+    (sb.repo / "src" / "sub2").symlink_to(outside)
+    result = sb.binder.commit(decision2.receipt, b"leak\n", sb.tick())
+    _expect(result.status == REJECTED, "post-approval symlink escape was committed")
+    _expect("outside the governed repository" in result.reason, result.reason)
+    _expect(not (outside / "leak.txt").exists(), "bytes escaped the governed repository")
+    return "symlink escape DENIED at decide time and REJECTED at effect time"
+
+
+def attack_k_metadata_swap(base: Path) -> str:
+    """Byte-identical content with changed file metadata is a state change:
+    file-to-symlink swaps and exec-bit flips must be visible divergence."""
+    sb = Sandbox.build(base)
+    resource = "src/module_a.py"
+    content = b"VALUE = 2\n"
+    sb.governed_mutation("agent-alpha", resource, content)
+    target = sb.repo / resource
+
+    # (1) Replace the file with a symlink to a byte-identical copy.
+    copy = sb.base / "copy_module_a.py"
+    copy.write_bytes(content)
+    target.unlink()
+    target.symlink_to(copy)
+    violations = repository_violations(sb.ledger, sb.repo, sb.root.governed_prefixes())
+    _expect(len(violations) == 1, f"symlink swap not detected: {violations}")
+    _expect(violations[0]["kind"] == "unauthorized_modify", "wrong violation kind")
+
+    # (2) Restore, then flip the exec bit on byte-identical content.
+    target.unlink()
+    target.write_bytes(content)
+    _expect(
+        repository_violations(sb.ledger, sb.repo, sb.root.governed_prefixes()) == [],
+        "restored file still reported divergent",
+    )
+    target.chmod(0o755)
+    violations = repository_violations(sb.ledger, sb.repo, sb.root.governed_prefixes())
+    _expect(len(violations) == 1, "exec-bit flip not detected")
+    return "file→symlink swap and exec-bit flip both surface as unauthorized_modify"
+
+
+def attack_l_unrecordable_effect_rolled_back(base: Path) -> str:
+    """If the COMMIT event cannot be appended, the filesystem effect must not
+    persist — otherwise an accepted mutation would be unauditable."""
+    sb = Sandbox.build(base)
+    resource = "src/module_a.py"
+    original = (sb.repo / resource).read_bytes()
+    decision = sb.engine.decide(sb.intent("agent-alpha", resource), sb.tick())
+    _expect(decision.decision == ALLOW, f"setup ALLOW failed: {decision.reason}")
+    assert decision.receipt is not None
+
+    class RecordingFailure(Exception):
+        pass
+
+    class FailingLedger:
+        """Delegates everything to the real ledger; append always fails."""
+
+        def __init__(self, inner: AuditLedger):
+            self._inner = inner
+
+        def __getattr__(self, name: str):
+            if name == "append":
+                def _fail(*_a: object, **_k: object) -> None:
+                    raise RecordingFailure("simulated audit-chain append failure")
+
+                return _fail
+            return getattr(self._inner, name)
+
+    sb.binder.ledger = FailingLedger(sb.ledger)  # type: ignore[assignment]
+    try:
+        sb.binder.commit(decision.receipt, b"VALUE = 2\n", sb.tick())
+    except EffectRecordingError:
+        _expect((sb.repo / resource).read_bytes() == original, "rolled-back effect persisted")
+        sb.ledger.verify_chain()
+        _expect(
+            repository_violations(sb.ledger, sb.repo, sb.root.governed_prefixes()) == [],
+            "rollback left the repository diverged from the chain",
+        )
+        return "append failure ⇒ EffectRecordingError; file restored, chain still clean"
+    raise CheckFailure("recording failure did not raise EffectRecordingError")
+
+
+def check_unanchored_ledger_refused(base: Path) -> str:
+    """Constructing a ledger without an anchor must be an explicit, loud
+    opt-in — never a silent default that disables truncation detection."""
+    base.mkdir(parents=True, exist_ok=True)
+    try:
+        AuditLedger(base / "ledger.jsonl")
+    except LedgerIntegrityError:
+        pass
+    else:
+        raise CheckFailure("unanchored ledger constructed without explicit opt-in")
+    AuditLedger(base / "ledger.jsonl", allow_unanchored=True)  # insecure dev mode
+    return "anchorless construction refused unless allow_unanchored=True"
+
+
 CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     ("happy-path: intent → decision → receipt → effect → audit", check_happy_path),
     ("deterministic verifier", check_deterministic_verifier),
@@ -434,7 +547,14 @@ CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     ("ATTACK G (bonus): forged/altered receipt", attack_forged_receipt),
     ("ATTACK H (bonus): truncate ledger tail, replay receipt", attack_h_ledger_truncation),
     ("ATTACK I (bonus): delete ledger, regenerate genesis", attack_i_genesis_regeneration),
+    ("ATTACK J (bonus): symlink escape from the governed repository", attack_j_symlink_escape),
+    ("ATTACK K (bonus): metadata-only mutation (symlink swap, exec bit)", attack_k_metadata_swap),
+    (
+        "ATTACK L (bonus): effect applied but unrecordable is rolled back",
+        attack_l_unrecordable_effect_rolled_back,
+    ),
     ("ledger is bound to its governance root", check_ledger_root_binding),
+    ("unanchored ledger construction is refused", check_unanchored_ledger_refused),
 ]
 
 

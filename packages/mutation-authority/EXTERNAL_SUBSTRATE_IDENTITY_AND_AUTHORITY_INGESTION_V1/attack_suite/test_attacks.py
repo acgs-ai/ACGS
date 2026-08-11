@@ -172,6 +172,12 @@ def manifest(substrate):
     return build_manifest(substrate, "TEST_SUBSTRATE")
 
 
+# The fixture source document behind default fixture evidence. Tests that
+# exercise positive routing retain these bytes as the registry artifact so
+# source_artifact_intact can re-verify the digest.
+FIXTURE_DOC = b"[FIXTURE] appointment deed"
+
+
 def _evidence(
     ev_id="AE-1",
     authority_type="DATA_CONTROLLER",
@@ -181,7 +187,7 @@ def _evidence(
     effective_from="2026-01-01T00:00:00Z",
     effective_until=None,
     revoked_at=None,
-    source_digest="a" * 64,
+    source_digest=sha256_hex(FIXTURE_DOC),
 ):
     return {
         "authority_evidence_id": ev_id,
@@ -509,8 +515,12 @@ def test_compute_state_layer_ready_on_confirmed_empty(substrate, tmp_path):
     assert all(st["invariants"].values())
 
 
-def test_supersession_deactivates_old_record(substrate, tmp_path):
-    # A superseded AUTHORITY_EVIDENCED record does not route (Section 15).
+def test_supersession_requires_qualified_successor(substrate, tmp_path):
+    # `supersedes` is attacker-writable content: a successor that would not
+    # itself stand (here: unattested, IDENTITY_EVIDENCED, no ingestion receipt)
+    # must NOT deactivate the established record (denial-of-authority defense).
+    # The old record stays classified as verified — and still does not route,
+    # because routing additionally requires a trusted attestation.
     import verify_authority_state as V
     from _registry import append_record
 
@@ -522,8 +532,9 @@ def test_supersession_deactivates_old_record(substrate, tmp_path):
     append_record(reg, old)
     append_record(reg, newer)
     st = V.compute_state(substrate, reg, tmp_path / "ks", INSTANT, manifest_path=mpath)
-    assert st["report"]["superseded_authority_records"] == 1
-    assert st["report"]["ready_to_send"] == 0
+    assert st["report"]["superseded_authority_records"] == 0  # bogus successor ignored
+    assert st["report"]["verified_authority_records"] == 1  # AE-OLD still stands
+    assert st["report"]["ready_to_send"] == 0  # but unattested evidence never routes
 
 
 def test_ingest_conflict_same_id_different_document(tmp_path):

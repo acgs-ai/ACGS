@@ -142,6 +142,9 @@ def test_vt3_expired_validator_credentials_invalidated(tmp_path):
         "key_fingerprint": sha256_hex(FIX_KEY),
         "effective_from": "2025-01-01T00:00:00Z",
         "effective_until": "2026-06-01T00:00:00Z",  # before validated_at
+        "onboarding": "EXTERNAL_VALIDATOR_ONBOARDING_V1",
+        "appointment_binding": sha256_hex(b"[FIXTURE] appointment binding"),
+        "appointment_evidence_digests": [sha256_hex(b"[FIXTURE] appointment deed")],
     }
     _append_event(trust, reg)
     ev = _attested(_evidence())
@@ -383,27 +386,34 @@ def test_validator_admin_lifecycle_and_bindings(tmp_path):
     reg = tmp_path / "vreg.jsonl"
     ks = tmp_path / "vks"
     base = ["--registry", str(reg), "--keystore", str(ks)]
-    register = [
-        "register",
-        "--validator-id",
-        "[FIXTURE] vld-cli",
-        "--identity",
-        "[FIXTURE] CLI Validator",
-        "--classes",
-        "DATA_CONTROLLER",
-        "--appointment-authority",
-        "[FIXTURE] General Counsel",
-        "--key-id",
-        "cli-k1",
-        "--effective-from",
-        "2026-01-01T00:00:00Z",
-    ]
-    assert VA.main([*base, *register]) == 0
-    # Duplicate registration refused (even with a fresh key id).
-    dup = [*register]
-    dup[dup.index("cli-k1")] = "cli-kdup"
-    assert VA.main([*base, *dup]) == 3
+    # Self-asserted registration is no longer a CLI path: enrolling a validator
+    # requires the evidence-backed onboarding ceremony (onboard_validator.py).
+    with pytest.raises(SystemExit):
+        VA.main([*base, "register", "--validator-id", "[FIXTURE] vld-cli"])
+    # rotate/revoke against an unregistered validator are refused.
     rotate = ["rotate", "--validator-id", "[FIXTURE] vld-cli", "--key-id", "cli-k2"]
+    assert VA.main([*base, *rotate, "--instant", "2026-06-01T00:00:00Z"]) == 3
+    # Seed a REGISTER event the way the onboarding ceremony does (chain-linked
+    # append with onboarding provenance + keystore-backed key).
+    fingerprint = VA._write_key(ks, "cli-k1")
+    VA._append(
+        reg,
+        {
+            "schema": EVENT_SCHEMA,
+            "event": "REGISTER",
+            "validator_id": "[FIXTURE] vld-cli",
+            "validator_identity": "[FIXTURE] CLI Validator",
+            "authorized_classes": ["DATA_CONTROLLER"],
+            "appointment_authority": "[FIXTURE] General Counsel",
+            "key_id": "cli-k1",
+            "key_fingerprint": fingerprint,
+            "effective_from": "2026-01-01T00:00:00Z",
+            "effective_until": None,
+            "onboarding": "EXTERNAL_VALIDATOR_ONBOARDING_V1",
+            "appointment_binding": sha256_hex(b"[FIXTURE] appointment binding"),
+            "appointment_evidence_digests": [sha256_hex(b"[FIXTURE] appointment deed")],
+        },
+    )
     assert VA.main([*base, *rotate, "--instant", "2026-06-01T00:00:00Z"]) == 0
     revoke = ["revoke", "--validator-id", "[FIXTURE] vld-cli"]
     assert VA.main([*base, *revoke, "--instant", "2026-07-01T00:00:00Z"]) == 0

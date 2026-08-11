@@ -45,6 +45,7 @@ from authority_lifecycle import (  # noqa: E402
     validate_onboarding_record,
 )
 from test_attacks import (  # noqa: E402
+    FIXTURE_DOC,
     INSTANT,
     _evidence,
     build_fixture_substrate,
@@ -85,6 +86,12 @@ def fixture_trust(tmp_path, *, classes=("COUNSEL_OR_RIGHTS_AUTHORITY", "DATA_CON
         "key_fingerprint": sha256_hex(FIX_KEY),
         "effective_from": "2026-01-01T00:00:00Z",
         "effective_until": None,
+        # Onboarding provenance (EXTERNAL_VALIDATOR_ONBOARDING_V1): a REGISTER
+        # without evidence-backed appointment provenance is refused at trust
+        # verification time.
+        "onboarding": "EXTERNAL_VALIDATOR_ONBOARDING_V1",
+        "appointment_binding": sha256_hex(b"[FIXTURE] appointment binding"),
+        "appointment_evidence_digests": [sha256_hex(FIXTURE_DOC)],
         "prev_event_binding": GENESIS,
     }
     ev["event_binding"] = event_binding(ev)
@@ -136,6 +143,11 @@ def _compute(substrate, tmp_path, registry_records, trust=None):
     if not mpath.exists():
         mpath.write_text(json.dumps(build_manifest(substrate, "TEST_SUBSTRATE")), encoding="utf-8")
     reg = tmp_path / "ob_reg.jsonl"
+    # Retain the fixture source artifact so source_artifact_intact can
+    # re-verify the default fixture digest at routing time.
+    artifact_dir = reg.parent / ".authority_artifacts"
+    artifact_dir.mkdir(exist_ok=True)
+    (artifact_dir / sha256_hex(FIXTURE_DOC)).write_bytes(FIXTURE_DOC)
     for r in registry_records:
         append_record(reg, r)
     return V.compute_state(

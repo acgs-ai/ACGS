@@ -1,0 +1,51 @@
+# Path-filtered CI for packages/mutation-authority/ — mutation-authority
+# governance kernel + external-substrate authority stack.
+# Stdlib-only package (no pyproject): pytest is provisioned via
+# `uv run --no-project --with pytest`, matching tests-root.yml.
+
+name: python-mutation-authority
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/mutation-authority/**'
+      - '.github/workflows/python-mutation-authority.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packages/mutation-authority/**'
+      - '.github/workflows/python-mutation-authority.yml'
+
+concurrency:
+  group: python-mutation-authority-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: packages/mutation-authority
+
+jobs:
+  test:
+    # Block fork PRs: untrusted code must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: CLI verification gate
+        run: |
+          uv run --no-project --python 3.11 python verify_mutation_governance.py
+
+      - name: Test
+        run: |
+          uv run --no-project --python 3.11 --with pytest \
+            python -m pytest tests integration_tests \
+            EXTERNAL_SUBSTRATE_IDENTITY_AND_AUTHORITY_INGESTION_V1/attack_suite \
+            -q --import-mode=importlib

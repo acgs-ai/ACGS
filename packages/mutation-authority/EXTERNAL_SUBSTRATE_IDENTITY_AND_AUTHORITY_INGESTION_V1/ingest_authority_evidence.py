@@ -109,6 +109,17 @@ def main(argv: list[str]) -> int:
     )
     record.setdefault("ingested_by", "ingest_authority_evidence.py")
     record["ingestion_receipt"] = receipt["receipt_id"]
+
+    # Retain the source-document bytes next to the registry so the digest
+    # stays independently re-verifiable: routing eligibility re-hashes the
+    # retained artifact (source_artifact_intact) instead of trusting a bare
+    # digest string whose source may have moved or changed.
+    artifact_dir = reg_path.parent / ".authority_artifacts"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    artifact = artifact_dir / record["source_digest"]
+    if not artifact.exists():
+        artifact.write_bytes(doc_path.read_bytes())
+
     append_record(reg_path, record)
     print(f"INGESTED: {record['authority_evidence_id']}")
     print(f"  authority_type   : {record['authority_type']}")

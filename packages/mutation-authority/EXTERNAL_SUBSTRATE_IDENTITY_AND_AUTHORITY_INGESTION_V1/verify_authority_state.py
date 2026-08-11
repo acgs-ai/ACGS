@@ -22,6 +22,7 @@ import validator_trust as VT
 from _identity import IDENTITY_CONFIRMED, MANIFEST_NAME, verify_manifest
 from _registry import REGISTRY_NAME, read_registry
 from _substrate import SubstrateError, derive_counts, load_requests, resolve_root
+from authority_lifecycle import superseded_ids_of
 from authority_receipt import ReplayLedger, load_or_create_key, verify_receipt
 from authority_router import (
     AUTHORITY_EVIDENCED,
@@ -52,6 +53,7 @@ def compute_state(
     validator_registry_path: Path | None = None,
     validator_keystore: Path | None = None,
     policy_path: Path | None = None,
+    replay_path: Path | None = None,
 ) -> dict[str, Any]:
     """Compute the full authority state. Pure w.r.t. the substrate (read-only).
 
@@ -69,9 +71,11 @@ def compute_state(
 
     # --- classify evidence (registry-only; independent of the substrate) ---
     records = read_registry(registry_path)
-    # A record named in another record's `supersedes` is inactive (Section 15):
-    # it is neither routable nor counted among the verified.
-    superseded_ids = {r.get("supersedes") for r in records if r.get("supersedes")}
+    # A record named in another record's `supersedes` is inactive (Section 15)
+    # only when the SUCCESSOR itself qualifies (schema-valid, attested, receipted,
+    # in effect) — `supersedes` is attacker-writable content and an unqualified
+    # successor must not deactivate established authority.
+    superseded_ids = superseded_ids_of(records, eval_instant)
     verified, identity_only, expired, revoked, malformed, superseded = [], [], [], [], [], []
     for rec in records:
         try:
@@ -102,7 +106,12 @@ def compute_state(
     vkeystore = validator_keystore or (HERE / VT.VALIDATOR_KEYSTORE_NAME)
     policy = VT.load_policy(policy_path or (HERE / VT.POLICY_NAME))
     routable = VT.governed_active_records(
-        records, eval_instant, events=events, keystore_dir=vkeystore, policy=policy
+        records,
+        eval_instant,
+        events=events,
+        keystore_dir=vkeystore,
+        policy=policy,
+        artifact_dir=registry_path.parent / ".authority_artifacts",
     )
     lifecycle = VT.governed_lifecycle_distribution(
         records, eval_instant, events=events, keystore_dir=vkeystore, policy=policy
@@ -122,6 +131,10 @@ def compute_state(
     # first state-changing instruction. A substrate that is not IDENTITY_CONFIRMED
     # yields ZERO transitions and ZERO receipts — route() is never entered and no
     # ReplayLedger slot is consumed. ---
+    # Verification recomputes deterministically, so the replay ledger is
+    # in-memory by default (duplicates within one evaluation still fail).
+    # An EXECUTION context — anything acting on receipts — must pass
+    # replay_path so consumed receipt ids persist across process restarts.
     key = load_or_create_key(keystore)
     if confirmed:
         routed = route(
@@ -130,7 +143,7 @@ def compute_state(
             substrate_digest=manifest["critical_set_digest"],
             key=key,
             eval_instant=eval_instant,
-            replay=ReplayLedger(),
+            replay=ReplayLedger(replay_path),
         )
     else:
         routed = RouteResult(

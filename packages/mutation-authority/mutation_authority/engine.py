@@ -102,10 +102,19 @@ class DecisionEngine:
         if resource is None:
             return "resource path escapes governed repository"
 
-        # 3. Governance root is never mutable through the mutation path.
+        # 3. Containment: the RESOLVED path (symlinks followed) must stay
+        #    inside the governed repository. String normalization alone
+        #    cannot see a symlinked directory that points outside the repo,
+        #    so a lexically clean path could otherwise write anywhere the
+        #    process can. Fail closed on any escape.
+        resolved = (self.repo_dir / resource).resolve()
+        repo_root = self.repo_dir.resolve()
+        if resolved != repo_root and not resolved.is_relative_to(repo_root):
+            return "resource resolves outside the governed repository (symlink escape)"
+
+        # 4. Governance root is never mutable through the mutation path.
         #    Structural check first: independent of policy authoring, any
         #    path resolving under root_dir is refused.
-        resolved = (self.repo_dir / resource).resolve()
         root_dir = self.root.root_dir.resolve()
         if resolved == root_dir or root_dir in resolved.parents:
             return "resource is inside the immutable governance root"
@@ -113,14 +122,14 @@ class DecisionEngine:
             if resource == prefix or resource.startswith(prefix.rstrip("/") + "/"):
                 return "resource is inside the immutable governance root"
 
-        # 4. Resource must be governed at all.
+        # 5. Resource must be governed at all.
         if not any(
             resource.startswith(p.rstrip("/") + "/") or fnmatchcase(resource, p)
             for p in self.root.governed_prefixes()
         ):
             return "resource is outside every governed prefix"
 
-        # 5. Scope permission: requested scope must cover the resource AND
+        # 6. Scope permission: requested scope must cover the resource AND
         #    be within the actor's allowed scopes (ownership). fnmatchcase:
         #    scope semantics must not vary with platform case-folding.
         if not fnmatchcase(resource, intent.requested_change_scope):
@@ -129,11 +138,11 @@ class DecisionEngine:
         if not any(fnmatchcase(resource, scope) for scope in allowed_scopes):
             return "actor scope does not permit this resource"
 
-        # 6. Task authority: the referenced task must grant this actor.
+        # 7. Task authority: the referenced task must grant this actor.
         if not self._task_authorized(intent.task_reference, intent.actor_identity):
             return "task_reference does not authorize this actor"
 
-        # 7. Pre-state binding: disk must match BOTH the ledger-derived
+        # 8. Pre-state binding: disk must match BOTH the ledger-derived
         #    authorized state (detects out-of-band mutation — Attack A is
         #    not launderable) and the intent's expected_pre_hash.
         disk_hash = hash_file(self.repo_dir / resource)
@@ -150,7 +159,7 @@ class DecisionEngine:
         if intent.operation in ("UPDATE", "DELETE") and disk_hash == ABSENT:
             return f"{intent.operation} on a resource that does not exist"
 
-        # 8. Concurrency: exactly one live receipt per resource.
+        # 9. Concurrency: exactly one live receipt per resource.
         if self.ledger.open_receipts_for(resource, now):
             return "conflicting mutation in flight for this resource"
 

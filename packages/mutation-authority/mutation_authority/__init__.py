@@ -4,7 +4,7 @@ No Valid Mutation Decision Receipt, No Repository State Change.
 """
 
 from .canonical import ABSENT
-from .effect import ACCEPTED, REJECTED, CommitResult, EffectBinder
+from .effect import ACCEPTED, REJECTED, CommitResult, EffectBinder, EffectRecordingError
 from .engine import ALLOW, DENY, Decision, DecisionEngine
 from .intent import MutationIntent, SignedIntent
 from .ledger import AuditLedger, LedgerIntegrityError
@@ -23,6 +23,7 @@ __all__ = [
     "Decision",
     "DecisionEngine",
     "EffectBinder",
+    "EffectRecordingError",
     "GovernanceRoot",
     "LedgerIntegrityError",
     "MutationDecisionReceipt",

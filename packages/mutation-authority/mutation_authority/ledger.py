@@ -59,7 +59,20 @@ class AuditLedger:
     hash-chain consistency alone cannot prove completeness.
     """
 
-    def __init__(self, path: Path, anchor_path: Path | None = None):
+    def __init__(
+        self,
+        path: Path,
+        anchor_path: Path | None = None,
+        *,
+        allow_unanchored: bool = False,
+    ):
+        if anchor_path is None and not allow_unanchored:
+            raise LedgerIntegrityError(
+                "AuditLedger requires an out-of-tree anchor_path: without it, "
+                "tail truncation and delete-and-regenerate attacks are "
+                "undetectable and consumed receipts become replayable. Pass "
+                "allow_unanchored=True only for insecure development use."
+            )
         self.path = path
         self.anchor_path = anchor_path
 
@@ -73,6 +86,8 @@ class AuditLedger:
         baseline: dict[str, str],
         timestamp: int,
         anchor_path: Path | None = None,
+        *,
+        allow_unanchored: bool = False,
     ) -> AuditLedger:
         if path.exists():
             raise LedgerIntegrityError(f"ledger already exists: {path}")
@@ -81,7 +96,7 @@ class AuditLedger:
                 f"ledger anchor already exists: {anchor_path} "
                 "(refusing to regenerate history for an existing chain)"
             )
-        ledger = cls(path, anchor_path=anchor_path)
+        ledger = cls(path, anchor_path=anchor_path, allow_unanchored=allow_unanchored)
         ledger._append(
             EVENT_GENESIS,
             {"root_manifest_hash": root_manifest_hash, "baseline": baseline},

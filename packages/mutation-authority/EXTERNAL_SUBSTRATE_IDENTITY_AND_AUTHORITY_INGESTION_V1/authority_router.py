@@ -20,11 +20,13 @@ merely IDENTITY_EVIDENCED. Authority without matching scope is insufficient
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from _canonical import sha256_hex
 from _substrate import BASIS_CONTROLLER, BASIS_COUNSEL, READY_TO_SEND, ROUTING_REQUIRED
-from authority_receipt import ReplayLedger, mint_receipt
+from authority_receipt import ReceiptError, ReplayLedger, mint_receipt
 
 DATA_CONTROLLER = "DATA_CONTROLLER"
 COUNSEL_OR_RIGHTS_AUTHORITY = "COUNSEL_OR_RIGHTS_AUTHORITY"
@@ -89,26 +91,55 @@ def source_digest_matches(record: dict[str, Any], document_bytes: bytes) -> bool
     return sha256_hex(document_bytes) == record.get("source_digest")
 
 
-def _utc_instant(s: Any) -> bool:
-    """A Z-suffixed ISO-8601 UTC instant. Lexicographic comparison of instants is
-    valid only for this form, so anything else fails closed."""
-    return isinstance(s, str) and "T" in s and s.endswith("Z")
+def source_artifact_intact(record: dict[str, Any], artifact_dir: Path) -> bool:
+    """True iff the retained source artifact for this record is on file and its
+    bytes still hash to the recorded source_digest. Ingestion retains the
+    artifact bytes under `<artifact_dir>/<source_digest>`; routing eligibility
+    re-verifies them here, so a source document altered or removed after
+    ingestion stops routing (fail closed) instead of surviving as an
+    unverifiable digest string."""
+    digest = record.get("source_digest")
+    if not isinstance(digest, str) or not digest.strip():
+        return False
+    if "/" in digest or "\\" in digest or ".." in digest:
+        return False
+    artifact = artifact_dir / digest
+    if not artifact.is_file():
+        return False
+    try:
+        return source_digest_matches(record, artifact.read_bytes())
+    except OSError:
+        return False
+
+
+def _parse_z(s: Any) -> datetime | None:
+    """Strict Z-suffixed ISO-8601 UTC instant, or None. Anything the format
+    does not exactly match — offsets, fractional seconds, garbage after a
+    lexicographically large prefix — is not comparable and fails closed."""
+    if not isinstance(s, str):
+        return None
+    try:
+        return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return None
 
 
 def in_effect(record: dict[str, Any], instant: str | None) -> bool:
     """Temporal + revocation gate (invariant I12). Fails closed when the instant
-    cannot be established, the times are not Z-suffixed UTC, or the record is
-    revoked/expired."""
+    cannot be established, any timestamp fails strict UTC parsing, or the record
+    is revoked/expired. Comparison is on parsed datetimes, never raw strings."""
     if record.get("revoked_at"):
         return False
-    if not _utc_instant(instant):
+    now = _parse_z(instant)
+    if now is None:
         return False
-    ef = record.get("effective_from")
-    if not _utc_instant(ef) or instant < ef:
+    frm = _parse_z(record.get("effective_from"))
+    if frm is None or now < frm:
         return False
     eu = record.get("effective_until")
     if eu is not None:
-        if not _utc_instant(eu) or instant >= eu:
+        eu_dt = _parse_z(eu)
+        if eu_dt is None or now >= eu_dt:
             return False
     return True
 
@@ -194,24 +225,36 @@ def route(
         scope = match["authority_scope"]
         ev_id = match["authority_evidence_id"]
         ev_digest = match["source_digest"]
+        # Mint-then-consume atomically per request: both receipts are minted
+        # first, then consumed against the replay ledger. If either receipt is
+        # a replay (already consumed in a prior evaluation against a persistent
+        # ledger), the whole request stays in its prior state and contributes
+        # no transitions — a request never half-advances (fail closed).
+        minted = []
         for prior, new in ((ROUTING_REQUIRED, ROUTING_RESOLVED), (ROUTING_RESOLVED, READY_TO_SEND)):
-            receipt = mint_receipt(
-                key,
-                request_id=rid,
-                prior_state=prior,
-                new_state=new,
-                authority_subject=subject,
-                authority_evidence_id=ev_id,
-                evidence_digest=ev_digest,
-                authority_scope=scope,
-                substrate_critical_set_digest=substrate_digest,
-                decision="ALLOW",
-                decision_reason=f"{match['authority_type']} evidence covers {rid} in scope",
-                created_at=eval_instant or "",
+            minted.append(
+                mint_receipt(
+                    key,
+                    request_id=rid,
+                    prior_state=prior,
+                    new_state=new,
+                    authority_subject=subject,
+                    authority_evidence_id=ev_id,
+                    evidence_digest=ev_digest,
+                    authority_scope=scope,
+                    substrate_critical_set_digest=substrate_digest,
+                    decision="ALLOW",
+                    decision_reason=f"{match['authority_type']} evidence covers {rid} in scope",
+                    created_at=eval_instant or "",
+                )
             )
-            replay.consume(receipt["receipt_id"])
-            result.transitions.append(receipt)
-            result.request_final_state[rid] = new
+        try:
+            for receipt in minted:
+                replay.consume(receipt["receipt_id"])
+        except ReceiptError:
+            continue
+        result.transitions.extend(minted)
+        result.request_final_state[rid] = minted[-1]["new_state"]
 
     return result
 

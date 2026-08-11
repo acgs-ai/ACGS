@@ -20,6 +20,7 @@ attack class).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from _canonical import hash_obj
@@ -86,10 +87,12 @@ def attestation_binding(record: dict[str, Any]) -> str:
     """The digest a validation attestation must carry in `record_binding`.
 
     Computed over the identity-bearing content the validator actually reviewed:
-    who the evidence names, what it covers, and the exact source document. Any
-    post-validation change to these fields breaks the binding, so the record
-    drops back to DISCOVERED (fail closed) instead of routing on a stale
-    attestation."""
+    who the evidence names, what it covers, the exact source document, and the
+    claimed verification_state. Any post-validation change to these fields
+    breaks the binding, so the record drops back to DISCOVERED (fail closed)
+    instead of routing on a stale attestation. verification_state is inside the
+    binding because upgrading IDENTITY_EVIDENCED to AUTHORITY_EVIDENCED after
+    validation is exactly the promotion a validator must re-review."""
     return hash_obj(
         {
             "authority_evidence_id": record.get("authority_evidence_id"),
@@ -99,6 +102,7 @@ def attestation_binding(record: dict[str, Any]) -> str:
             "source_digest": record.get("source_digest"),
             "effective_from": record.get("effective_from"),
             "effective_until": record.get("effective_until"),
+            "verification_state": record.get("verification_state"),
         }
     )
 
@@ -177,15 +181,50 @@ def derive_lifecycle_state(
     return ACTIVE
 
 
-def superseded_ids_of(records: list[dict[str, Any]]) -> set[str]:
-    return {r.get("supersedes") for r in records if r.get("supersedes")}
+def superseded_ids_of(
+    records: list[dict[str, Any]],
+    instant: str | None = None,
+    *,
+    successor_trusted: Callable[[dict[str, Any]], bool] | None = None,
+) -> set[str]:
+    """Ids displaced by a QUALIFIED successor only.
+
+    `supersedes` is attacker-writable content: if any well-formed string could
+    deactivate a record, appending a bogus successor would be a denial-of-
+    authority primitive. A successor only counts when it would itself stand:
+    schema-valid, not revoked, carrying a valid attestation and an ingestion
+    receipt, and in effect at `instant`. `successor_trusted` lets the validator-
+    trust layer additionally require the successor's attestations to be
+    trust-verified. Anything less leaves the predecessor in place (fail closed
+    in favor of established authority)."""
+    out: set[str] = set()
+    for r in records:
+        sid = r.get("supersedes")
+        if not sid:
+            continue
+        try:
+            validate_onboarding_record(r)
+        except OnboardingError:
+            continue
+        if r.get("revoked_at"):
+            continue
+        if not has_valid_attestation(r):
+            continue
+        if not r.get("ingestion_receipt"):
+            continue
+        if not in_effect(r, instant):
+            continue
+        if successor_trusted is not None and not successor_trusted(r):
+            continue
+        out.add(sid)
+    return out
 
 
 def active_records(records: list[dict[str, Any]], instant: str | None) -> list[dict[str, Any]]:
     """The subset eligible to drive routing: lifecycle-ACTIVE only. A record
     that is DISCOVERED (no attestation), VALIDATED, INGESTED-but-inactive,
     SUPERSEDED, or REVOKED is excluded — fail closed."""
-    sids = superseded_ids_of(records)
+    sids = superseded_ids_of(records, instant)
     out = []
     for r in records:
         try:
@@ -200,7 +239,7 @@ def active_records(records: list[dict[str, Any]], instant: str | None) -> list[d
 
 def lifecycle_distribution(records: list[dict[str, Any]], instant: str | None) -> dict[str, int]:
     """Count records by derived lifecycle state (registry members)."""
-    sids = superseded_ids_of(records)
+    sids = superseded_ids_of(records, instant)
     dist = dict.fromkeys(LIFECYCLE_STATES, 0)
     for r in records:
         try:

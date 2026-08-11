@@ -75,11 +75,20 @@
         "record_binding": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256 over the identity-bearing record content at validation time (see authority_lifecycle.attestation_binding). A record changed after validation no longer matches — it drops to DISCOVERED and cannot route (identity-drift fail-closed)."},
         "validator_id": {"type": "string", "minLength": 1, "description": "VALIDATOR_TRUST_GOVERNANCE_V1: the registered validator id. Unregistered, unauthorized-class, expired, or revoked-at-attestation validators derive INVALIDATED."},
         "key_id": {"type": "string", "minLength": 1, "description": "The validator signing key current at validated_at (registry key window). A rotated-out key fails closed."},
-        "attestation_signature": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "HMAC-SHA256 over the canonical attestation payload (validator_trust.attestation_payload) with the validator's key. Altering ANY attestation field after signing invalidates it."},
+        "attestation_signature": {"type": "string", "description": "Signature over the canonical attestation payload with the validator's key. hmac-sha256: 64 hex chars over validator_trust.attestation_payload. ed25519: 128 hex chars over validator_trust.attestation_payload_v2. Altering ANY attestation field after signing invalidates it."},
+        "signature_algorithm": {"enum": ["hmac-sha256", "ed25519"], "description": "Signature mode (ASYMMETRIC_VALIDATOR_KEYS_V1 dual mode). Default hmac-sha256. Must match the algorithm registered for key_id."},
+        "key_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256 of the signing public key. REQUIRED for ed25519 attestations; must equal the fingerprint registered for key_id."},
         "disposition": {"enum": ["APPROVED", "REJECTED"], "description": "Default APPROVED. All-REJECTED derives INVALIDATED; mixed dispositions derive CONFLICTED."},
         "confirmed_scope_digest": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "description": "Optional: hash_obj of the authority_scope the validator confirmed. A mismatch with the record scope derives CONFLICTED."},
         "confirmed_period": {"type": ["object", "null"], "description": "Optional: {from, until} the validator confirmed. A mismatch with the record's effective period derives CONFLICTED."}
       },
+      "allOf": [
+        {
+          "if": {"type": "object", "properties": {"signature_algorithm": {"const": "ed25519"}}, "required": ["signature_algorithm"]},
+          "then": {"required": ["key_fingerprint"], "properties": {"attestation_signature": {"pattern": "^[0-9a-f]{128}$"}}},
+          "else": {"properties": {"attestation_signature": {"pattern": "^[0-9a-f]{64}$"}}}
+        }
+      ],
       "description": "A human validation attestation, cryptographically bound to the record content (record_binding) and to a registered validator (signature). Absent = DISCOVERED. Untrusted = INVALIDATED. Lifecycle state itself is derived, never stored."
     }
   }

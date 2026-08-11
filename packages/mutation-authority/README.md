@@ -16,7 +16,12 @@ time).
 ```bash
 python3 verify_mutation_governance.py   # must print: ALL CHECKS PASSED
 python3 -m pytest tests -q              # same suite under pytest
+python3 -m pytest tests integration_tests \
+    EXTERNAL_SUBSTRATE_IDENTITY_AND_AUTHORITY_INGESTION_V1/attack_suite -q  # full package gate
 ```
+
+CI: the full package gate runs in `.github/workflows/python-mutation-authority.yml`
+(path-filtered) and via the root `make test-py` target.
 
 ## Architecture
 
@@ -154,7 +159,10 @@ from mutation_authority import (
 )
 
 root = GovernanceRoot.load(Path("governance"), Path("/secure/keystore"))
-ledger = AuditLedger(Path("mutation_ledger.jsonl"))
+# The anchor checkpoint lives OUTSIDE the governed tree (with the keystore);
+# without it, tail truncation of the ledger is undetectable. Constructing an
+# unanchored ledger requires an explicit allow_unanchored=True opt-in.
+ledger = AuditLedger(Path("mutation_ledger.jsonl"), anchor_path=Path("/secure/keystore/ledger.head"))
 engine = DecisionEngine(root, ledger, repo_dir=Path("."))
 binder = EffectBinder(root, ledger, repo_dir=Path("."))
 

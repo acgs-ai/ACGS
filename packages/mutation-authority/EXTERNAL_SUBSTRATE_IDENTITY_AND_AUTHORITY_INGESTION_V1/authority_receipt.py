@@ -145,14 +145,34 @@ def verify_receipt(key: bytes, receipt: dict[str, Any]) -> bool:
 
 
 class ReplayLedger:
-    """At-most-once guard over receipt_ids. A receipt_id may be consumed once."""
+    """At-most-once guard over receipt_ids. A receipt_id may be consumed once.
 
-    def __init__(self) -> None:
+    By default the ledger is in-memory, which is what deterministic
+    *verification* needs: recomputing the same evaluation must reproduce the
+    same receipts, and an in-memory ledger still catches duplicates within one
+    evaluation. An *execution* context — anything that acts on a receipt —
+    must pass ``path`` so consumed ids persist across process restarts;
+    otherwise a restart would forget every consumed receipt and replays of old
+    receipts would be accepted."""
+
+    def __init__(self, path: Path | None = None) -> None:
         self._seen: set[str] = set()
+        self._path = path
+        if path is not None and path.is_file():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                rid = line.strip()
+                if rid:
+                    self._seen.add(rid)
 
     def consume(self, receipt_id: str) -> None:
         if receipt_id in self._seen:
             raise ReceiptError(f"receipt replay: {receipt_id} already consumed")
+        if self._path is not None:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            with self._path.open("a", encoding="utf-8") as fh:
+                fh.write(receipt_id + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
         self._seen.add(receipt_id)
 
     def has(self, receipt_id: str) -> bool:

@@ -3,13 +3,17 @@
 
 Appends tamper-evident lifecycle events to the validator registry:
 
-    register  — enroll a validator: identity, authorized evidence classes,
-                appointment authority, effective period; generates a signing
-                key into the local keystore and records its fingerprint.
     rotate    — issue a new signing key from a given instant; the old key can
                 no longer sign new attestations (old signatures made inside
                 their window remain verifiable).
     revoke    — end the validator's authority at a given instant.
+
+Registration is NOT available here: enrolling a validator requires
+evidence-backed appointment provenance and goes through the 6-gate
+onboarding CLI (onboard_validator.py, EXTERNAL_VALIDATOR_ONBOARDING_V1).
+A REGISTER event without onboarding provenance is refused at verification
+time (`register_missing_onboarding_provenance`), so a self-asserted
+registration path would authorize nothing anyway.
 
 The registry is append-only JSONL; every event carries an `event_binding`
 digest, so editing history in place is detectable and makes the validator
@@ -17,8 +21,7 @@ unverifiable (fail closed). This tool never writes a validation block and
 never touches the evidence registry.
 
 Production discipline: the production registry stays EMPTY until a real
-validator is appointed by a real authority. This tool refuses to invent one —
-every field must be supplied by the operator from a real appointment.
+validator is appointed by a real authority and onboarded with evidence.
 
 Exit codes: 0 ok · 3 refused (duplicate/unknown/invalid) · 2 operational error.
 """
@@ -44,8 +47,6 @@ from validator_trust import (
 )
 
 HERE = Path(__file__).resolve().parent
-
-CLASSES = ("DATA_CONTROLLER", "COUNSEL_OR_RIGHTS_AUTHORITY")
 
 
 def _append(path: Path, event: dict) -> None:
@@ -80,17 +81,6 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--keystore", default=str(HERE / VALIDATOR_KEYSTORE_NAME))
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    reg = sub.add_parser("register")
-    reg.add_argument("--validator-id", required=True)
-    reg.add_argument("--identity", required=True, help="real validator identity (person/org)")
-    reg.add_argument("--classes", required=True, help=f"comma list of {CLASSES}")
-    reg.add_argument(
-        "--appointment-authority", required=True, help="who appointed this validator (real)"
-    )
-    reg.add_argument("--key-id", required=True)
-    reg.add_argument("--effective-from", required=True, help="ISO-8601 Z")
-    reg.add_argument("--effective-until", default=None, help="ISO-8601 Z (optional)")
-
     rot = sub.add_parser("rotate")
     rot.add_argument("--validator-id", required=True)
     rot.add_argument("--key-id", required=True, help="NEW key id")
@@ -108,45 +98,6 @@ def main(argv: list[str]) -> int:
         print("FATAL: validator registry is malformed — refusing to append", file=sys.stderr)
         return 2
     mine = [e for e in events if e.get("validator_id") == args.validator_id]
-
-    if args.cmd == "register":
-        if any(e.get("event") == "REGISTER" for e in mine):
-            print(f"REFUSED: {args.validator_id} already registered", file=sys.stderr)
-            return 3
-        classes = [c.strip() for c in args.classes.split(",") if c.strip()]
-        bad = [c for c in classes if c not in CLASSES]
-        if bad or not classes:
-            print(
-                f"REFUSED: unknown classes {bad or '(none)'}; allowed: {CLASSES}", file=sys.stderr
-            )
-            return 3
-        if _parse_z(args.effective_from) is None or (
-            args.effective_until is not None and _parse_z(args.effective_until) is None
-        ):
-            print("REFUSED: effective period must be ISO-8601 Z instants", file=sys.stderr)
-            return 3
-        try:
-            fingerprint = _write_key(keystore, args.key_id)
-        except ValueError as exc:
-            print(f"REFUSED: {exc}", file=sys.stderr)
-            return 3
-        _append(
-            registry,
-            {
-                "schema": EVENT_SCHEMA,
-                "event": "REGISTER",
-                "validator_id": args.validator_id,
-                "validator_identity": args.identity,
-                "authorized_classes": sorted(classes),
-                "appointment_authority": args.appointment_authority,
-                "key_id": args.key_id,
-                "key_fingerprint": fingerprint,
-                "effective_from": args.effective_from,
-                "effective_until": args.effective_until,
-            },
-        )
-        print(f"REGISTERED {args.validator_id} key={args.key_id} fingerprint={fingerprint}")
-        return 0
 
     if not any(e.get("event") == "REGISTER" for e in mine):
         print(f"REFUSED: {args.validator_id} is not registered", file=sys.stderr)

@@ -15,7 +15,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .canonical import ABSENT, hash_file, sha256_hex
+from .canonical import ABSENT, hash_file
 from .engine import _verify_chain_root_binding
 from .ledger import EVENT_COMMIT, AuditLedger
 from .receipt import MutationDecisionReceipt
@@ -23,6 +23,14 @@ from .root import GovernanceRoot
 
 ACCEPTED = "ACCEPTED"
 REJECTED = "REJECTED"
+
+
+class EffectRecordingError(Exception):
+    """The filesystem effect could not be bound into the audit chain.
+
+    The effect has been rolled back: an applied-but-unrecorded side effect
+    would be an unaudited state change, which violates the core invariant.
+    """
 
 
 @dataclass(frozen=True)
@@ -74,8 +82,16 @@ class EffectBinder:
             return CommitResult(REJECTED, f"{receipt.operation} requires new content")
 
         # 6. Pre-state binding: the file must still be exactly the state
-        #    the decision was made against.
+        #    the decision was made against. Re-check containment at effect
+        #    time too: a symlink introduced after approval must not let the
+        #    write land outside the governed repository.
         target = self.repo_dir / receipt.resource
+        repo_root = self.repo_dir.resolve()
+        resolved = target.resolve()
+        if resolved != repo_root and not resolved.is_relative_to(repo_root):
+            return CommitResult(
+                REJECTED, "resource resolves outside the governed repository (symlink escape)"
+            )
         before_hash = hash_file(target)
         if before_hash != receipt.previous_state_hash:
             return CommitResult(
@@ -84,7 +100,9 @@ class EffectBinder:
                 before_hash=before_hash,
             )
 
-        # 7. Apply the effect atomically.
+        # 7. Apply the effect atomically. Snapshot the prior bytes first so
+        #    an effect that cannot be recorded (step 8) can be rolled back.
+        prior_bytes = target.read_bytes() if before_hash != ABSENT else None
         if receipt.operation == "DELETE":
             target.unlink()
             after_hash = ABSENT
@@ -94,21 +112,38 @@ class EffectBinder:
             tmp = target.with_name(target.name + ".mutation-authority.tmp")
             tmp.write_bytes(new_content)
             os.replace(tmp, target)
-            after_hash = sha256_hex(new_content)
+            # Re-hash from disk (not from the input bytes) so the recorded
+            # after-state binds exactly what the repository now contains,
+            # including file-metadata state (symlink/exec) — never a value
+            # the on-disk state could silently diverge from.
+            after_hash = hash_file(target)
 
-        # 8. Bind the effect into the audit chain.
-        self.ledger.append(
-            EVENT_COMMIT,
-            {
-                "receipt_id": receipt.receipt_id,
-                "actor": receipt.actor,
-                "resource": receipt.resource,
-                "before_hash": before_hash,
-                "after_hash": after_hash,
-                "decision": "ALLOW",
-            },
-            now,
-        )
+        # 8. Bind the effect into the audit chain. If the append fails, the
+        #    effect must not persist: roll the file back and fail loudly —
+        #    an applied-but-unaudited mutation is indistinguishable from an
+        #    unauthorized out-of-band write.
+        try:
+            self.ledger.append(
+                EVENT_COMMIT,
+                {
+                    "receipt_id": receipt.receipt_id,
+                    "actor": receipt.actor,
+                    "resource": receipt.resource,
+                    "before_hash": before_hash,
+                    "after_hash": after_hash,
+                    "decision": "ALLOW",
+                },
+                now,
+            )
+        except Exception as exc:
+            if prior_bytes is None:
+                target.unlink(missing_ok=True)
+            else:
+                target.write_bytes(prior_bytes)
+            raise EffectRecordingError(
+                "effect could not be bound to the audit chain; "
+                "filesystem change rolled back"
+            ) from exc
         return CommitResult(
             ACCEPTED, "effect bound", before_hash=before_hash, after_hash=after_hash
         )
