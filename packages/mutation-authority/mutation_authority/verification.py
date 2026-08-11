@@ -1003,6 +1003,51 @@ def attack_o_in_memory_root_mutation(base: Path) -> str:
     raise CheckFailure("engine decided on an in-memory-tampered policy")
 
 
+def attack_t_content_substitution(base: Path) -> str:
+    """A receipt approves specific bytes, not just a resource: an executor
+    holding a valid receipt must not be able to commit DIFFERENT content —
+    the expected post-state hash is part of what was authorized."""
+    sb = Sandbox.build(base)
+    resource = "src/module_a.py"
+    original = (sb.repo / resource).read_bytes()
+    decision = sb.engine.decide(
+        sb.intent("agent-alpha", resource, new_content=b"VALUE = 2\n"), sb.tick()
+    )
+    _expect(decision.decision == ALLOW, f"setup ALLOW failed: {decision.reason}")
+    assert decision.receipt is not None
+    swapped = sb.binder.commit(decision.receipt, b"import os  # pwn\n", sb.tick())
+    _expect(swapped.status == REJECTED, "substituted content was committed")
+    _expect("not authorized by receipt" in swapped.reason, swapped.reason)
+    _expect((sb.repo / resource).read_bytes() == original, "substitution touched the file")
+    # The same receipt still authorizes exactly the approved bytes.
+    approved = sb.binder.commit(decision.receipt, b"VALUE = 2\n", sb.tick())
+    _expect(approved.status == ACCEPTED, f"approved bytes rejected: {approved.reason}")
+    return "substituted bytes REJECTED (post-state bound); approved bytes ACCEPTED"
+
+
+def attack_u_inflated_clock_receipt(base: Path) -> str:
+    """decide() takes a caller-supplied `now`. An inflated value must not
+    mint a receipt whose expiry outlives the TTL measured from the audit
+    chain's own clock — such a receipt would block the resource (via
+    open_receipts_for) or stay committable arbitrarily far into the future."""
+    sb = Sandbox.build(base)
+    ttl = sb.root.receipt_ttl()
+    decision = sb.engine.decide(sb.intent("agent-alpha", "src/module_a.py"), 999_999_999)
+    _expect(decision.decision == ALLOW, f"setup ALLOW failed: {decision.reason}")
+    assert decision.receipt is not None
+    # At issuance the chain holds only genesis (timestamp 0, one event), so
+    # the clamp pins the issue tick to 2 regardless of the caller's clock.
+    _expect(
+        decision.receipt.expiry <= 2 + ttl,
+        f"inflated now minted far-future expiry {decision.receipt.expiry}",
+    )
+    _expect(
+        sb.ledger.open_receipts_for("src/module_a.py", decision.receipt.expiry + 1) == [],
+        "inflated-clock receipt still blocks the resource past its clamped expiry",
+    )
+    return "inflated caller clock cannot extend a receipt past the ledger clock + TTL"
+
+
 def check_unanchored_ledger_refused(base: Path) -> str:
     """Constructing a ledger without an anchor must be an explicit, loud
     opt-in — never a silent default that disables truncation detection."""
@@ -1061,6 +1106,14 @@ CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     ),
     ("CREATE respects restrictive umask", check_create_respects_restrictive_umask),
     ("ATTACK P: post-write state substitution", attack_s_post_write_replacement),
+    (
+        "ATTACK T: content substitution against a valid receipt",
+        attack_t_content_substitution,
+    ),
+    (
+        "ATTACK U: inflated caller clock at receipt issuance",
+        attack_u_inflated_clock_receipt,
+    ),
     (
         "mutation receipt v2 rejects legacy state bindings",
         check_mutation_receipt_schema_v2_rejects_legacy,

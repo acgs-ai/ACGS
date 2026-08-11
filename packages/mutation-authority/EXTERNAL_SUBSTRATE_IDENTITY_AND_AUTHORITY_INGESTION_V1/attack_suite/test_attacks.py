@@ -377,6 +377,17 @@ def test_attack10_invented_counsel_no_reference_rejected():
         validate_evidence(bad)
 
 
+def test_malformed_evidence_id_rejected():
+    # The committed schema constrains authority_evidence_id to
+    # ^AE-[A-Za-z0-9_.:-]+$; runtime validation must enforce the same
+    # pattern, or an empty/whitespace/free-form id would mint "INGEST::"
+    # receipts and could become ACTIVE with no usable evidence identity.
+    for bad_id in ("", "AE-", "ae-1", "EV-1", "AE-id with spaces", "AE-1\n", 7, None):
+        with pytest.raises(EvidenceError):
+            validate_evidence(_evidence(ev_id=bad_id))
+    validate_evidence(_evidence(ev_id="AE-controller_2026.01:a-b"))  # schema-valid
+
+
 def test_malformed_scope_shape_rejected_not_crash():
     # Scope ids must be "ALL" or a list of strings: a dict/list/None element
     # would raise TypeError deep inside _scope_covers (set() of unhashables)
@@ -985,6 +996,56 @@ def test_ingest_idempotent_revalidates_current_manifest(
     assert registry.read_bytes() == registry_before
     assert not (tmp_path / ".authority_artifacts").exists()
     assert not keystore.exists()
+
+
+def test_ingest_refuses_symlinked_artifact_store(tmp_path):
+    # Retention must not follow symlinks: a `.authority_artifacts` path
+    # replaced by a symlink would redirect the retained bytes outside the
+    # store, and a symlink pre-planted at the digest path would either be
+    # followed by a plain write (dangling) or silently counted as retained.
+    import ingest_authority_evidence as ING
+
+    doc = tmp_path / "doc"
+    doc.write_text("appointment")
+    rec = tmp_path / "rec.json"
+    rec.write_text(json.dumps(_evidence(ev_id="AE-SYMLINK", source_digest="")))
+    reg = tmp_path / "reg.jsonl"
+    base = [
+        "--record",
+        str(rec),
+        "--registry",
+        str(reg),
+        "--keystore",
+        str(tmp_path / "ks"),
+        "--instant",
+        INSTANT,
+        "--document",
+        str(doc),
+    ]
+    store = tmp_path / ".authority_artifacts"
+
+    # (1) The store itself is a symlink -> refused, nothing appended or escaped.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    store.symlink_to(outside)
+    assert ING.main(list(base)) == 2
+    assert list(outside.iterdir()) == []
+    assert not reg.exists() or reg.read_text() == ""
+
+    # (2) A symlink pre-planted at the digest path -> refused, not followed.
+    store.unlink()
+    store.mkdir()
+    digest = sha256_hex(b"appointment")
+    (store / digest).symlink_to(tmp_path / "planted")
+    assert ING.main(list(base)) == 2
+    assert not (tmp_path / "planted").exists()
+    assert not reg.exists() or reg.read_text() == ""
+
+    # (3) Clean store -> ingested, artifact retained as a regular file.
+    (store / digest).unlink()
+    assert ING.main(list(base)) == 0
+    assert (store / digest).read_bytes() == b"appointment"
+    assert not (store / digest).is_symlink()
 
 
 def test_attack24_aggregate_counts_are_derived_not_stored():

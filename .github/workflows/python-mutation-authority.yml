@@ -47,9 +47,10 @@ jobs:
 
       - name: Test
         # `cryptography` is provisioned so the Ed25519 attack suite
-        # (test_asymmetric_keys.py) actually runs in CI instead of skipping.
+        # (test_asymmetric_keys.py) actually runs in CI instead of skipping;
+        # `jsonschema` backs the attack-suite schema-conformance checks.
         run: |
-          uv run --no-project --python 3.11 --with pytest --with cryptography \
+          uv run --no-project --python 3.11 --with pytest --with cryptography --with jsonschema \
             python -m pytest tests integration_tests \
             EXTERNAL_SUBSTRATE_IDENTITY_AND_AUTHORITY_INGESTION_V1/attack_suite \
             -q --import-mode=importlib
@@ -73,9 +74,10 @@ jobs:
 
       - name: Test
         # `cryptography` is provisioned so the Ed25519 attack suite
-        # (test_asymmetric_keys.py) actually runs in CI instead of skipping.
+        # (test_asymmetric_keys.py) actually runs in CI instead of skipping;
+        # `jsonschema` backs the attack-suite schema-conformance checks.
         run: |
-          uv run --no-project --python 3.11 --with pytest --with cryptography \
+          uv run --no-project --python 3.11 --with pytest --with cryptography --with jsonschema \
             python -m pytest tests integration_tests \
             EXTERNAL_SUBSTRATE_IDENTITY_AND_AUTHORITY_INGESTION_V1/attack_suite \
             -q --import-mode=importlib

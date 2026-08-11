@@ -30,10 +30,8 @@ Exit codes: 0 registered · 3 refused (contract/evidence/temporal/conflict)
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import sys
-from contextlib import contextmanager
 from pathlib import Path
 
 from _canonical import sha256_hex
@@ -57,25 +55,17 @@ from validator_trust import (
     _parse_z,
     chain_intact,
     load_validator_events,
+    registry_write_lock,
 )
 
 HERE = Path(__file__).resolve().parent
 
 
-@contextmanager
-def _registry_lock(registry: Path):
-    """Exclusive cross-process lock over the registry for the whole
-    read-check-append sequence. Two onboarding runs racing on the same
-    registry would otherwise both read the same events, both pass the
-    conflict gates (duplicate validator_id / reused appointment evidence),
-    and both append — exactly the double-registration those gates exist to
-    refuse. The lock lives in a sidecar file (never the registry itself, so
-    locking cannot create or truncate it) and releases on close."""
-    registry.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = registry.with_name(registry.name + ".lock")
-    with lock_path.open("a", encoding="utf-8") as fh:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-        yield
+# Exclusive cross-process lock over the registry for the whole
+# read-check-append sequence. Shared with validator_admin (rotate/revoke)
+# via validator_trust.registry_write_lock so admin/onboarding races
+# serialize on the same sidecar, not just onboarding/onboarding ones.
+_registry_lock = registry_write_lock
 
 
 def main(argv: list[str]) -> int:

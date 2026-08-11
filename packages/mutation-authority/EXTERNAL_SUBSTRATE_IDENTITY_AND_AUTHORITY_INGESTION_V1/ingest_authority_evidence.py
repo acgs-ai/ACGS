@@ -25,6 +25,8 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import os
+import stat
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -162,11 +164,63 @@ def main(argv: list[str]) -> int:
         # stays independently re-verifiable: routing eligibility re-hashes the
         # retained artifact (source_artifact_intact) instead of trusting a bare
         # digest string whose source may have moved or changed.
+        #
+        # The store is written through a PINNED directory descriptor with
+        # no-follow semantics: a `.authority_artifacts` path replaced by a
+        # symlink would be accepted by mkdir(exist_ok=True) and redirect the
+        # write outside the store, and a dangling symlink planted at the
+        # digest path would be followed by write_bytes() after exists()
+        # returned False. O_DIRECTORY|O_NOFOLLOW refuses a symlinked store;
+        # O_CREAT|O_EXCL|O_NOFOLLOW against the pinned descriptor refuses any
+        # pre-planted digest-path symlink (dangling or not).
         artifact_dir = reg_path.parent / ".authority_artifacts"
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        artifact = artifact_dir / record["source_digest"]
-        if not artifact.exists():
-            artifact.write_bytes(doc_path.read_bytes())
+        try:
+            os.mkdir(artifact_dir)
+        except FileExistsError:
+            pass
+        try:
+            dir_fd = os.open(artifact_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError as exc:
+            print(
+                f"FATAL: artifact store is not a real directory (symlinked or "
+                f"unreadable) — refusing to retain: {exc}",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            try:
+                artifact_fd = os.open(
+                    record["source_digest"],
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o666,
+                    dir_fd=dir_fd,
+                )
+            except FileExistsError:
+                # An entry already occupies the digest path. Only a REGULAR
+                # file counts as retained: a pre-planted symlink (dangling or
+                # not) is an attempted redirect, not a retained artifact.
+                st = os.lstat(record["source_digest"], dir_fd=dir_fd)
+                if not stat.S_ISREG(st.st_mode):
+                    print(
+                        "FATAL: artifact digest path is occupied by a "
+                        "non-regular file (pre-planted symlink?) — refusing "
+                        "to ingest",
+                        file=sys.stderr,
+                    )
+                    return 2
+                # already retained; idempotent
+            except OSError as exc:
+                print(
+                    f"FATAL: cannot retain source artifact (symlinked digest "
+                    f"path?) — refusing to ingest: {exc}",
+                    file=sys.stderr,
+                )
+                return 2
+            else:
+                with os.fdopen(artifact_fd, "wb") as fh:
+                    fh.write(doc_path.read_bytes())
+        finally:
+            os.close(dir_fd)
 
         append_record(reg_path, record)
     print(f"INGESTED: {record['authority_evidence_id']}")

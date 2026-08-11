@@ -19,6 +19,7 @@ merely IDENTITY_EVIDENCED. Authority without matching scope is insufficient
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -64,6 +65,12 @@ _REQUIRED_EVIDENCE_FIELDS = (
     "verification_state",
 )
 
+# The committed schema's identifier pattern (AUTHORITY_EVIDENCE_SCHEMA.json).
+# Enforced at runtime too: a record with an empty or malformed identifier
+# would otherwise mint "INGEST::" receipts and could become ACTIVE and route
+# with no usable evidence identity.
+_EVIDENCE_ID_RE = re.compile(r"^AE-[A-Za-z0-9_.:-]+$")
+
 
 class EvidenceError(ValueError):
     """An authority evidence record is malformed — reject, do not ingest."""
@@ -78,6 +85,13 @@ def validate_evidence(record: dict[str, Any]) -> None:
     missing = [f for f in _REQUIRED_EVIDENCE_FIELDS if f not in record]
     if missing:
         raise EvidenceError(f"missing required fields: {missing}")
+    ev_id = record["authority_evidence_id"]
+    if not isinstance(ev_id, str) or not _EVIDENCE_ID_RE.fullmatch(ev_id):
+        raise EvidenceError(
+            "authority_evidence_id must match the committed schema pattern "
+            "^AE-[A-Za-z0-9_.:-]+$ (an empty or malformed identifier cannot "
+            "name a logical authority fact)"
+        )
     if record["authority_type"] not in AUTHORITY_TYPES:
         raise EvidenceError(f"unknown authority_type: {record['authority_type']!r}")
     if record["verification_state"] not in VERIFICATION_STATES:

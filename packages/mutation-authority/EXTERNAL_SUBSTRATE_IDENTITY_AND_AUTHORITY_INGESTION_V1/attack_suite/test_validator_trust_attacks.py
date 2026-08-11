@@ -496,6 +496,17 @@ def test_freshness_age_demotes_to_requires_review(tmp_path):
     assert _gstate(ev2, trust, instant="2026-10-10T12:00:00Z", policy=policy) == ACTIVE
 
 
+def test_future_dated_freshness_basis_fails_closed(tmp_path):
+    # A freshness basis dated in the FUTURE is not evidence of a past
+    # verification: a forward-dated last_verified_at would otherwise stay
+    # "fresh" until that future instant plus max_age. Not comparable ->
+    # REQUIRES_REVIEW.
+    trust = fixture_trust(tmp_path)
+    policy = dict(DEFAULT_POLICY, max_age_days=30)
+    ev = _attested(dict(_evidence(), last_verified_at="2027-01-01T00:00:00Z"))
+    assert _gstate(ev, trust, instant="2026-10-10T12:00:00Z", policy=policy) == REQUIRES_REVIEW
+
+
 def test_freshness_epoch_demotes_to_requires_review(tmp_path):
     trust = fixture_trust(tmp_path)
     policy = dict(DEFAULT_POLICY, minimum_epoch=2)
@@ -657,6 +668,53 @@ def test_current_substrate_binding_is_mandatory_at_every_ingestion_api(tmp_path)
         )
         == []
     )
+
+
+def test_non_monotonic_rotation_instant_refused(tmp_path):
+    # The rotation CLI signs with the LAST APPENDED key event as predecessor;
+    # an out-of-order instant would make it sign with a key that is not the
+    # key current at that instant, producing a ROTATE that
+    # rotations_authenticated() (which sorts by instant) rejects at read
+    # time. Refused loudly at write time instead.
+    import validator_admin as VA
+
+    reg = tmp_path / "vreg.jsonl"
+    ks = tmp_path / "vks"
+    base = ["--registry", str(reg), "--keystore", str(ks)]
+    fingerprint = VA._write_key(ks, "mono-k1")
+    VA._append(
+        reg,
+        {
+            "schema": EVENT_SCHEMA,
+            "event": "REGISTER",
+            "validator_id": "[FIXTURE] vld-mono",
+            "validator_identity": "[FIXTURE] Monotonic Validator",
+            "authorized_classes": ["DATA_CONTROLLER"],
+            "appointment_authority": "[FIXTURE] General Counsel",
+            "key_id": "mono-k1",
+            "key_fingerprint": fingerprint,
+            "effective_from": "2026-01-01T00:00:00Z",
+            "effective_until": None,
+            "onboarding": "EXTERNAL_VALIDATOR_ONBOARDING_V1",
+            "appointment_binding": sha256_hex(b"[FIXTURE] appointment binding"),
+            "appointment_evidence_digests": [sha256_hex(b"[FIXTURE] appointment deed")],
+        },
+    )
+
+    def _rotate(key_id, instant):
+        cmd = ["rotate", "--validator-id", "[FIXTURE] vld-mono", "--key-id", key_id]
+        return VA.main([*base, *cmd, "--instant", instant])
+
+    # Not later than the REGISTER effective_from -> refused.
+    assert _rotate("mono-k2", "2025-12-01T00:00:00Z") == 3
+    assert _rotate("mono-k2", "2026-01-01T00:00:00Z") == 3
+    # Strictly later -> accepted.
+    assert _rotate("mono-k2", "2026-06-01T00:00:00Z") == 0
+    # Equal to or before the accepted rotation -> refused.
+    assert _rotate("mono-k3", "2026-06-01T00:00:00Z") == 3
+    assert _rotate("mono-k3", "2026-03-01T00:00:00Z") == 3
+    events = load_validator_events(reg)
+    assert events is not None and [e["event"] for e in events] == ["REGISTER", "ROTATE"]
 
 
 def test_governed_derivation_is_deterministic(tmp_path):

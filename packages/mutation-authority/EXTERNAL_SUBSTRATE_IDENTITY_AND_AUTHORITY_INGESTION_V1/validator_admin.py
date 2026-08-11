@@ -49,6 +49,7 @@ from validator_trust import (
     chain_intact,
     event_binding,
     load_validator_events,
+    registry_write_lock,
     rotation_payload,
 )
 
@@ -126,6 +127,16 @@ def main(argv: list[str]) -> int:
     args = ap.parse_args(argv)
     registry = Path(args.registry)
     keystore = Path(args.keystore)
+    # Every registry writer serializes on the SAME sidecar lock (shared with
+    # the onboarding CLI) across its whole read-validate-append sequence: two
+    # writers that both read the same tail would emit events with the same
+    # prev_event_binding, and the second append would fork the hash chain and
+    # invalidate the entire validator history until manual repair.
+    with registry_write_lock(registry):
+        return _admin(args, registry, keystore)
+
+
+def _admin(args: argparse.Namespace, registry: Path, keystore: Path) -> int:
     events = load_validator_events(registry)
     if events is None:
         print("FATAL: validator registry is malformed — refusing to append", file=sys.stderr)
@@ -151,6 +162,33 @@ def main(argv: list[str]) -> int:
         # scheme: without --algorithm the successor key keeps the algorithm of
         # the validator's current (latest) key instead of defaulting to HMAC.
         current = [e for e in mine if e.get("event") in ("REGISTER", "ROTATE")]
+        # The predecessor is selected as the LAST APPENDED key event, so the
+        # new rotation's instant must be strictly later than every existing
+        # key event's instant. An out-of-order instant (e.g. an August
+        # rotation appended after a September one) would make the CLI sign
+        # with a predecessor that is not the key current at that instant:
+        # this command would report ROTATED while rotations_authenticated()
+        # (which sorts by instant) rejects the whole history at read time.
+        new_instant = _parse_z(args.instant)
+        prior_instants = [
+            _parse_z(e.get("effective_from") if e.get("event") == "REGISTER" else e.get("instant"))
+            for e in current
+        ]
+        if any(i is None for i in prior_instants):
+            print(
+                "REFUSED: an existing key event carries an unparseable instant — "
+                "cannot establish the key current at the rotation instant",
+                file=sys.stderr,
+            )
+            return 3
+        if prior_instants and new_instant <= max(prior_instants):
+            print(
+                "REFUSED: non-monotonic rotation instant — it must be strictly "
+                "later than every existing key event for this validator "
+                f"(latest: {max(prior_instants).strftime('%Y-%m-%dT%H:%M:%SZ')})",
+                file=sys.stderr,
+            )
+            return 3
         inferred = current[-1].get("key_algorithm", HMAC_SHA256) if current else HMAC_SHA256
         algorithm = args.algorithm or inferred
         event = {

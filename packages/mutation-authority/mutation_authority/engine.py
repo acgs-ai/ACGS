@@ -21,7 +21,7 @@ from typing import Any
 
 from .canonical import ABSENT, hash_file, hash_obj, hmac_verify, sha256_hex
 from .intent import OPERATIONS, SignedIntent
-from .ledger import EVENT_DECISION, AuditLedger, LedgerIntegrityError
+from .ledger import EVENT_COMMIT, EVENT_DECISION, EVENT_GENESIS, AuditLedger, LedgerIntegrityError
 from .receipt import MUTATION_RECEIPT_SCHEMA, MutationDecisionReceipt
 from .root import GovernanceRoot, UnknownActorError
 from .state import governed_match
@@ -333,6 +333,23 @@ class DecisionEngine:
             resource = _normalized(intent.resource_path)
             assert resource is not None  # already validated
             assert parent_precondition is not None
+            # Receipt lifetime must not be caller-extensible: `now` is a
+            # caller argument, so an inflated value would mint a receipt whose
+            # expiry outlives the TTL by an arbitrary margin — committable far
+            # past its intended lifetime, or left unconsumed to block every
+            # other mutation on the resource (open_receipts_for) until the
+            # far-future expiry. Clamp the issuance tick against the VERIFIED
+            # ledger clock: trusted GENESIS/COMMIT timestamps (COMMIT times
+            # are themselves clamp-gated at effect time) and the event count
+            # (which advances exactly one per appended event) bound the next
+            # legitimate tick, so an honest caller's `now` passes through
+            # unchanged while an inflated one is pinned to the chain.
+            events = list(self.ledger.events())
+            chain_now = max(
+                (e.timestamp for e in events if e.type in (EVENT_GENESIS, EVENT_COMMIT)),
+                default=0,
+            )
+            issue_tick = min(now, max(chain_now, len(events)) + 1)
             body = {
                 "schema": MUTATION_RECEIPT_SCHEMA,
                 "receipt_id": hash_obj({"intent": intent_hash, "decision": decision_hash}),
@@ -342,8 +359,8 @@ class DecisionEngine:
                 "resource": resource,
                 "operation": intent.operation,
                 "allowed_scope": intent.requested_change_scope,
-                "issued_at": now,
-                "expiry": now + self.root.receipt_ttl(),
+                "issued_at": issue_tick,
+                "expiry": issue_tick + self.root.receipt_ttl(),
                 "previous_state_hash": intent.expected_pre_hash,
                 "expected_state_hash": parent_precondition["expected_state_hash"],
                 "expected_state_mode": parent_precondition["expected_state_mode"],

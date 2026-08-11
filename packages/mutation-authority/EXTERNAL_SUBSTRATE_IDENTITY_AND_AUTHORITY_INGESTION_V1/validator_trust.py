@@ -29,7 +29,9 @@ papered over.
 
 from __future__ import annotations
 
+import fcntl
 import json
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -103,6 +105,26 @@ DEFAULT_POLICY: dict[str, Any] = {
 
 class ValidatorTrustError(ValueError):
     """Validator registry / trust material invalid — fail closed."""
+
+
+@contextmanager
+def registry_write_lock(registry: Path):
+    """Exclusive cross-process lock shared by EVERY validator-registry writer
+    (onboarding AND admin) for the whole read-validate-append sequence.
+
+    Two writers racing on the same registry would otherwise both read the same
+    tail, both compute the same `prev_event_binding`, and the second append
+    would fork the hash chain — invalidating the entire validator history at
+    the next verification. The lock lives in a sidecar file (never the
+    registry itself, so locking cannot create or truncate it), is keyed only
+    by the registry path so admin/admin, admin/onboarding, and
+    onboarding/onboarding races all serialize on the same file, and releases
+    on close (and on process death)."""
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = registry.with_name(registry.name + ".lock")
+    with lock_path.open("a", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        yield
 
 
 # --------------------------------------------------------------------------- #
@@ -678,6 +700,12 @@ def is_stale(
             basis = stamps[-1] if stamps else None
         basis_dt = _parse_z(basis)
         if now is None or basis_dt is None:
+            return True
+        if basis_dt > now:
+            # A freshness basis dated in the future is not evidence of a past
+            # verification: a typo or forward-dated revalidation would make
+            # the negative age below count as "fresh" until that future
+            # instant plus max_age. Not comparable — fail closed.
             return True
         if (now - basis_dt).days > max_age:
             return True
