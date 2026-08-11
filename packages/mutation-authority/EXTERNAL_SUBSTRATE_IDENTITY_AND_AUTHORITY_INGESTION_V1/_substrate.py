@@ -115,9 +115,13 @@ def compute_critical_objects(root: Path) -> dict[str, dict[str, Any]]:
     for rel in CRITICAL_OBJECTS:
         p = root / rel
         digest = hash_file(p)
+        # Size only for a real content digest: a symlinked slot yields an
+        # UNHASHABLE marker and must not be stat'ed through (the link may
+        # dangle, and the target's size is not the in-tree object's).
+        is_content = digest != ABSENT and not digest.startswith("UNHASHABLE:")
         out[rel] = {
             "sha256": digest,
-            "bytes": (p.stat().st_size if digest != ABSENT else None),
+            "bytes": (p.stat().st_size if is_content else None),
         }
     return out
 

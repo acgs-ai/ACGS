@@ -311,6 +311,50 @@ def test_attack08_stale_manifest_detects_change(manifest, substrate):
     assert verify_manifest(manifest, substrate)["state"] == IDENTITY_MISMATCH
 
 
+def test_attack_symlinked_critical_object_fails_identity(manifest, substrate, tmp_path):
+    # Replace a critical object with a symlink to an EXTERNAL file holding the
+    # exact expected bytes: the in-tree object is gone, so identity must NOT
+    # confirm — a follow-symlink hasher would report IDENTITY_CONFIRMED here.
+    victim = substrate / "README.md"
+    outside = tmp_path / "outside-readme.md"
+    outside.write_bytes(victim.read_bytes())
+    victim.unlink()
+    victim.symlink_to(outside)
+    res = verify_manifest(manifest, substrate)
+    assert res["state"] == IDENTITY_MISMATCH
+    assert "README.md" in res["mismatched"]
+
+
+def test_attack_symlinked_sums_pinned_file_fails_identity(substrate, tmp_path):
+    # Same swap against a file pinned only transitively by a layer's
+    # sha256sums.txt: the checksum-listed file must be hashed no-follow too.
+    ex = "COMMERCIAL_RIGHTS_REQUEST_EXECUTION_V1"
+    extra = substrate / ex / "extra_evidence_bundle.json"
+    extra.write_text('{"pinned": true}', encoding="utf-8")
+    _rewrite_layer_sums(substrate, ex)
+    m = build_manifest(substrate, "TEST_SUBSTRATE")
+    assert verify_manifest(m, substrate)["state"] == IDENTITY_CONFIRMED
+    outside = tmp_path / "outside-bundle.json"
+    outside.write_bytes(extra.read_bytes())
+    extra.unlink()
+    extra.symlink_to(outside)
+    res = verify_manifest(m, substrate)
+    assert res["state"] == IDENTITY_MISMATCH
+    assert f"{ex}/extra_evidence_bundle.json" in res["mismatched"]
+
+
+def test_build_manifest_refuses_symlinked_critical_object(substrate, tmp_path):
+    # A manifest built over a symlinked slot would carry the marker digest and
+    # re-verify against the same symlink — refuse to bind such an identity.
+    victim = substrate / "README.md"
+    outside = tmp_path / "outside-readme.md"
+    outside.write_bytes(victim.read_bytes())
+    victim.unlink()
+    victim.symlink_to(outside)
+    with pytest.raises(ValueError, match="not regular files"):
+        build_manifest(substrate, "TEST_SUBSTRATE")
+
+
 def _rewrite_layer_sums(substrate, layer):
     d = substrate / layer
     entries = sorted(p for p in d.iterdir() if p.name != "sha256sums.txt")

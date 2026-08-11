@@ -42,6 +42,7 @@ from authority_lifecycle import (  # noqa: E402
     active_records,
     attestation_binding,
     derive_lifecycle_state,
+    has_valid_attestation,
     lifecycle_distribution,
     validate_onboarding_record,
 )
@@ -541,6 +542,37 @@ def test_attestation_binding_is_deterministic_and_content_sensitive():
     assert b1 != attestation_binding(dict(ev, source_digest="b" * 64))
 
 
+def test_attestation_binding_binds_authority_provenance_fields():
+    # Post-validation edits to authority-bearing provenance — the source kind
+    # and locator, the appointing party, jurisdiction, appointment authority,
+    # verification_metadata — must break the attestation binding: a registry
+    # writer must not be able to re-attribute WHERE the authority came from
+    # while has_valid_attestation() (and validator signatures over
+    # record_binding) still succeed.
+    ev = dict(_evidence(authority_type="COUNSEL_OR_RIGHTS_AUTHORITY"))
+    ev["jurisdiction"] = "[FIXTURE] Jurisdiction X"
+    ev["appointment_authority"] = "[FIXTURE] General Counsel"
+    ev["verification_metadata"] = {"verified_by": "[FIXTURE] clerk"}
+    ev["issuer_or_appointing_party"] = "[FIXTURE] Board"
+    ev["validation"] = {
+        "validator_identity": "[FIXTURE] Legal Validator",
+        "validation_method": "[FIXTURE] reviewed deed",
+        "validated_at": "2026-08-10T11:00:00Z",
+        "record_binding": attestation_binding(ev),
+    }
+    assert has_valid_attestation(ev)
+    for field, forged in (
+        ("source_type", "REGISTER_EXTRACT"),
+        ("source_reference", "doc://forged/2"),
+        ("issuer_or_appointing_party", "[FIXTURE] Forged Issuer"),
+        ("jurisdiction", "[FIXTURE] Elsewhere"),
+        ("appointment_authority", "[FIXTURE] Nobody"),
+        ("verification_metadata", {"verified_by": "[FIXTURE] attacker"}),
+    ):
+        drifted = dict(ev, **{field: forged})
+        assert not has_valid_attestation(drifted), field
+
+
 # --------------------------------------------------------------------------- #
 # Pipeline exit-code contract (onboard_authority_evidence.py)
 # --------------------------------------------------------------------------- #
@@ -672,3 +704,57 @@ def test_pipeline_tampered_document_exits_3(tmp_path):
     assert OB.main(args[:-2]) == 2
     rc = OB.main(args)
     assert rc == 3
+
+
+def test_pipeline_hands_ingest_the_validated_object_never_a_staging_path(tmp_path, monkeypatch):
+    # The pipeline once wrote the checked record to a staging file that ingest
+    # re-opened by pathname — a writer to the record's directory could swap
+    # that path between the gates and the re-open, minting a receipt for a
+    # merely schema-valid record that never passed onboarding or validator
+    # trust. Ingest must now receive the validated object and the pinned
+    # document bytes directly; any pathname round-trip fails this test.
+    import ingest_authority_evidence as ING
+    import onboard_authority_evidence as OB
+
+    trust = fixture_trust(tmp_path)
+    doc = tmp_path / "deed"
+    doc.write_text("[FIXTURE] appointment deed")
+    rec = dict(_evidence(source_digest=sha256_hex(doc.read_bytes())))
+    rec["issuer_or_appointing_party"] = "[FIXTURE] Board"
+    rec["validation"] = _sign_att(
+        {
+            "validator_identity": "[FIXTURE] Legal Validator",
+            "validation_method": "[FIXTURE] reviewed deed",
+            "validated_at": "2026-08-10T11:00:00Z",
+            "record_binding": attestation_binding(rec),
+        }
+    )
+
+    def pathname_reopening_ingest(argv):
+        raise AssertionError(
+            "onboarding re-entered ingest via a record pathname (staging swap window)"
+        )
+
+    monkeypatch.setattr(ING, "main", pathname_reopening_ingest)
+
+    captured = {}
+    real_ingest_record = ING.ingest_record
+
+    def capturing_ingest_record(record, doc_bytes, **kwargs):
+        captured["record"] = json.loads(json.dumps(record))
+        captured["doc_bytes"] = doc_bytes
+        return real_ingest_record(record, doc_bytes, **kwargs)
+
+    monkeypatch.setattr(ING, "ingest_record", capturing_ingest_record)
+    rc = OB.main(_pipeline_args(tmp_path, rec, doc, trust))
+    assert rc == 0
+    # Ingest saw exactly the record the gates validated and the pinned bytes.
+    assert captured["record"]["authority_evidence_id"] == rec["authority_evidence_id"]
+    assert captured["record"]["validation"] == rec["validation"]
+    assert captured["record"]["source_digest"] == rec["source_digest"]
+    assert captured["doc_bytes"] == doc.read_bytes()
+    # And no staging artifact was ever published next to the record.
+    assert not list(tmp_path.glob("*.staged.json"))
+    stored = read_registry(tmp_path / "reg.jsonl")
+    assert len(stored) == 1
+    assert _state(stored[0]) == ACTIVE

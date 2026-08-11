@@ -1454,6 +1454,95 @@ def attack_ac_hash_file_symlink_swap_after_lstat(base: Path) -> str:
     return "symlink swapped in after lstat ⇒ classified :symlink, never a plain digest"
 
 
+def check_publication_dir_fsync_precedes_commit(base: Path) -> str:
+    """The published directory entry must be made durable BEFORE the COMMIT is
+    appended: if the directory cannot be fsynced the commit must reject and
+    roll back, never record an audit event a host crash could orphan (ledger
+    authorizing the new hash while the path reboots into its old state)."""
+    sb = Sandbox.build(base)
+    resource = "src/module_a.py"
+    original = (sb.repo / resource).read_bytes()
+    content = b"VALUE = 2\n"
+    decision = sb.engine.decide(sb.intent("agent-alpha", resource, new_content=content), sb.tick())
+    assert decision.receipt is not None
+    real_fsync = os.fsync
+    dir_fsyncs: list[int] = []
+
+    def failing_dir_fsync(fd: int) -> None:
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            dir_fsyncs.append(fd)
+            raise OSError("simulated directory fsync failure")
+        real_fsync(fd)
+
+    with patch.object(effect_module.os, "fsync", failing_dir_fsync):
+        result = sb.binder.commit(decision.receipt, content, sb.tick())
+    _expect(
+        dir_fsyncs != [],
+        "commit never fsynced the publication directory before the COMMIT append",
+    )
+    _expect(
+        result.status == REJECTED,
+        f"undurable publication was accepted: {result.status}: {result.reason}",
+    )
+    _expect(
+        (sb.repo / resource).read_bytes() == original,
+        "undurable publication left the effect applied (unauditable on crash)",
+    )
+    _expect(
+        all(e.type != EVENT_COMMIT for e in sb.ledger.events()),
+        "a COMMIT was appended before the publication directory was durable",
+    )
+    sb.ledger.verify_chain()
+    _expect(
+        repository_violations(sb.ledger, sb.repo, sb.root.governed_prefixes()) == [],
+        "repository diverged after the rolled-back undurable publication",
+    )
+    return "publication dir fsync failure ⇒ REJECTED before any COMMIT, effect rolled back"
+
+
+def attack_ad_target_replaced_during_audit_append(base: Path) -> str:
+    """Replace the target with rogue bytes while the COMMIT event is being
+    appended: the commit must revalidate the exact target state after the
+    audit boundary and rewind both the effect and the COMMIT — never return
+    ACCEPTED with a chain authorizing a hash the governed path does not
+    contain."""
+    sb = Sandbox.build(base)
+    resource = "src/module_a.py"
+    original = (sb.repo / resource).read_bytes()
+    approved = b"VALUE = 2\n"
+    decision = sb.engine.decide(sb.intent("agent-alpha", resource, new_content=approved), sb.tick())
+    assert decision.receipt is not None
+    real_append = sb.ledger.append
+
+    def append_then_replace(*args: object, **kwargs: object):
+        event = real_append(*args, **kwargs)
+        # Raw writer wins the race inside the append window.
+        (sb.repo / resource).write_bytes(b"ROGUE = True\n")
+        return event
+
+    with patch.object(sb.ledger, "append", side_effect=append_then_replace):
+        result = sb.binder.commit(decision.receipt, approved, sb.tick())
+
+    _expect(
+        result.status == REJECTED,
+        f"COMMIT accepted while the target held rogue bytes: {result.status}: {result.reason}",
+    )
+    _expect(
+        (sb.repo / resource).read_bytes() == original,
+        "append-window substitution was not rolled back to the approved pre-state",
+    )
+    _expect(
+        decision.receipt.receipt_id not in sb.ledger.committed_receipt_ids(),
+        "append-window substitution left a COMMIT authorizing unapplied state",
+    )
+    sb.ledger.verify_chain()
+    _expect(
+        repository_violations(sb.ledger, sb.repo, sb.root.governed_prefixes()) == [],
+        "repository diverged after the rolled-back append-window substitution",
+    )
+    return "target swapped during audit append ⇒ REJECTED, effect and COMMIT rewound"
+
+
 CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     ("happy-path: intent → decision → receipt → effect → audit", check_happy_path),
     ("deterministic verifier", check_deterministic_verifier),
@@ -1537,6 +1626,14 @@ CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     (
         "ATTACK AC: symlink swapped in after lstat classification",
         attack_ac_hash_file_symlink_swap_after_lstat,
+    ),
+    (
+        "publication directory fsync precedes the COMMIT append",
+        check_publication_dir_fsync_precedes_commit,
+    ),
+    (
+        "ATTACK AD: target replaced during the audit append",
+        attack_ad_target_replaced_during_audit_append,
     ),
 ]
 

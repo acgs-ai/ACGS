@@ -102,6 +102,16 @@ def build_manifest(root: Path, identity_class: str) -> dict[str, Any]:
     absent = sorted(rel for rel, v in critical.items() if v["sha256"] == ABSENT)
     if absent:
         raise ValueError("cannot build identity: critical objects absent: " + ", ".join(absent))
+    irregular = sorted(
+        rel for rel, v in critical.items() if str(v["sha256"]).startswith("UNHASHABLE:")
+    )
+    if irregular:
+        # A manifest carrying a marker "digest" would re-verify against the
+        # same symlinked object — identity must bind regular in-tree bytes.
+        raise ValueError(
+            "cannot build identity: critical objects are not regular files "
+            "(symlinked?): " + ", ".join(irregular)
+        )
     counts = derive_counts(root)
     digest = critical_set_digest(critical)
     return {
@@ -193,9 +203,10 @@ def verify_manifest(manifest: dict[str, Any], candidate_root: Path) -> dict[str,
     for rel in CRITICAL_OBJECTS:
         p = candidate_root / rel
         digest = hash_file(p)
+        is_content = digest != ABSENT and not digest.startswith("UNHASHABLE:")
         live[rel] = {
             "sha256": digest,
-            "bytes": (p.stat().st_size if (digest != ABSENT and p.is_file()) else None),
+            "bytes": (p.stat().st_size if (is_content and p.is_file()) else None),
         }
         exp = expected.get(rel, {}).get("sha256")
         if digest == ABSENT:

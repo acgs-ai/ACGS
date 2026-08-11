@@ -116,7 +116,15 @@ def attestation_binding(record: dict[str, Any]) -> str:
     set (each entry minus its binding-derived fields, see
     `_attestation_core`): removing a rejecting co-validation would otherwise
     flip a CONFLICTED record back to ACTIVE while every remaining attestation
-    still verified. Changing the validation set demands re-validation."""
+    still verified. Changing the validation set demands re-validation.
+
+    Every authority-bearing provenance field is also bound: `source_type` and
+    `source_reference` (what kind of artifact, and which one, the validator
+    reviewed) plus the class-specific fields `issuer_or_appointing_party`,
+    `jurisdiction`, `appointment_authority`, and `verification_metadata`.
+    A registry writer who edits any of these after validation would otherwise
+    leave `record_binding` unchanged, so the record could stay ACTIVE while
+    claiming provenance the validator never reviewed."""
     co = record.get("co_validations")
     return hash_obj(
         {
@@ -124,7 +132,13 @@ def attestation_binding(record: dict[str, Any]) -> str:
             "authority_type": record.get("authority_type"),
             "subject_identity": record.get("subject_identity"),
             "authority_scope": record.get("authority_scope"),
+            "source_type": record.get("source_type"),
+            "source_reference": record.get("source_reference"),
             "source_digest": record.get("source_digest"),
+            "issuer_or_appointing_party": record.get("issuer_or_appointing_party"),
+            "jurisdiction": record.get("jurisdiction"),
+            "appointment_authority": record.get("appointment_authority"),
+            "verification_metadata": record.get("verification_metadata"),
             "effective_from": record.get("effective_from"),
             "effective_until": record.get("effective_until"),
             "verification_state": record.get("verification_state"),

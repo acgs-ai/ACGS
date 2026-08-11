@@ -34,9 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
-import tempfile
 from pathlib import Path
 
 import ingest_authority_evidence as ingest
@@ -101,7 +99,10 @@ def main(argv: list[str]) -> int:
         return 2
 
     record = json.loads(rec_path.read_text(encoding="utf-8"))
-    doc_digest = sha256_hex(doc_path.read_bytes())
+    # Snapshot the document bytes ONCE; the same bytes are later handed to
+    # ingest so the retained artifact is exactly what this gate hashed.
+    doc_bytes = doc_path.read_bytes()
+    doc_digest = sha256_hex(doc_bytes)
 
     # Gate 1 — the record must describe exactly this document.
     if record.get("source_digest") in (None, ""):
@@ -166,32 +167,20 @@ def main(argv: list[str]) -> int:
             return 5
 
     # Gate 4 — receipted, idempotent ingest via the trusted V1 path. The
-    # attested record (with bound source_digest) is passed through a unique
-    # temp file (never a deterministic sibling name that could clobber and
-    # then delete a user's file) so ingest re-validates exactly what we
-    # checked.
-    fd, staged_name = tempfile.mkstemp(
-        dir=str(rec_path.parent), prefix=rec_path.stem + ".", suffix=".staged.json"
+    # attested record OBJECT and the already-hashed document bytes are handed
+    # to ingest directly — never through a staged file that ingest re-opens by
+    # pathname: a writer to the record's directory could swap that staging
+    # path between our gates and the re-open, minting a receipt for a merely
+    # schema-valid record that never passed onboarding or validator trust.
+    # A canonical JSON round-trip hands ingest its own copy, so its receipt
+    # annotations never mutate the object these gates validated.
+    rc = ingest.ingest_record(
+        json.loads(json.dumps(record, sort_keys=True, ensure_ascii=False)),
+        doc_bytes,
+        registry=Path(args.registry),
+        keystore=Path(args.keystore),
+        instant=args.instant,
     )
-    staged = Path(staged_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, sort_keys=True, ensure_ascii=False))
-        rc = ingest.main(
-            [
-                "--record",
-                str(staged),
-                "--document",
-                str(doc_path),
-                "--registry",
-                args.registry,
-                "--keystore",
-                args.keystore,
-                *(["--instant", args.instant] if args.instant else []),
-            ]
-        )
-    finally:
-        staged.unlink(missing_ok=True)
     if rc != 0:
         return rc
 

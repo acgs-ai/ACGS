@@ -1,8 +1,9 @@
 """Canonical serialization, hashing, and HMAC primitives (stdlib only).
 
-Byte-for-byte identical to `mutation_authority/canonical.py` so every digest
-this package computes is reproducible across processes and consistent with the
-mutation-authority kernel. Vendored (not imported) to keep
+Mirrors `mutation_authority/canonical.py` so every digest this package
+computes is reproducible across processes and consistent with the
+mutation-authority kernel (`hash_file` is substrate-specific: pure content
+digests, no mode binding, symlinks refused). Vendored (not imported) to keep
 EXTERNAL_SUBSTRATE_IDENTITY_AND_AUTHORITY_INGESTION_V1 a self-contained package
 that runs from its own directory with no PYTHONPATH assumptions.
 """
@@ -12,6 +13,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -34,16 +37,40 @@ def hash_obj(obj: Any) -> str:
 
 
 def hash_file(path: Path) -> str:
-    """Streamed sha256 of the file's bytes, or ABSENT if it is not a file.
+    """Streamed sha256 of a REGULAR file's bytes, pinned against symlinks.
 
-    Streamed so a large critical object (a multi-MB registry) is never read
-    fully into memory. A directory in a critical-object slot returns ABSENT
-    (fail closed), not a crash.
+    Substrate identity binds the in-tree object itself, so a critical object
+    (or checksum-listed file) replaced by a symlink — even one pointing at
+    external content with the expected bytes — must never verify: a symlink
+    yields a non-matching ``UNHASHABLE:symlink`` marker, never a content
+    digest. The entry is classified via ``lstat``, opened with ``O_NOFOLLOW``,
+    and re-classified via ``fstat`` on the open descriptor, so a symlink
+    swapped in between the calls cannot be laundered into the authorized
+    digest either. A directory or other non-regular object in a slot returns
+    ABSENT (fail closed), and absence is ABSENT. Streamed so a large critical
+    object (a multi-MB registry) is never read fully into memory.
     """
-    if not path.is_file():
+    try:
+        st = path.lstat()
+    except OSError:
         return ABSENT
+    if stat.S_ISLNK(st.st_mode):
+        return "UNHASHABLE:symlink"
+    if not stat.S_ISREG(st.st_mode):
+        return ABSENT
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return ABSENT
+    except OSError:
+        # ELOOP: the entry became a symlink after lstat — never a content
+        # digest (and never followed).
+        return "UNHASHABLE:symlink"
     h = hashlib.sha256()
-    with path.open("rb") as fh:
+    with os.fdopen(fd, "rb") as fh:
+        fst = os.fstat(fh.fileno())
+        if not stat.S_ISREG(fst.st_mode):
+            return "UNHASHABLE:" + stat.filemode(fst.st_mode)
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()

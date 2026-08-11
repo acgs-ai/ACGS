@@ -234,6 +234,22 @@ def _atomic_create_at(parent_fd: int, name: str, content: bytes, mode: int) -> N
         raise exc
 
 
+def _sync_publication(parent_fd: int, created_parents: list[tuple[int, str]]) -> None:
+    """Make the published directory entries durable before the COMMIT append.
+
+    ``fsync`` on the temporary file persists its bytes, but the rename/link/
+    unlink that published the effect lives in the parent directory's entries.
+    Without syncing the directory, a host crash after the COMMIT append could
+    reboot into the pre-effect filesystem state while the audit chain already
+    authorizes the new one. Synced deepest-first (the target's parent, then
+    each newly created parent up to the signed ancestor) so no durable entry
+    can reference an undurable directory.
+    """
+    os.fsync(parent_fd)
+    for ref_fd, _name in reversed(created_parents):
+        os.fsync(ref_fd)
+
+
 def _parent_matches_path(parent_fd: int, parent_path: Path) -> bool:
     """Return whether the pinned directory is still the authorized path."""
     try:
@@ -495,6 +511,22 @@ class EffectBinder:
                     "effect after-state does not match receipt authorization",
                 )
 
+            # Make the directory-entry publication durable BEFORE the COMMIT
+            # is appended: otherwise a crash after the append could surface a
+            # ledger authorizing the new state while the governed path
+            # rebooted into its old one (audited-but-lost effect).
+            try:
+                _sync_publication(parent_fd, created_parents)
+            except OSError:
+                _rollback_transaction(
+                    parent_fd,
+                    target_name,
+                    prior_bytes,
+                    prior_mode,
+                    created_parents,
+                )
+                return CommitResult(REJECTED, "effect publication could not be made durable")
+
             # Retain both the signed ancestor and final parent pins through the
             # mutation and audit append boundaries.
             if not _parent_matches_path(ancestor_fd, ancestor_path) or not _parent_matches_path(
@@ -541,9 +573,24 @@ class EffectBinder:
                     "effect could not be bound to the audit chain; filesystem change rolled back"
                 ) from exc
 
-            if not _parent_matches_path(ancestor_fd, ancestor_path) or not _parent_matches_path(
-                parent_fd, lexical.parent
-            ):
+            # The COMMIT is in the chain. Re-verify the pinned directory
+            # identities AND the exact target state through the pinned parent:
+            # a raw writer that replaced the target during the append window
+            # would otherwise leave an ACCEPTED COMMIT authorizing a hash the
+            # governed path does not contain.
+            append_consistent = _parent_matches_path(
+                ancestor_fd, ancestor_path
+            ) and _parent_matches_path(parent_fd, lexical.parent)
+            if append_consistent:
+                try:
+                    _post_bytes, post_hash, post_mode = _read_state_at(parent_fd, target_name)
+                except OSError:
+                    append_consistent = False
+                else:
+                    append_consistent = post_hash == receipt.expected_state_hash and (
+                        post_hash == ABSENT or post_mode == receipt.expected_state_mode
+                    )
+            if not append_consistent:
                 try:
                     _rollback_transaction(
                         parent_fd,
@@ -555,10 +602,10 @@ class EffectBinder:
                     self.ledger.rollback_last(commit_event)
                 except Exception as exc:
                     raise EffectRecordingError(
-                        "resource ancestor changed at audit append and the effect "
+                        "resource state changed at audit append and the effect "
                         "transaction could not be rolled back"
                     ) from exc
-                return CommitResult(REJECTED, "resource ancestor changed during audit append")
+                return CommitResult(REJECTED, "resource state changed during audit append")
 
             _close_created_parent_refs(created_parents)
         finally:

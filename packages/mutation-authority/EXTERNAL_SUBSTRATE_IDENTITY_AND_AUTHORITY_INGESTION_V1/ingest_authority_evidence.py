@@ -30,6 +30,7 @@ import stat
 import sys
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from _canonical import sha256_hex
 from _identity import MANIFEST_NAME
@@ -72,7 +73,6 @@ def main(argv: list[str]) -> int:
     args = ap.parse_args(argv)
 
     rec_path, doc_path = Path(args.record), Path(args.document)
-    reg_path = Path(args.registry)
     if not rec_path.is_file():
         print(f"FATAL: record file not found: {rec_path}", file=sys.stderr)
         return 2
@@ -88,6 +88,33 @@ def main(argv: list[str]) -> int:
     # a later re-read is a TOCTOU window in which the file can be swapped,
     # producing a retained artifact that does not match the bound digest.
     doc_bytes = doc_path.read_bytes()
+    return ingest_record(
+        record,
+        doc_bytes,
+        registry=Path(args.registry),
+        keystore=Path(args.keystore),
+        instant=args.instant,
+    )
+
+
+def ingest_record(
+    record: dict[str, Any],
+    doc_bytes: bytes,
+    *,
+    registry: Path,
+    keystore: Path,
+    instant: str | None = None,
+) -> int:
+    """Ingest an already-loaded record against pinned document bytes.
+
+    Callers that have ALREADY gated a record (the onboarding pipeline) pass
+    the object and the document bytes directly. Re-opening a staged pathname
+    here would reopen a swap window: a writer to that directory could
+    substitute a different, merely schema-valid record between the caller's
+    gates and this ingest, minting a receipt for evidence that never passed
+    onboarding or validator trust.
+    """
+    reg_path = registry
     doc_digest = sha256_hex(doc_bytes)
 
     # Bind / cross-check the source digest against the actual document.
@@ -139,7 +166,7 @@ def main(argv: list[str]) -> int:
                 )
                 return 3
 
-        key = load_or_create_key(Path(args.keystore))
+        key = load_or_create_key(keystore)
         receipt = mint_receipt(
             key,
             request_id=f"INGEST::{record['authority_evidence_id']}",
@@ -155,7 +182,7 @@ def main(argv: list[str]) -> int:
             decision_reason=(
                 f"{record['authority_type']} evidence recorded from {record['source_type']}"
             ),
-            created_at=args.instant or record.get("effective_from", ""),
+            created_at=instant or record.get("effective_from", ""),
         )
         record.setdefault("ingested_by", "ingest_authority_evidence.py")
         record["ingestion_receipt"] = receipt["receipt_id"]
