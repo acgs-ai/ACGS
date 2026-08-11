@@ -59,6 +59,13 @@ What this module deliberately does NOT claim
   :data:`ACTION_SHELL_EXEC`. Only package managers with a declared artifact
   grammar (``npm pack``, ``cargo package``, ``poetry build``, …) reach
   :data:`ACTION_ARTIFACT_GENERATE` — a named residual, not a claim of coverage.
+* **Git inspection inherits executable configuration.** Repository and ambient
+  Git configuration can launch fsmonitor, diff, pager, signature, and content
+  filter helpers even when the visible argv is only ``git status`` or
+  ``git diff``. This hook does not sanitize that configuration in a trusted
+  executor, so every declared Git read-only command is undecidable and
+  escalates without a receipt. Git mutations retain their explicit
+  control-surface classification.
 """
 
 from __future__ import annotations
@@ -215,18 +222,12 @@ _SHELL_EVAL_BUILTINS = frozenset({"eval", "source", "."})
 #: program's effect is not recoverable from the outer argv prefix (option
 #: grammars, ``$0`` argument slots, and script contents are all out of reach),
 #: so every shell-interpreter invocation is returned undecidable (fail-closed)
-#: rather than parsed on a guess.
-_SHELL_INTERPRETERS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh"})
-
-#: Non-shell interpreters that accept an inline program — ``node -e``,
-#: ``ruby -e``, ``perl -E``, a ``-`` stdin program — on option flags whose
-#: per-interpreter grammars this module does not model. Python gets full
-#: option modeling above because ``-m`` recovery is load-bearing there; for
-#: these binaries any option token may introduce (or consume) inline program
-#: text the argv prefix cannot recover, so an invocation carrying *any*
-#: option is returned undecidable (fail-closed). A bare script run
-#: (``node server.js``) stays a decidable plain exec, like ``python app.py``.
-_INLINE_INTERPRETERS = frozenset({"node", "nodejs", "deno", "ruby", "perl", "php", "lua", "luajit"})
+#: rather than parsed on a guess. Version suffixes cover executable names such
+#: as ``bash5.2``; ``.exe`` is normalized separately.
+_SHELL_INTERPRETER_RE = re.compile(
+    r"^(?:ash|bash|csh|dash|fish|ksh|mksh|rbash|sh|tcsh|yash|zsh)(?:\d+(?:\.\d+)*)?$"
+)
+_SHELL_LIKE_EXECUTABLE_RE = re.compile(r"^[a-z0-9+_.-]*sh(?:\d+(?:\.\d+)*)?$")
 
 #: Utilities that execute a *nested command* given as operands. ``xargs npm
 #: install left-pad``, ``timeout 60 npm install left-pad``, and ``watch 'npm
@@ -258,9 +259,9 @@ _COMMAND_LAUNCHERS = frozenset(
 
 #: ``find`` primaries that execute a nested command once per matched path
 #: (``find /tmp -maxdepth 0 -exec npm install left-pad \;``). A find without
-#: one of these reads the filesystem like any other unclassified binary and
-#: stays a decidable plain exec; with one present the nested argv is embedded
-#: mid-expression and is not recovered — the invocation fails closed. shlex
+#: one of these still falls to the unknown-grammar fail-closed floor; with one
+#: present the nested argv is identified explicitly and is not recovered —
+#: the invocation fails closed. shlex
 #: strips quotes, so a quoted pattern spelling a primary (``-name '-exec'``)
 #: is over-approximated: an escalation, never a false allow.
 _FIND_EXEC_PRIMARIES = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
@@ -413,6 +414,19 @@ _GH_REMOTE_MUTATING: Mapping[str, frozenset[str]] = {
     ),
 }
 
+_GH_READ_ONLY_SHORT_VALUE_OPTIONS: Mapping[tuple[str, str], frozenset[str]] = {
+    ("pr", "checks"): frozenset({"R", "i", "q", "t"}),
+    ("pr", "diff"): frozenset({"R", "e"}),
+    ("pr", "list"): frozenset({"A", "B", "H", "L", "R", "S", "a", "l", "q", "s", "t"}),
+    ("pr", "status"): frozenset({"R", "q", "t"}),
+    ("pr", "view"): frozenset({"R", "q", "t"}),
+    ("issue", "list"): frozenset({"A", "L", "R", "S", "a", "l", "m", "q", "s", "t"}),
+    ("issue", "status"): frozenset({"R", "q", "t"}),
+    ("issue", "view"): frozenset({"R", "q", "t"}),
+    ("repo", "list"): frozenset({"L", "l", "q", "t"}),
+    ("repo", "view"): frozenset({"b", "q", "t"}),
+}
+
 #: Every gh group the classifier resolves beyond the group token. ``api`` is
 #: included so it can be forced undecidable rather than falling through.
 _GH_REMOTE_GROUPS = frozenset({"api", *_GH_REMOTE_READ_ONLY, *_GH_REMOTE_MUTATING})
@@ -476,7 +490,6 @@ _GIT_READ_ONLY = frozenset(
         "for-each-ref",
         "fsck",
         "grep",
-        "help",
         "log",
         "ls-files",
         "ls-remote",
@@ -517,19 +530,6 @@ _GIT_OUTPUT_REDIRECT_OPTIONS = frozenset({"--output", "--output-directory"})
 #: read-only claim the tier assignment rests on is false whenever one of
 #: these appears — fail closed.
 _GIT_HELPER_ENABLE_OPTIONS = frozenset({"--ext-diff", "--textconv"})
-
-#: ``-c`` / ``--config-env`` key prefixes that cannot change *what* git
-#: executes. Git configuration is itself a command-execution surface:
-#: ``diff.external``, ``diff.<driver>.command``, ``core.pager``,
-#: ``core.editor``, ``core.sshCommand``, ``credential.helper``,
-#: ``filter.<name>.clean``, ``pager.<cmd>``, ... all name programs git will
-#: run, and the dangerous-key set is open-ended. Keys are therefore
-#: **allowlisted, not blocklisted**: identity and display keys are inert;
-#: any other key on the command line is returned undecidable (fail-closed)
-#: rather than trusted on a guess about its semantics. ``git -c
-#: diff.external='touch /tmp/poc' diff`` executed the helper while riding
-#: the read-only branch when only ``alias.*`` was rejected.
-_GIT_INERT_CONFIG_PREFIXES = ("user.", "author.", "committer.", "color.", "advice.")
 
 #: git global options that consume the *following* token as their value when
 #: not written in ``--option=value`` form. ``git -h`` explicitly permits these
@@ -581,19 +581,67 @@ _GRAMMAR_BINARIES: frozenset[str] = frozenset(
     {"git", *_INSTALL_SUBCOMMANDS, *_PUBLISH_SUBCOMMANDS, *_ARTIFACT_SUBCOMMANDS}
 )
 
+#: Python modules whose argv is deliberately recovered into an existing
+#: governed package-manager grammar. A module merely sharing a binary name
+#: (for example ``python -m git``) is not evidence that it implements that
+#: binary's declared command-line contract.
+_PYTHON_GOVERNED_MODULES = frozenset({"pip", "pip3", "poetry", "uv"})
+
+#: Non-delegating read-only commands whose outer argv grammar is intentionally
+#: accepted as an unclassified shell execution. Everything else needs a declared
+#: grammar or a recognized interpreter family; an executable name alone is not
+#: evidence that its arguments cannot delegate a governed effect.
+_PLAIN_EXECUTABLES = frozenset({"cat", "grep", "ls"})
+
 #: A subcommand is a lowercase word. A secret, a path, or an option value is
 #: essentially never one.
 _SUBCOMMAND_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
 #: A valid shell variable name. Bash treats a leading ``word=value`` as an
-#: environment assignment only when ``word`` is a valid identifier; anything
-#: else — ``${PM:=npm}`` included — is an executable word. Peeling a
-#: non-identifier "assignment" would hide the expansion from the
-#: executable-word check.
+#: environment assignment only when ``word`` is a valid identifier.
 _ASSIGNMENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-#: A python interpreter binary: ``python``, ``python3``, ``python3.12``.
-_PYTHON_BINARY_RE = re.compile(r"^python(\d+(\.\d+)*)?$")
+#: Python-family executables, including Windows GUI launchers and PyPy.
+_PYTHON_BINARY_RE = re.compile(
+    r"^(?:pyw?|jython(?:\d+(?:\.\d+)*)?|(?:[a-z]+)?pythonw?(?:\d+(?:\.\d+)*)?t?|pypy(?:\d+(?:\.\d+)*)?)$"
+)
+
+#: Other interpreter/launcher families that can hide arbitrary effects inside
+#: an inline program, script, module, or applet. Numeric suffixes cover common
+#: distro/versioned binaries such as ``php8.2``, ``lua5.4``, and ``ruby3.1``.
+_DELEGATING_INTERPRETER_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"^busybox(?:\d+(?:\.\d+)*)?$"), "launcher"),
+    (re.compile(r"^cmd(?:\d+(?:\.\d+)*)?$"), "cmd"),
+    (re.compile(r"^lua(?:jit)?(?:\d+(?:\.\d+)*)?$"), "lua"),
+    (re.compile(r"^node(?:js)?(?:\d+(?:\.\d+)*)?$"), "node"),
+    (re.compile(r"^perl(?:\d+(?:\.\d+)*)?$"), "perl"),
+    (
+        re.compile(r"^php(?:(?:\d+(?:\.\d+)*)?(?:-cgi)?|(?:-cgi)(?:\d+(?:\.\d+)*)?)$"),
+        "php",
+    ),
+    (re.compile(r"^(?:powershell|pwsh)(?:\d+(?:\.\d+)*)?$"), "powershell"),
+    (re.compile(r"^(?:ruby|jruby)(?:\d+(?:\.\d+)*)?$"), "ruby"),
+)
+_SAFE_INTERPRETER_PROBES: Mapping[str, frozenset[str]] = {
+    "cmd": frozenset({"/?"}),
+    "launcher": frozenset({"--help", "--version"}),
+    "lua": frozenset({"-v", "--version"}),
+    "node": frozenset({"-h", "--help", "-v", "--version"}),
+    "perl": frozenset({"-h", "--help", "-v", "--version"}),
+    "php": frozenset({"-h", "--help", "-v", "--version"}),
+    "powershell": frozenset({"-help", "--help", "-version", "--version"}),
+    "python": frozenset({"-h", "--help", "-V", "-VV", "--version"}),
+    "ruby": frozenset({"-h", "--help", "-v", "--version"}),
+    "shell": frozenset({"--help", "--version"}),
+}
+
+#: Long-form inline-program options are self-describing enough to fail closed
+#: even when the executable name is not a known interpreter family. Ambiguous
+#: short flags remain family-scoped so ordinary tools are not rejected merely
+#: because they reuse a flag.
+_GENERIC_INLINE_PROGRAM_OPTIONS = frozenset(
+    {"--command", "--eval", "--execute", "--execute-command", "-encodedcommand"}
+)
 
 #: python interpreter options known to take no value.
 _PYTHON_FLAG_OPTIONS = frozenset(
@@ -876,28 +924,6 @@ def _has_unquoted_operator(text: str) -> bool:
     return False
 
 
-def _git_config_key(value: str) -> str:
-    """The config key of a ``name=value`` / ``name=envvar`` option value."""
-    return value.split("=", 1)[0].strip().lower()
-
-
-def _git_config_undecidable_reason(value: str) -> str:
-    """The fail-closed reason for a ``-c`` / ``--config-env`` value, or ``""``.
-
-    ``alias.*`` keeps its own marker — the config defines the very subcommand
-    about to run. Every other key is accepted only when its prefix is on the
-    inert allowlist: git config keys routinely name programs git executes
-    (``diff.external``, ``core.pager``, ``credential.helper``, ...), and that
-    key space is open-ended, so an unrecognized key is not guessed at.
-    """
-    key = _git_config_key(value)
-    if key.startswith("alias."):
-        return "git-alias-config"
-    if not key.startswith(_GIT_INERT_CONFIG_PREFIXES):
-        return "git-config-override"
-    return ""
-
-
 def _git_subcommand(argv: Sequence[str]) -> tuple[str, str]:
     """``(subcommand, undecidable_reason)`` for a git argv.
 
@@ -905,50 +931,72 @@ def _git_subcommand(argv: Sequence[str]) -> tuple[str, str]:
     command. The generic :func:`_subcommand` skip-options loop would return the
     *value* of such an option — ``git -C repo push --force`` yields ``repo``,
     silently downgrading a control-surface mutation to an allowed shell exec.
-    Values of the declared global options are skipped; an option in neither
-    table is not guessed at, and the command is returned undecidable
-    (fail-closed) rather than classified on an unparsed prefix.
-
-    ``-c alias.<name>=<command>`` (and ``--config-env`` naming an ``alias.*``
-    key) defines the very subcommand about to run: ``git -c alias.st='!rm -rf'
-    st`` would otherwise classify on ``st``, a token whose meaning the command
-    line itself just rewrote. Any alias-defining config is therefore returned
-    undecidable (``git-alias-config``). Other keys are accepted only from the
-    inert allowlist (:data:`_GIT_INERT_CONFIG_PREFIXES`): ``git -c
-    diff.external='touch /tmp/poc' diff`` executes the helper on a read-only
-    subcommand, and the set of command-executing config keys is open-ended,
-    so a non-inert key is returned undecidable (``git-config-override``)
-    rather than skipped on a guess. Inert keys (``user.name=x``) are still
-    skipped.
+    Value-taking global options can switch repository/config/exec context, and
+    command-local config can install execution hooks such as ``core.fsmonitor``,
+    ``diff.external``, or ``help.browser``. Pager flags likewise delegate to an
+    external process. Those shapes fail closed rather than trusting a known
+    subcommand under an attacker-selected execution context.
     """
     index = 1
     while index < len(argv):
         token = argv[index]
         if not token.startswith("-"):
             return (token, "") if _SUBCOMMAND_RE.match(token) else ("", "non-subcommand-token")
+        if token == "-c" or token.startswith("-c") and len(token) > 2:
+            return "", "git-config-injection"
+        option = token.split("=", 1)[0]
+        if option == "--config-env":
+            return "", "git-config-injection"
+        if option in _GIT_VALUE_GLOBAL_OPTIONS:
+            return "", "git-execution-context-option"
+        if option in {"-p", "--paginate"}:
+            return "", "git-execution-hook-option"
         if token.startswith("--") and "=" in token:
-            option, value = token.split("=", 1)
-            if option in _GIT_VALUE_GLOBAL_OPTIONS or option in _GIT_FLAG_GLOBAL_OPTIONS:
-                if option in ("-c", "--config-env"):
-                    config_reason = _git_config_undecidable_reason(value)
-                    if config_reason:
-                        return "", config_reason
+            if option in _GIT_FLAG_GLOBAL_OPTIONS:
                 index += 1
                 continue
             return "", "unrecognized-git-global-option"
-        if token in _GIT_VALUE_GLOBAL_OPTIONS:
-            value = argv[index + 1] if index + 1 < len(argv) else ""
-            if token in ("-c", "--config-env"):
-                config_reason = _git_config_undecidable_reason(value)
-                if config_reason:
-                    return "", config_reason
-            index += 2
-            continue
         if token in _GIT_FLAG_GLOBAL_OPTIONS:
             index += 1
             continue
         return "", "unrecognized-git-global-option"
     return "", ""
+
+
+_FALSE_BOOLEAN_OPTION_VALUES = frozenset({"0", "f", "false"})
+
+
+def _short_boolean_option_active(token: str, target: str, *, value_options: frozenset[str]) -> bool:
+    """Whether a short boolean option is active in a parsed option cluster."""
+    if not token.startswith("-") or token.startswith("--") or token == "-":
+        return False
+    cluster = token[1:]
+    for index, option in enumerate(cluster):
+        if option == target:
+            remainder = cluster[index + 1 :]
+            if remainder.startswith("="):
+                return remainder[1:].casefold() not in _FALSE_BOOLEAN_OPTION_VALUES
+            return True
+        if option in value_options:
+            return False
+    return False
+
+
+def _gh_external_helper_reason(argv: Sequence[str], subcommand: str, operation: str) -> str:
+    """Return a declared read-only GH option that opens an external browser."""
+    active_argv = argv[: argv.index("--")] if "--" in argv else argv
+    value_options = _GH_READ_ONLY_SHORT_VALUE_OPTIONS.get((subcommand, operation), frozenset())
+    if any(
+        _short_boolean_option_active(token, "w", value_options=value_options)
+        or token == "--web"
+        or (
+            token.startswith("--web=")
+            and token.split("=", 1)[1].casefold() not in _FALSE_BOOLEAN_OPTION_VALUES
+        )
+        for token in active_argv
+    ):
+        return "gh-web-helper-option"
+    return ""
 
 
 def _git_option_present(argv: Sequence[str], options: frozenset[str]) -> str:
@@ -976,7 +1024,8 @@ def _python_module_argv(argv: Sequence[str]) -> tuple[list[str] | None, str]:
     ``python -m pip install x`` executes pip exactly as ``pip install x``
     would; not recovering the module would leave an interpreter-shaped alias
     for every governed manager. Returns the argv *after* ``-m`` (module name
-    first) when a module is invoked, ``(None, "")`` for a plain script run,
+    first) when a module is invoked, ``(None, "")`` for a plain script run
+    (the caller marks that delegation undecidable),
     ``(None, "inline-interpreter-program")`` for a ``-c`` / stdin program —
     inline program text is a second command line this classifier never
     tokenizes, so ``python -c "open('.gove-zone/gate.mode','w')..."`` must not
@@ -995,8 +1044,8 @@ def _python_module_argv(argv: Sequence[str]) -> tuple[list[str] | None, str]:
         if token == "-c" or token == "-":
             return None, "inline-interpreter-program"
         if not token.startswith("-"):
-            # A script path: no module to recover; the command classifies as a
-            # plain interpreter exec, like any other unclassified binary.
+            # A script path: no module to recover. The caller fails closed
+            # because the script contents are outside this argv classifier.
             return None, ""
         if token in _PYTHON_VALUE_OPTIONS:
             index += 2
@@ -1010,6 +1059,77 @@ def _python_module_argv(argv: Sequence[str]) -> tuple[list[str] | None, str]:
             continue
         return None, "unrecognized-python-option"
     return None, ""
+
+
+def _normalized_executable(binary: str) -> str:
+    """Normalize a basename for case-insensitive family matching."""
+    normalized = binary.casefold()
+    return normalized.removesuffix(".exe")
+
+
+def _portable_basename(executable: str) -> str:
+    """Return a basename for either POSIX or Windows-style command tokens."""
+    return executable.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def _interpreter_family(binary: str) -> str:
+    """Return the normalized family for a known delegating executable."""
+    normalized = _normalized_executable(binary)
+    if _PYTHON_BINARY_RE.fullmatch(normalized):
+        return "python"
+    family = next(
+        (
+            family
+            for pattern, family in _DELEGATING_INTERPRETER_PATTERNS
+            if pattern.fullmatch(normalized)
+        ),
+        "",
+    )
+    if family:
+        return family
+    return "shell" if _SHELL_INTERPRETER_RE.fullmatch(normalized) else ""
+
+
+def _is_exact_interpreter_probe(family: str, argv: Sequence[str]) -> bool:
+    """Whether argv is exactly a declared non-executing help/version probe."""
+    if len(argv) != 2:
+        return False
+    probe = argv[1]
+    safe_probes = _SAFE_INTERPRETER_PROBES[family]
+    if family == "powershell":
+        return probe.casefold() in safe_probes
+    return probe in safe_probes
+
+
+def _has_generic_inline_delegation(binary: str, argv: Sequence[str]) -> bool:
+    """Detect inline execution outside known interpreter families."""
+    for token in argv[1:]:
+        if token == "--":
+            break
+        normalized = token.casefold()
+        if normalized in _GENERIC_INLINE_PROGRAM_OPTIONS or any(
+            normalized.startswith(option + "=") for option in _GENERIC_INLINE_PROGRAM_OPTIONS
+        ):
+            return True
+    normalized = _normalized_executable(binary)
+    if _SHELL_LIKE_EXECUTABLE_RE.fullmatch(normalized) is None:
+        return False
+    saw_short_option = False
+    for token in argv[1:]:
+        if token == "--":
+            return False
+        if token == "-" or not token.startswith("-"):
+            # Unknown short-option grammars may consume this operand as a value.
+            return saw_short_option
+        if token.startswith("--"):
+            # An unknown long option may itself delegate or consume the next
+            # token, so guessing where its value ends would be unsafe.
+            return True
+        saw_short_option = True
+        option_cluster = token[1:].split("=", 1)[0]
+        if "c" in option_cluster:
+            return True
+    return saw_short_option
 
 
 def _corepack_argv(argv: Sequence[str]) -> tuple[list[str] | None, str, str]:
@@ -1145,22 +1265,16 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
             command_sha256=digest,
         )
 
-    binary = Path(argv[0]).name or argv[0]
+    binary = _portable_basename(argv[0])
     invoked_by_absolute_path = argv[0] != binary
+    untrusted_invocation_context = bool(wrappers) or invoked_by_absolute_path
+    if untrusted_invocation_context and not reasons:
+        reasons.append("untrusted-execution-context")
     interpreter = ""
+    interpreter_family = _interpreter_family(binary)
     package_frontend = ""
     corepack_operation = ""
     if _EXPANSION_CHARS & set(argv[0]):
-        # `${PM:-npm} install left-pad`, `$PM install`, `$'npm' install`: bash
-        # expands the executable word before execution, so the token this
-        # classifier sees is not the binary that will run. Parameter and
-        # ANSI-C expansions change the executable identity without any `$(`
-        # command substitution, so the substitution check above never fires.
-        # The expansion is not emulated here — that would require the shell's
-        # environment and quoting state — so the event fails closed as
-        # undecidable. shlex strips quotes, so a single-quoted literal
-        # (`'$PM' install`) is over-approximated as an expansion: an
-        # escalation, never a false allow.
         reasons.append("executable-word-expansion")
     if _GLOB_CHARS & set(argv[0]):
         # `/opt/node/bin/n?m install left-pad`: bash performs pathname
@@ -1171,23 +1285,17 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
         # unexpanded spelling.
         reasons.append("executable-word-glob")
     if binary in _SHELL_EVAL_BUILTINS:
-        # `eval` combines its arguments and executes them as a new shell
-        # command line; `source`/`.` run file contents in the current shell.
-        # Neither payload is recoverable from this argv — `eval 'npm install
-        # left-pad'` contains no unquoted operator — so classifying the outer
-        # builtin as a decidable exec would mint an allow receipt for whatever
-        # the evaluated text does.
         reasons.append("shell-eval-builtin")
-    if binary in _SHELL_INTERPRETERS:
+    exact_probe = (
+        bool(interpreter_family)
+        and not wrappers
+        and not invoked_by_absolute_path
+        and _is_exact_interpreter_probe(interpreter_family, argv)
+    )
+    if not reasons and interpreter_family == "shell" and not exact_probe:
         # The real program is whatever the shell is handed — inline `-c` text,
         # a script, or stdin — none of which is recoverable from this argv.
         reasons.append("shell-interpreter-delegation")
-    if binary in _INLINE_INTERPRETERS and any(t.startswith("-") for t in argv[1:]):
-        # `node -e "..."`, `ruby -e '...'`, a `-` stdin program: these option
-        # grammars are not modeled, so any option may introduce (or consume)
-        # inline program text this classifier never tokenizes. A bare script
-        # run carries no options and stays a decidable plain exec.
-        reasons.append("inline-interpreter-option")
     if binary in _COMMAND_LAUNCHERS:
         # `xargs npm install left-pad` / `timeout 60 npm install left-pad`:
         # the outer utility executes a nested command whose argv is embedded
@@ -1199,22 +1307,27 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
         # path; without the marker the governed nested argv rode an allowed
         # `env.shell.exec` for the outer find.
         reasons.append("find-exec-delegation")
-    if _PYTHON_BINARY_RE.match(binary):
+    if not reasons and interpreter_family == "python" and not exact_probe:
         # `python -m pip install x` IS `pip install x`; leaving it unrecovered
         # would make the interpreter an alias for every governed manager.
         module_argv, python_reason = _python_module_argv(argv)
         if python_reason:
             reasons.append(python_reason)
-        elif module_argv is not None and module_argv[0] in _GRAMMAR_BINARIES:
-            interpreter = binary
-            argv = module_argv
-            binary = argv[0]
+        elif module_argv is not None:
+            if module_argv[0] in _PYTHON_GOVERNED_MODULES:
+                interpreter = binary
+                argv = module_argv
+                binary = argv[0]
+            else:
+                reasons.append("python-module-delegation")
+        else:
+            reasons.append("python-interpreter-delegation")
+    elif not reasons and interpreter_family and not exact_probe:
+        reasons.append("interpreter-delegation")
+    elif not reasons and not interpreter_family and _has_generic_inline_delegation(binary, argv):
+        reasons.append("inline-program-delegation")
 
-    if binary == "corepack":
-        # `corepack npm install left-pad` IS `npm install left-pad` — plus a
-        # possible network fetch of the pinned manager release itself — so
-        # the delegated manager argv is classified, keeping the
-        # canonical-manager contract on the manager that actually runs.
+    if not reasons and binary == "corepack":
         delegated, corepack_operation, corepack_reason = _corepack_argv(argv)
         if corepack_reason:
             reasons.append(corepack_reason)
@@ -1223,22 +1336,45 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
             argv = delegated
             binary = argv[0]
 
-    if binary == "git":
+    trusted_plain_executable = binary in _PLAIN_EXECUTABLES
+    if (
+        not reasons
+        and not interpreter_family
+        and binary not in _GRAMMAR_BINARIES
+        and binary not in _PACKAGE_RUNNERS
+        and binary != "corepack"
+        and not trusted_plain_executable
+    ):
+        reasons.append("unknown-execution-grammar")
+
+    if reasons:
+        subcommand, sub_reason = "", ""
+    elif binary == "git":
         subcommand, sub_reason = _git_subcommand(argv)
     else:
         subcommand, sub_reason = _subcommand(binary, argv)
     if sub_reason:
         reasons.append(sub_reason)
+    elif binary == "git" and subcommand in _GIT_READ_ONLY:
+        if _git_option_present(argv, _GIT_OUTPUT_REDIRECT_OPTIONS):
+            reasons.append("git-output-redirection")
+        elif _git_option_present(argv, _GIT_HELPER_ENABLE_OPTIONS):
+            reasons.append("git-helper-option")
+        else:
+            reasons.append("git-read-only-external-context")
     argv_prefix = (binary, subcommand) if subcommand else (binary,)
     flags = frozenset(t for t in argv[1:] if t.startswith("-"))
 
     base_facts: dict[str, Any] = {
         "operator_present": operator_present,
         "invoked_by_absolute_path": invoked_by_absolute_path,
+        "trusted_invocation_context": not untrusted_invocation_context,
         "wrapped": bool(wrappers),
     }
     if interpreter:
         base_facts["interpreter"] = interpreter
+    elif interpreter_family:
+        base_facts["interpreter_family"] = interpreter_family
     if package_frontend:
         base_facts["package_frontend"] = package_frontend
     if unsupported_wrapper_options:
@@ -1400,6 +1536,18 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
                 command_sha256=digest,
             )
         if operation and operation in _GH_REMOTE_READ_ONLY.get(subcommand, frozenset()):
+            helper_reason = _gh_external_helper_reason(argv, subcommand, operation)
+            if helper_reason:
+                return ExecutionEvent(
+                    action=ACTION_SHELL_EXEC,
+                    binary=binary,
+                    argv_prefix=(binary, subcommand, operation),
+                    tier_hint=TIER_UNCLASSIFIED,
+                    decidable=False,
+                    undecidable_reasons=(helper_reason,),
+                    facts={**base_facts, "subcommand": subcommand, "operation": operation},
+                    command_sha256=digest,
+                )
             return ExecutionEvent(
                 action=ACTION_SHELL_EXEC,
                 binary=binary,

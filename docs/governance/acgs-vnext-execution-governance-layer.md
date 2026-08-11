@@ -252,19 +252,28 @@ already concedes exactly this and warns against writing rules that would be
 Therefore surface 1 is scoped to what is decidable:
 
 - **Decidable:** argv-prefix match against a declared table — the invoked binary
-  and its first arguments. This is what routes `npm`/`pnpm`/`pip` to surfaces
-  2-3 and `git` to surface 5.
+  and its first arguments. This routes `npm`/`pnpm`/`pip` to surfaces 2-3 and
+  Git mutations to surface 5.
 - **Not decidable:** the effect of an arbitrary command. Redirects, copies, and
   substitutions are recorded as `env.shell.exec` with an `argument_hash`, and
-  are **not** classified into a risk tier.
+  are not promoted to a risk-bearing surface. The undecidable marker itself
+  fails closed to `ESCALATE`, with no allow receipt.
 
-**Consequence, stated rather than engineered around:** a shell command that
-mutates tracked source without invoking a recognized binary is *recorded and
-attributed but not gated*. Detection falls to surface 5 at commit time and to
-the control-surface inventory. Any claim that shell commands are "governed" must
-carry this qualifier. Substring matching over command text is explicitly
-rejected as the classifier — §1.3 documents two live false positives from
-exactly that technique.
+Git inspection is also not decidable from argv alone. Repository and ambient
+configuration can launch `core.fsmonitor`, `diff.external`, pager, signature,
+and content-filter helpers from commands whose visible form is only
+`git status`, `git diff`, or `git log`. The hook does not execute Git in a
+sanitized environment or bind trusted Git configuration into a receipt.
+Consequently every declared Git read-only command fails closed as undecidable;
+only Git mutations retain their explicit control-surface classification.
+
+**Consequence, stated rather than engineered around:** a shell command whose
+effect is undecidable is recorded, attributed, and escalated without an allow
+receipt. Detection of its actual mutation still falls to surface 5 at commit
+time and to the control-surface inventory. Any claim that shell commands are
+"governed" must carry this qualifier. Substring matching over command text is
+explicitly rejected as the classifier — §1.3 documents two live false
+positives from exactly that technique.
 
 #### 2.2.2 Lifecycle scripts cannot be mediated at execution
 
@@ -312,8 +321,8 @@ tools default to the most restrictive declared tier
 
 | Tier | Actions | Verdicts permitted |
 |---|---|---|
-| `unclassified` | shell commands whose effect is not decidable from the argv prefix | `ALLOW` + receipt — **recorded, not risk-classified** |
-| `read-only` | inspection, resolution without fetch | `ALLOW` |
+| `unclassified` | shell commands whose effect is not decidable from the argv prefix | `ESCALATE`; no allow receipt |
+| `read-only` | inspection whose executable context is structurally bounded; excludes Git inspection | `ALLOW` |
 | `workspace` | untracked/ignored writes | `ALLOW` + receipt |
 | `source` | tracked source mutation | `ALLOW` + receipt |
 | `dependency` | surfaces 2–4 | `ALLOW` \| `TRANSFORM` \| `ESCALATE` \| `DENY` |
@@ -644,14 +653,15 @@ All seven are implemented in
 
 | ID | Attack | Status | Test |
 |---|---|---|---|
-| ADV-A | `npm` invoked by absolute path, bypassing a shim | **NOT CLOSED, asserted as such** | `test_absolute_path_invocation_is_classified_but_a_path_shim_is_not_claimed` — the classifier still reads the basename and flags `invoked_by_absolute_path`, but no shim exists and the interactive path reaches no hook |
+| ADV-A | `npm` invoked by absolute path, bypassing a shim | **closed on the hook path; interactive path out of scope** | `test_absolute_path_invocation_fails_closed_but_a_path_shim_is_not_claimed` — a hook-visible path-qualified executable is undecidable; an interactive invocation that never reaches the hook remains outside this layer |
 | ADV-B | Receipt for one actor replayed by another | **closed** | `test_receipt_for_one_actor_is_rejected_for_another` |
 | ADV-C | A governed tool reaching a second governed tool mid-execution | **closed** | `test_a_governed_tool_cannot_reach_a_second_sealed_tool` — the grant is per-tool |
 | ADV-D | Policy rewritten to allow all | **closed structurally** | `test_policy_is_content_addressed_and_sealed` — a rewritten bundle is a different content-addressed version, and the sealed policy rejects attribute rebinding |
 | ADV-E | Audit tail truncated to hide an install | **NOT CLOSED, asserted as such** | `test_truncated_audit_tail_is_invisible_without_an_external_anchor` |
 
-ADV-A and ADV-E remain *not closed*, and their tests assert the limitation rather
-than a defense. A third test,
+ADV-E remains *not closed*, and its test asserts the limitation rather than a
+defense. ADV-A is closed only when the invocation reaches the hook; this layer
+does not claim to mediate an interactive terminal. A third test,
 `test_bypass_attempts_is_only_evidence_when_the_gate_is_on_the_path`, records
 that an empty `bypass_attempts()` proves nothing on its own — a gateway nothing
 was ever routed through reports zero too. An acceptance suite that claimed to

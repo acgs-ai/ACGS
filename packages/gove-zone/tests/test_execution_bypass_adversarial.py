@@ -3,17 +3,18 @@
 Numbering follows the acceptance table in
 ``docs/governance/acgs-vnext-execution-governance-layer.md`` §5.
 
-Two cases are specified there as **not closed**, and are asserted here as *not
-closed* rather than quietly omitted:
+One case is specified there as **not closed**, and is asserted here as *not
+closed* rather than quietly omitted. ADV-A is closed on the hook-visible path,
+but the layer makes no claim about commands that never reach the hook:
 
-* **ADV-A** — a manager invoked by absolute path bypasses a ``PATH`` shim. This
-  layer is not a shim, so nothing here prevents it; what is tested is that the
-  hook-visible path still classifies, and that no prevention is claimed.
+* **ADV-A** — a manager invoked by absolute path fails closed when the command
+  reaches this hook. This layer is not a ``PATH`` shim, so an interactive
+  terminal invocation outside the hook remains out of scope.
 * **ADV-E** — a truncated audit tail is invisible to an internal chain walk. The
   test asserts precisely that: undetected without an external anchor, detected
   with one.
 
-An acceptance suite that asserted prevention for either would be false.
+An acceptance suite that asserted ADV-E prevention would be false.
 """
 
 from __future__ import annotations
@@ -367,23 +368,22 @@ def test_actor_outside_the_allowlist_is_denied(
     assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
-# -- ADV-A — NOT CLOSED: absolute-path invocation ---------------------------- #
+# -- ADV-A — hook path closed; interactive-terminal boundary remains -------- #
 
 
-def test_absolute_path_invocation_is_classified_but_a_path_shim_is_not_claimed() -> None:
-    """ADV-A is specified as *not closed*.
+def test_absolute_path_invocation_fails_closed_but_a_path_shim_is_not_claimed() -> None:
+    """The hook rejects an attacker-selected executable path.
 
-    At the hook, an absolute path changes nothing — the classifier reads the
-    basename and records that the invocation was by absolute path. But this layer
-    is not a ``PATH`` shim, and a command typed into an interactive terminal
-    reaches no hook at all. That residual is ADV9's, and it is not closed by any
-    assertion in this file.
+    This layer is still not a ``PATH`` shim: a command typed into an interactive
+    terminal reaches no hook at all. That residual remains ADV9's and is not
+    closed by this assertion.
     """
     event = classify_command("/usr/local/bin/npm install", canonical_package_manager="pnpm")
 
-    assert event.action == ACTION_PACKAGE_INSTALL
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("untrusted-execution-context",)
     assert event.facts["invoked_by_absolute_path"] is True
-    assert event.facts["manager_is_canonical"] is False
 
 
 def test_bypass_attempts_is_only_evidence_when_the_gate_is_on_the_path(
