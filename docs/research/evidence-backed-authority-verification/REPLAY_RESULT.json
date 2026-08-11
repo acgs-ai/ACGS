@@ -1,11 +1,11 @@
 {
   "derived": {
     "artifact_hashes": {
-      "AUTHORITY_PRINCIPAL_ANALYSIS.json": "2bd12284851b7dd9808123cd80b74233b25f2c242d9b5f89b59afdb17d7f2b49",
+      "AUTHORITY_PRINCIPAL_ANALYSIS.json": "327920468bd559f6bc9eb4b40bb731a631fb3a5ec6d6bc2fc27da7d5abb0a9ab",
       "EXPECTED_CREDENTIAL.json": "1de7dc9905e290a84ac7dd2bb3acdfa7a2d16968062bc5136c771cfe8972a695",
       "PRIVILEGE_GRAPH.json": "020caf79669eb2cabbb0a36906d20776624cb9e818f8c2d8b290fbc1520a6bae",
-      "PRIVILEGE_TOPOLOGY_FINAL.json": "661d2eaa4860805fd14887e2ad6933f833d33b5ee5d14ce43864ab2377a5e0b2",
-      "ROOT_EQUIVALENCE_REGISTRY.json": "a69b0882e493aecb4a9360e24859acddc5055b688e41841f459472762c21e590",
+      "PRIVILEGE_TOPOLOGY_FINAL.json": "f7ab728ba8b5f9c92989aa4563953150144f7cbdbc06a0e3fe3b5697eedc4435",
+      "ROOT_EQUIVALENCE_REGISTRY.json": "8160ac2c7cd3672041083b18c9898ad3b8d80db4573f80fd82e5c17aa269d74a",
       "SURFACE_REGISTRY.json": "f6dc7afed6275b20f285e8bbdc6c7018b588667833c0f38b41ce03fb14147a7e",
       "attack_results.json": "aeb0d947a44c17c05af86fe03b0c1bb3bbaf1eb59fb47c1aeff076820be74a8b"
     },
@@ -425,7 +425,7 @@
     "verdict": "BLOCKED_ROOT_EQUIVALENCE"
   },
   "docker_invoked": false,
-  "evidence_digest": "957e7887b1a2f661ff5861749e2a433694c7ba307d227104ac375c6f31f65667",
+  "evidence_digest": "cac2eefdc30176d6888a165df841a89cf1ae4d6c7c07d2d0ffffe4410743604b",
   "host_probe_performed": false,
   "mode": "PURE_ARTIFACT_REPLAY",
   "schema": "authority-artifact-replay/v1",

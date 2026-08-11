@@ -20,7 +20,7 @@
    "unknown": 0
   },
   "file": "PRIVILEGE_TOPOLOGY_FINAL.json",
-  "measurement_context_fingerprint": "f20868966845913d0438af7e97d5e8aebafd22979f6ce13d9d652d12e6c7c823"
+  "measurement_context_fingerprint": "0e528faf49f07c976c9b92a1f8b0906c3bcef59b039497cecab856f5536d7ccb"
  },
  "items": [
   {
@@ -90,11 +90,11 @@
   {
    "blocks_until_answered": true,
    "commands": [
-    "sudo -l -U martin",
+    "sudo -l -U agent-user",
     "grep -rn wheel /etc/sudoers /etc/sudoers.d /etc/polkit-1/rules.d"
    ],
    "decision_rule": {
-    "NON_ROOT_EQUIVALENT": "the identity is removed from wheel (`gpasswd -d martin wheel`), which resolves this path by removal rather than by evidence",
+    "NON_ROOT_EQUIVALENT": "the identity is removed from wheel (`gpasswd -d agent-user wheel`), which resolves this path by removal rather than by evidence",
     "ROOT_EQUIVALENT": "wheel grants a root command via sudoers, or admin authentication is reachable by the agent runtime"
    },
    "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
@@ -416,12 +416,12 @@
   {
    "blocks_until_answered": true,
    "commands": [
-    "sudo -l -U martin",
+    "sudo -l -U agent-user",
     "cat /etc/sudoers",
     "cat /etc/sudoers.d/*"
    ],
    "decision_rule": {
-    "NON_ROOT_EQUIVALENT": "no entry for this identity or any group it holds, verified with `sudo -l -U martin` run as root",
+    "NON_ROOT_EQUIVALENT": "no entry for this identity or any group it holds, verified with `sudo -l -U agent-user` run as root",
     "ROOT_EQUIVALENT": "any entry granting this identity a command as root, or any NOPASSWD entry, or a command with a documented shell escape"
    },
    "discriminator": "the gate is the authorisation policy, which is unreadable by the agent (/etc/sudoers is 0440 root, /etc/polkit-1/rules.d is 0700 root)",
@@ -608,12 +608,12 @@
   {
    "blocks_until_answered": true,
    "commands": [
-    "sudo -l -U martin",
+    "sudo -l -U agent-user",
     "cat /etc/sudoers",
     "cat /etc/sudoers.d/*"
    ],
    "decision_rule": {
-    "NON_ROOT_EQUIVALENT": "no entry for this identity or any group it holds, verified with `sudo -l -U martin` run as root",
+    "NON_ROOT_EQUIVALENT": "no entry for this identity or any group it holds, verified with `sudo -l -U agent-user` run as root",
     "ROOT_EQUIVALENT": "any entry granting this identity a command as root, or any NOPASSWD entry, or a command with a documented shell escape"
    },
    "discriminator": "`sudo -n -l` distinguishes *no entry* ('not allowed to run sudo') from *an entry behind a password* ('a password is required'). It cannot reveal which commands the entry grants, and /etc/sudoers is 0440 root",

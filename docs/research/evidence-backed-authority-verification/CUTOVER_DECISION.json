@@ -35,6 +35,10 @@
    "PRIVILEGE_TOPOLOGY": true,
    "ROOT_EQUIVALENCE_REGISTRY": true
   },
+  "inventory_credential_digests": {
+   "PRIVILEGE_TOPOLOGY": "63cc804c8dd4d4fbef0907e0698e944cefeb926b1578165570ea66166731226e",
+   "ROOT_EQUIVALENCE_REGISTRY": "63cc804c8dd4d4fbef0907e0698e944cefeb926b1578165570ea66166731226e"
+  },
   "precedence": [
    "BLOCKED_ROOT_EQUIVALENCE",
    "BLOCKED_AUTHORITY_EQUIVALENCE",
@@ -118,44 +122,44 @@
  "exclusivity_requires": "root_equivalent_paths == [] and unknown_privilege_paths == [] and requires_operator_evidence_paths == [] and every inventory measured in a host-representative context",
  "inputs": {
   "CUTOVER_GATE.json": {
-   "bytes": 8393,
-   "mtime": 1786417078,
+   "bytes": 8287,
+   "mtime": 1786450025,
    "present": true,
-   "sha256": "7baaffebaed09953d60e324a1d1962f73ddd0ac3fee8ebfc67297c9aaa77a5f0"
+   "sha256": "6b7dd91ac0a3957d5cdbbaac9649cccd1f1d6245cf2c525fcbbcb934468277bc"
   },
   "PREFLIGHT_AUDIT.json": {
-   "bytes": 5733,
-   "mtime": 1786403088,
+   "bytes": 5522,
+   "mtime": 1786449989,
    "present": true,
-   "sha256": "85d2adf3469c155a32055043af893441e0b18d9b9267070fe07205c384d5a640"
+   "sha256": "d474008e3165e625a6626d85c329fd9e7d91e4f973c2df99748e3c5bedfeffd5"
   },
   "PRIVILEGE_GRAPH.json": {
    "bytes": 4647,
-   "mtime": 1786417058,
+   "mtime": 1786449754,
    "present": true,
    "sha256": "020caf79669eb2cabbb0a36906d20776624cb9e818f8c2d8b290fbc1520a6bae"
   },
   "PRIVILEGE_TOPOLOGY.json": {
-   "bytes": 73934,
-   "mtime": 1786417051,
+   "bytes": 73942,
+   "mtime": 1786449474,
    "present": true,
-   "sha256": "036be38be81d56c56d0521603773f544f74f8b9e53cd1ae8c3c6ad6f329c65eb"
+   "sha256": "ef0f09e327fad62d1d2651d6a4fb7ba544fe47aca1c4c3c45bf29411989a1369"
   },
   "PRIVILEGE_TOPOLOGY_FINAL.json": {
-   "bytes": 85249,
-   "mtime": 1786417052,
+   "bytes": 86182,
+   "mtime": 1786449877,
    "present": true,
-   "sha256": "1ba5b946b6f82d05bd090852e7e9eaf2b558cb7775e63414a68cc78c902baea0"
+   "sha256": "f7ab728ba8b5f9c92989aa4563953150144f7cbdbc06a0e3fe3b5697eedc4435"
   },
   "ROOT_EQUIVALENCE_REGISTRY.json": {
-   "bytes": 13021,
-   "mtime": 1786417044,
+   "bytes": 13435,
+   "mtime": 1786449474,
    "present": true,
-   "sha256": "c379c38d793935610c40636763a1f16450e8e271bdab90d591be9553ff987963"
+   "sha256": "8160ac2c7cd3672041083b18c9898ad3b8d80db4573f80fd82e5c17aa269d74a"
   },
   "verification_result.json": {
    "bytes": 21989,
-   "mtime": 1786417058,
+   "mtime": 1786446414,
    "present": true,
    "sha256": "4310a3c5dce5c2f613fb880b9e4f6f1829b3c89c80096b430dfa4551123663f2"
   }
@@ -194,7 +198,7 @@
    "privilege_effect": "an authorised libvirt session can attach host block devices to a guest, which is root-equivalent; the socket is world-connectable by design and decides nothing"
   },
   {
-   "action": "operator removes this identity from `wheel` (`gpasswd -d martin wheel`) after confirming no other admin identity depends on it",
+   "action": "operator removes this identity from `wheel` (`gpasswd -d agent-user wheel`) after confirming no other admin identity depends on it",
    "classification": "REQUIRES_OPERATOR_EVIDENCE",
    "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
    "path": "groups:membership_wheel",
@@ -250,7 +254,7 @@
    "privilege_effect": "administers group membership; root-equivalent exactly when the agent administers a privileged group, because adding itself to `docker` or `wheel` re-opens a closed path"
   },
   {
-   "action": "operator runs `sudo -l -U martin`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
+   "action": "operator runs `sudo -l -U agent-user`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
    "classification": "REQUIRES_OPERATOR_EVIDENCE",
    "discriminator": "the gate is the authorisation policy, which is unreadable by the agent (/etc/sudoers is 0440 root, /etc/polkit-1/rules.d is 0700 root)",
    "path": "setuid:/usr/bin/pkexec",
@@ -258,7 +262,7 @@
    "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor"
   },
   {
-   "action": "operator runs `sudo -l -U martin`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
+   "action": "operator runs `sudo -l -U agent-user`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
    "classification": "REQUIRES_OPERATOR_EVIDENCE",
    "discriminator": "the gate is the authorisation policy, which is unreadable by the agent (/etc/sudoers is 0440 root, /etc/polkit-1/rules.d is 0700 root)",
    "path": "setuid:/usr/bin/su",
@@ -266,7 +270,7 @@
    "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor"
   },
   {
-   "action": "operator runs `sudo -l -U martin`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
+   "action": "operator runs `sudo -l -U agent-user`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
    "classification": "REQUIRES_OPERATOR_EVIDENCE",
    "discriminator": "the gate is the authorisation policy, which is unreadable by the agent (/etc/sudoers is 0440 root, /etc/polkit-1/rules.d is 0700 root)",
    "path": "setuid:/usr/bin/sudo",
@@ -274,7 +278,7 @@
    "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor"
   },
   {
-   "action": "operator runs `sudo -l -U martin`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
+   "action": "operator runs `sudo -l -U agent-user`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
    "classification": "REQUIRES_OPERATOR_EVIDENCE",
    "discriminator": "the gate is the authorisation policy, which is unreadable by the agent (/etc/sudoers is 0440 root, /etc/polkit-1/rules.d is 0700 root)",
    "path": "setuid:/usr/bin/userhelper",
@@ -306,7 +310,7 @@
    "privilege_effect": "setuid-root binary with no measured bound"
   },
   {
-   "action": "operator runs `sudo -l -U martin` and reads /etc/sudoers plus /etc/sudoers.d/*; any root-capable entry for this identity must be removed",
+   "action": "operator runs `sudo -l -U agent-user` and reads /etc/sudoers plus /etc/sudoers.d/*; any root-capable entry for this identity must be removed",
    "classification": "REQUIRES_OPERATOR_EVIDENCE",
    "discriminator": "`sudo -n -l` distinguishes *no entry* ('not allowed to run sudo') from *an entry behind a password* ('a password is required'). It cannot reveal which commands the entry grants, and /etc/sudoers is 0440 root",
    "path": "sudo:sudo",

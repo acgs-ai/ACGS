@@ -35,6 +35,8 @@ import shutil
 import subprocess
 import tempfile
 
+import identity_pseudonym
+
 NOT_PRESENT = "NOT_PRESENT"
 PRESENT_NON_ESCALATING = "PRESENT_NON_ESCALATING"
 ROOT_EQUIVALENT = "ROOT_EQUIVALENT"
@@ -563,7 +565,7 @@ def build_registry(
     unknown = [name for name, entry in registry.items() if entry["classification"] == UNKNOWN]
     import privilege_context
 
-    return {
+    result = {
         # Binds this registry to the context it was probed from. Without it the
         # same probes run inside a sandbox emit `root_equivalent_paths: []` --
         # a clean registry produced by changing nothing on the host. See
@@ -577,6 +579,7 @@ def build_registry(
         "agent_is_root_equivalent": bool(root_equivalent),
         "docker_access_route": docker_access_route(env),
     }
+    return identity_pseudonym.pseudonymize(result)
 
 
 def main() -> int:

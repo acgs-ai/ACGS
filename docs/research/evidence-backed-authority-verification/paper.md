@@ -1617,11 +1617,15 @@ per-command metadata and does not claim to contain it.
 
 Canonical artifacts are `REPLAY_RESULT.json`,
 `PRIVILEGE_TOPOLOGY_FINAL.json`, `ROOT_EQUIVALENCE_REGISTRY.json`,
-`EXPECTED_CREDENTIAL.json`, `SURFACE_REGISTRY.json`,
+`PREFLIGHT_AUDIT.json`, `EXPECTED_CREDENTIAL.json`, `SURFACE_REGISTRY.json`,
 `PRIVILEGE_GRAPH.json`, `attack_results.json`, and the generated PDF/hash.
 `SHA256SUMS` binds every shipped file except itself; self-exclusion avoids a
-circular digest and is checked by `release_manifest.py`. The current renderer
-creates a new deterministic canonical PDF; it does not
+circular digest and is checked by `release_manifest.py`. Machine-local operator
+labels are serialized as the stable pseudonym `agent-user`; numeric UID/GID,
+group membership, sub-ID ranges, and credential digests are preserved. The
+release regression scans every manifest-bound text artifact and extracted PDF
+text for the retired local identity. The current renderer creates a new
+deterministic canonical PDF; it does not
 claim bit-for-bit reproduction of the earlier `fa34430...` artifact.
 
 **Table 16: Provenance of every numeric claim.** Each value below was recomputed
@@ -1657,8 +1661,8 @@ reproduced in §13.3.
 | Distinct digests over those runs | `3` | `run_history.jsonl` | `evidence_digest` |
 | Final four runs identical | `True` | `run_history.jsonl` | last four `evidence_digest` |
 | Evidence digest | `ab4ae6bcb450971214b4e4e6a34be75147653826400ccd09c5e3786415e1c9ac` | `verification_result.json` | `evidence_digest` |
-| Shipped non-runtime Python lines | `8941` | `working tree` | all shipped Python except the four runtime-subject files |
-| ...of which tests | `1311` | `working tree` | tests/*.py |
+| Shipped non-runtime Python lines | `9064` | `working tree` | all shipped Python except the four runtime-subject files |
+| ...of which tests | `1345` | `working tree` | tests/*.py |
 | Runtime subject Python lines | `931` | `working tree` | container_launch.py, deployment.py, v3_authority.py, v3_client.py |
 
 Two rows deserve comment. `Runs recorded` counts every recorded run, not only

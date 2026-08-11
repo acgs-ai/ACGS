@@ -1,7 +1,7 @@
 {
  "agent": {
   "uid": 1000,
-  "user": "martin"
+  "user": "agent-user"
  },
  "classification_rule": {
   "NON_ROOT_EQUIVALENT": "measured not to, with the measurement stated",
@@ -1529,7 +1529,7 @@
     ],
     "kernel_credential_groups": [
      "docker",
-     "martin",
+     "agent-user",
      "wheel"
     ],
     "note": "read from os.getgroups(); the `id` utility can disagree inside a sandboxed launcher, which is why the kernel credential is the source here"

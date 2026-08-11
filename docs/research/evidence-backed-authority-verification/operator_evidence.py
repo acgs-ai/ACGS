@@ -37,7 +37,7 @@ OUT = os.path.join(HERE, "OPERATOR_EVIDENCE_CHECKLIST.json")
 SUDO_POLICY = {
     "minimum_artifact": "the sudoers policy that applies to this identity",
     "commands": [
-        "sudo -l -U martin",
+        "sudo -l -U agent-user",
         "cat /etc/sudoers",
         "cat /etc/sudoers.d/*",
     ],
@@ -55,7 +55,7 @@ SUDO_POLICY = {
         "ROOT_EQUIVALENT": "any entry granting this identity a command as root, "
         "or any NOPASSWD entry, or a command with a documented shell escape",
         "NON_ROOT_EQUIVALENT": "no entry for this identity or any group it "
-        "holds, verified with `sudo -l -U martin` run as root",
+        "holds, verified with `sudo -l -U agent-user` run as root",
     },
 }
 
@@ -89,7 +89,7 @@ CHECKS: dict[str, dict] = {
     "groups:membership_wheel": {
         "minimum_artifact": "every policy that names `wheel` as an authority",
         "commands": [
-            "sudo -l -U martin",
+            "sudo -l -U agent-user",
             "grep -rn wheel /etc/sudoers /etc/sudoers.d /etc/polkit-1/rules.d",
         ],
         "privileged_only": [
@@ -105,7 +105,7 @@ CHECKS: dict[str, dict] = {
             "ROOT_EQUIVALENT": "wheel grants a root command via sudoers, or "
             "admin authentication is reachable by the agent runtime",
             "NON_ROOT_EQUIVALENT": "the identity is removed from wheel "
-            "(`gpasswd -d martin wheel`), which resolves this path by removal "
+            "(`gpasswd -d agent-user wheel`), which resolves this path by removal "
             "rather than by evidence",
         },
     },

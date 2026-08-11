@@ -52,6 +52,11 @@ coverage.
 
 ## Integrity contracts
 
+- `identity_pseudonym.py` maps the machine-local operator account label to the
+  stable pseudonym `agent-user` at evidence serialization boundaries. Numeric
+  UID/GID values, group membership, sub-ID ranges, and credential hashes remain
+  evidence, and the tests scan every `SHA256SUMS`-bound file, including PDF
+  text, for the retired machine identity.
 - `EXPECTED_CREDENTIAL.json` seals all Linux UID/GID tuples,
   supplementary groups, five capability sets, `NoNewPrivs`, seccomp state,
   uid/gid maps, and user-namespace identity. Consumers recompute this structure
@@ -78,7 +83,7 @@ drafts, and obsolete manifests. Primary files are:
 - `artifact_replay.py`, `exclusivity_model.py`,
   `privilege_context.py`, and privilege graph/topology sources
 - `EXPECTED_CREDENTIAL.json`, `SURFACE_REGISTRY.json`,
-  `REPLAY_RESULT.json`
+  `PREFLIGHT_AUDIT.json`, and `REPLAY_RESULT.json`
 - the shipped JSON evidence consumed by replay
 - `tests/` adversarial and regression coverage
 

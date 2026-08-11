@@ -44,6 +44,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+import identity_pseudonym  # noqa: E402
 import privilege_context  # noqa: E402
 
 BEFORE = os.path.join(HERE, "PRIVILEGE_TOPOLOGY.json")
@@ -395,7 +396,7 @@ def rule_arbitrary_root_exec(path: str, facts: Facts, pkg: dict) -> tuple:
             "polkit_local_listable": facts.polkit_local.get("listable_by_agent"),
             "package": pkg.get("package_owner"),
         },
-        "operator runs `sudo -l -U martin`, reads /etc/sudoers, "
+        "operator runs `sudo -l -U agent-user`, reads /etc/sudoers, "
         "/etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry "
         "granting this identity a root command",
     )
@@ -717,7 +718,7 @@ def resolve_non_setuid(path_id: str, before: dict, facts: Facts) -> dict | None:
             "membership of the polkit administrator group and, on RPM-family "
             "hosts, the conventional sudoers group: it is the identity that "
             "authenticates privileged actions, not a mechanism of its own",
-            "operator removes this identity from `wheel` (`gpasswd -d martin "
+            "operator removes this identity from `wheel` (`gpasswd -d agent-user "
             "wheel`) after confirming no other admin identity depends on it",
         )
         entry["privilege_effect"] = entry["privilege_effect"]
@@ -748,7 +749,7 @@ def resolve_non_setuid(path_id: str, before: dict, facts: Facts) -> dict | None:
                 if entry_exists
                 else "no entry was demonstrated",
             },
-            "operator_action": "operator runs `sudo -l -U martin` and reads "
+            "operator_action": "operator runs `sudo -l -U agent-user` and reads "
             "/etc/sudoers plus /etc/sudoers.d/*; any root-capable entry for "
             "this identity must be removed",
         }
@@ -1109,6 +1110,19 @@ def build() -> dict:
         )
         return result
 
+    source_surface_results = before.get("surface_results")
+    if not isinstance(source_surface_results, dict):
+        source_surface_results = {}
+        for surface, body in before.get("sections", {}).items():
+            surface_paths = body.get("paths") if isinstance(body, dict) else None
+            completed = isinstance(surface_paths, dict)
+            source_surface_results[surface] = {
+                "status": "SUCCESS" if completed else "ERROR",
+                "completed": completed,
+                "path_count": len(surface_paths) if completed else 0,
+            }
+    result["surface_results"] = source_surface_results
+
     facts = Facts()
     paths: dict[str, dict] = {}
     # Read-only inputs for the root-path carrier analysis. Both were produced
@@ -1167,7 +1181,7 @@ def build() -> dict:
         "unknown": len(buckets[UNKNOWN]),
         "blocking": len(result["blocking_paths"]),
     }
-    return result
+    return identity_pseudonym.pseudonymize(result)
 
 
 def main() -> int:

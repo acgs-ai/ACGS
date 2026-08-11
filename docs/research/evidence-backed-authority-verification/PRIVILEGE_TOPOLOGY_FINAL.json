@@ -44,10 +44,13 @@
  },
  "measurement_context": {
   "capabilities": {
+   "ambient": "0000000000000000",
    "bounding": "000001ffffffffff",
    "effective": "0000000000000000",
+   "inheritable": "0000000800000000",
    "permitted": "0000000000000000"
   },
+  "credential_sha256": "63cc804c8dd4d4fbef0907e0698e944cefeb926b1578165570ea66166731226e",
   "disqualifiers": [],
   "euid": 1000,
   "filesystem_visibility": {
@@ -151,7 +154,7 @@
     "count": 56
    }
   },
-  "fingerprint_sha256": "f20868966845913d0438af7e97d5e8aebafd22979f6ce13d9d652d12e6c7c823",
+  "fingerprint_sha256": "0e528faf49f07c976c9b92a1f8b0906c3bcef59b039497cecab856f5536d7ccb",
   "getgroups": [
    10,
    969,
@@ -284,8 +287,8 @@
       969,
       1000
      ],
-     "attack_H_changed_canonical": null,
-     "attack_H_verdict": null,
+     "attack_H_changed_canonical": true,
+     "attack_H_verdict": "EXPECTED_SUCCESS",
      "container_uid_map": [
       "         0          0 4294967295"
      ],
@@ -346,7 +349,7 @@
     "agent_groups": [
      "wheel",
      "docker",
-     "martin"
+     "agent-user"
     ],
     "agent_is_admin_identity": false,
     "implicit": {
@@ -395,7 +398,7 @@
     "agent_groups": [
      "wheel",
      "docker",
-     "martin"
+     "agent-user"
     ],
     "agent_is_admin_identity": false,
     "implicit": {
@@ -806,8 +809,8 @@
       969,
       1000
      ],
-     "attack_H_changed_canonical": null,
-     "attack_H_verdict": null,
+     "attack_H_changed_canonical": true,
+     "attack_H_verdict": "EXPECTED_SUCCESS",
      "container_uid_map": [
       "         0          0 4294967295"
      ],
@@ -859,7 +862,7 @@
     "agent_groups": [
      "wheel",
      "docker",
-     "martin"
+     "agent-user"
     ],
     "agent_is_admin_identity": false,
     "group_roster": null,
@@ -871,7 +874,7 @@
     "overlap": [],
     "polkit_local_rules_listable_by_agent": false
    },
-   "operator_action": "operator removes this identity from `wheel` (`gpasswd -d martin wheel`) after confirming no other admin identity depends on it",
+   "operator_action": "operator removes this identity from `wheel` (`gpasswd -d agent-user wheel`) after confirming no other admin identity depends on it",
    "prior_classification": "UNKNOWN",
    "privilege_effect": "membership of the polkit administrator group and, on RPM-family hosts, the conventional sudoers group: it is the identity that authenticates privileged actions, not a mechanism of its own",
    "surface": "groups"
@@ -886,7 +889,7 @@
     "agent_groups": [
      "wheel",
      "docker",
-     "martin"
+     "agent-user"
     ],
     "agent_is_admin_identity": false,
     "implicit": {
@@ -912,7 +915,7 @@
     "agent_groups": [
      "wheel",
      "docker",
-     "martin"
+     "agent-user"
     ],
     "agent_is_admin_identity": false,
     "implicit": {
@@ -1551,7 +1554,7 @@
      "sudoers_readable": false
     }
    },
-   "operator_action": "operator runs `sudo -l -U martin`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
+   "operator_action": "operator runs `sudo -l -U agent-user`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
    "prior_classification": "UNKNOWN",
    "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor",
    "surface": "setuid"
@@ -1582,7 +1585,7 @@
      "sudoers_readable": false
     }
    },
-   "operator_action": "operator runs `sudo -l -U martin`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
+   "operator_action": "operator runs `sudo -l -U agent-user`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
    "prior_classification": "UNKNOWN",
    "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor",
    "surface": "setuid"
@@ -1613,7 +1616,7 @@
      "sudoers_readable": false
     }
    },
-   "operator_action": "operator runs `sudo -l -U martin`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
+   "operator_action": "operator runs `sudo -l -U agent-user`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
    "prior_classification": "UNKNOWN",
    "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor",
    "surface": "setuid"
@@ -1699,7 +1702,7 @@
      "sudoers_readable": false
     }
    },
-   "operator_action": "operator runs `sudo -l -U martin`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
+   "operator_action": "operator runs `sudo -l -U agent-user`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
    "prior_classification": "UNKNOWN",
    "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor",
    "surface": "setuid"
@@ -2137,7 +2140,7 @@
     "sudoers_mode": "0o440",
     "sudoers_readable_by_agent": false
    },
-   "operator_action": "operator runs `sudo -l -U martin` and reads /etc/sudoers plus /etc/sudoers.d/*; any root-capable entry for this identity must be removed",
+   "operator_action": "operator runs `sudo -l -U agent-user` and reads /etc/sudoers plus /etc/sudoers.d/*; any root-capable entry for this identity must be removed",
    "prior_classification": "UNKNOWN",
    "privilege_effect": "arbitrary command execution as uid 0 if the policy grants it",
    "surface": "sudo"
@@ -2152,7 +2155,7 @@
     "agent_groups": [
      "wheel",
      "docker",
-     "martin"
+     "agent-user"
     ],
     "agent_is_admin_identity": false,
     "implicit": {
@@ -2237,15 +2240,6 @@
   "container_runtimes:docker_rootful_socket",
   "groups:membership_docker"
  ],
- "surface_results": {
-  "container_runtimes": {"completed": true, "path_count": 4, "status": "SUCCESS"},
-  "filecaps": {"completed": true, "path_count": 11, "status": "SUCCESS"},
-  "groups": {"completed": true, "path_count": 2, "status": "SUCCESS"},
-  "polkit": {"completed": true, "path_count": 2, "status": "SUCCESS"},
-  "setuid": {"completed": true, "path_count": 35, "status": "SUCCESS"},
-  "sudo": {"completed": true, "path_count": 1, "status": "SUCCESS"},
-  "systemd": {"completed": true, "path_count": 2, "status": "SUCCESS"}
- },
  "source_inventory": {
   "counts": {
    "non_root_equivalent": 14,
@@ -2254,7 +2248,44 @@
    "unknown": 41
   },
   "path": "PRIVILEGE_TOPOLOGY.json",
-  "sha256": "036be38be81d56c56d0521603773f544f74f8b9e53cd1ae8c3c6ad6f329c65eb"
+  "sha256": "ef0f09e327fad62d1d2651d6a4fb7ba544fe47aca1c4c3c45bf29411989a1369"
+ },
+ "surface_results": {
+  "container_runtimes": {
+   "completed": true,
+   "path_count": 4,
+   "status": "SUCCESS"
+  },
+  "filecaps": {
+   "completed": true,
+   "path_count": 11,
+   "status": "SUCCESS"
+  },
+  "groups": {
+   "completed": true,
+   "path_count": 2,
+   "status": "SUCCESS"
+  },
+  "polkit": {
+   "completed": true,
+   "path_count": 2,
+   "status": "SUCCESS"
+  },
+  "setuid": {
+   "completed": true,
+   "path_count": 35,
+   "status": "SUCCESS"
+  },
+  "sudo": {
+   "completed": true,
+   "path_count": 1,
+   "status": "SUCCESS"
+  },
+  "systemd": {
+   "completed": true,
+   "path_count": 2,
+   "status": "SUCCESS"
+  }
  },
  "unknown_privilege_paths": []
 }

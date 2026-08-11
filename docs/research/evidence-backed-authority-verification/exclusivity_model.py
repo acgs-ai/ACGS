@@ -101,6 +101,11 @@ def _derived_classes(inventory: dict) -> dict[str, set[str]]:
     return derived
 
 
+def derive(inventory: dict) -> dict[str, set[str]]:
+    """Public fail-closed classification derivation used by readiness gates."""
+    return _derived_classes(inventory)
+
+
 def _declared_summary(inventory: dict, keys: tuple[str, ...]) -> set[str] | None:
     present = [key for key in keys if key in inventory]
     if not present:

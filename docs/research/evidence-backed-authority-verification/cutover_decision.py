@@ -52,7 +52,11 @@ def load(name: str) -> tuple[dict | None, dict]:
         with open(path, "rb") as handle:
             raw = handle.read()
     except OSError as exc:
-        return None, {"present": False, "error": str(exc)}
+        return None, {
+            "present": False,
+            "artifact": name,
+            "error": exc.strerror or type(exc).__name__,
+        }
     binding = {
         "present": True,
         "sha256": hashlib.sha256(raw).hexdigest(),

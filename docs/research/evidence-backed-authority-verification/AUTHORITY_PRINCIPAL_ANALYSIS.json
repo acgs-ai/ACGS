@@ -1,6 +1,6 @@
 {
   "agent_uid": 1000,
-  "agent_user": "martin",
+  "agent_user": "agent-user",
   "allocated_in_range": {
     "959": "ollama",
     "960": "malcontent-webd",
@@ -181,7 +181,7 @@
     999
   ],
   "selected_authority_uid": 940,
-  "selection_rationale": "uid 940 is unallocated on this host, outside every range delegated to 'martin' in /etc/subuid and /etc/subgid, and newuidmap refuses to map it. V2's uid 999 satisfies the non-delegability requirement but is 'systemd-oom', an unrelated system service -- sharing an identity with a running daemon would hand canonical mutation authority to anything that compromised it.",
+  "selection_rationale": "uid 940 is unallocated on this host, outside every range delegated to 'agent-user' in /etc/subuid and /etc/subgid, and newuidmap refuses to map it. V2's uid 999 satisfies the non-delegability requirement but is 'systemd-oom', an unrelated system service -- sharing an identity with a running daemon would hand canonical mutation authority to anything that compromised it.",
   "unallocated_in_range": [
     940,
     941,

@@ -84,7 +84,10 @@ def input_digests() -> dict:
                 "bytes": len(data),
             }
         except OSError as exc:
-            out[name] = {"unreadable": str(exc)}
+            out[name] = {
+                "unreadable": exc.strerror or type(exc).__name__,
+                "artifact": name,
+            }
     return out
 
 
@@ -101,7 +104,14 @@ def evaluate() -> dict:
     if registry is None:
         return {
             "verdict": BLOCKED_OTHER,
-            "checks": [check("registry_present", "MISSING", REGISTRY, BLOCKED_OTHER)],
+            "checks": [
+                check(
+                    "registry_present",
+                    "MISSING",
+                    os.path.basename(REGISTRY),
+                    BLOCKED_OTHER,
+                )
+            ],
         }
 
     # Derived from the per-mechanism terminal states and unioned with the list
@@ -184,7 +194,7 @@ def evaluate() -> dict:
             "privilege_topology_inventory_present",
             "MET" if topology is not None else "MISSING",
             {
-                "path": TOPOLOGY,
+                "path": f"<evidence-root>/{os.path.basename(TOPOLOGY)}",
                 "counts": (topology or {}).get("counts"),
                 "root_equivalent_paths": (topology or {}).get("root_equivalent_paths"),
             },
@@ -319,7 +329,14 @@ def evaluate() -> dict:
             )
         )
     else:
-        checks.append(check("preflight_present", "MISSING", PREFLIGHT, BLOCKED_OTHER))
+        checks.append(
+            check(
+                "preflight_present",
+                "MISSING",
+                os.path.basename(PREFLIGHT),
+                BLOCKED_OTHER,
+            )
+        )
 
     if verification is not None:
         checks.append(

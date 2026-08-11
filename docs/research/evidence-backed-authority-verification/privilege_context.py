@@ -12,7 +12,7 @@ binding to the process context that produced it. Measured on this host:
                        (wheel, docker)                                      required"
 
 The host did not change between those two rows -- `getent group docker` returns
-`docker:x:969:martin` in both. The *credential the measurement was taken under*
+`docker:x:969:agent-user` in both. The *credential the measurement was taken under*
 changed. Running `privilege_topology.py` in the sandboxed row emits
 `root_equivalent_paths == []`, which is indistinguishable, in the JSON, from a
 completed cutover. That is a synthetic PASS reachable with no host mutation at

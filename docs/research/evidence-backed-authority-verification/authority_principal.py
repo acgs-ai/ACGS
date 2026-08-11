@@ -19,6 +19,7 @@ import os
 import pwd
 import subprocess
 
+import identity_pseudonym
 import identity_ranges
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -138,7 +139,7 @@ def analyse() -> dict:
         evaluation["all_criteria_met"] = all(evaluation["criteria"].values())
         evaluations[str(uid)] = evaluation
 
-    return {
+    result = {
         "agent_uid": os.getuid(),
         "agent_user": user,
         "search_range": [SEARCH_RANGE.start, SEARCH_RANGE.stop - 1],
@@ -163,6 +164,7 @@ def analyse() -> dict:
             "HOST_CUTOVER_PLAN.md."
         ),
     }
+    return identity_pseudonym.pseudonymize(result, source_identity=user)
 
 
 if __name__ == "__main__":

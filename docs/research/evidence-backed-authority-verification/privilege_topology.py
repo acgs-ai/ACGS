@@ -32,6 +32,8 @@ import stat
 import subprocess
 import sys
 
+import identity_pseudonym
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOPOLOGY_PATH = os.path.join(HERE, "PRIVILEGE_TOPOLOGY.json")
 
@@ -247,7 +249,7 @@ def audit_container_runtimes(groups: dict) -> dict:
                 {"socket": info},
                 "rootless podman container root maps into the agent's own "
                 "delegated subuid range; V3 measured a chown landing on host "
-                "uid 528529, inside martin:524288:65536",
+                "uid 528529, inside agent-user:524288:65536",
             )
         else:
             paths[label] = entry(
@@ -801,8 +803,16 @@ def build() -> dict:
     }
 
     all_paths: dict[str, dict] = {}
+    surface_results: dict[str, dict] = {}
     for section, body in sections.items():
-        for name, item in body.get("paths", {}).items():
+        paths = body.get("paths") if isinstance(body, dict) else None
+        completed = isinstance(paths, dict)
+        surface_results[section] = {
+            "status": "SUCCESS" if completed else "ERROR",
+            "completed": completed,
+            "path_count": len(paths) if completed else 0,
+        }
+        for name, item in (paths or {}).items():
             all_paths[f"{section}:{name}"] = item
 
     root_equivalent = sorted(
@@ -811,12 +821,13 @@ def build() -> dict:
     unknown = sorted(k for k, v in all_paths.items() if v["classification"] == UNKNOWN)
     non_root = sorted(k for k, v in all_paths.items() if v["classification"] == NON_ROOT_EQUIVALENT)
 
-    return {
+    result = {
         "read_only": True,
         "mutations_performed": [],
         "agent": {"uid": os.getuid(), "user": pwd.getpwuid(os.getuid()).pw_name},
         "sections": sections,
         "paths": all_paths,
+        "surface_results": surface_results,
         "root_equivalent_paths": root_equivalent,
         "unknown_privilege_paths": unknown,
         "non_root_equivalent_paths": non_root,
@@ -832,6 +843,7 @@ def build() -> dict:
             UNKNOWN: "not established; blocking, never a pass",
         },
     }
+    return identity_pseudonym.pseudonymize(result)
 
 
 def _group_paths(groups: dict) -> dict:

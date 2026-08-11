@@ -15,7 +15,9 @@ PACKAGE = HERE.parent
 sys.path.insert(0, str(PACKAGE))
 
 import artifact_replay  # noqa: E402
+import cutover_gate  # noqa: E402
 import exclusivity_model as model  # noqa: E402
+import identity_pseudonym  # noqa: E402
 import privilege_context  # noqa: E402
 import release_manifest  # noqa: E402
 import root_equivalence  # noqa: E402
@@ -110,6 +112,10 @@ class TestSurfaceRegistry(unittest.TestCase):
 
 
 class TestPureReplay(unittest.TestCase):
+    def test_cutover_gate_regenerates_from_current_evidence(self):
+        result = cutover_gate.evaluate()
+        self.assertEqual(result["verdict"], model.BLOCKED_ROOT)
+
     def test_shipped_evidence_replays_without_host_or_docker(self):
         result = artifact_replay.replay()
         self.assertEqual(result["mode"], "PURE_ARTIFACT_REPLAY")
@@ -227,12 +233,40 @@ class TestPureReplay(unittest.TestCase):
         self.assertFalse(docker["probe"]["active_evidence_recorded"])
         self.assertNotIn("active_probe", docker["evidence"])
 
-    def test_manifest_bound_paths_are_pseudonymized(self):
-        for name in ("CUTOVER_GATE.json", "ROOT_EQUIVALENCE_REGISTRY.json"):
-            text = (PACKAGE / name).read_text(encoding="utf-8")
-            self.assertNotIn("/home/martin", text)
-            self.assertNotIn("/tmp/claude", text)
-            self.assertNotIn('"martin"', text)
+    def test_complete_manifest_closure_is_pseudonymized(self):
+        forbidden_identity = "".join(chr(code) for code in (109, 97, 114, 116, 105, 110))
+        manifest_entries = [
+            line.split("  ", 1)[1]
+            for line in (PACKAGE / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        self.assertEqual(
+            manifest_entries,
+            [path.relative_to(PACKAGE).as_posix() for path in release_manifest.release_files()],
+        )
+        for relative in manifest_entries:
+            path = PACKAGE / relative
+            if path.suffix == ".pdf":
+                extracted = subprocess.run(
+                    ["pdftotext", str(path), "-"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(extracted.returncode, 0, extracted.stderr)
+                text = extracted.stdout
+            else:
+                text = path.read_text(encoding="utf-8")
+            legacy_placeholder = "<" + identity_pseudonym.PSEUDONYM + ">"
+            machine_tmp_prefix = "/tmp/" + "claude" + "-"
+            self.assertNotIn(forbidden_identity, text, relative)
+            self.assertNotIn(legacy_placeholder, text, relative)
+            self.assertNotIn(machine_tmp_prefix, text, relative)
+        self.assertEqual(identity_pseudonym.PSEUDONYM, "agent-user")
+        self.assertEqual(
+            load("AUTHORITY_PRINCIPAL_ANALYSIS.json")["agent_user"],
+            identity_pseudonym.PSEUDONYM,
+        )
 
 
 class TestTable16Metrics(unittest.TestCase):
