@@ -164,6 +164,17 @@ _OPERATOR_CHARS = frozenset("();<>|&")
 # Leading tokens that wrap another command rather than being the command.
 _WRAPPERS = frozenset({"sudo", "env", "command", "nohup", "time", "nice", "exec", "doas"})
 
+#: Shell interpreter binaries. Invoking one delegates the real program — an
+#: inline ``-c`` string, a script file, or stdin — that this classifier never
+#: tokenizes: ``bash -c 'npm install left-pad'`` contains no unquoted operator,
+#: so without this table it would classify as a decidable, allowed
+#: ``env.shell.exec`` while executing a governed dependency mutation. The inner
+#: program's effect is not recoverable from the outer argv prefix (option
+#: grammars, ``$0`` argument slots, and script contents are all out of reach),
+#: so every shell-interpreter invocation is returned undecidable (fail-closed)
+#: rather than parsed on a guess.
+_SHELL_INTERPRETERS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh"})
+
 _INSTALL_SUBCOMMANDS: Mapping[str, frozenset[str]] = {
     "npm": frozenset({"install", "i", "ci", "add", "update", "up"}),
     "pnpm": frozenset({"install", "i", "add", "update", "up"}),
@@ -602,11 +613,14 @@ def _python_module_argv(argv: Sequence[str]) -> tuple[list[str] | None, str]:
     ``python -m pip install x`` executes pip exactly as ``pip install x``
     would; not recovering the module would leave an interpreter-shaped alias
     for every governed manager. Returns the argv *after* ``-m`` (module name
-    first) when a module is invoked, ``(None, "")`` for a plain script /
-    ``-c`` / stdin run, and ``(None, "unrecognized-python-option")`` when an
-    interpreter option this table does not declare appears before the program —
-    an unknown option may consume the next token, so nothing after it can be
-    trusted (fail-closed).
+    first) when a module is invoked, ``(None, "")`` for a plain script run,
+    ``(None, "inline-interpreter-program")`` for a ``-c`` / stdin program —
+    inline program text is a second command line this classifier never
+    tokenizes, so ``python -c "open('.gove-zone/gate.mode','w')..."`` must not
+    pass as a decidable plain exec — and
+    ``(None, "unrecognized-python-option")`` when an interpreter option this
+    table does not declare appears before the program: an unknown option may
+    consume the next token, so nothing after it can be trusted (fail-closed).
     """
     index = 1
     while index < len(argv):
@@ -615,9 +629,11 @@ def _python_module_argv(argv: Sequence[str]) -> tuple[list[str] | None, str]:
             if index + 1 < len(argv):
                 return list(argv[index + 1 :]), ""
             return None, "unrecognized-python-option"
-        if token == "-c" or token == "-" or not token.startswith("-"):
-            # An inline program, stdin program, or script path: no module to
-            # recover; the command classifies as a plain interpreter exec.
+        if token == "-c" or token == "-":
+            return None, "inline-interpreter-program"
+        if not token.startswith("-"):
+            # A script path: no module to recover; the command classifies as a
+            # plain interpreter exec, like any other unclassified binary.
             return None, ""
         if token in _PYTHON_VALUE_OPTIONS:
             index += 2
@@ -726,6 +742,10 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
     binary = Path(argv[0]).name
     invoked_by_absolute_path = argv[0] != binary
     interpreter = ""
+    if binary in _SHELL_INTERPRETERS:
+        # The real program is whatever the shell is handed — inline `-c` text,
+        # a script, or stdin — none of which is recoverable from this argv.
+        reasons.append("shell-interpreter-delegation")
     if _PYTHON_BINARY_RE.match(binary):
         # `python -m pip install x` IS `pip install x`; leaving it unrecovered
         # would make the interpreter an alias for every governed manager.
