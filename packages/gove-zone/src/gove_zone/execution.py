@@ -77,6 +77,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -345,10 +346,27 @@ _COREPACK_SHIM_SUBCOMMANDS = frozenset({"enable", "disable", "cache", "hydrate",
 #: is determined from the original argv token before this normalization.
 _WINDOWS_PACKAGE_EXECUTABLE_SUFFIXES = (".cmd", ".bat", ".exe")
 
-#: Flags that disable lifecycle-script execution, per manager family. Absence is
-#: treated as "not disabled" — fail-closed, because an unknown manager cannot be
-#: assumed safe.
-_IGNORE_SCRIPTS_FLAGS = frozenset({"--ignore-scripts", "--no-scripts"})
+#: Flags that disable lifecycle-script execution, per manager. Keyed by the
+#: manager because the spelling is not portable: npm 11 declares only
+#: ``--ignore-scripts`` (``--no-scripts`` draws "Unknown cli config" and the
+#: install scripts still run), while Composer's is ``--no-scripts``. A flag a
+#: manager does not declare must never record ``scripts_disabled: true``: the
+#: claim would suppress the lifecycle-enablement decision while the scripts
+#: execute. A manager absent from this table is treated as "not disabled",
+#: fail-closed, because an unknown manager cannot be assumed safe.
+_LIFECYCLE_DISABLE_FLAGS: Mapping[str, frozenset[str]] = {
+    "npm": frozenset({"--ignore-scripts"}),
+    "pnpm": frozenset({"--ignore-scripts"}),
+    "yarn": frozenset({"--ignore-scripts"}),
+    "bun": frozenset({"--ignore-scripts"}),
+    "composer": frozenset({"--no-scripts"}),
+}
+
+
+def _lifecycle_scripts_disabled(manager: str, flags: frozenset[str]) -> bool:
+    """True only when the manager's own declared disable flag is present."""
+    return bool(flags & _LIFECYCLE_DISABLE_FLAGS.get(manager, frozenset()))
+
 
 _PUBLISH_SUBCOMMANDS: Mapping[str, frozenset[str]] = {
     "npm": frozenset({"publish"}),
@@ -618,8 +636,42 @@ _PYTHON_GOVERNED_MODULES = frozenset({"pip", "pip3", "poetry", "uv"})
 #: Non-delegating read-only commands whose outer argv grammar is intentionally
 #: accepted as an unclassified shell execution. Everything else needs a declared
 #: grammar or a recognized interpreter family; an executable name alone is not
-#: evidence that its arguments cannot delegate a governed effect.
+#: evidence that its arguments cannot delegate a governed effect. The name is
+#: trusted only after :func:`_ambient_resolution_reason` confirms the bare
+#: spelling actually reaches the system implementation.
 _PLAIN_EXECUTABLES = frozenset({"cat", "grep", "ls"})
+
+#: Root-owned system directories a plain executable must resolve into for the
+#: bare name to be trusted. Deliberately excludes ``/usr/local/bin`` and other
+#: commonly user-writable prefixes: an implementation installed there is a
+#: replacement, not the system one.
+_TRUSTED_EXECUTABLE_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+
+
+def _ambient_resolution_reason(binary: str, environ: Mapping[str, str]) -> str:
+    """Why bash's ambient resolution of a bare name is untrusted, or ``""``.
+
+    Bash resolves a bare word through functions and ``PATH`` before any
+    binary runs, so the name alone is not evidence that the system
+    implementation executes: an exported function or a ``PATH``-shadowing
+    executable named ``ls`` runs arbitrary code while the argv still reads
+    ``ls``. Exported functions are visible in the inherited environment
+    (``BASH_FUNC_<name>%%``, older bash ``BASH_FUNC_<name>()``), and ``PATH``
+    shadowing is detected by requiring the ambient lookup to land on the same
+    file (by identity, not spelling) as a lookup restricted to
+    :data:`_TRUSTED_EXECUTABLE_PATH`. Anything unresolvable fails closed.
+    """
+    if f"BASH_FUNC_{binary}%%" in environ or f"BASH_FUNC_{binary}()" in environ:
+        return "exported-function-shadowing"
+    ambient = shutil.which(binary, path=environ.get("PATH") or os.defpath)
+    trusted = shutil.which(binary, path=_TRUSTED_EXECUTABLE_PATH)
+    if not ambient or not trusted:
+        return "ambient-path-resolution"
+    with contextlib.suppress(OSError, RuntimeError, ValueError):
+        if os.path.samefile(ambient, trusted):
+            return ""
+    return "ambient-path-resolution"
+
 
 #: A subcommand is a lowercase word. A secret, a path, or an option value is
 #: essentially never one.
@@ -1243,8 +1295,19 @@ def declared_package_manager(root: str | Path | None = None) -> str:
     return declared.strip().split("@", 1)[0].strip()
 
 
-def classify_command(command: str, *, canonical_package_manager: str = "") -> ExecutionEvent:
+def classify_command(
+    command: str,
+    *,
+    canonical_package_manager: str = "",
+    environ: Mapping[str, str] | None = None,
+) -> ExecutionEvent:
     """Classify one shell command string into an execution surface, structurally.
+
+    ``environ`` is the environment the executing shell inherits (defaults to
+    this process's, which the hook shares with the host tool). It is consulted
+    only to validate that a bare :data:`_PLAIN_EXECUTABLES` name actually
+    resolves to the system implementation; see
+    :func:`_ambient_resolution_reason`.
 
     Decides on the argv prefix only. Never matches substrings of the command
     text: ``git commit -m "fix team dashboard"`` is a git mutation, not an
@@ -1408,7 +1471,20 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
             argv = delegated
             binary = argv[0]
 
-    trusted_plain_executable = binary in _PLAIN_EXECUTABLES
+    trusted_plain_executable = False
+    if not reasons and binary in _PLAIN_EXECUTABLES:
+        # The bare name is trusted only when ambient resolution provably
+        # reaches the system implementation: an exported function or a
+        # PATH-shadowing executable named `ls` runs arbitrary code while the
+        # argv this classifier sees still reads `ls`, so a name-only
+        # allowlist would mint a decidable allow for the replacement.
+        ambient_reason = _ambient_resolution_reason(
+            binary, environ if environ is not None else os.environ
+        )
+        if ambient_reason:
+            reasons.append(ambient_reason)
+        else:
+            trusted_plain_executable = True
     if (
         not reasons
         and not interpreter_family
@@ -1487,7 +1563,7 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
                 "canonical_manager": canonical if in_contract else "",
                 "manager_is_canonical": (binary == canonical) if in_contract else True,
                 "manager_contract_applies": in_contract,
-                "scripts_disabled": bool(flags & _IGNORE_SCRIPTS_FLAGS),
+                "scripts_disabled": _lifecycle_scripts_disabled(binary, flags),
             },
             command_sha256=digest,
         )
@@ -1775,7 +1851,7 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
                 "canonical_manager": canonical if in_contract else "",
                 "manager_is_canonical": (runner_ecosystem == canonical) if in_contract else True,
                 "manager_contract_applies": in_contract,
-                "scripts_disabled": bool(flags & _IGNORE_SCRIPTS_FLAGS),
+                "scripts_disabled": _lifecycle_scripts_disabled(runner_ecosystem, flags),
             },
             command_sha256=digest,
         )
@@ -1796,7 +1872,7 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
             "canonical_manager": canonical if in_contract else "",
             "manager_is_canonical": (binary == canonical) if in_contract else True,
             "manager_contract_applies": in_contract,
-            "scripts_disabled": bool(flags & _IGNORE_SCRIPTS_FLAGS),
+            "scripts_disabled": _lifecycle_scripts_disabled(binary, flags),
         }
         return ExecutionEvent(
             action=ACTION_PACKAGE_INSTALL if installing else ACTION_PACKAGE_INVOKE,
@@ -2262,6 +2338,24 @@ def _casefolded_path_spellings(path: Path) -> tuple[str, ...]:
     return tuple(spellings)
 
 
+def _path_identity_token(path: Path) -> str:
+    """A device/inode identity token for an existing file, or ``""``.
+
+    ``Path.resolve()`` normalizes spellings and follows symlinks but cannot
+    see hard links: a hard-linked alias of a protected file resolves to the
+    alias pathname while naming the same inode, so a spelling comparison
+    misses it. Device and inode identify the file itself. The token starts
+    with no ``/`` so it can never collide with an absolute path spelling. A
+    zero inode (some Windows filesystems) identifies nothing and yields no
+    token rather than a token every such file would share.
+    """
+    with contextlib.suppress(OSError, RuntimeError, ValueError):
+        stat = os.stat(path.expanduser())
+        if stat.st_ino:
+            return f"identity:{stat.st_dev}:{stat.st_ino}"
+    return ""
+
+
 def _protected_trust_root_targets(
     audit_path: str | Path | None, ledger_path: str | Path | None
 ) -> frozenset[str]:
@@ -2282,6 +2376,11 @@ def _protected_trust_root_targets(
     write that reaches the real file through the resolved location (a
     spelling carrying no protected segment) still lands on the trust-root
     tier.
+
+    Existing protected files also contribute a device/inode identity token
+    (:func:`_path_identity_token`): a hard link to the audit chain resolves
+    to the alias pathname, so only file identity ties the alias back to the
+    protected inode.
     """
     from gove_zone.integration import resolve_audit_path, resolve_gate_mode_path
 
@@ -2292,6 +2391,9 @@ def _protected_trust_root_targets(
     targets: set[str] = set()
     for protected in (resolve_gate_mode_path(), resolved_audit, resolved_ledger):
         targets.update(_casefolded_path_spellings(protected))
+        identity = _path_identity_token(protected)
+        if identity:
+            targets.add(identity)
     return frozenset(targets)
 
 
@@ -2309,12 +2411,19 @@ def _mutation_target(child: Mapping[str, Any]) -> str | None:
 
 
 def _mutation_targets_trust_root(target: str, trust_root_targets: frozenset[str]) -> bool:
-    """True when a file-mutation target names a protected trust-root file."""
+    """True when a file-mutation target names a protected trust-root file.
+
+    Compared by spelling and, for existing targets, by file identity: a hard
+    link to a protected file keeps its own pathname under ``resolve()`` while
+    a write through it truncates the protected inode, so the alias is caught
+    only by the device/inode comparison.
+    """
     if not trust_root_targets:
         return False
-    return any(
-        spelling in trust_root_targets for spelling in _casefolded_path_spellings(Path(target))
-    )
+    if any(spelling in trust_root_targets for spelling in _casefolded_path_spellings(Path(target))):
+        return True
+    identity = _path_identity_token(Path(target))
+    return bool(identity) and identity in trust_root_targets
 
 
 def _governance_path_tier(path: Sequence[str]) -> str:

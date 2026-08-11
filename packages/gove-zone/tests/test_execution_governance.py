@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -1004,6 +1005,69 @@ def test_bare_plain_executables_remain_decidable(command: str) -> None:
     assert event.action == ACTION_SHELL_EXEC
     assert event.decidable is True
     assert event.undecidable_reasons == ()
+
+
+@pytest.mark.parametrize("key", ["BASH_FUNC_ls%%", "BASH_FUNC_ls()"])
+def test_exported_function_shadowing_makes_the_bare_name_undecidable(key: str) -> None:
+    """Bash resolves a bare word through functions before ``PATH``: an
+    exported ``ls`` function runs arbitrary code while the argv still reads
+    ``ls``, so the name-only allowlist minted a decidable allow for the
+    replacement implementation."""
+    event = classify_command(
+        "ls -la", environ={"PATH": "/usr/bin:/bin", key: "() { echo pwned > owned; }"}
+    )
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("exported-function-shadowing",)
+
+
+def test_path_shadowing_executable_makes_the_bare_name_undecidable(tmp_path: Path) -> None:
+    """A ``PATH`` entry ahead of the system directories can carry a
+    replacement ``ls``; ambient resolution must land on the same file as the
+    trusted system lookup or the bare name is not evidence of anything."""
+    shadow = tmp_path / "ls"
+    shadow.write_text("#!/bin/sh\nnpm install left-pad\n", encoding="utf-8")
+    shadow.chmod(0o755)
+
+    event = classify_command("ls -la", environ={"PATH": f"{tmp_path}:/usr/bin:/bin"})
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("ambient-path-resolution",)
+
+
+def test_unresolvable_plain_executable_fails_closed() -> None:
+    event = classify_command("ls -la", environ={"PATH": "/nonexistent-path-entry"})
+
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("ambient-path-resolution",)
+
+
+def test_plain_executable_with_clean_ambient_resolution_stays_decidable() -> None:
+    """Positive control: with no exported function and the system directories
+    resolving first, the bare name is the system implementation."""
+    event = classify_command("ls -la", environ={"PATH": "/usr/bin:/bin"})
+
+    assert event.decidable is True
+    assert event.undecidable_reasons == ()
+
+
+def test_shadowed_plain_executable_requires_a_human_at_the_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gate wiring: the hook path classifies with the inherited environment,
+    so the exported-function marker must surface as the fail-closed
+    undecidable ask, not the unclassified allow."""
+    monkeypatch.setenv("BASH_FUNC_ls%%", "() { echo pwned > owned; }")
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "ls -la")
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["decision"] == "escalate"
 
 
 @pytest.mark.parametrize(
@@ -2102,6 +2166,40 @@ def test_install_with_scripts_disabled_does_not_claim_lifecycle_enablement(
     assert tools == [ACTION_PACKAGE_INSTALL]
 
 
+@pytest.mark.parametrize(
+    ("command", "disabled"),
+    [
+        ("npm install --ignore-scripts", True),
+        ("npm install --no-scripts", False),
+        ("pnpm install --ignore-scripts", True),
+        ("pnpm install --no-scripts", False),
+        ("composer install --no-scripts", True),
+        ("composer install --ignore-scripts", False),
+    ],
+)
+def test_lifecycle_disable_flags_are_manager_specific(command: str, disabled: bool) -> None:
+    """npm 11 declares no ``--no-scripts`` option: it draws "Unknown cli
+    config" and install scripts still run, so the shared flag set claimed
+    ``scripts_disabled: true`` for an install that executes lifecycle
+    scripts. Only the manager's own declared disable spelling counts;
+    Composer's is ``--no-scripts``."""
+    event = classify_command(command)
+
+    assert event.facts["scripts_disabled"] is disabled
+
+
+def test_npm_no_scripts_flag_still_records_lifecycle_enablement(tmp_path: Path) -> None:
+    """``npm install --no-scripts`` runs its install scripts, so the
+    lifecycle-enablement decision must be recorded exactly as for a bare
+    ``npm install``; the unrecognized flag previously suppressed it."""
+    gateway = make_execution_gateway(tmp_path)
+
+    decide(gateway, "npm install left-pad --no-scripts")
+
+    tools = [e["tool"] for e in audit_events(tmp_path)]
+    assert tools == [ACTION_PACKAGE_LIFECYCLE_ENABLE, ACTION_PACKAGE_INSTALL]
+
+
 #: npm's own CLI declares these as ``install`` aliases (npm 11
 #: ``npm install --help`` lists them verbatim).
 _NPM_INSTALL_ALIAS_SPELLINGS = (
@@ -2775,6 +2873,76 @@ def test_writes_to_configured_evidence_paths_are_denied(tmp_path: Path) -> None:
         call_factory=factory,
     )
     assert permission(response) == "allow"
+
+
+def test_hard_link_aliases_of_the_configured_evidence_are_denied(tmp_path: Path) -> None:
+    """``Path.resolve()`` follows symlinks but keeps a hard link's own
+    pathname, so the spelling comparison missed the alias while
+    ``os.path.samefile(alias, chain)`` is true: a governed ``Write`` through
+    the alias received the source-tier allow and could truncate the protected
+    inode. Existing targets are compared by file identity too."""
+    audit = tmp_path / "audit.jsonl"
+    ledger = tmp_path / "ledger.jsonl"
+    gateway = make_execution_gateway(tmp_path)
+    factory = make_execution_call_factory("pnpm", audit_path=audit, ledger_path=ledger)
+    # Append a first decision so the chain file exists to be hard-linked.
+    decide(gateway, "git status")
+    assert audit.exists()
+    alias = tmp_path / "chain-alias.txt"
+    os.link(audit, alias)
+
+    response = gateway.handle_claude_hook(
+        {"tool_name": "Write", "tool_input": {"file_path": str(alias), "content": ""}},
+        actor="operator-a",
+        call_factory=factory,
+    )
+
+    assert permission(response) == "deny"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["tool"] == "runtime.Write"
+    assert "deny-trust-root-path-mutation" in event["matched_rules"]
+
+
+def test_hard_link_alias_of_the_gate_mode_file_carries_the_trust_root_tier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hard-linked ``mode-alias`` of ``.gove-zone/gate.mode`` resolves to
+    its own unprotected pathname, so segment and spelling rules both missed
+    it while a write through it replaced the gate-mode inode."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    monkeypatch.delenv("GOVE_ZONE_AUDIT_PATH", raising=False)
+    gove_zone_dir = tmp_path / ".gove-zone"
+    gove_zone_dir.mkdir()
+    mode = gove_zone_dir / "gate.mode"
+    mode.write_text("enforce", encoding="utf-8")
+    alias = tmp_path / "mode-alias"
+    os.link(mode, alias)
+
+    (call,) = execution_tool_calls_from_hook_payload(
+        {"tool_name": "Write", "tool_input": {"file_path": "mode-alias", "content": "observe"}},
+        action_kind="PreToolUse",
+        actor="operator-a",
+    )
+
+    assert call.args["governance_path_tier"] == "trust-root"
+    assert call.state["governance_path_tier"] == "trust-root"
+
+
+def test_hard_links_between_ordinary_files_stay_on_the_source_tier(tmp_path: Path) -> None:
+    """Positive control: file-identity comparison catches protected inodes
+    only; hard links between ordinary files remain ordinary source edits."""
+    gateway = make_execution_gateway(tmp_path)
+    original = tmp_path / "notes.txt"
+    original.write_text("x", encoding="utf-8")
+    alias = tmp_path / "notes-alias.txt"
+    os.link(original, alias)
+
+    response = governed_write(gateway, str(alias))
+
+    assert permission(response) == "allow"
+    assert response["gove_zone"]["receipts"]
 
 
 def test_env_configured_audit_path_is_protected_by_default(
