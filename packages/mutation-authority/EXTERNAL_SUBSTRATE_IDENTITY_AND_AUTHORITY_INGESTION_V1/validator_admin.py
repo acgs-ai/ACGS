@@ -189,6 +189,20 @@ def _admin(args: argparse.Namespace, registry: Path, keystore: Path) -> int:
                 file=sys.stderr,
             )
             return 3
+        # A successor key id must be NEW for this validator, for every
+        # algorithm. HMAC rotations were only refused incidentally (keystore
+        # O_EXCL); an ed25519 rotation reusing an existing key_id with a new
+        # public key would be appended, and then _key_windows() treats the
+        # later event as current while _key_event_of() resolves the FIRST
+        # event with that id — so attestations verify against the retired
+        # key and the "successfully rotated" validator is unusable.
+        if any(e.get("key_id") == args.key_id for e in current):
+            print(
+                f"REFUSED: key_id {args.key_id!r} already appears in this "
+                "validator's key history — a rotation must introduce a new key id",
+                file=sys.stderr,
+            )
+            return 3
         inferred = current[-1].get("key_algorithm", HMAC_SHA256) if current else HMAC_SHA256
         algorithm = args.algorithm or inferred
         event = {

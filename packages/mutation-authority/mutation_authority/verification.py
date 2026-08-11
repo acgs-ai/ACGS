@@ -12,7 +12,9 @@ from __future__ import annotations
 import os
 import shutil
 import stat
+import threading
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from unittest.mock import patch
@@ -25,7 +27,7 @@ from .intent import MutationIntent, SignedIntent
 from .ledger import AuditLedger, LedgerIntegrityError
 from .receipt import MutationDecisionReceipt, ReceiptFormatError
 from .root import GovernanceRoot, RootIntegrityError
-from .state import ABSENT, repository_violations
+from .state import ABSENT, RepositoryScanError, repository_violations
 
 
 class CheckFailure(Exception):
@@ -1062,6 +1064,78 @@ def check_unanchored_ledger_refused(base: Path) -> str:
     return "anchorless construction refused unless allow_unanchored=True"
 
 
+def attack_v_unreadable_governed_subtree(base: Path) -> str:
+    """Hide an unauthorized file by dropping traversal permission on its
+    directory: the scan must fail closed, never report a clean repository."""
+    sb = Sandbox.build(base)
+    hidden = sb.repo / "src" / "hidden"
+    hidden.mkdir()
+    (hidden / "rogue.py").write_bytes(b"ROGUE = True\n")
+    if os.geteuid() == 0:
+        # root ignores directory modes; inject the identical enumeration
+        # failure the kernel would see as an unprivileged scanner.
+        real_iterdir = Path.iterdir
+
+        def deny(self: Path):
+            if self == hidden:
+                raise PermissionError(13, "Permission denied", str(self))
+            return real_iterdir(self)
+
+        guard = patch.object(Path, "iterdir", deny)
+    else:
+        hidden.chmod(0o000)
+        guard = nullcontext()
+    try:
+        with guard:
+            try:
+                repository_violations(sb.ledger, sb.repo, sb.root.governed_prefixes())
+            except RepositoryScanError:
+                pass
+            else:
+                raise CheckFailure(
+                    "unreadable governed subtree was silently skipped — the hidden "
+                    "unauthorized file would pass the CI gate undetected"
+                )
+    finally:
+        if os.geteuid() != 0:
+            hidden.chmod(0o755)
+    return "unreadable governed directory ⇒ scan fails closed (RepositoryScanError)"
+
+
+def check_concurrent_ledger_appends_serialized(base: Path) -> str:
+    """Two writers appending concurrently must serialize on the ledger lock:
+    unique seqs, an intact chain, and an anchor that matches the head —
+    never two events built from the same snapshotted tail."""
+    sb = Sandbox.build(base)
+    start = threading.Barrier(2)
+    errors: list[Exception] = []
+
+    def writer(offset: int) -> None:
+        # A separate AuditLedger instance per writer, as two processes would have.
+        ledger = AuditLedger(sb.ledger.path, anchor_path=sb.ledger.anchor_path)
+        start.wait()
+        try:
+            for i in range(8):
+                ledger.append(
+                    "DECISION",
+                    {"decision": "DENY", "reason": f"race-{offset}-{i}"},
+                    100 + offset,
+                )
+        except Exception as exc:  # surfaced below as a check failure
+            errors.append(exc)
+
+    threads = [threading.Thread(target=writer, args=(k,)) for k in (1, 2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    _expect(not errors, f"concurrent append raised: {errors}")
+    sb.ledger.verify_chain()  # unique seqs, linked chain, anchor == head
+    events = list(sb.ledger.events())
+    _expect(len(events) == 1 + 16, f"expected 17 events, found {len(events)} (lost append)")
+    return "16 racing appends from 2 writers ⇒ intact chain, anchored head, none lost"
+
+
 CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     ("happy-path: intent → decision → receipt → effect → audit", check_happy_path),
     ("deterministic verifier", check_deterministic_verifier),
@@ -1120,6 +1194,11 @@ CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     ),
     ("ledger is bound to its governance root", check_ledger_root_binding),
     ("unanchored ledger construction is refused", check_unanchored_ledger_refused),
+    (
+        "ATTACK V: unreadable governed subtree hides a rogue file",
+        attack_v_unreadable_governed_subtree,
+    ),
+    ("concurrent ledger appends are serialized", check_concurrent_ledger_appends_serialized),
 ]
 
 

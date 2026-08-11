@@ -10,7 +10,7 @@ from .intent import MutationIntent, SignedIntent
 from .ledger import AuditLedger, LedgerIntegrityError
 from .receipt import MUTATION_RECEIPT_SCHEMA, MutationDecisionReceipt, ReceiptFormatError
 from .root import GovernanceRoot, RootIntegrityError
-from .state import repository_violations
+from .state import RepositoryScanError, repository_violations
 
 __all__ = [
     "ABSENT",
@@ -30,6 +30,7 @@ __all__ = [
     "MutationDecisionReceipt",
     "MutationIntent",
     "ReceiptFormatError",
+    "RepositoryScanError",
     "RootIntegrityError",
     "SignedIntent",
     "repository_violations",

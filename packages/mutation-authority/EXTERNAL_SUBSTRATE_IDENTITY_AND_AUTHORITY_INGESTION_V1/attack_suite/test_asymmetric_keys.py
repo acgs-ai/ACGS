@@ -372,6 +372,54 @@ def test_cli_rotation_preserves_ed25519_algorithm(tmp_path):
     assert ok, reason
 
 
+def test_cli_rotation_rejects_reused_key_id(tmp_path):
+    # An Ed25519 rotation that reuses an existing key_id with a NEW public
+    # key must be refused at write time: if appended, _key_windows() would
+    # treat the later event as current while _key_event_of() resolves the
+    # FIRST event with that id, so post-rotation attestations verify against
+    # the retired key and the "successfully rotated" validator is unusable.
+    import validator_admin as VA
+
+    trust = ed_trust(tmp_path)
+    _priv2, pub2 = _ed25519.generate()
+    reused = {
+        "schema": EVENT_SCHEMA,
+        "event": "ROTATE",
+        "validator_id": ED_VALIDATOR,
+        "key_id": ED_KEY_ID,  # already the REGISTER key id
+        "key_algorithm": ED25519,
+        "instant": "2026-09-01T00:00:00Z",
+        "public_key": pub2.hex(),
+        "key_fingerprint": sha256_hex(pub2),
+    }
+    authorization = _ed25519.sign(trust["priv"], rotation_payload(reused))
+    rc = VA.main(
+        [
+            "--registry",
+            str(trust["registry"]),
+            "--keystore",
+            str(trust["keystore"]),
+            "rotate",
+            "--validator-id",
+            ED_VALIDATOR,
+            "--key-id",
+            ED_KEY_ID,
+            "--instant",
+            "2026-09-01T00:00:00Z",
+            "--public-key",
+            pub2.hex(),
+            "--rotation-authorization",
+            authorization,
+        ]
+    )
+    assert rc == 3  # refused despite an otherwise-valid predecessor authorization
+    events = load_validator_events(trust["registry"])
+    assert len(events) == 1 and events[0]["event"] == "REGISTER"  # nothing appended
+    # The validator remains fully usable under its original key.
+    ok, reason = _trusted(_ed_evidence(trust), trust)
+    assert ok, reason
+
+
 def test_unauthorized_ed25519_rotation_fails_closed(tmp_path):
     # Attacker appends a chain-valid ROTATE naming a keypair they generated:
     # no signature by the retired key -> nothing the validator "signs" after

@@ -16,6 +16,10 @@ from .canonical import ABSENT, hash_file
 from .ledger import EVENT_COMMIT, AuditLedger
 
 
+class RepositoryScanError(Exception):
+    """A governed-tree directory could not be enumerated. Fail closed."""
+
+
 def governed_match(resource: str, prefixes: list[str]) -> bool:
     """The single governed-resource predicate: a resource is governed when it
     lies under a directory prefix OR matches a glob pattern (fnmatchcase, so
@@ -36,12 +40,18 @@ def _scan_entries(base: Path) -> Iterator[Path]:
     ``is_file``) never sees a dangling symlink, so an attacker could plant
     one inside a governed prefix undetected; ``hash_file`` uses ``lstat``
     semantics and classifies the link itself, so enumerating it here is what
-    surfaces it as an unauthorized creation. Unreadable directories are
-    skipped (their contents cannot diverge from ABSENT observably)."""
+    surfaces it as an unauthorized creation. An unreadable directory is a
+    fail-closed scan error: files absent from the ledger are discovered ONLY
+    by this walk, so silently skipping a subtree would let an attacker hide
+    an unauthorized file simply by dropping traversal permission on its
+    parent directory."""
     try:
         children = sorted(base.iterdir())
-    except OSError:
-        return
+    except OSError as exc:
+        raise RepositoryScanError(
+            f"cannot enumerate governed-tree directory {base}: {exc} "
+            "(an unscannable subtree could conceal unauthorized mutations)"
+        ) from exc
     for child in children:
         if child.is_symlink():
             yield child

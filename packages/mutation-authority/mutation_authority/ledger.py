@@ -9,9 +9,11 @@ source of truth for "what is the authorized state of resource X".
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -106,12 +108,37 @@ class AuditLedger:
 
     # -- append -----------------------------------------------------------
 
+    @contextmanager
+    def _write_lock(self) -> Iterator[None]:
+        """Exclusive cross-process lock serializing EVERY ledger writer over
+        the whole tail-read → append → anchor-replace → rollback sequence.
+
+        Two concurrent writers that both snapshot the same tail would emit
+        events with the same seq and predecessor hash, race the shared anchor
+        temporary file, and — if one anchor replacement failed — its
+        exception-path truncation to the stale prior size could delete the
+        other writer's already-fsynced event, leaving an ACCEPTED effect
+        unrecorded. The lock lives in a sidecar file (never the ledger itself,
+        so locking cannot create or truncate it) and releases on close (and on
+        process death)."""
+        lock_path = self.path.with_name(self.path.name + ".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a", encoding="utf-8") as fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            yield
+
     def append(self, event_type: str, payload: dict[str, Any], timestamp: int) -> LedgerEvent:
         if event_type not in (EVENT_DECISION, EVENT_COMMIT):
             raise ValueError(f"unsupported event type: {event_type}")
         return self._append(event_type, payload, timestamp)
 
     def _append(self, event_type: str, payload: dict[str, Any], timestamp: int) -> LedgerEvent:
+        with self._write_lock():
+            return self._append_locked(event_type, payload, timestamp)
+
+    def _append_locked(
+        self, event_type: str, payload: dict[str, Any], timestamp: int
+    ) -> LedgerEvent:
         events = list(self.events())
         prev_hash = events[-1].event_hash if events else GENESIS_PREV
         body = {
@@ -145,22 +172,23 @@ class AuditLedger:
         This is only for an effect transaction whose post-append filesystem
         identity check failed. Refuse if anything else has advanced the chain.
         """
-        events = list(self.events())
-        if not events or events[-1].event_hash != event.event_hash:
-            raise LedgerIntegrityError("cannot roll back ledger: appended event is not head")
-        lines = self.path.read_bytes().splitlines(keepends=True)
-        if len(lines) != len(events):
-            raise LedgerIntegrityError("cannot roll back ledger: event framing changed")
-        prior_size = sum(len(line) for line in lines[:-1])
-        with self.path.open("rb+") as fh:
-            fh.truncate(prior_size)
-            fh.flush()
-            os.fsync(fh.fileno())
-        prior = events[-2] if len(events) > 1 else None
-        self._write_anchor(
-            count=len(events) - 1,
-            head_hash=prior.event_hash if prior is not None else GENESIS_PREV,
-        )
+        with self._write_lock():
+            events = list(self.events())
+            if not events or events[-1].event_hash != event.event_hash:
+                raise LedgerIntegrityError("cannot roll back ledger: appended event is not head")
+            lines = self.path.read_bytes().splitlines(keepends=True)
+            if len(lines) != len(events):
+                raise LedgerIntegrityError("cannot roll back ledger: event framing changed")
+            prior_size = sum(len(line) for line in lines[:-1])
+            with self.path.open("rb+") as fh:
+                fh.truncate(prior_size)
+                fh.flush()
+                os.fsync(fh.fileno())
+            prior = events[-2] if len(events) > 1 else None
+            self._write_anchor(
+                count=len(events) - 1,
+                head_hash=prior.event_hash if prior is not None else GENESIS_PREV,
+            )
 
     def _write_anchor(self, count: int, head_hash: str) -> None:
         if self.anchor_path is None:
