@@ -166,6 +166,14 @@ TIER_PUBLICATION = "publication"
 # escaped punctuation is argument data.
 _OPERATOR_CHARS = frozenset("();<>|&")
 
+# Characters that begin a shell expansion inside a word. shlex strips quotes,
+# so after tokenization ``$'npm'`` (ANSI-C quoting) and ``"$PM"`` both reach
+# the argv as ``$npm`` — indistinguishable from a literal token — while bash
+# expands them before execution. An executable word carrying one of these
+# names a binary this classifier never saw, so it must fail closed rather
+# than classify the unexpanded spelling.
+_EXPANSION_CHARS = frozenset("$`")
+
 # Leading tokens that wrap another command rather than being the command.
 # These pass their remaining arguments through as an argv — the wrapped
 # command's structure is preserved — which is why peeling them is sound.
@@ -236,6 +244,27 @@ _PACKAGE_RUNNERS: Mapping[str, str] = {
     "pnpx": "pnpm",
     "bunx": "bun",
 }
+
+#: Managers Corepack can proxy. Corepack is the Node package-manager
+#: front-end: ``corepack npm ...`` routes the call to a pinned npm release,
+#: fetching it over the network first when it is not cached (Corepack 0.34.6
+#: attempts to fetch ``npm-11.8.0.tgz`` for a bare ``corepack npm --version``).
+#: Absent from the package surfaces, every such invocation classified as an
+#: allowed plain exec — bypassing the canonical-manager denial and the
+#: dependency escalation.
+_COREPACK_MANAGERS = frozenset({"npm", "pnpm", "yarn"})
+
+#: Corepack's own operations that fetch a manager release and/or mutate
+#: declared dependency state: ``use`` retrieves a release, rewrites
+#: ``package.json``, and performs an install; ``install`` and ``up`` fetch and
+#: activate manager releases. These classify as dependency mutations.
+_COREPACK_INSTALL_SUBCOMMANDS = frozenset({"use", "install", "up"})
+
+#: Corepack operations that mutate the shim/cache environment without a
+#: declared install (``enable`` writes manager shims onto the ``PATH``). They
+#: stay on the package surface — dependency tier, escalated — rather than
+#: falling through to an unclassified allow.
+_COREPACK_SHIM_SUBCOMMANDS = frozenset({"enable", "disable", "cache", "hydrate", "pack", "prepare"})
 
 #: Flags that disable lifecycle-script execution, per manager family. Absence is
 #: treated as "not disabled" — fail-closed, because an unknown manager cannot be
@@ -484,6 +513,13 @@ _GRAMMAR_BINARIES: frozenset[str] = frozenset(
 #: essentially never one.
 _SUBCOMMAND_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
+#: A valid shell variable name. Bash treats a leading ``word=value`` as an
+#: environment assignment only when ``word`` is a valid identifier; anything
+#: else — ``${PM:=npm}`` included — is an executable word. Peeling a
+#: non-identifier "assignment" would hide the expansion from the
+#: executable-word check.
+_ASSIGNMENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
 #: A python interpreter binary: ``python``, ``python3``, ``python3.12``.
 _PYTHON_BINARY_RE = re.compile(r"^python(\d+(\.\d+)*)?$")
 
@@ -605,11 +641,15 @@ def _strip_wrappers(argv: Sequence[str]) -> tuple[list[str], list[str], bool]:
     rest = list(argv)
     while rest:
         head = rest[0]
-        if "=" in head and not head.startswith("=") and "/" not in head.split("=", 1)[0]:
+        if "=" in head and _ASSIGNMENT_NAME_RE.match(head.split("=", 1)[0]):
+            # Bash performs the assignment only for a valid identifier name;
+            # `${PM:=npm} install` is an executable word, not an assignment,
+            # and peeling it would hide the expansion from the
+            # executable-word check in classify_command.
             wrappers.append(head.split("=", 1)[0] + "=")
             rest = rest[1:]
             continue
-        if Path(head).name in _WRAPPERS:
+        if Path(head).name in _WRAPPERS and not (_EXPANSION_CHARS & set(head)):
             wrapper = Path(head).name
             wrappers.append(wrapper)
             rest = rest[1:]
@@ -874,6 +914,32 @@ def _python_module_argv(argv: Sequence[str]) -> tuple[list[str] | None, str]:
     return None, ""
 
 
+def _corepack_argv(argv: Sequence[str]) -> tuple[list[str] | None, str, str]:
+    """``(delegated_argv, own_operation, undecidable_reason)`` for a corepack argv.
+
+    Corepack is a package-manager front-end, not an ordinary binary. A proxied
+    manager — ``corepack npm install left-pad``, version-pinned ``corepack
+    yarn@4.1.0 add left-pad`` — returns the delegated manager argv so the
+    ordinary classification (and the canonical-manager contract) applies to
+    the manager that actually runs; the proxying itself may fetch the pinned
+    manager release first. Corepack's own operations return the operation
+    name for surface routing. Options before the first word are not modeled —
+    an option may consume the following token — and fail closed, as does an
+    operation this table does not declare.
+    """
+    if len(argv) < 2:
+        return None, "", "missing-corepack-operation"
+    token = argv[1]
+    if token.startswith("-"):
+        return None, "", "corepack-option-ambiguity"
+    base = token.split("@", 1)[0]
+    if base in _COREPACK_MANAGERS:
+        return [base, *argv[2:]], "", ""
+    if token in _COREPACK_INSTALL_SUBCOMMANDS or token in _COREPACK_SHIM_SUBCOMMANDS:
+        return None, token, ""
+    return None, "", "undeclared-corepack-operation"
+
+
 def declared_package_manager(root: str | Path | None = None) -> str:
     """The manager declared by ``package.json``'s ``packageManager``, or ``""``.
 
@@ -984,6 +1050,20 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
     binary = Path(argv[0]).name or argv[0]
     invoked_by_absolute_path = argv[0] != binary
     interpreter = ""
+    package_frontend = ""
+    corepack_operation = ""
+    if _EXPANSION_CHARS & set(argv[0]):
+        # `${PM:-npm} install left-pad`, `$PM install`, `$'npm' install`: bash
+        # expands the executable word before execution, so the token this
+        # classifier sees is not the binary that will run. Parameter and
+        # ANSI-C expansions change the executable identity without any `$(`
+        # command substitution, so the substitution check above never fires.
+        # The expansion is not emulated here — that would require the shell's
+        # environment and quoting state — so the event fails closed as
+        # undecidable. shlex strips quotes, so a single-quoted literal
+        # (`'$PM' install`) is over-approximated as an expansion: an
+        # escalation, never a false allow.
+        reasons.append("executable-word-expansion")
     if binary in _SHELL_EVAL_BUILTINS:
         # `eval` combines its arguments and executes them as a new shell
         # command line; `source`/`.` run file contents in the current shell.
@@ -1013,6 +1093,19 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
             argv = module_argv
             binary = argv[0]
 
+    if binary == "corepack":
+        # `corepack npm install left-pad` IS `npm install left-pad` — plus a
+        # possible network fetch of the pinned manager release itself — so
+        # the delegated manager argv is classified, keeping the
+        # canonical-manager contract on the manager that actually runs.
+        delegated, corepack_operation, corepack_reason = _corepack_argv(argv)
+        if corepack_reason:
+            reasons.append(corepack_reason)
+        elif delegated is not None:
+            package_frontend = binary
+            argv = delegated
+            binary = argv[0]
+
     if binary == "git":
         subcommand, sub_reason = _git_subcommand(argv)
     else:
@@ -1029,6 +1122,8 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
     }
     if interpreter:
         base_facts["interpreter"] = interpreter
+    if package_frontend:
+        base_facts["package_frontend"] = package_frontend
     if unsupported_wrapper_options:
         base_facts["wrapper_options_supported"] = False
 
@@ -1076,6 +1171,56 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
             decidable=False,
             undecidable_reasons=tuple(reasons),
             facts=base_facts,
+            command_sha256=digest,
+        )
+
+    if binary == "corepack" and corepack_operation:
+        # Corepack's own operations are dependency-surface work: `use`
+        # retrieves a manager release, rewrites package.json, and performs an
+        # install; `install`/`up` fetch and activate releases; the shim
+        # operations mutate which manager the PATH resolves to. None of them
+        # may fall through to an unclassified allow.
+        spec = ""
+        if corepack_operation == "use":
+            for token in argv[2:]:
+                if token.startswith("-"):
+                    # An unmodeled option may consume the following token, so
+                    # the manager spec cannot be trusted out of position.
+                    return ExecutionEvent(
+                        action=ACTION_SHELL_EXEC,
+                        binary=binary,
+                        argv_prefix=(binary, corepack_operation),
+                        tier_hint=TIER_UNCLASSIFIED,
+                        decidable=False,
+                        undecidable_reasons=("corepack-option-ambiguity",),
+                        facts={**base_facts, "subcommand": corepack_operation},
+                        command_sha256=digest,
+                    )
+                spec = token.split("@", 1)[0]
+                break
+        manager = spec or binary
+        canonical = canonical_package_manager.strip()
+        in_contract = bool(canonical) and manager in _JS_MANAGERS and canonical in _JS_MANAGERS
+        return ExecutionEvent(
+            action=ACTION_PACKAGE_INSTALL
+            if corepack_operation in _COREPACK_INSTALL_SUBCOMMANDS
+            else ACTION_PACKAGE_INVOKE,
+            binary=binary,
+            argv_prefix=(binary, corepack_operation),
+            tier_hint=TIER_DEPENDENCY,
+            decidable=True,
+            facts={
+                **base_facts,
+                "manager": manager,
+                "subcommand": corepack_operation,
+                "canonical_manager": canonical if in_contract else "",
+                "manager_is_canonical": (manager == canonical) if in_contract else True,
+                "manager_contract_applies": in_contract,
+                # Corepack has no script-disable grammar: `use` runs the
+                # manager's own install with lifecycle scripts enabled, and
+                # `install`/`up` fetch and activate manager releases.
+                "scripts_disabled": False,
+            },
             command_sha256=digest,
         )
 

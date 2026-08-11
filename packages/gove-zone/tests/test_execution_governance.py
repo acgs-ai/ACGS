@@ -251,6 +251,121 @@ def test_package_runners_are_a_dependency_execution_surface(
     assert event.facts["manager_is_canonical"] == (ecosystem == "pnpm")
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "${PM:-npm} install left-pad",
+        "${PM:=npm} install left-pad",
+        "$PM install left-pad",
+        "$'npm' install left-pad",
+        '"$PM" install left-pad',
+        "sudo ${PM:-npm} install left-pad",
+    ],
+)
+def test_executable_word_expansions_are_undecidable(command: str) -> None:
+    """bash expands ``${PM:-npm}`` / ``$'npm'`` to ``npm`` before execution,
+    but the classifier sees only the unexpanded token: classifying it as an
+    ordinary binary minted an allowed ``env.shell.exec`` that bypassed the
+    non-canonical-manager denial and the dependency escalation. Parameter and
+    ANSI-C expansions change the executable identity without any ``$(``
+    substitution, so they must fail closed on their own marker."""
+    event = classify_command(command, canonical_package_manager="pnpm")
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert "executable-word-expansion" in event.undecidable_reasons
+
+
+def test_assignment_expansion_is_not_peeled_as_an_env_prefix() -> None:
+    """``${PM:=npm}`` contains ``=`` but is an executable word, not an
+    assignment: bash performs the assignment only for a valid identifier name.
+    Peeling it would hide the expansion from the executable-word check."""
+    event = classify_command("${PM:=npm} install left-pad")
+
+    assert event.decidable is False
+    assert event.facts["wrapped"] is False
+
+
+@pytest.mark.parametrize(
+    ("command", "manager", "action"),
+    [
+        ("corepack npm install left-pad", "npm", ACTION_PACKAGE_INSTALL),
+        ("corepack yarn@4.1.0 add left-pad", "yarn", ACTION_PACKAGE_INSTALL),
+        ("corepack pnpm run build", "pnpm", ACTION_PACKAGE_INVOKE),
+        ("corepack npm --version", "npm", ACTION_PACKAGE_INVOKE),
+    ],
+)
+def test_corepack_proxied_managers_classify_as_the_manager(
+    command: str, manager: str, action: str
+) -> None:
+    """``corepack npm install left-pad`` IS ``npm install left-pad`` — plus a
+    possible fetch of the pinned manager release itself (Corepack 0.34.6
+    attempts to fetch ``npm-11.8.0.tgz`` for a bare ``corepack npm
+    --version``). Unmodeled, the proxy classified as an allowed plain exec,
+    bypassing the canonical-manager denial and the dependency escalation."""
+    event = classify_command(command, canonical_package_manager="pnpm")
+
+    assert event.action == action
+    assert event.binary == manager
+    assert event.tier_hint == TIER_DEPENDENCY
+    assert event.facts["manager"] == manager
+    assert event.facts["package_frontend"] == "corepack"
+    assert event.facts["manager_contract_applies"] is True
+    assert event.facts["manager_is_canonical"] == (manager == "pnpm")
+
+
+def test_corepack_use_is_a_dependency_mutation_bound_to_the_contract() -> None:
+    """``corepack use yarn`` retrieves a release, rewrites ``package.json``,
+    and automatically performs an install (per ``corepack use --help``); it is
+    a dependency mutation carrying the named manager, not a plain exec."""
+    event = classify_command("corepack use yarn@4.1.0", canonical_package_manager="pnpm")
+
+    assert event.action == ACTION_PACKAGE_INSTALL
+    assert event.argv_prefix == ("corepack", "use")
+    assert event.tier_hint == TIER_DEPENDENCY
+    assert event.facts["manager"] == "yarn"
+    assert event.facts["manager_contract_applies"] is True
+    assert event.facts["manager_is_canonical"] is False
+    assert event.facts["scripts_disabled"] is False
+
+
+@pytest.mark.parametrize(
+    ("command", "operation", "action"),
+    [
+        ("corepack install", "install", ACTION_PACKAGE_INSTALL),
+        ("corepack up", "up", ACTION_PACKAGE_INSTALL),
+        ("corepack enable", "enable", ACTION_PACKAGE_INVOKE),
+        ("corepack disable pnpm", "disable", ACTION_PACKAGE_INVOKE),
+    ],
+)
+def test_corepack_own_operations_stay_on_the_package_surface(
+    command: str, operation: str, action: str
+) -> None:
+    event = classify_command(command)
+
+    assert event.action == action
+    assert event.tier_hint == TIER_DEPENDENCY
+    assert event.argv_prefix == ("corepack", operation)
+    assert event.facts["subcommand"] == operation
+
+
+@pytest.mark.parametrize(
+    ("command", "reason"),
+    [
+        ("corepack", "missing-corepack-operation"),
+        ("corepack --version", "corepack-option-ambiguity"),
+        ("corepack use --json yarn", "corepack-option-ambiguity"),
+        ("corepack completion", "undeclared-corepack-operation"),
+    ],
+)
+def test_undeclared_corepack_operations_fail_closed(command: str, reason: str) -> None:
+    event = classify_command(command)
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert reason in event.undecidable_reasons
+
+
 def test_git_global_option_values_do_not_hide_the_subcommand() -> None:
     """``git -C repo push --force`` must classify on ``push``, not on ``repo``.
 
@@ -1070,6 +1185,63 @@ def test_npx_in_a_pnpm_workspace_is_denied_before_any_fetch(tmp_path: Path) -> N
     assert "deny-non-canonical-package-manager" in event["matched_rules"]
 
 
+def test_corepack_proxied_npm_is_denied_in_a_pnpm_workspace(tmp_path: Path) -> None:
+    """``corepack npm install left-pad`` executes an npm install (fetching the
+    pinned npm release first when uncached); it must hit the same
+    canonical-manager denial as the direct ``npm install``."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "corepack npm install left-pad")
+
+    assert permission(response) == "deny"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["tool"] == ACTION_PACKAGE_INSTALL
+    assert "deny-non-canonical-package-manager" in event["matched_rules"]
+
+
+def test_corepack_use_of_a_non_canonical_manager_is_denied(tmp_path: Path) -> None:
+    """``corepack use yarn`` rewrites ``package.json`` and installs with a
+    manager the repository did not declare — denied before any fetch."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "corepack use yarn@4.1.0")
+
+    assert permission(response) == "deny"
+    event = audit_events(tmp_path)[-1]
+    assert event["tool"] == ACTION_PACKAGE_INSTALL
+    assert "deny-non-canonical-package-manager" in event["matched_rules"]
+
+
+def test_corepack_shim_mutation_requires_a_human(tmp_path: Path) -> None:
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "corepack enable")
+
+    assert permission(response) == "ask"
+    event = audit_events(tmp_path)[-1]
+    assert event["tool"] == ACTION_PACKAGE_INVOKE
+    assert event["decision"] == "escalate"
+    assert f"RISK_TIER:{TIER_DEPENDENCY}" in event["matched_rules"]
+
+
+def test_executable_word_expansion_never_reaches_the_manager_denial_gap(
+    tmp_path: Path,
+) -> None:
+    """``${PM:-npm} install left-pad`` in a pnpm workspace previously returned
+    ALLOW — ordinary host approval bypassed the non-canonical-manager denial.
+    The expansion marker must land on the fail-closed undecidable rule."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "${PM:-npm} install left-pad")
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["decision"] == "escalate"
+    assert "escalate-undecidable-shell" in event["matched_rules"]
+
+
 def test_package_runner_without_a_contract_still_requires_a_human(tmp_path: Path) -> None:
     gateway = make_execution_gateway(tmp_path)
 
@@ -1146,6 +1318,10 @@ def test_artifact_generation_requires_a_human_at_the_gate(tmp_path: Path) -> Non
         "gh api -X DELETE repos/owner/name",
         "gh pr checkout 123",
         "git log --format=tformat:observe --output=.gove-zone/gate.mode -1",
+        "${PM:-npm} install left-pad",
+        "$'npm' install left-pad",
+        "corepack completion",
+        "corepack --version",
     ],
 )
 def test_classifier_refusals_fail_closed_to_a_human_at_the_gate(
