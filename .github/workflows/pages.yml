@@ -15,6 +15,15 @@ name: pages
 on:
   push:
     branches: [master]
+    # Only publishable content should trigger a deploy. _config.yml excludes
+    # the source trees (packages/, tests/, acgi-ai/, ...) from the rendered
+    # site, so pushes confined to them would rebuild an identical artifact.
+    paths:
+      - '_config.yml'
+      - '*.md'
+      - 'llms.txt'
+      - 'docs/**'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
@@ -22,12 +31,21 @@ permissions:
   pages: write
   id-token: write
 
+# Allow one queued run to supersede older queued runs, but never cancel an
+# in-progress run: deploy-pages creates an external deployment and waits on
+# it, so cancelling mid-deploy can leave the production deployment stuck in a
+# cancelled state or overlapping its replacement.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
+    # storybook.yml also publishes to this repository's single Pages site when
+    # STORYBOOK_PAGES_ENABLED is 'true'. A repo has exactly one Pages site, so
+    # two publishers would overwrite each other's artifact; while that flag is
+    # enabled, this docs publisher stands down (deploy is skipped transitively).
+    if: vars.STORYBOOK_PAGES_ENABLED != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
