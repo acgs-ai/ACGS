@@ -33,14 +33,23 @@ execution — only ``UniversalGateway.invoke`` closes that loop.
 Output protocol: a JSON ``hookSpecificOutput`` object on stdout with exit 0.
 Exit 2 remains the fail-closed channel for a hook that cannot decide at all.
 
+**A policy ALLOW defers to host permissions.** The Claude Code PreToolUse
+contract defines ``permissionDecision: "allow"`` as *bypassing* the host's own
+permission system, so echoing every policy ALLOW would silently override the
+explicit deny entries in ``.claude/settings.json``. This hook therefore only
+ever tightens: ``deny``/``ask`` verdicts are returned as-is, while an ALLOW
+strips the permission decision from the response (see :func:`_defer_allow`),
+leaving the receipt anchors attached and the host permission flow live.
+
 Gate mode (``gove_zone.integration.current_gate_mode`` — env var, then
 ``.gove-zone/gate.mode``, then the fail-closed ``enforce`` default):
 
-* ``enforce`` (default): the policy verdict is returned as-is; an import, parse,
-  or governance failure exits 2 and blocks the call.
+* ``enforce`` (default): a deny/ask verdict is returned as-is; an import,
+  parse, or governance failure exits 2 and blocks the call.
 * ``observe`` (explicit, time-boxed opt-in): the decision is still evaluated,
-  recorded, and receipted, but the response is downgraded to ``allow`` with the
-  real verdict in the reason. Per ADR-0010 D6 an indefinitely-observing gate is
+  recorded, and receipted, but the permission decision is withheld so the host
+  permission system alone decides — never an explicit ``allow``, which would
+  bypass configured denials. Per ADR-0010 D6 an indefinitely-observing gate is
   the failure this layer exists to correct — this mode is for cutover only.
 """
 
@@ -67,18 +76,41 @@ def _emit(response: dict[str, Any]) -> int:
     return 0
 
 
+def _defer_allow(response: dict[str, Any]) -> dict[str, Any]:
+    """Strip an explicit ``allow`` so the host permission system stays live.
+
+    The PreToolUse contract treats ``permissionDecision: "allow"`` as bypassing
+    the host's configured permissions, so an echoed policy ALLOW would override
+    the explicit deny entries in ``.claude/settings.json`` (``git add .``,
+    ``git reset --hard``, ...). A policy ALLOW is a governance statement, not a
+    permission grant: keep the receipt anchors, omit the permission decision,
+    and let the host decide. Deny/ask verdicts pass through untouched.
+    """
+    block = dict(response.get("hookSpecificOutput") or {})
+    if str(block.get("permissionDecision", "")) != "allow":
+        return response
+    block.pop("permissionDecision", None)
+    block.pop("permissionDecisionReason", None)
+    deferred = dict(response)
+    deferred["hookSpecificOutput"] = block
+    return deferred
+
+
 def _observe_downgrade(response: dict[str, Any]) -> dict[str, Any]:
     block = dict(response.get("hookSpecificOutput") or {})
     verdict = str(block.get("permissionDecision", "allow"))
     if verdict == "allow":
-        return response
-    reason = str(block.get("permissionDecisionReason", ""))
-    block["permissionDecision"] = "allow"
-    block["permissionDecisionReason"] = f"[observe] would be {verdict}: {reason}"
+        return _defer_allow(response)
+    # Withhold the verdict rather than rewriting it to "allow": an explicit
+    # allow would bypass the host permission system, which observe mode must
+    # leave fully in charge.
+    block.pop("permissionDecision", None)
+    block.pop("permissionDecisionReason", None)
     downgraded = dict(response)
     downgraded["hookSpecificOutput"] = block
     print(
-        f"gove-zone hook (observe): decision {verdict!r} recorded but not enforced",
+        f"gove-zone hook (observe): decision {verdict!r} recorded but not enforced "
+        "(deferred to host permissions)",
         file=sys.stderr,
     )
     return downgraded
@@ -153,8 +185,7 @@ def main() -> int:
             return 2
         return 0
 
-    if not enforce:
-        response = _observe_downgrade(response)
+    response = _defer_allow(response) if enforce else _observe_downgrade(response)
     return _emit(response)
 
 

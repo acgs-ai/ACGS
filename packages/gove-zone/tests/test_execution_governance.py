@@ -217,6 +217,64 @@ def test_package_manager_with_only_options_has_no_subcommand() -> None:
     assert event.facts["subcommand"] == ""
 
 
+@pytest.mark.parametrize(
+    ("command", "runner", "ecosystem"),
+    [
+        ("npx -y left-pad", "npx", "npm"),
+        ("pnpx cowsay hi", "pnpx", "pnpm"),
+        ("bunx cowsay hi", "bunx", "bun"),
+    ],
+)
+def test_package_runners_are_a_dependency_execution_surface(
+    command: str, runner: str, ecosystem: str
+) -> None:
+    """``npx -y <pkg>`` fetches and executes remote package code in one step.
+
+    Left out of the manager table it would classify as an allowed
+    ``env.shell.exec`` — the exact bypass of the dependency controls this
+    layer exists for.
+    """
+    event = classify_command(command, canonical_package_manager="pnpm")
+
+    assert event.action == ACTION_PACKAGE_INVOKE
+    assert event.tier_hint == TIER_DEPENDENCY
+    assert event.facts["runner"] == runner
+    assert event.facts["manager"] == ecosystem
+    assert event.facts["manager_contract_applies"] is True
+    assert event.facts["manager_is_canonical"] == (ecosystem == "pnpm")
+
+
+def test_git_global_option_values_do_not_hide_the_subcommand() -> None:
+    """``git -C repo push --force`` must classify on ``push``, not on ``repo``.
+
+    Reading the option's *value* as the subcommand downgraded a control-surface
+    mutation to an allowed shell exec.
+    """
+    event = classify_command("git -C repo push --force")
+
+    assert event.action == ACTION_GIT_MUTATE
+    assert event.argv_prefix == ("git", "push")
+    assert event.facts["git_control_surface"] is True
+
+
+def test_git_inline_config_values_do_not_hide_the_subcommand() -> None:
+    event = classify_command("git -c user.name=x --git-dir=.git commit -m msg")
+
+    assert event.action == ACTION_GIT_MUTATE
+    assert event.facts["subcommand"] == "commit"
+    assert event.decidable is True
+
+
+def test_unrecognized_git_global_option_is_undecidable_not_guessed() -> None:
+    """A git global option outside the declared grammar is rejected fail-closed
+    rather than being skipped on a hunch about whether it takes a value."""
+    event = classify_command("git --some-future-option push")
+
+    assert event.action == ACTION_SHELL_EXEC
+    assert event.decidable is False
+    assert event.undecidable_reasons == ("unrecognized-git-global-option",)
+
+
 # -- 2. what the classifier refuses to decide -------------------------------- #
 
 
@@ -430,6 +488,130 @@ def test_release_publication_escalates(tmp_path: Path) -> None:
     gateway = make_execution_gateway(tmp_path)
 
     assert permission(decide(gateway, "npm publish")) == "ask"
+
+
+def test_npx_in_a_pnpm_workspace_is_denied_before_any_fetch(tmp_path: Path) -> None:
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "npx -y left-pad")
+
+    assert permission(response) == "deny"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["tool"] == ACTION_PACKAGE_INVOKE
+    assert "deny-non-canonical-package-manager" in event["matched_rules"]
+
+
+def test_package_runner_without_a_contract_still_requires_a_human(tmp_path: Path) -> None:
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "npx -y left-pad", canonical="")
+
+    assert permission(response) == "ask"
+    event = audit_events(tmp_path)[-1]
+    assert event["decision"] == "escalate"
+    assert f"RISK_TIER:{TIER_DEPENDENCY}" in event["matched_rules"]
+
+
+def test_undecidable_shell_command_fails_closed_to_a_human(tmp_path: Path) -> None:
+    """``true; npm install left-pad`` previously inherited the unclassified
+    allow tier and minted an allow receipt — adding one operator bought an
+    allow that the direct invocation would never get."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "true; npm install left-pad")
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["decision"] == "escalate"
+    assert "escalate-undecidable-shell" in event["matched_rules"]
+
+
+def test_git_global_option_values_still_escalate_at_the_gate(tmp_path: Path) -> None:
+    gateway = make_execution_gateway(tmp_path)
+
+    assert permission(decide(gateway, "git -C repo push --force")) == "ask"
+    event = audit_events(tmp_path)[-1]
+    assert event["tool"] == ACTION_GIT_MUTATE
+    assert "escalate-git-control-surface" in event["matched_rules"]
+    # Positive control: skipping option values must not over-trigger.
+    assert permission(decide(gateway, "git -c user.name=x commit -m msg")) == "allow"
+
+
+def test_unrecognized_git_global_option_requires_review(tmp_path: Path) -> None:
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "git --some-future-option push")
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+    assert "escalate-undecidable-shell" in audit_events(tmp_path)[-1]["matched_rules"]
+
+
+# -- 4b. governance configuration and evidence paths -------------------------- #
+
+
+def governed_write(gateway: UniversalGateway, file_path: str) -> dict[str, Any]:
+    return gateway.handle_claude_hook(
+        {"tool_name": "Write", "tool_input": {"file_path": file_path, "content": "observe"}},
+        actor="operator-a",
+        call_factory=make_execution_call_factory("pnpm"),
+    )
+
+
+@pytest.mark.parametrize(
+    "file_path",
+    [
+        ".gove-zone/gate.mode",
+        "/workspace/checkout/.gove-zone/gate.mode",
+        ".gove-zone/audit.jsonl",
+        ".gove-zone/ledger.jsonl",
+    ],
+)
+def test_trust_root_path_writes_are_denied_not_source_tier(tmp_path: Path, file_path: str) -> None:
+    """A governed ``Write`` of ``observe`` into ``.gove-zone/gate.mode`` would
+    downgrade every later deny to allow on the next hook invocation. The gate's
+    own trust root and evidence must not evaluate as an ordinary source edit."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = governed_write(gateway, file_path)
+
+    assert permission(response) == "deny"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["tool"] == "runtime.Write"
+    assert "deny-trust-root-path-mutation" in event["matched_rules"]
+
+
+@pytest.mark.parametrize(
+    "file_path",
+    [
+        ".claude/hooks/acgs-emit-receipt.py",
+        ".claude/settings.json",
+        "/workspace/checkout/.claude/settings.json",
+    ],
+)
+def test_control_surface_path_writes_require_a_human(tmp_path: Path, file_path: str) -> None:
+    gateway = make_execution_gateway(tmp_path)
+
+    response = governed_write(gateway, file_path)
+
+    assert permission(response) == "ask"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert "escalate-control-surface-path-mutation" in event["matched_rules"]
+
+
+def test_ordinary_source_writes_stay_on_the_source_tier(tmp_path: Path) -> None:
+    """Positive control: the path rule is scoped to governance paths, not a
+    blanket restriction on file mutation."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = governed_write(gateway, "src/app.py")
+
+    assert permission(response) == "allow"
+    assert response["gove_zone"]["receipts"]
 
 
 def test_batch_wrapped_install_is_still_classified(tmp_path: Path) -> None:

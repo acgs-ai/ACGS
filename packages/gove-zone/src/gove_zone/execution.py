@@ -41,8 +41,11 @@ What this module deliberately does NOT claim
   ``$(...)`` mutate tracked source without naming a governed binary. When an
   operator token is present, :func:`classify_command` marks the event
   ``decidable=False`` and does **not** route it to a risk-bearing surface — it is
-  recorded and attributed as :data:`ACTION_SHELL_EXEC`, nothing more. Detection
-  of those effects belongs to commit-time controls, not to this gate.
+  recorded and attributed as :data:`ACTION_SHELL_EXEC`. The policy side fails
+  closed on that marker: the ``escalate-undecidable-shell`` rule sends every
+  undecidable command to a human rather than letting it inherit the
+  unclassified allow tier. Detection of the actual effects still belongs to
+  commit-time controls, not to this gate.
 * **Lifecycle scripts are not mediated at execution.** They run inside the
   package manager's own process with no callback. :data:`ACTION_PACKAGE_LIFECYCLE_ENABLE`
   records the *enablement decision taken before the manager runs*; it does not
@@ -173,6 +176,17 @@ _INSTALL_SUBCOMMANDS: Mapping[str, frozenset[str]] = {
 #: canonical-manager contract declared by ``package.json``'s ``packageManager``.
 _JS_MANAGERS = frozenset({"npm", "pnpm", "yarn", "bun"})
 
+#: Runner front-ends that fetch and execute a package in one step (``npx -y
+#: <pkg>`` and friends). Absent from this table they would classify as allowed
+#: ``env.shell.exec`` — remote package code executing without the dependency
+#: escalation or the canonical-manager check — so each maps to the manager
+#: ecosystem whose contract it participates in.
+_PACKAGE_RUNNERS: Mapping[str, str] = {
+    "npx": "npm",
+    "pnpx": "pnpm",
+    "bunx": "bun",
+}
+
 #: Flags that disable lifecycle-script execution, per manager family. Absence is
 #: treated as "not disabled" — fail-closed, because an unknown manager cannot be
 #: assumed safe.
@@ -226,6 +240,50 @@ _GIT_MUTATING = frozenset(
 #: escalate rather than record — they are the control surface of the repository.
 _GIT_CONTROL_SURFACE = frozenset(
     {"push", "reset", "rebase", "filter-branch", "update-ref", "clean", "tag"}
+)
+
+#: git global options that consume the *following* token as their value when
+#: not written in ``--option=value`` form. ``git -h`` explicitly permits these
+#: before the command (``git [-C <path>] [-c <name>=<value>] ... <command>``);
+#: skipping only the option token would return its value as the subcommand.
+_GIT_VALUE_GLOBAL_OPTIONS = frozenset(
+    {
+        "-C",
+        "-c",
+        "--attr-source",
+        "--config-env",
+        "--exec-path",
+        "--git-dir",
+        "--namespace",
+        "--super-prefix",
+        "--work-tree",
+    }
+)
+
+#: git global options known to take no value. An option in neither table is
+#: not guessed at — the command is returned undecidable (fail-closed).
+_GIT_FLAG_GLOBAL_OPTIONS = frozenset(
+    {
+        "-h",
+        "--help",
+        "--version",
+        "--html-path",
+        "--man-path",
+        "--info-path",
+        "-p",
+        "--paginate",
+        "-P",
+        "--no-pager",
+        "--bare",
+        "--no-replace-objects",
+        "--no-lazy-fetch",
+        "--no-optional-locks",
+        "--no-advice",
+        "--literal-pathspecs",
+        "--glob-pathspecs",
+        "--noglob-pathspecs",
+        "--icase-pathspecs",
+    }
 )
 
 #: Binaries whose second-position token has declared meaning. Everything else is
@@ -354,6 +412,38 @@ def _subcommand(binary: str, argv: Sequence[str]) -> str:
     return ""
 
 
+def _git_subcommand(argv: Sequence[str]) -> tuple[str, str]:
+    """``(subcommand, undecidable_reason)`` for a git argv.
+
+    git's global-option grammar permits value-taking options before the
+    command. The generic :func:`_subcommand` skip-options loop would return the
+    *value* of such an option — ``git -C repo push --force`` yields ``repo``,
+    silently downgrading a control-surface mutation to an allowed shell exec.
+    Values of the declared global options are skipped; an option in neither
+    table is not guessed at, and the command is returned undecidable
+    (fail-closed) rather than classified on an unparsed prefix.
+    """
+    index = 1
+    while index < len(argv):
+        token = argv[index]
+        if not token.startswith("-"):
+            return (token if _SUBCOMMAND_RE.match(token) else "", "")
+        if token.startswith("--") and "=" in token:
+            option = token.split("=", 1)[0]
+            if option in _GIT_VALUE_GLOBAL_OPTIONS or option in _GIT_FLAG_GLOBAL_OPTIONS:
+                index += 1
+                continue
+            return "", "unrecognized-git-global-option"
+        if token in _GIT_VALUE_GLOBAL_OPTIONS:
+            index += 2
+            continue
+        if token in _GIT_FLAG_GLOBAL_OPTIONS:
+            index += 1
+            continue
+        return "", "unrecognized-git-global-option"
+    return "", ""
+
+
 def declared_package_manager(root: str | Path | None = None) -> str:
     """The manager declared by ``package.json``'s ``packageManager``, or ``""``.
 
@@ -388,7 +478,10 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
     then not recoverable from the argv prefix, so the event is returned with
     ``decidable=False`` on :data:`ACTION_SHELL_EXEC` — recorded and attributed,
     **not** routed to a risk-bearing surface. Claiming otherwise would classify
-    ``echo x > tracked-file`` as a harmless ``echo``.
+    ``echo x > tracked-file`` as a harmless ``echo``. The policy bundle fails
+    closed on the marker instead: ``escalate-undecidable-shell`` requires a
+    human for every undecidable command, so appending ``; npm install`` to a
+    harmless command cannot buy an allow the direct invocation would not get.
     """
     text = command if isinstance(command, str) else ""
     reasons: list[str] = []
@@ -432,7 +525,12 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
         )
 
     binary = Path(argv[0]).name
-    subcommand = _subcommand(binary, argv)
+    if binary == "git":
+        subcommand, git_reason = _git_subcommand(argv)
+        if git_reason:
+            reasons.append(git_reason)
+    else:
+        subcommand = _subcommand(binary, argv)
     argv_prefix = (binary, subcommand) if subcommand else (binary,)
     flags = frozenset(t for t in argv[1:] if t.startswith("-"))
 
@@ -480,6 +578,30 @@ def classify_command(command: str, *, canonical_package_manager: str = "") -> Ex
                 **base_facts,
                 "subcommand": subcommand,
                 "git_control_surface": subcommand in _GIT_CONTROL_SURFACE,
+            },
+        )
+
+    runner_ecosystem = _PACKAGE_RUNNERS.get(binary)
+    if runner_ecosystem is not None:
+        canonical = canonical_package_manager.strip()
+        in_contract = (
+            bool(canonical) and runner_ecosystem in _JS_MANAGERS and canonical in _JS_MANAGERS
+        )
+        return ExecutionEvent(
+            action=ACTION_PACKAGE_INVOKE,
+            binary=binary,
+            argv_prefix=argv_prefix,
+            tier_hint=TIER_DEPENDENCY,
+            decidable=True,
+            facts={
+                **base_facts,
+                "manager": runner_ecosystem,
+                "runner": binary,
+                "subcommand": subcommand,
+                "canonical_manager": canonical if in_contract else "",
+                "manager_is_canonical": (runner_ecosystem == canonical) if in_contract else True,
+                "manager_contract_applies": in_contract,
+                "scripts_disabled": bool(flags & _IGNORE_SCRIPTS_FLAGS),
             },
         )
 
@@ -535,10 +657,11 @@ EXECUTION_TIER_BUNDLE: dict[str, Any] = {
             "name": TIER_UNCLASSIFIED,
             "enforcement": "allow",
             "description": (
-                "Recorded and attributed, NOT risk-classified. A shell command whose "
-                "effect is not recoverable from its argv prefix lands here. Allowing "
-                "it is an honest statement that this gate does not decide it — not a "
-                "judgement that it is safe."
+                "Recorded and attributed, NOT risk-classified. A decidable command "
+                "naming no governed surface lands here. An UNDECIDABLE command — "
+                "operator, substitution, unparseable syntax — does not inherit this "
+                "allow: the escalate-undecidable-shell rule runs first and fails "
+                "closed to a human."
             ),
             "requirements": ["receipt"],
         },
@@ -639,6 +762,47 @@ EXECUTION_RULE_BUNDLE: dict[str, Any] = {
             "reason": (
                 "repository declares a canonical packageManager; a different manager "
                 "splits dependency resolution and is denied before any fetch"
+            ),
+        },
+        {
+            "id": "deny-trust-root-path-mutation",
+            "effect": "deny",
+            "tools": [
+                "runtime.Edit",
+                "runtime.MultiEdit",
+                "runtime.NotebookEdit",
+                "runtime.Write",
+            ],
+            "state_equals": {"governance_path_tier": TIER_TRUST_ROOT},
+            "reason": (
+                "path holds the gate mode or audit evidence this layer is judged by; "
+                "a governed call may not rewrite its own trust root"
+            ),
+        },
+        {
+            "id": "escalate-undecidable-shell",
+            "effect": "escalate",
+            "tools": [ACTION_SHELL_EXEC],
+            "state_equals": {"execution_decidable": False},
+            "reason": (
+                "command effect is not recoverable from the argv prefix (operator, "
+                "substitution, or unparseable syntax); an undecidable command must "
+                "not inherit the unclassified allow tier"
+            ),
+        },
+        {
+            "id": "escalate-control-surface-path-mutation",
+            "effect": "escalate",
+            "tools": [
+                "runtime.Edit",
+                "runtime.MultiEdit",
+                "runtime.NotebookEdit",
+                "runtime.Write",
+            ],
+            "state_equals": {"governance_path_tier": TIER_CONTROL_SURFACE},
+            "reason": (
+                "path holds runtime hook code or permission configuration; mutation "
+                "requires human approval, not a source-tier allow"
             ),
         },
         {
@@ -782,6 +946,38 @@ def build_execution_gateway(
 
 # -- hook surface ------------------------------------------------------------ #
 
+#: Path segments whose files decide whether this gate enforces at all (the
+#: ``.gove-zone`` gate-mode file) or constitute its evidence (audit chain,
+#: ledger). A governed call may never rewrite the trust root it is judged by.
+_TRUST_ROOT_PATH_SEGMENTS = frozenset({".gove-zone"})
+
+#: Path segments carrying runtime hook code and permission configuration —
+#: the checkout-resident control surface of this gate.
+_CONTROL_SURFACE_PATH_SEGMENTS = frozenset({".claude", ".codex"})
+
+#: Host-runtime file-mutation surfaces the governance-path rules apply to.
+_FILE_MUTATION_TOOLS = frozenset(
+    {"runtime.Edit", "runtime.MultiEdit", "runtime.NotebookEdit", "runtime.Write"}
+)
+
+
+def _governance_path_tier(path: Sequence[str]) -> str:
+    """The governance tier a file path belongs to, or ``""`` for ordinary paths.
+
+    Segment-based on purpose: the hook may deliver the path absolute, relative,
+    or ``~``-anchored, and a prefix rule would miss all but one spelling. A
+    ``.gove-zone`` or ``.claude`` segment anywhere in the normalized path marks
+    the target as governance configuration or evidence, never an ordinary
+    source edit.
+    """
+    for segment in path:
+        if segment in _TRUST_ROOT_PATH_SEGMENTS:
+            return TIER_TRUST_ROOT
+    for segment in path:
+        if segment in _CONTROL_SURFACE_PATH_SEGMENTS:
+            return TIER_CONTROL_SURFACE
+    return ""
+
 
 def _command_from_payload(child: Mapping[str, Any]) -> str | None:
     try:
@@ -863,17 +1059,26 @@ def execution_tool_calls_from_hook_payload(
             )
             continue
 
-        if not context:
+        extra: dict[str, Any] = dict(context)
+        if call.name in _FILE_MUTATION_TOOLS:
+            governance_tier = _governance_path_tier(call.path)
+            if governance_tier:
+                # Fail-closed path rule input: a Write to the gate-mode file,
+                # the hook, or the audit chain must not evaluate as an ordinary
+                # RISK_TIER:source edit — see deny-trust-root-path-mutation and
+                # escalate-control-surface-path-mutation.
+                extra["governance_path_tier"] = governance_tier
+        if not extra:
             calls.append(call)
             continue
         calls.append(
             ToolCall(
                 name=call.name,
-                args={**dict(call.args), **context},
+                args={**dict(call.args), **extra},
                 goal=call.goal,
                 actor=actor,
                 path=call.path,
-                state={**dict(call.state), **context},
+                state={**dict(call.state), **extra},
             )
         )
     return tuple(calls)

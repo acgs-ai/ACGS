@@ -225,13 +225,17 @@ def test_hook_fails_closed_when_gate_mode_unresolvable(
     assert hook._gate_enforce() is True
 
 
-def _run_hook(tmp_path: Path, env_extra: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run_hook(
+    tmp_path: Path,
+    env_extra: dict[str, str],
+    payload: dict[str, object] | None = None,
+) -> subprocess.CompletedProcess[str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith("GOVE_ZONE_")}
     env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
     env.update(env_extra)
     return subprocess.run(
         [sys.executable, str(HOOK_PATH)],
-        input=json.dumps(_EDIT_PAYLOAD),
+        input=json.dumps(payload if payload is not None else _EDIT_PAYLOAD),
         text=True,
         capture_output=True,
         env=env,
@@ -261,6 +265,59 @@ def test_hook_end_to_end_blocks_on_emission_failure(tmp_path: Path) -> None:
     )
     assert proc.returncode == 2
     assert "governance unavailable" in proc.stderr
+
+
+def test_hook_policy_allow_defers_to_host_permissions(tmp_path: Path) -> None:
+    """The PreToolUse contract defines ``permissionDecision: "allow"`` as
+    bypassing the host permission system, so echoing a policy ALLOW would
+    override the explicit deny entries in ``.claude/settings.json`` (e.g.
+    ``git add .``). An allowed governance result must defer: receipt anchors
+    are emitted, the permission decision is not.
+    """
+    proc = _run_hook(tmp_path, {"GOVE_ZONE_PROFILE": "dev"})
+    assert proc.returncode == 0, proc.stderr
+    response = json.loads(proc.stdout)
+    block = response["hookSpecificOutput"]
+    assert "permissionDecision" not in block
+    assert "permissionDecisionReason" not in block
+    assert response["gove_zone"]["receipts"], "the decision must still be receipted"
+
+
+def test_hook_deny_verdict_is_returned_not_deferred(tmp_path: Path) -> None:
+    """Wiring proof for the trust-root path rule through the real hook process:
+    a governed ``Write`` of ``observe`` into ``.gove-zone/gate.mode`` is denied,
+    and the deny (unlike an allow) is delivered to the runtime."""
+    payload = {
+        "tool_name": "Write",
+        "tool_input": {"file_path": ".gove-zone/gate.mode", "content": "observe"},
+    }
+    proc = _run_hook(tmp_path, {"GOVE_ZONE_PROFILE": "dev"}, payload)
+    assert proc.returncode == 0, proc.stderr
+    response = json.loads(proc.stdout)
+    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "gove_zone" not in response
+    # Negative path: the gate-mode file was never written by anything here,
+    # and the next resolution still fails closed to enforce.
+    assert not (tmp_path / ".gove-zone" / "gate.mode").exists()
+
+
+def test_hook_observe_mode_never_emits_an_explicit_allow(tmp_path: Path) -> None:
+    """Observe mode records the real verdict but must not answer ``allow``:
+    an explicit allow would bypass the host permission system it is supposed
+    to leave in charge during cutover."""
+    payload = {
+        "tool_name": "Write",
+        "tool_input": {"file_path": ".gove-zone/gate.mode", "content": "observe"},
+    }
+    proc = _run_hook(
+        tmp_path,
+        {"GOVE_ZONE_PROFILE": "dev", "GOVE_ZONE_GATE_MODE": "observe"},
+        payload,
+    )
+    assert proc.returncode == 0, proc.stderr
+    block = json.loads(proc.stdout)["hookSpecificOutput"]
+    assert "permissionDecision" not in block
+    assert "recorded but not enforced" in proc.stderr
 
 
 def test_hook_end_to_end_production_without_signer_blocks(tmp_path: Path) -> None:
