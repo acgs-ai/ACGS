@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "acgs_validator_registry_event/v1",
+  "description": "Append-only validator lifecycle events (JSONL, one event per line). An empty registry is valid and trusts nobody. Every event carries an event_binding digest over its own content; a tampered line makes its validator unverifiable (fail closed). No event is ever edited or deleted — rotation and revocation are new events.",
+  "type": "object",
+  "required": ["schema", "event", "validator_id", "event_binding"],
+  "properties": {
+    "schema": { "const": "acgs_validator_registry_event/v1" },
+    "event": { "enum": ["REGISTER", "ROTATE", "REVOKE"] },
+    "validator_id": { "type": "string", "minLength": 1 },
+    "validator_identity": {
+      "type": "string",
+      "minLength": 1,
+      "description": "REGISTER only — the real person/organization. Never invented by software."
+    },
+    "authorized_classes": {
+      "type": "array",
+      "items": { "enum": ["DATA_CONTROLLER", "COUNSEL_OR_RIGHTS_AUTHORITY"] },
+      "minItems": 1,
+      "description": "REGISTER only — evidence classes this validator may attest."
+    },
+    "appointment_authority": {
+      "type": "string",
+      "minLength": 1,
+      "description": "REGISTER only — who appointed this validator (real, externally evidenced)."
+    },
+    "key_id": { "type": "string", "minLength": 1, "description": "REGISTER/ROTATE — signing key id (keystore file name)." },
+    "key_fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 of the key bytes; verification checks the keystore key against this."
+    },
+    "effective_from": { "type": "string", "description": "REGISTER — authority window start (ISO-8601 Z)." },
+    "effective_until": { "type": ["string", "null"], "description": "REGISTER — authority window end, null = open." },
+    "instant": { "type": "string", "description": "ROTATE/REVOKE — logical instant the event takes effect (ISO-8601 Z)." },
+    "event_binding": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256(canonical(event minus this field)) — tamper evidence."
+    }
+  }
+}
