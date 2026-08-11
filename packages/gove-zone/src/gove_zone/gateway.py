@@ -1062,7 +1062,22 @@ class UniversalGateway:
         if not actor or not actor.strip():
             raise ValueError("actor is required for hook governance (fail-closed)")
         factory = call_factory if call_factory is not None else tool_calls_from_hook_payload
-        calls = tuple(factory(dict(payload), action_kind=action_kind, actor=actor))
+        try:
+            calls = tuple(factory(dict(payload), action_kind=action_kind, actor=actor))
+        except Exception as exc:  # noqa: BLE001 - a crashing normalizer must fail closed
+            # A factory that raises on a malformed or unsupported payload is a
+            # governance failure, not a caller contract error: direct
+            # integrations rely on this method's documented fail-closed
+            # response shape, so the crash must become a deny, not an escaped
+            # exception that drops the response contract.
+            return _hook_response(
+                action_kind, "deny", f"call normalization failed: {type(exc).__name__}"
+            )
+        if not all(isinstance(call, ToolCall) for call in calls):
+            # Result validation is part of the same boundary: a factory
+            # returning a non-ToolCall would otherwise crash the actor-binding
+            # check below and escape the response contract the same way.
+            return _hook_response(action_kind, "deny", "call factory returned a non-ToolCall")
         if not calls:
             return _hook_response(action_kind, "deny", "no governable call in hook payload")
         if any(call.actor != actor for call in calls):

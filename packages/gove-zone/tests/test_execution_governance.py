@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 
+from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.errors import ProductionProfileError
 from gove_zone.execution import (
     _GIT_MUTATING,
@@ -1634,6 +1635,42 @@ def test_yarnpkg_alias_is_denied_like_yarn(tmp_path: Path) -> None:
     assert "deny-non-canonical-package-manager" in event["matched_rules"]
 
 
+@pytest.mark.parametrize("command", ["NPM install left-pad", "Npm install left-pad"])
+def test_mixed_case_manager_spelling_is_denied_like_the_lowercase_one(
+    tmp_path: Path, command: str
+) -> None:
+    """On the case-insensitive filesystems macOS and Windows ship, ``NPM
+    install`` resolves to the ordinary ``npm`` binary, but the mixed-case
+    spelling previously missed every manager table and downgraded the hard
+    non-canonical-manager denial to an approvable undecidable-shell ask."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, command)
+
+    assert permission(response) == "deny"
+    assert "gove_zone" not in response
+    event = audit_events(tmp_path)[-1]
+    assert event["tool"] == ACTION_PACKAGE_INSTALL
+    assert event["decision"] == "deny"
+    assert "deny-non-canonical-package-manager" in event["matched_rules"]
+
+
+def test_mixed_case_canonical_manager_is_not_denied_as_non_canonical(
+    tmp_path: Path,
+) -> None:
+    """Positive control: casefolding recovers the canonical contract too;
+    ``PNPM install`` is the declared manager, so it escalates on the
+    dependency tier rather than hitting the non-canonical denial."""
+    gateway = make_execution_gateway(tmp_path)
+
+    response = decide(gateway, "PNPM install left-pad")
+
+    assert permission(response) == "ask"
+    event = audit_events(tmp_path)[-1]
+    assert event["decision"] == "escalate"
+    assert "deny-non-canonical-package-manager" not in event["matched_rules"]
+
+
 def test_option_bearing_wrapper_is_denied_before_receipt_minting(tmp_path: Path) -> None:
     gateway = make_execution_gateway(tmp_path)
 
@@ -2873,6 +2910,60 @@ def test_call_factory_cannot_spoof_the_gateway_actor(
     assert audit_events(tmp_path) == []
 
 
+def test_crashing_call_factory_denies_instead_of_escaping_the_hook_contract(
+    tmp_path: Path,
+) -> None:
+    """A custom normalizer that raises on a malformed payload must become a
+    deny response, not an exception that escapes ``handle_claude_hook`` and
+    drops the documented fail-closed response shape."""
+    gateway = make_execution_gateway(tmp_path)
+
+    def raising_factory(
+        payload: dict[str, Any],
+        *,
+        action_kind: str,
+        actor: str,
+    ) -> tuple[ToolCall, ...]:
+        raise KeyError("tool_input")
+
+    response = gateway.handle_claude_hook(
+        bash_payload("ls"),
+        actor="operator-a",
+        call_factory=raising_factory,
+    )
+
+    assert permission(response) == "deny"
+    assert "gove_zone" not in response
+    assert "call normalization failed: KeyError" in json.dumps(response)
+    # Nothing was evaluated, so nothing may have been authorized or audited.
+    assert audit_events(tmp_path) == []
+
+
+def test_call_factory_returning_a_non_toolcall_is_denied(tmp_path: Path) -> None:
+    """A factory yielding something other than ``ToolCall`` would crash the
+    actor-binding check and escape the response contract the same way a
+    raising factory does; it must be denied instead."""
+    gateway = make_execution_gateway(tmp_path)
+
+    def wrong_shape_factory(
+        payload: dict[str, Any],
+        *,
+        action_kind: str,
+        actor: str,
+    ) -> tuple[Any, ...]:
+        return ({"name": ACTION_SHELL_EXEC, "actor": actor},)
+
+    response = gateway.handle_claude_hook(
+        bash_payload("ls"),
+        actor="operator-a",
+        call_factory=wrong_shape_factory,
+    )
+
+    assert permission(response) == "deny"
+    assert "gove_zone" not in response
+    assert audit_events(tmp_path) == []
+
+
 # -- 5. fail-closed wiring --------------------------------------------------- #
 
 
@@ -3035,6 +3126,47 @@ def test_gateway_factory_writes_to_the_existing_audit_chain(
     assert not (tmp_path / ".gove-zone" / "gateway-audit.jsonl").exists()
 
 
+def test_gateway_factory_forwards_the_receipt_ttl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``receipt_ttl_seconds`` must reach ``UniversalGateway``: a builder that
+    drops it makes every require_expiry posture unreachable through the
+    public factory."""
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("GOVE_ZONE_PROFILE", "dev")
+
+    gateway = build_execution_gateway(receipt_ttl_seconds=900.0)
+
+    assert gateway.receipt_ttl_seconds == 900.0
+
+
+def test_gateway_factory_supports_the_strict_expiry_profile(tmp_path: Path) -> None:
+    """``production_strict`` requires expiry; without the TTL argument the
+    builder fails closed at construction, and with it the hardened posture
+    constructs, proving the parameter is honored end to end."""
+    signer = FakeSigner()
+    profile = GovernanceProfile.production_strict(
+        verifier=signer,
+        signer=signer,
+        consumption_ledger=ReceiptConsumptionLedger(str(tmp_path / "strict-ledger.jsonl")),
+    )
+
+    with pytest.raises(ValueError, match="receipt_ttl_seconds"):
+        build_execution_gateway(
+            profile=profile,
+            audit_path=tmp_path / "audit.jsonl",
+            ledger_path=tmp_path / "ledger.jsonl",
+        )
+
+    gateway = build_execution_gateway(
+        profile=profile,
+        audit_path=tmp_path / "audit.jsonl",
+        ledger_path=tmp_path / "ledger.jsonl",
+        receipt_ttl_seconds=60.0,
+    )
+    assert gateway.receipt_ttl_seconds == 60.0
+
+
 def test_run_context_is_threaded_into_the_receipt_binding() -> None:
     """``run_id`` was accepted by the prior path and dropped before the receipt
     was built, leaving decisions correlated to nothing. It is bound now."""
@@ -3170,6 +3302,44 @@ def test_verifier_always_flags_the_canonical_unattributed_actor() -> None:
     assert report["counts"]["unassigned_tier"] == 0
     assert report["counts"]["unconditional_allow"] == 0
     assert report["counts"]["legacy_observer_path"] == 0
+
+
+@pytest.mark.parametrize("actor", [None, 0, False, {}, ["operator-a"], "  "])
+def test_verifier_flags_non_string_or_blank_actors_as_unattributed(actor: Any) -> None:
+    """``str()``-ing a non-string actor coined spellings like ``"None"`` or
+    ``"0"`` that no fallback list contains, so a record with no real
+    attribution verified ``ok: true``. Only a nonempty string is a valid
+    attribution; every other shape is reported as unattributed."""
+    report = verify_execution_chain(
+        [
+            {
+                "event_id": "ev_bad_actor",
+                "tool": ACTION_SHELL_EXEC,
+                "actor": actor,
+                "decision": "allow",
+                "matched_rules": [f"RISK_TIER:{TIER_UNCLASSIFIED}"],
+            }
+        ]
+    )
+
+    assert report["ok"] is False
+    assert report["counts"]["unattributed"] == 1
+
+
+def test_verifier_flags_a_missing_actor_field_as_unattributed() -> None:
+    report = verify_execution_chain(
+        [
+            {
+                "event_id": "ev_no_actor",
+                "tool": ACTION_SHELL_EXEC,
+                "decision": "allow",
+                "matched_rules": [f"RISK_TIER:{TIER_UNCLASSIFIED}"],
+            }
+        ]
+    )
+
+    assert report["ok"] is False
+    assert report["counts"]["unattributed"] == 1
 
 
 def test_verifier_flags_unassigned_tier() -> None:

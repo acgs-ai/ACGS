@@ -270,7 +270,10 @@ rather than by silently allowing.
   bypass becomes *deliberate and detectable* rather than routine and invisible.
 - Denying non-canonical package managers will occasionally block a legitimate
   ad-hoc action. That is the intended trade; the escape hatch is an explicit,
-  receipted `ESCALATE`, not a silent allow.
+  audited `ESCALATE` surfaced as the host's "ask" permission prompt, not a
+  silent allow. The hook path mints no receipt for a non-allow decision: the
+  escalation is recorded in the audit chain, and a receipt exists only if a
+  human approves and the action re-enters through a receipted path.
 - More `DENY` and `ESCALATE` decisions raise the availability surface named by
   ADV13 — fail-closed inverts integrity attacks into availability attacks.
 

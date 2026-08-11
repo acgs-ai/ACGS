@@ -1101,7 +1101,18 @@ def _portable_basename(executable: str) -> str:
 
 
 def _normalized_package_executable(binary: str) -> str:
-    """Normalize declared package-tool shims without trusting arbitrary names."""
+    """Normalize declared package-tool shims without trusting arbitrary names.
+
+    Recognized manager names, runners, and aliases are compared casefolded in
+    the unsuffixed branch too: on a case-insensitive filesystem (macOS and
+    Windows defaults) ``NPM install`` resolves to the normal ``npm``
+    executable, so keeping the mixed-case spelling would demote the manager
+    contract to an approvable undecidable-shell ask instead of the hard
+    non-canonical-manager deny. On a case-sensitive filesystem this
+    over-approximates (a genuinely distinct ``NPM`` binary is still governed
+    as ``npm``), which is a deny/escalation, never a false allow. Names
+    outside the declared tables keep their original spelling.
+    """
     folded = binary.casefold()
     for suffix in _WINDOWS_PACKAGE_EXECUTABLE_SUFFIXES:
         if not folded.endswith(suffix):
@@ -1115,7 +1126,14 @@ def _normalized_package_executable(binary: str) -> str:
         ):
             return _MANAGER_EXECUTABLE_ALIASES.get(candidate, candidate)
         break
-    return _MANAGER_EXECUTABLE_ALIASES.get(binary, binary)
+    if (
+        folded == "corepack"
+        or folded in _INSTALL_SUBCOMMANDS
+        or folded in _PACKAGE_RUNNERS
+        or folded in _MANAGER_EXECUTABLE_ALIASES
+    ):
+        return _MANAGER_EXECUTABLE_ALIASES.get(folded, folded)
+    return binary
 
 
 def _interpreter_family(binary: str) -> str:
@@ -2090,6 +2108,7 @@ def build_execution_gateway(
     validator_id: str = EXECUTION_VALIDATOR_ID,
     allowed_actors: frozenset[str] | set[str] | None = None,
     policy: Policy | None = None,
+    receipt_ttl_seconds: float | None = None,
 ) -> Any:
     """A :class:`~gove_zone.gateway.UniversalGateway` for this boundary.
 
@@ -2099,6 +2118,12 @@ def build_execution_gateway(
     (``.gove-zone/gateway-audit.jsonl``), and taking that default during cutover
     would fork the audit chain in two, leaving the pre-cutover history in one
     file and everything after it in another.
+
+    ``receipt_ttl_seconds`` is forwarded to ``UniversalGateway`` so minted
+    receipts carry a hash-bound ``expires_at``. A profile that requires expiry
+    (``GovernanceProfile.production_strict``) makes ``UniversalGateway`` fail
+    closed at construction when no TTL is configured; without this argument
+    the hardened posture would be unreachable through this public builder.
     """
     from gove_zone.errors import ProductionProfileError
     from gove_zone.gateway import UniversalGateway
@@ -2135,6 +2160,7 @@ def build_execution_gateway(
         audit_path=resolved_audit,
         ledger_path=resolved_ledger,
         allowed_actors=allowed_actors,
+        receipt_ttl_seconds=receipt_ttl_seconds,
     )
 
 
@@ -2600,8 +2626,13 @@ def verify_execution_chain(
     * ``unassigned_tier`` — a decision whose ``matched_rules`` contains
       ``RISK_TIER:default`` means the tool had no tier assignment and was denied
       by the fail-closed default. Correct behavior, but a wiring gap to report.
-    * ``unattributed`` — records carrying a fallback actor. These are audit
-      records, not authorizations.
+    * ``unattributed`` — records carrying a fallback actor, or an ``actor``
+      field that is not a nonempty string (missing, ``None``, numeric,
+      mapping, or whitespace-only). Stringifying such values would mint a
+      spelling like ``"None"`` that no fallback list contains, so a record
+      with no real attribution would verify clean; instead any non-string or
+      blank actor is treated as unattributed. These are audit records, not
+      authorizations.
     * ``unconditional_allow`` — an ``env.*`` decision with no ``matched_rules``
       is not traceable to a policy and is reported. Matched by namespace, not
       by the current action tuple, so an execution surface added or misspelled
@@ -2640,7 +2671,13 @@ def verify_execution_chain(
             continue
         checked += 1
         tool = str(event.get("tool", ""))
-        actor = str(event.get("actor", ""))
+        raw_actor = event.get("actor", "")
+        # str()-ing a non-string actor would coin spellings like "None" or
+        # "0" that no fallback list contains, letting a record with no real
+        # attribution verify clean. Only a nonempty (non-blank) string is a
+        # valid attribution; anything else is treated as unattributed.
+        actor_valid = isinstance(raw_actor, str) and bool(raw_actor.strip())
+        actor = raw_actor if isinstance(raw_actor, str) else repr(raw_actor)
         matched = event.get("matched_rules")
         # A str/bytes value IS a Sequence: iterating it yields characters that
         # match no predicate while keeping the list nonempty, so a string like
@@ -2674,7 +2711,7 @@ def verify_execution_chain(
             findings["legacy_observer_path"].append(anchor)
         if "RISK_TIER:default" in matched_list:
             findings["unassigned_tier"].append(anchor)
-        if require_attributed and actor in fallbacks:
+        if require_attributed and (not actor_valid or actor in fallbacks):
             findings["unattributed"].append(anchor)
         # Namespace-based on purpose: limiting this to the current
         # EXECUTION_ACTIONS tuple would blind the verifier to exactly the
