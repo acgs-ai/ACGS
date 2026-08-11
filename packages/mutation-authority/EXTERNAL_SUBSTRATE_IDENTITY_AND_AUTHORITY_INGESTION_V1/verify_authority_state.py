@@ -126,6 +126,8 @@ def compute_state(
         policy=policy,
         artifact_dir=registry_path.parent / ".authority_artifacts",
         receipt_key=key,
+        substrate_identity=manifest["substrate_id"],
+        substrate_digest=manifest["critical_set_digest"],
     )
     lifecycle = VT.governed_lifecycle_distribution(
         records,
@@ -134,6 +136,8 @@ def compute_state(
         keystore_dir=vkeystore,
         policy=policy,
         receipt_key=key,
+        substrate_identity=manifest["substrate_id"],
+        substrate_digest=manifest["critical_set_digest"],
     )
 
     # --- substrate reads (best-effort; a drifted/absent substrate must not crash) ---
@@ -158,6 +162,7 @@ def compute_state(
         routed = route(
             requests,
             routable,
+            substrate_identity=manifest["substrate_id"],
             substrate_digest=manifest["critical_set_digest"],
             key=key,
             eval_instant=eval_instant,

@@ -17,6 +17,7 @@ from __future__ import annotations
 import fcntl
 import os
 import secrets
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -30,58 +31,149 @@ class ReceiptError(RuntimeError):
     """Receipt invalid, replayed, or bound to different inputs — fail closed."""
 
 
-def load_key(keystore: Path) -> bytes | None:
-    """Load the HMAC key WITHOUT creating one. Verification paths must use
-    this: minting a fresh key during verification would silently invalidate
-    every receipt on file (they were signed with the real key) while looking
-    like a healthy trust root. Returns None when no keystore exists — the
-    caller decides whether an absent trust root is tolerable — and raises
-    ReceiptError when a keystore exists but holds no usable key."""
-    if not keystore.exists():
-        return None
-    if keystore.is_file():
-        data = keystore.read_bytes()
-        if len(data) >= 32:
-            return data
-    raise ReceiptError(f"keystore exists but holds no usable key: {keystore}")
+def _read_secure_key(parent_fd: int, name: str, display: Path) -> bytes:
+    """Read raw key bytes verbatim through a no-follow, pinned parent fd."""
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
+    except OSError as exc:
+        raise ReceiptError(f"cannot securely open keystore {display}: {exc}") from exc
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ReceiptError(f"keystore is not a regular file: {display}")
+        if st.st_uid != os.geteuid():
+            raise ReceiptError(f"keystore is not owned by the current user: {display}")
+        if stat.S_IMODE(st.st_mode) != 0o600:
+            raise ReceiptError(f"keystore permissions must be exactly 0600: {display}")
+        chunks = []
+        while True:
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        data = b"".join(chunks)
+        if len(data) < 32:
+            raise ReceiptError(f"keystore exists but holds no usable key: {display}")
+        return data
+    finally:
+        os.close(fd)
+
+
+def _open_trusted_parent(keystore: Path) -> tuple[int, str, Path]:
+    """Pin a non-symlinked, current-user-owned, non-writable parent path.
+
+    The parent must already exist.  Traversing every component with
+    O_NOFOLLOW prevents an ancestor symlink from redirecting key access.
+    """
+    absolute = keystore.absolute()
+    if absolute.name in ("", ".", ".."):
+        raise ReceiptError(f"invalid keystore path: {keystore}")
+    parent = absolute.parent
+    parts = parent.parts
+    try:
+        fd = os.open(parts[0], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        for part in parts[1:]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+    except OSError as exc:
+        try:
+            os.close(fd)
+        except (NameError, OSError):
+            pass
+        raise ReceiptError(
+            f"keystore parent has a missing or symlinked component: {parent}"
+        ) from exc
+    try:
+        st = os.fstat(fd)
+        if st.st_uid != os.geteuid() or stat.S_IMODE(st.st_mode) & 0o022:
+            raise ReceiptError(
+                "keystore parent must be owned by the current user and not "
+                f"group/other-writable: {parent}"
+            )
+        _validate_pinned_parent(fd, parent)
+        return fd, absolute.name, parent
+    except Exception:
+        os.close(fd)
+        raise
+
+
+def _validate_pinned_parent(parent_fd: int, parent: Path) -> None:
+    try:
+        pinned = os.fstat(parent_fd)
+        named = os.stat(parent, follow_symlinks=False)
+    except OSError as exc:
+        raise ReceiptError(f"keystore parent changed during access: {parent}") from exc
+    if not stat.S_ISDIR(named.st_mode) or (
+        pinned.st_dev,
+        pinned.st_ino,
+    ) != (named.st_dev, named.st_ino):
+        raise ReceiptError(f"keystore parent changed during access: {parent}")
 
 
 def load_or_create_key(keystore: Path) -> bytes:
-    """Load the HMAC key from a keystore outside the substrate, creating it on
-    first use. The keystore lives in this package (gitignored), never in the
-    read-only substrate.
-
-    Creation is atomic and owner-only: the file is opened with
-    O_CREAT|O_EXCL and mode 0600, so the key bytes are never observable
-    through a world-readable window and a failure to restrict permissions
-    fails closed instead of leaving a readable keystore behind.
-
-    The key is raw random bytes and is read back verbatim — never
-    whitespace-stripped. Stripping would reject (or worse, silently alter)
-    a key whose first or last byte happens to be a whitespace byte, making
-    load nondeterministically disagree with the key returned at creation."""
-    if keystore.exists():
-        if keystore.is_file():
-            data = keystore.read_bytes()
-            if len(data) >= 32:
-                return data
-        raise ReceiptError(f"keystore exists but holds no usable key: {keystore}")
-    key = secrets.token_bytes(32)
-    keystore.parent.mkdir(parents=True, exist_ok=True)
+    """Securely load or atomically create an owner-only regular key file."""
+    parent_fd, name, parent = _open_trusted_parent(keystore)
+    created = False
     try:
-        fd = os.open(keystore, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        data = keystore.read_bytes()
-        if len(data) >= 32:
+        try:
+            data = _read_secure_key(parent_fd, name, keystore)
+            _validate_pinned_parent(parent_fd, parent)
             return data
-        raise ReceiptError(f"keystore exists but holds no usable key: {keystore}") from None
-    except OSError as exc:
-        raise ReceiptError(f"cannot create keystore with owner-only permissions: {exc}") from exc
-    try:
-        os.write(fd, key)
+        except ReceiptError:
+            try:
+                os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                raise
+
+        key = secrets.token_bytes(32)
+        try:
+            fd = os.open(
+                name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=parent_fd,
+            )
+            created = True
+        except FileExistsError:
+            data = _read_secure_key(parent_fd, name, keystore)
+            _validate_pinned_parent(parent_fd, parent)
+            return data
+        except OSError as exc:
+            raise ReceiptError(
+                f"cannot create keystore with owner-only permissions: {exc}"
+            ) from exc
+        try:
+            st = os.fstat(fd)
+            if (
+                not stat.S_ISREG(st.st_mode)
+                or st.st_uid != os.geteuid()
+                or stat.S_IMODE(st.st_mode) != 0o600
+            ):
+                raise ReceiptError("new keystore failed owner/regular/mode verification")
+            view = memoryview(key)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise ReceiptError("short write while creating keystore")
+                view = view[written:]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        try:
+            _validate_pinned_parent(parent_fd, parent)
+        except ReceiptError:
+            if created:
+                try:
+                    os.unlink(name, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    pass
+            raise
+        return key
     finally:
-        os.close(fd)
-    return key
+        os.close(parent_fd)
 
 
 def _decision_inputs(
@@ -89,19 +181,27 @@ def _decision_inputs(
     request_id: str,
     prior_state: str,
     new_state: str,
+    authority_subject: str,
     authority_evidence_id: str,
     evidence_digest: str,
     authority_scope: Any,
+    substrate_identity: str,
     substrate_critical_set_digest: str,
+    decision: str,
+    decision_reason: str,
 ) -> dict[str, Any]:
     return {
         "authority_evidence_id": authority_evidence_id,
+        "authority_subject": authority_subject,
         "authority_scope_digest": hash_obj(authority_scope),
+        "decision": decision,
+        "decision_reason": decision_reason,
         "evidence_digest": evidence_digest,
         "new_state": new_state,
         "policy_version": POLICY_VERSION,
         "prior_state": prior_state,
         "request_id": request_id,
+        "substrate_identity": substrate_identity,
         "substrate_critical_set_digest": substrate_critical_set_digest,
     }
 
@@ -116,6 +216,7 @@ def mint_receipt(
     authority_evidence_id: str,
     evidence_digest: str,
     authority_scope: Any,
+    substrate_identity: str,
     substrate_critical_set_digest: str,
     decision: str,
     decision_reason: str,
@@ -126,10 +227,14 @@ def mint_receipt(
         request_id=request_id,
         prior_state=prior_state,
         new_state=new_state,
+        authority_subject=authority_subject,
         authority_evidence_id=authority_evidence_id,
         evidence_digest=evidence_digest,
         authority_scope=authority_scope,
+        substrate_identity=substrate_identity,
         substrate_critical_set_digest=substrate_critical_set_digest,
+        decision=decision,
+        decision_reason=decision_reason,
     )
     decision_inputs_digest = hash_obj(inputs)
     receipt_id = hash_obj({"decision_inputs_digest": decision_inputs_digest})
@@ -143,7 +248,8 @@ def mint_receipt(
         "authority_evidence_id": authority_evidence_id,
         "authority_scope": authority_scope,
         "evidence_digest": evidence_digest,
-        "substrate_identity": substrate_critical_set_digest,
+        "substrate_identity": substrate_identity,
+        "substrate_critical_set_digest": substrate_critical_set_digest,
         "decision_inputs_digest": decision_inputs_digest,
         "policy_version": POLICY_VERSION,
         "decision": decision,
@@ -167,10 +273,14 @@ def verify_receipt(key: bytes, receipt: dict[str, Any]) -> bool:
             request_id=receipt["request_id"],
             prior_state=receipt["prior_state"],
             new_state=receipt["new_state"],
+            authority_subject=receipt["authority_subject"],
             authority_evidence_id=receipt["authority_evidence_id"],
             evidence_digest=receipt["evidence_digest"],
             authority_scope=receipt["authority_scope"],
-            substrate_critical_set_digest=receipt["substrate_identity"],
+            substrate_identity=receipt["substrate_identity"],
+            substrate_critical_set_digest=receipt["substrate_critical_set_digest"],
+            decision=receipt["decision"],
+            decision_reason=receipt["decision_reason"],
         )
         digest = hash_obj(inputs)
         if digest != receipt["decision_inputs_digest"]:

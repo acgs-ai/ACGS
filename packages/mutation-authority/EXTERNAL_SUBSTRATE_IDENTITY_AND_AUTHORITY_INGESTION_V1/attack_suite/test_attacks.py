@@ -20,6 +20,7 @@ import pytest
 PKG = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PKG))
 
+import authority_receipt as AR  # noqa: E402
 from _canonical import sha256_hex  # noqa: E402
 from _identity import (  # noqa: E402
     IDENTITY_CONFIRMED,
@@ -184,6 +185,7 @@ def manifest(substrate):
 # exercise positive routing retain these bytes as the registry artifact so
 # source_artifact_intact can re-verify the digest.
 FIXTURE_DOC = b"[FIXTURE] appointment deed"
+FIXTURE_DIGEST = sha256_hex(FIXTURE_DOC)
 
 
 def _evidence(
@@ -195,7 +197,7 @@ def _evidence(
     effective_from="2026-01-01T00:00:00Z",
     effective_until=None,
     revoked_at=None,
-    source_digest=sha256_hex(FIXTURE_DOC),
+    source_digest=FIXTURE_DIGEST,
 ):
     return {
         "authority_evidence_id": ev_id,
@@ -216,6 +218,7 @@ def _route(requests, evidence, digest="d" * 64):
     return route(
         requests,
         evidence,
+        substrate_identity="fixture-substrate",
         substrate_digest=digest,
         key=KEY,
         eval_instant=INSTANT,
@@ -446,6 +449,86 @@ def test_attack18_duplicate_ingestion_idempotent(tmp_path):
     assert dup  # ingest CLI treats this as a no-op
 
 
+def test_receipt_keystore_rejects_symlink_and_insecure_mode(tmp_path):
+    external = tmp_path / "external-key"
+    external.write_bytes(b"x" * 32)
+    external.chmod(0o600)
+    external_before = external.read_bytes()
+    linked = tmp_path / "linked-keystore"
+    linked.symlink_to(external)
+    with pytest.raises(ReceiptError):
+        load_or_create_key(linked)
+    assert external.read_bytes() == external_before
+
+    insecure = tmp_path / "insecure-keystore"
+    insecure.write_bytes(b"y" * 32)
+    insecure.chmod(0o644)
+    with pytest.raises(ReceiptError):
+        load_or_create_key(insecure)
+    assert insecure.read_bytes() == b"y" * 32
+
+
+def test_receipt_keystore_fileexists_race_revalidates_winner(tmp_path, monkeypatch):
+    keystore = tmp_path / "raced-keystore"
+    winner = b"w" * 32
+    real_open = AR.os.open
+    raced = False
+
+    def racing_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal raced
+        if flags & AR.os.O_CREAT and not raced:
+            raced = True
+            keystore.write_bytes(winner)
+            keystore.chmod(0o600)
+            raise FileExistsError(path)
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(AR.os, "open", racing_open)
+    assert load_or_create_key(keystore) == winner
+
+
+def test_receipt_keystore_rejects_symlinked_ancestor_and_insecure_parent(tmp_path):
+    trusted = tmp_path / "trusted-parent"
+    trusted.mkdir(mode=0o700)
+    linked_parent = tmp_path / "linked-parent"
+    linked_parent.symlink_to(trusted, target_is_directory=True)
+    with pytest.raises(ReceiptError):
+        load_or_create_key(linked_parent / "receipt.key")
+    assert not (trusted / "receipt.key").exists()
+
+    insecure = tmp_path / "insecure-parent"
+    insecure.mkdir()
+    insecure.chmod(0o777)
+    with pytest.raises(ReceiptError):
+        load_or_create_key(insecure / "receipt.key")
+    assert not (insecure / "receipt.key").exists()
+
+
+def test_receipt_keystore_rejects_parent_swap_and_removes_new_key(tmp_path, monkeypatch):
+    parent = tmp_path / "secure-parent"
+    parent.mkdir(mode=0o700)
+    moved = tmp_path / "moved-parent"
+    protected = tmp_path / "protected.txt"
+    protected.write_bytes(b"protected-original\n")
+    real_open = AR.os.open
+    swapped = False
+
+    def swapping_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if flags & AR.os.O_CREAT and not swapped:
+            swapped = True
+            parent.rename(moved)
+            parent.mkdir(mode=0o700)
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(AR.os, "open", swapping_open)
+    with pytest.raises(ReceiptError, match="parent changed"):
+        load_or_create_key(parent / "receipt.key")
+    assert not (moved / "receipt.key").exists()
+    assert not (parent / "receipt.key").exists()
+    assert protected.read_bytes() == b"protected-original\n"
+
+
 def test_attack19_replayed_receipt():
     ledger = ReplayLedger()
     r = mint_receipt(
@@ -457,6 +540,7 @@ def test_attack19_replayed_receipt():
         authority_evidence_id="AE-1",
         evidence_digest="a" * 64,
         authority_scope={"asset_ids": "ALL", "requirement_ids": "ALL"},
+        substrate_identity="fixture-substrate",
         substrate_critical_set_digest="d" * 64,
         decision="ALLOW",
         decision_reason="x",
@@ -519,6 +603,7 @@ def test_keystore_key_with_whitespace_edge_bytes_round_trips(tmp_path):
     ks = tmp_path / "ks"
     edge_key = b"\n" + b"k" * 30 + b" "  # 32 bytes, whitespace at both edges
     ks.write_bytes(edge_key)
+    ks.chmod(0o600)
     assert load_or_create_key(ks) == edge_key
     # Create-then-reload must also agree bit-for-bit.
     ks2 = tmp_path / "ks2"
@@ -537,6 +622,7 @@ def test_attack20_receipt_for_request_a_used_for_request_b():
         authority_evidence_id="AE-1",
         evidence_digest="a" * 64,
         authority_scope={"asset_ids": "ALL", "requirement_ids": "ALL"},
+        substrate_identity="fixture-substrate",
         substrate_critical_set_digest="d" * 64,
         decision="ALLOW",
         decision_reason="x",
@@ -556,6 +642,7 @@ def test_attack21_receipt_against_old_substrate_identity():
         authority_evidence_id="AE-1",
         evidence_digest="a" * 64,
         authority_scope={"asset_ids": "ALL", "requirement_ids": "ALL"},
+        substrate_identity="fixture-substrate",
         substrate_critical_set_digest="OLD" + "d" * 61,
         decision="ALLOW",
         decision_reason="x",
@@ -578,6 +665,7 @@ def test_attack22_authority_record_changed_after_receipt():
         authority_evidence_id=rec["authority_evidence_id"],
         evidence_digest=rec["source_digest"],
         authority_scope=rec["authority_scope"],
+        substrate_identity="fixture-substrate",
         substrate_critical_set_digest="d" * 64,
         decision="ALLOW",
         decision_reason="x",
@@ -760,6 +848,7 @@ def test_attack32_tampered_receipt_fails_verification():
         authority_evidence_id="AE-1",
         evidence_digest="a" * 64,
         authority_scope={"asset_ids": "ALL", "requirement_ids": "ALL"},
+        substrate_identity="fixture-substrate",
         substrate_critical_set_digest="d" * 64,
         decision="ALLOW",
         decision_reason="x",

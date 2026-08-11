@@ -174,6 +174,7 @@ def main(argv: list[str]) -> int:
         (r for r in registry if r.get("authority_evidence_id") == record["authority_evidence_id"]),
         record,
     )
+    manifest = json.loads((HERE / "substrate_identity.json").read_text(encoding="utf-8"))
     state = VT.derive_governed_state(
         mine,
         instant=args.instant,
@@ -183,6 +184,8 @@ def main(argv: list[str]) -> int:
         keystore_dir=Path(args.validator_keystore),
         policy=VT.load_policy(HERE / VT.POLICY_NAME),
         receipt_key=load_or_create_key(Path(args.keystore)),
+        substrate_identity=manifest["substrate_id"],
+        substrate_digest=manifest["critical_set_digest"],
     )
     print(f"lifecycle_state = {state}")
     if state != "ACTIVE":

@@ -9,11 +9,15 @@ deterministic.
 
 from __future__ import annotations
 
+import os
 import shutil
+import stat
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from unittest.mock import patch
 
+from . import effect as effect_module
 from .canonical import hash_file, sha256_hex
 from .effect import ACCEPTED, REJECTED, EffectBinder, EffectRecordingError
 from .engine import ALLOW, DENY, DecisionEngine
@@ -498,6 +502,7 @@ def attack_l_unrecordable_effect_rolled_back(base: Path) -> str:
 
         def __getattr__(self, name: str):
             if name == "append":
+
                 def _fail(*_a: object, **_k: object) -> None:
                     raise RecordingFailure("simulated audit-chain append failure")
 
@@ -572,6 +577,155 @@ def attack_n_glob_prefix_rogue_artifacts(base: Path) -> str:
     _expect(violations[0]["resource"] == "src/dangling.py", str(violations[0]))
     _expect(violations[0]["kind"] == "unauthorized_create", "wrong violation kind")
     return "glob-prefix rogue file and dangling symlink surface as unauthorized_create"
+def attack_p_temp_symlink_race(base: Path) -> str:
+    """A pre-planted temporary symlink must never be followed or replaced."""
+    for label, victim_kind in (("external", "external"), ("protected", "protected")):
+        sb = Sandbox.build(base / label)
+        resource = "src/module_a.py"
+        target = sb.repo / resource
+        original = target.read_bytes()
+        decision = sb.engine.decide(sb.intent("agent-alpha", resource), sb.tick())
+        assert decision.receipt is not None
+        if victim_kind == "external":
+            victim = sb.base / "outside.txt"
+            victim.write_bytes(b"outside-original\n")
+        else:
+            victim = sb.repo / "governance" / "policy.json"
+        victim_before = victim.read_bytes()
+        hostile = target.parent / ".module_a.py.mutation-authority.deadbeef.tmp"
+        hostile.symlink_to(victim)
+        with patch("mutation_authority.effect.secrets.token_hex", return_value="deadbeef"):
+            result = sb.binder.commit(decision.receipt, b"attacker-controlled\n", sb.tick())
+        _expect(result.status == REJECTED, f"{label} temp symlink race was accepted")
+        _expect(target.read_bytes() == original, f"{label} race changed governed target")
+        _expect(victim.read_bytes() == victim_before, f"{label} race changed protected victim")
+        _expect(hostile.is_symlink(), f"{label} hostile symlink was unexpectedly replaced")
+    return "unique O_EXCL|O_NOFOLLOW temp creation left external/protected files unchanged"
+
+
+def attack_q_parent_rename_during_effect(base: Path) -> str:
+    """Renaming the verified parent during mutation must roll back via dirfd."""
+
+    def make_rename_after_effect(
+        real_replace: Callable[[int, str, bytes, int], None],
+        repo: Path,
+        moved_parent: Path,
+        destination: Path,
+    ) -> Callable[[int, str, bytes, int], None]:
+        renamed = False
+
+        def rename_after_effect(parent_fd: int, name: str, content: bytes, mode: int) -> None:
+            nonlocal renamed
+            real_replace(parent_fd, name, content, mode)
+            if not renamed:
+                renamed = True
+                (repo / "src").rename(moved_parent)
+                (repo / "src").symlink_to(destination, target_is_directory=True)
+
+        return rename_after_effect
+
+    for label in ("external", "protected"):
+        sb = Sandbox.build(base / label)
+        resource = "src/module_a.py"
+        original = (sb.repo / resource).read_bytes()
+        protected = sb.repo / "governance" / "policy.json"
+        protected_before = protected.read_bytes()
+        outside = sb.base / "outside"
+        outside.mkdir()
+        outside_victim = outside / "module_a.py"
+        outside_victim.write_bytes(b"outside-original\n")
+        decision = sb.engine.decide(sb.intent("agent-alpha", resource), sb.tick())
+        assert decision.receipt is not None
+
+        moved_parent = sb.base / "moved-src"
+        destination = outside if label == "external" else protected.parent
+        rename_after_effect = make_rename_after_effect(
+            effect_module._atomic_replace_at,
+            sb.repo,
+            moved_parent,
+            destination,
+        )
+
+        with patch(
+            "mutation_authority.effect._atomic_replace_at",
+            side_effect=rename_after_effect,
+        ):
+            result = sb.binder.commit(decision.receipt, b"attacker-controlled\n", sb.tick())
+
+        _expect(result.status == REJECTED, f"{label} ancestor rename was accepted")
+        _expect(
+            moved_parent.joinpath("module_a.py").read_bytes() == original,
+            f"{label} rollback did not restore the pinned target",
+        )
+        _expect(
+            outside_victim.read_bytes() == b"outside-original\n",
+            f"{label} race changed external content",
+        )
+        _expect(
+            protected.read_bytes() == protected_before, f"{label} race changed protected content"
+        )
+        _expect(
+            decision.receipt.receipt_id not in sb.ledger.committed_receipt_ids(),
+            f"{label} race recorded a COMMIT",
+        )
+    return "ancestor rename rolled back through pinned fd; no external/protected write or COMMIT"
+
+
+def attack_r_parent_rename_at_audit_append(base: Path) -> str:
+    """A rename injected at append must rewind both effect and COMMIT."""
+    sb = Sandbox.build(base)
+    resource = "src/module_a.py"
+    original = (sb.repo / resource).read_bytes()
+    outside = sb.base / "outside"
+    outside.mkdir()
+    outside_victim = outside / "module_a.py"
+    outside_victim.write_bytes(b"outside-original\n")
+    decision = sb.engine.decide(sb.intent("agent-alpha", resource), sb.tick())
+    assert decision.receipt is not None
+    real_append = sb.ledger.append
+    moved_parent = sb.base / "moved-src"
+
+    def append_then_rename(*args: object, **kwargs: object):
+        event = real_append(*args, **kwargs)
+        (sb.repo / "src").rename(moved_parent)
+        (sb.repo / "src").symlink_to(outside, target_is_directory=True)
+        return event
+
+    with patch.object(sb.ledger, "append", side_effect=append_then_rename):
+        result = sb.binder.commit(decision.receipt, b"attacker-controlled\n", sb.tick())
+
+    _expect(result.status == REJECTED, "append-boundary ancestor rename was accepted")
+    _expect(
+        moved_parent.joinpath("module_a.py").read_bytes() == original,
+        "append-boundary rollback did not restore the pinned target",
+    )
+    _expect(
+        outside_victim.read_bytes() == b"outside-original\n",
+        "append-boundary race changed external content",
+    )
+    _expect(
+        decision.receipt.receipt_id not in sb.ledger.committed_receipt_ids(),
+        "append-boundary race left a COMMIT event",
+    )
+    sb.ledger.verify_chain()
+    return "append-boundary rename rewound effect and COMMIT; external content unchanged"
+
+
+def check_create_respects_restrictive_umask(base: Path) -> str:
+    """CREATE must derive its mode from the caller's restrictive umask."""
+    sb = Sandbox.build(base)
+    resource = "src/private.py"
+    decision = sb.engine.decide(sb.intent("agent-alpha", resource, operation="CREATE"), sb.tick())
+    assert decision.receipt is not None
+    previous_umask = os.umask(0o077)
+    try:
+        result = sb.binder.commit(decision.receipt, b"SECRET = True\n", sb.tick())
+    finally:
+        os.umask(previous_umask)
+    _expect(result.status == ACCEPTED, f"restrictive-umask CREATE failed: {result.reason}")
+    mode = stat.S_IMODE((sb.repo / resource).stat().st_mode)
+    _expect(mode == 0o600, f"CREATE widened umask 077 mode to {mode:o}")
+    return "CREATE under umask 077 produced mode 0600"
 
 
 def attack_o_in_memory_root_mutation(base: Path) -> str:
@@ -644,6 +798,10 @@ CHECKS: list[tuple[str, Callable[[Path], str]]] = [
         "ATTACK O (bonus): in-memory governance root mutation",
         attack_o_in_memory_root_mutation,
     ),
+    ("ATTACK M: effect-time temporary symlink race", attack_p_temp_symlink_race),
+    ("ATTACK N: ancestor rename during effect", attack_q_parent_rename_during_effect),
+    ("ATTACK O: ancestor rename at audit append", attack_r_parent_rename_at_audit_append),
+    ("CREATE respects restrictive umask", check_create_respects_restrictive_umask),
     ("ledger is bound to its governance root", check_ledger_root_binding),
     ("unanchored ledger construction is refused", check_unanchored_ledger_refused),
 ]

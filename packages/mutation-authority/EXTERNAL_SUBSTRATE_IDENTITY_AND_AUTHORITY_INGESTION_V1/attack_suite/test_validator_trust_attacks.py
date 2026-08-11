@@ -54,7 +54,9 @@ from validator_trust import (  # noqa: E402
     attestation_payload,
     derive_governed_state,
     event_binding,
+    governed_active_records,
     governed_lifecycle_distribution,
+    ingestion_receipt_verified,
     load_validator_events,
     rotation_payload,
     verify_attestation_trust,
@@ -96,6 +98,8 @@ def _gstate(rec, trust, *, instant=INSTANT, policy=_DEFAULT, events=None):
         events=events,
         keystore_dir=trust["keystore"],
         policy=dict(DEFAULT_POLICY) if policy is _DEFAULT else policy,
+        substrate_identity="fixture-substrate",
+        substrate_digest="d" * 64,
         receipt_key=FIX_AUTH_KEY,
     )
 
@@ -599,6 +603,56 @@ def test_validator_admin_lifecycle_and_bindings(tmp_path):
     for e in events:
         if e.get("key_id"):
             assert sha256_hex((ks / e["key_id"]).read_bytes()) == e["key_fingerprint"]
+
+
+def test_current_substrate_binding_is_mandatory_at_every_ingestion_api(tmp_path):
+    trust = fixture_trust(tmp_path)
+    ev = _attested(_evidence())
+    events = load_validator_events(trust["registry"])
+    common = {
+        "instant": INSTANT,
+        "superseded_ids": set(),
+        "in_registry": True,
+        "events": events,
+        "keystore_dir": trust["keystore"],
+        "policy": dict(DEFAULT_POLICY),
+        "receipt_key": FIX_AUTH_KEY,
+    }
+
+    with pytest.raises(TypeError):
+        ingestion_receipt_verified(ev, FIX_AUTH_KEY)
+    assert not ingestion_receipt_verified(
+        ev, FIX_AUTH_KEY, substrate_identity="", substrate_digest="d" * 64
+    )
+    assert not ingestion_receipt_verified(
+        ev, FIX_AUTH_KEY, substrate_identity="fixture-substrate", substrate_digest=""
+    )
+
+    with pytest.raises(TypeError):
+        derive_governed_state(ev, **common)
+    assert (
+        derive_governed_state(ev, substrate_identity="", substrate_digest="d" * 64, **common)
+        != ACTIVE
+    )
+
+    active_common = {
+        "events": events,
+        "keystore_dir": trust["keystore"],
+        "policy": dict(DEFAULT_POLICY),
+        "receipt_key": FIX_AUTH_KEY,
+    }
+    with pytest.raises(TypeError):
+        governed_active_records([ev], INSTANT, **active_common)
+    assert (
+        governed_active_records(
+            [ev],
+            INSTANT,
+            substrate_identity="fixture-substrate",
+            substrate_digest="",
+            **active_common,
+        )
+        == []
+    )
 
 
 def test_governed_derivation_is_deterministic(tmp_path):

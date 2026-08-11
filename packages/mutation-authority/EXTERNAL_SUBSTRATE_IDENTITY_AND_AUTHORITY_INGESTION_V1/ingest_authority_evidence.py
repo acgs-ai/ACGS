@@ -128,6 +128,7 @@ def main(argv: list[str]) -> int:
             authority_evidence_id=record["authority_evidence_id"],
             evidence_digest=record["source_digest"],
             authority_scope=record["authority_scope"],
+            substrate_identity=manifest["substrate_id"],
             substrate_critical_set_digest=manifest["critical_set_digest"],
             decision="INGEST",
             decision_reason=(

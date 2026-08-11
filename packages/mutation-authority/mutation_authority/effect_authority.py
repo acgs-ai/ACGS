@@ -157,7 +157,10 @@ CARRIERS: tuple[Carrier, ...] = (
         bypasses_execute_with_receipt=True,
         decidable_before_execution=False,
         sanctioned=False,
-        notes="execution.py marks these decidable=False; mutate tracked source without a governed binary",
+        notes=(
+            "execution.py marks these decidable=False; mutate tracked source "
+            "without a governed binary"
+        ),
     ),
     Carrier(
         id="lifecycle_scripts",

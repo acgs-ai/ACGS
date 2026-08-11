@@ -310,6 +310,8 @@ def test_algorithm_mode_confusion_refused(tmp_path):
         events=load_validator_events(hmac_trust["registry"]),
         keystore_dir=hmac_trust["keystore"],
         policy=dict(DEFAULT_POLICY),
+        substrate_identity="fixture-substrate",
+        substrate_digest="d" * 64,
     )
     assert state == INVALIDATED
 

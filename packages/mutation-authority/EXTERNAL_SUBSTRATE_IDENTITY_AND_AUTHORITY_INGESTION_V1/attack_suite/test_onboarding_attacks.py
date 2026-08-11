@@ -63,6 +63,7 @@ from validator_trust import (  # noqa: E402
     GENESIS,
     attestation_payload,
     event_binding,
+    ingestion_receipt_verified,
 )
 
 # --------------------------------------------------------------------------- #
@@ -168,7 +169,12 @@ def _sign_att(att: dict) -> dict:
     return att
 
 
-def _fixture_receipt(ev: dict) -> dict:
+def _fixture_receipt(
+    ev: dict,
+    *,
+    substrate_identity: str = "fixture-substrate",
+    substrate_digest: str = "d" * 64,
+) -> dict:
     """Mint a REAL ingestion receipt for this record under the fixture
     authority key — a bare receipt-id string no longer counts as ingested."""
     return mint_receipt(
@@ -180,7 +186,8 @@ def _fixture_receipt(ev: dict) -> dict:
         authority_evidence_id=ev["authority_evidence_id"],
         evidence_digest=ev["source_digest"],
         authority_scope=ev["authority_scope"],
-        substrate_critical_set_digest="d" * 64,
+        substrate_identity=substrate_identity,
+        substrate_critical_set_digest=substrate_digest,
         decision="INGEST",
         decision_reason="[FIXTURE] ingested",
         created_at="2026-08-10T11:30:00Z",
@@ -232,13 +239,24 @@ def _compute(substrate, tmp_path, registry_records, trust=None):
     ob_ks = tmp_path / "ob_ks"
     if not ob_ks.exists():
         ob_ks.write_bytes(FIX_AUTH_KEY)
+        ob_ks.chmod(0o600)
     reg = tmp_path / "ob_reg.jsonl"
     # Retain the fixture source artifact so source_artifact_intact can
     # re-verify the default fixture digest at routing time.
     artifact_dir = reg.parent / ".authority_artifacts"
     artifact_dir.mkdir(exist_ok=True)
     (artifact_dir / sha256_hex(FIXTURE_DOC)).write_bytes(FIXTURE_DOC)
-    for r in registry_records:
+    manifest = json.loads(mpath.read_text(encoding="utf-8"))
+    for original in registry_records:
+        r = dict(original)
+        if isinstance(r.get("ingestion_receipt_record"), dict):
+            receipt = _fixture_receipt(
+                r,
+                substrate_identity=manifest["substrate_id"],
+                substrate_digest=manifest["critical_set_digest"],
+            )
+            r["ingestion_receipt"] = receipt["receipt_id"]
+            r["ingestion_receipt_record"] = receipt
         append_record(reg, r)
     return V.compute_state(
         substrate,
@@ -331,6 +349,49 @@ def test_ob6b_bare_receipt_id_never_activates(substrate, tmp_path):
     assert st["report"]["ready_to_send"] == 0
     assert st["report"]["routable_authority_records"] == 0
     assert st["report"]["lifecycle_distribution"][VALIDATED] == 1
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"authority_subject": "other-subject"},
+        {"authority_evidence_id": "AE-OTHER"},
+        {"evidence_digest": "b" * 64},
+        {"authority_scope": {"asset_ids": ["other"], "requirement_ids": "ALL"}},
+        {"substrate_identity": "other-substrate"},
+        {"substrate_critical_set_digest": "e" * 64},
+        {"prior_state": "VALIDATED"},
+        {"new_state": "ACTIVE"},
+        {"decision": "ALLOW"},
+    ],
+)
+def test_ingestion_receipt_replay_rejected_across_exact_bindings(override):
+    ev = _evidence()
+    kwargs = {
+        "request_id": f"INGEST::{ev['authority_evidence_id']}",
+        "prior_state": "ABSENT",
+        "new_state": "INGESTED",
+        "authority_subject": ev["subject_identity"],
+        "authority_evidence_id": ev["authority_evidence_id"],
+        "evidence_digest": ev["source_digest"],
+        "authority_scope": ev["authority_scope"],
+        "substrate_identity": "35d071b427513b4a",
+        "substrate_critical_set_digest": (
+            "35d071b427513b4a85d5f5660436651787cb9f43fc6cf0163f3d66c620511c8f"
+        ),
+        "decision": "INGEST",
+        "decision_reason": "[FIXTURE] ingested",
+        "created_at": "2026-08-10T11:30:00Z",
+    }
+    kwargs.update(override)
+    receipt = mint_receipt(FIX_AUTH_KEY, **kwargs)
+    record = dict(ev, ingestion_receipt=receipt["receipt_id"], ingestion_receipt_record=receipt)
+    assert not ingestion_receipt_verified(
+        record,
+        FIX_AUTH_KEY,
+        substrate_identity="35d071b427513b4a",
+        substrate_digest=("35d071b427513b4a85d5f5660436651787cb9f43fc6cf0163f3d66c620511c8f"),
+    )
 
 
 def test_ob7_fabricated_authority_records_rejected():

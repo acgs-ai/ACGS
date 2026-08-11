@@ -50,6 +50,7 @@ from authority_lifecycle import (
     superseded_ids_of,
     validate_onboarding_record,
 )
+from authority_receipt import POLICY_VERSION
 from authority_receipt import verify_receipt as _verify_transition_receipt
 from authority_router import in_effect, source_artifact_intact
 
@@ -688,12 +689,21 @@ def is_stale(
 # --------------------------------------------------------------------------- #
 
 
-def ingestion_receipt_verified(record: dict[str, Any], receipt_key: bytes | None) -> bool:
-    """Was this record ingested through the receipted path? A bare receipt-id
-    string proves nothing — anyone who can write the registry can invent one.
-    The record must carry the full ingestion receipt, the receipt must verify
-    under the authority receipt key, and every bound field must match THIS
-    record. No key or no verifiable receipt -> not ingested (fail closed)."""
+def ingestion_receipt_verified(
+    record: dict[str, Any],
+    receipt_key: bytes | None,
+    *,
+    substrate_identity: str,
+    substrate_digest: str,
+) -> bool:
+    """Verify exact record, decision, policy, state, and current-substrate binding."""
+    if (
+        not isinstance(substrate_identity, str)
+        or not substrate_identity.strip()
+        or not isinstance(substrate_digest, str)
+        or not substrate_digest.strip()
+    ):
+        return False
     rid = record.get("ingestion_receipt")
     if not isinstance(rid, str) or not rid.strip():
         return False
@@ -705,11 +715,17 @@ def ingestion_receipt_verified(record: dict[str, Any], receipt_key: bytes | None
     ev_id = record.get("authority_evidence_id")
     return (
         receipt.get("receipt_id") == rid
+        and receipt.get("prior_state") == "ABSENT"
         and receipt.get("new_state") == "INGESTED"
+        and receipt.get("decision") == "INGEST"
+        and receipt.get("policy_version") == POLICY_VERSION
         and receipt.get("request_id") == f"INGEST::{ev_id}"
+        and receipt.get("authority_subject") == record.get("subject_identity")
         and receipt.get("authority_evidence_id") == ev_id
         and receipt.get("evidence_digest") == record.get("source_digest")
         and hash_obj(receipt.get("authority_scope")) == hash_obj(record.get("authority_scope"))
+        and receipt.get("substrate_identity") == substrate_identity
+        and receipt.get("substrate_critical_set_digest") == substrate_digest
     )
 
 
@@ -732,6 +748,8 @@ def derive_governed_state(
     events: list[dict[str, Any]] | None,
     keystore_dir: Path,
     policy: dict[str, Any] | None,
+    substrate_identity: str,
+    substrate_digest: str,
     receipt_key: bytes | None = None,
 ) -> str:
     """Trust-governed lifecycle state. Extends (never bypasses) the onboarding
@@ -774,7 +792,12 @@ def derive_governed_state(
         }:
             return CONFLICTED  # validator confirmed a different validity period
 
-    if not in_registry or not ingestion_receipt_verified(record, receipt_key):
+    if not in_registry or not ingestion_receipt_verified(
+        record,
+        receipt_key,
+        substrate_identity=substrate_identity,
+        substrate_digest=substrate_digest,
+    ):
         return VALIDATED
     if not in_effect(record, instant):
         return INGESTED
@@ -836,6 +859,8 @@ def governed_active_records(
     events: list[dict[str, Any]] | None,
     keystore_dir: Path,
     policy: dict[str, Any] | None,
+    substrate_identity: str,
+    substrate_digest: str,
     artifact_dir: Path | None = None,
     receipt_key: bytes | None = None,
 ) -> list[dict[str, Any]]:
@@ -861,6 +886,8 @@ def governed_active_records(
             keystore_dir=keystore_dir,
             policy=policy,
             receipt_key=receipt_key,
+            substrate_identity=substrate_identity,
+            substrate_digest=substrate_digest,
         )
         if state == ACTIVE and (artifact_dir is None or source_artifact_intact(r, artifact_dir)):
             out.append(r)
@@ -874,6 +901,8 @@ def governed_lifecycle_distribution(
     events: list[dict[str, Any]] | None,
     keystore_dir: Path,
     policy: dict[str, Any] | None,
+    substrate_identity: str,
+    substrate_digest: str,
     receipt_key: bytes | None = None,
 ) -> dict[str, int]:
     sids = _trusted_superseded_ids(
@@ -894,6 +923,8 @@ def governed_lifecycle_distribution(
             keystore_dir=keystore_dir,
             policy=policy,
             receipt_key=receipt_key,
+            substrate_identity=substrate_identity,
+            substrate_digest=substrate_digest,
         )
         dist[state] += 1
     return dist

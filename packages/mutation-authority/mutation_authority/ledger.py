@@ -139,6 +139,29 @@ class AuditLedger:
             raise
         return event
 
+    def rollback_last(self, event: LedgerEvent) -> None:
+        """Remove an exact just-appended head event and rewind its anchor.
+
+        This is only for an effect transaction whose post-append filesystem
+        identity check failed. Refuse if anything else has advanced the chain.
+        """
+        events = list(self.events())
+        if not events or events[-1].event_hash != event.event_hash:
+            raise LedgerIntegrityError("cannot roll back ledger: appended event is not head")
+        lines = self.path.read_bytes().splitlines(keepends=True)
+        if len(lines) != len(events):
+            raise LedgerIntegrityError("cannot roll back ledger: event framing changed")
+        prior_size = sum(len(line) for line in lines[:-1])
+        with self.path.open("rb+") as fh:
+            fh.truncate(prior_size)
+            fh.flush()
+            os.fsync(fh.fileno())
+        prior = events[-2] if len(events) > 1 else None
+        self._write_anchor(
+            count=len(events) - 1,
+            head_hash=prior.event_hash if prior is not None else GENESIS_PREV,
+        )
+
     def _write_anchor(self, count: int, head_hash: str) -> None:
         if self.anchor_path is None:
             return
