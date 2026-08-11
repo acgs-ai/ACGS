@@ -362,10 +362,71 @@ _LIFECYCLE_DISABLE_FLAGS: Mapping[str, frozenset[str]] = {
     "composer": frozenset({"--no-scripts"}),
 }
 
+#: Managers whose CLIs parse ``--ignore-scripts`` as a *boolean-valued*
+#: option, not a bare switch. npm 11 (nopt grammar, shared by pnpm) accepts
+#: three spellings that leave lifecycle scripts ENABLED: a following literal
+#: value (``npm install --ignore-scripts false <pkg>`` runs install scripts;
+#: ``npm config get ignore-scripts --ignore-scripts false`` prints ``false``),
+#: an inline value (``--ignore-scripts=false``), and the negation
+#: (``--no-ignore-scripts``) — with the last spelling on the line winning
+#: (``--ignore-scripts --no-ignore-scripts`` resolves to false). yarn and bun
+#: do not document value-consuming booleans, but they take the same
+#: conservative parse: a misread there can only *emit* a lifecycle-enablement
+#: decision for a command whose scripts were disabled — an extra escalation,
+#: never a suppressed one. Composer's ``--no-scripts`` is a Symfony
+#: ``VALUE_NONE`` switch that takes no value and has no negation, so exact
+#: token presence remains its correct parse.
+_BOOLEAN_LIFECYCLE_FLAG_MANAGERS = frozenset({"npm", "pnpm", "yarn", "bun"})
 
-def _lifecycle_scripts_disabled(manager: str, flags: frozenset[str]) -> bool:
-    """True only when the manager's own declared disable flag is present."""
-    return bool(flags & _LIFECYCLE_DISABLE_FLAGS.get(manager, frozenset()))
+
+def _lifecycle_scripts_disabled(manager: str, argv: Sequence[str]) -> bool:
+    """True only when *manager*'s own parse leaves lifecycle scripts disabled.
+
+    Bare set membership is not enough: ``npm install --ignore-scripts false
+    <pkg>`` and ``npm install --ignore-scripts --no-ignore-scripts <pkg>``
+    both RUN lifecycle scripts (npm resolves the boolean's final value), so
+    claiming ``scripts_disabled: true`` from the bare token would suppress
+    the separately promised lifecycle-enablement decision while the scripts
+    execute. The parse walks argv in order, stops at the first ``--`` (both
+    nopt and Symfony stop option parsing there), lets the last spelling win,
+    and reports disabled only for spellings that provably resolve to true;
+    every ambiguous spelling reports enabled, which at worst emits an extra
+    escalated decision — fail closed.
+    """
+    disable_flags = _LIFECYCLE_DISABLE_FLAGS.get(manager)
+    if not disable_flags:
+        return False
+    boolean_valued = manager in _BOOLEAN_LIFECYCLE_FLAG_MANAGERS
+    disabled = False
+    tokens = list(argv[1:])
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            break
+        for flag in disable_flags:
+            if token == flag:
+                if (
+                    boolean_valued
+                    and index + 1 < len(tokens)
+                    and tokens[index + 1] in ("true", "false")
+                ):
+                    # nopt consumes a literal true/false following a boolean
+                    # flag as that flag's value.
+                    disabled = tokens[index + 1] == "true"
+                    index += 1
+                else:
+                    disabled = True
+            elif boolean_valued and token == f"--no-{flag.removeprefix('--')}":
+                disabled = False
+            elif boolean_valued and token.startswith(f"{flag}="):
+                # Only the explicit literal ``true`` provably disables; any
+                # other inline value is reported enabled (nopt coerces
+                # non-literal spellings unpredictably, and over-reporting
+                # enablement only adds an escalation).
+                disabled = token[len(flag) + 1 :] == "true"
+        index += 1
+    return disabled
 
 
 _PUBLISH_SUBCOMMANDS: Mapping[str, frozenset[str]] = {
@@ -1609,7 +1670,6 @@ def classify_command(
         else:
             reasons.append("git-read-only-external-context")
     argv_prefix = (binary, subcommand) if subcommand else (binary,)
-    flags = frozenset(t for t in argv[1:] if t.startswith("-"))
 
     base_facts: dict[str, Any] = {
         "operator_present": operator_present,
@@ -1668,7 +1728,7 @@ def classify_command(
                 "canonical_manager": canonical if in_contract else "",
                 "manager_is_canonical": (binary == canonical) if in_contract else True,
                 "manager_contract_applies": in_contract,
-                "scripts_disabled": _lifecycle_scripts_disabled(binary, flags),
+                "scripts_disabled": _lifecycle_scripts_disabled(binary, argv),
             },
             command_sha256=digest,
         )
@@ -1966,7 +2026,7 @@ def classify_command(
                 "canonical_manager": canonical if in_contract else "",
                 "manager_is_canonical": (runner_ecosystem == canonical) if in_contract else True,
                 "manager_contract_applies": in_contract,
-                "scripts_disabled": _lifecycle_scripts_disabled(runner_ecosystem, flags),
+                "scripts_disabled": _lifecycle_scripts_disabled(runner_ecosystem, argv),
             },
             command_sha256=digest,
         )
@@ -1987,7 +2047,7 @@ def classify_command(
             "canonical_manager": canonical if in_contract else "",
             "manager_is_canonical": (binary == canonical) if in_contract else True,
             "manager_contract_applies": in_contract,
-            "scripts_disabled": _lifecycle_scripts_disabled(binary, flags),
+            "scripts_disabled": _lifecycle_scripts_disabled(binary, argv),
         }
         return ExecutionEvent(
             action=ACTION_PACKAGE_INSTALL if installing else ACTION_PACKAGE_INVOKE,

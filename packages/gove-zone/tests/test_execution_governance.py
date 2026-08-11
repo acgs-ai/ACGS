@@ -2474,14 +2474,34 @@ def test_install_with_scripts_disabled_does_not_claim_lifecycle_enablement(
         ("pnpm install --no-scripts", False),
         ("composer install --no-scripts", True),
         ("composer install --ignore-scripts", False),
+        # npm parses --ignore-scripts as a boolean-valued option (nopt): a
+        # following literal value, an inline value, or a --no- negation can
+        # resolve it to false, with the last spelling winning. Every spelling
+        # that resolves false (or is ambiguous) must report enabled.
+        ("npm install --ignore-scripts false left-pad", False),
+        ("npm install --ignore-scripts true left-pad", True),
+        ("npm install --ignore-scripts=false left-pad", False),
+        ("npm install --ignore-scripts=true left-pad", True),
+        ("npm install --no-ignore-scripts left-pad", False),
+        ("npm install --ignore-scripts --no-ignore-scripts left-pad", False),
+        ("npm install --no-ignore-scripts --ignore-scripts left-pad", True),
+        ("npm install --ignore-scripts false --ignore-scripts left-pad", True),
+        # nopt stops option parsing at `--`; a disable spelling after it is
+        # an ordinary argument and must not suppress the lifecycle record.
+        ("npm install left-pad -- --ignore-scripts", False),
+        ("pnpm install --ignore-scripts false", False),
+        # Symfony likewise stops at `--`: the token is an argument there.
+        ("composer install -- --no-scripts", False),
     ],
 )
 def test_lifecycle_disable_flags_are_manager_specific(command: str, disabled: bool) -> None:
     """npm 11 declares no ``--no-scripts`` option: it draws "Unknown cli
     config" and install scripts still run, so the shared flag set claimed
     ``scripts_disabled: true`` for an install that executes lifecycle
-    scripts. Only the manager's own declared disable spelling counts;
-    Composer's is ``--no-scripts``."""
+    scripts. Only the manager's own declared disable spelling counts —
+    parsed with the manager's own boolean-value and ordering semantics, not
+    bare token membership (``npm install --ignore-scripts false <pkg>`` runs
+    lifecycle scripts) — and Composer's is ``--no-scripts``."""
     event = classify_command(command)
 
     assert event.facts["scripts_disabled"] is disabled
@@ -2497,6 +2517,40 @@ def test_npm_no_scripts_flag_still_records_lifecycle_enablement(tmp_path: Path) 
 
     tools = [e["tool"] for e in audit_events(tmp_path)]
     assert tools == [ACTION_PACKAGE_LIFECYCLE_ENABLE, ACTION_PACKAGE_INSTALL]
+
+
+def test_boolean_false_ignore_scripts_still_records_lifecycle_enablement(
+    tmp_path: Path,
+) -> None:
+    """``--ignore-scripts false`` RUNS lifecycle scripts — npm 11 consumes the
+    following literal as the boolean's value (``npm config get ignore-scripts
+    --ignore-scripts false`` prints ``false``, and a file dependency's install
+    script executed under that spelling) — so the lifecycle-enablement
+    decision must be recorded exactly as for a bare install; the bare-token
+    membership check previously suppressed it."""
+    gateway = make_execution_gateway(tmp_path)
+
+    decide(gateway, "pnpm install --ignore-scripts false")
+
+    tools = [e["tool"] for e in audit_events(tmp_path)]
+    assert tools == [ACTION_PACKAGE_LIFECYCLE_ENABLE, ACTION_PACKAGE_INSTALL]
+
+
+def test_negated_ignore_scripts_records_lifecycle_enablement_from_hook_payload() -> None:
+    """``npm install --ignore-scripts --no-ignore-scripts <pkg>`` resolves the
+    boolean to false (last spelling wins in npm's parse), so the hook path
+    must emit the separately promised lifecycle-enablement decision."""
+    calls = execution_tool_calls_from_hook_payload(
+        bash_payload("npm install --ignore-scripts --no-ignore-scripts left-pad"),
+        action_kind="PreToolUse",
+        actor="operator-a",
+        canonical_package_manager="npm",
+    )
+
+    assert [call.name for call in calls] == [
+        ACTION_PACKAGE_LIFECYCLE_ENABLE,
+        ACTION_PACKAGE_INSTALL,
+    ]
 
 
 #: npm's own CLI declares these as ``install`` aliases (npm 11
