@@ -210,10 +210,20 @@ class EvidenceEmitter:
         finally:
             os.close(fd)
         out: list[dict[str, Any]] = []
-        for raw_line in raw.splitlines():
+        for lineno, raw_line in enumerate(raw.splitlines(), 1):
             line = raw_line.strip()
-            if line:
-                out.append(json.loads(line.decode("utf-8")))
+            if not line:
+                continue
+            record = json.loads(line.decode("utf-8"))
+            # A parseable non-object line (list/scalar) must fail here, in the
+            # gateway's PRE-effect readability check — admitting it would let
+            # the mutation commit and then crash recover_missing() (which
+            # calls .get() on every record) AFTER the effect is durable.
+            # ValueError, like json.JSONDecodeError, so preflight callers that
+            # fail closed on a malformed projection catch it uniformly.
+            if not isinstance(record, dict):
+                raise ValueError(f"evidence record at {self.path}:{lineno} is not a JSON object")
+            out.append(record)
         return out
 
     @staticmethod

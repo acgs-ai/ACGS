@@ -1542,6 +1542,49 @@ def test_registry_replaced_during_append_fails_closed(tmp_path, monkeypatch):
     assert [r["authority_evidence_id"] for r in read_registry(reg)] == ["AE-OK"]
 
 
+def test_registry_refuses_unterminated_tail_append(tmp_path):
+    # A registry whose last record lacks its terminating newline still parses
+    # via read_registry, but a raw append would write the next object directly
+    # after the closing brace ({"x":1}{"y":2}): the fsynced append "succeeds"
+    # while every subsequent registry read raises RegistryError, blocking the
+    # entire authority layer. The append must validate the JSONL framing on
+    # the opened descriptor and refuse to extend an unterminated tail.
+    from _registry import RegistryError, append_record, read_registry
+
+    reg = tmp_path / "reg.jsonl"
+    append_record(reg, _evidence(ev_id="AE-BASE"))
+    reg.write_bytes(reg.read_bytes().rstrip(b"\n"))  # simulate the interrupted append
+    unterminated = reg.read_bytes()
+    assert [r["authority_evidence_id"] for r in read_registry(reg)] == ["AE-BASE"]
+    with pytest.raises(RegistryError):
+        append_record(reg, _evidence(ev_id="AE-INJECTED"))
+    assert reg.read_bytes() == unterminated  # nothing fused onto the tail
+    assert [r["authority_evidence_id"] for r in read_registry(reg)] == ["AE-BASE"]
+    # After the tail is restored (terminated), appends work again.
+    reg.write_bytes(unterminated + b"\n")
+    append_record(reg, _evidence(ev_id="AE-OK"))
+    assert [r["authority_evidence_id"] for r in read_registry(reg)] == ["AE-BASE", "AE-OK"]
+
+
+def test_schema_invalid_registry_rows_block_readiness(substrate, tmp_path):
+    # A parseable JSON object that fails validate_evidence() never raises
+    # RegistryError, so it cannot be waved through as "no evidence on file":
+    # with a pristine substrate, intact trust root, and zero routed requests,
+    # a registry containing only unclassifiable rows must yield
+    # INTEGRATION_BLOCKED, never a healthy AUTHORITY_LAYER_READY.
+    import verify_authority_state as V
+    from _registry import append_record
+
+    mpath = _fixture_manifest_path(substrate, tmp_path)
+    reg = tmp_path / "reg.jsonl"
+    append_record(reg, {"authority_evidence_id": "AE-SCHEMA-INVALID"})
+    st = V.compute_state(substrate, reg, tmp_path / "ks", INSTANT, manifest_path=mpath)
+    assert st["report"]["substrate_identity_state"] == IDENTITY_CONFIRMED
+    assert st["report"]["malformed_authority_records"] == 1
+    assert st["report"]["ready_to_send"] == 0
+    assert st["verdict"] == V.INTEGRATION_BLOCKED
+
+
 def test_replay_ledger_refuses_unterminated_tail(tmp_path):
     # An interrupted append that leaves the final line unterminated must be
     # an explicit error: silently loading the fragment forgets the real

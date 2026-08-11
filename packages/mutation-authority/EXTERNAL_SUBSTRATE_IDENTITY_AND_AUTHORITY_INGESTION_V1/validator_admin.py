@@ -142,7 +142,15 @@ def _append(path: Path, event: dict) -> None:
 def _write_key(keystore: Path, key_id: str) -> str:
     """Create a fresh HMAC key atomically with owner-only permissions.
     O_CREAT|O_EXCL with mode 0600 means the key bytes are never observable
-    through a world-readable window; a permission failure fails closed."""
+    through a world-readable window; a permission failure fails closed.
+
+    The key bytes AND the keystore directory entry are made durable before
+    this returns: the caller fsyncs the registry ROTATE event, so a short
+    write or host failure that loses the key would otherwise leave a durable
+    rotation whose registered fingerprint has no usable key — the validator
+    is rejected at verification time while a retry is refused because that
+    key id is already in its history. A key that cannot be durably persisted
+    is removed and the rotation refused."""
     if "/" in key_id or "\\" in key_id or ".." in key_id:
         raise ValueError(f"unsafe key_id: {key_id!r}")
     keystore.mkdir(parents=True, exist_ok=True)
@@ -155,9 +163,26 @@ def _write_key(keystore: Path, key_id: str) -> str:
     except OSError as exc:
         raise ValueError(f"cannot create key with owner-only permissions: {exc}") from exc
     try:
-        os.write(fd, key)
-    finally:
-        os.close(fd)
+        try:
+            view = memoryview(key)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise OSError("short write to keystore key file")
+                view = view[written:]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        dir_fd = os.open(keystore, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError as exc:
+        # An incomplete or undurable key must not survive: it would shadow
+        # every retry with the same key id behind the keystore's O_EXCL.
+        p.unlink(missing_ok=True)
+        raise ValueError(f"cannot durably persist successor key {key_id!r}: {exc}") from exc
     return sha256_hex(key)
 
 

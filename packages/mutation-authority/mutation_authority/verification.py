@@ -1500,6 +1500,65 @@ def check_publication_dir_fsync_precedes_commit(base: Path) -> str:
     return "publication dir fsync failure ⇒ REJECTED before any COMMIT, effect rolled back"
 
 
+def check_rollback_dir_entries_fsynced_after_failed_append(base: Path) -> str:
+    """When ledger.append() fails AFTER _sync_publication has durably
+    published the effect, the rollback must fsync the rolled-back target
+    parent and every removed created-parent entry: restoring the pathname in
+    page cache only is not a rollback — a crash after the exception could
+    recover the durable NEW entry while the COMMIT was truncated or never
+    written, leaving an unaudited repository side effect."""
+    sb = Sandbox.build(base)
+    resource = "src/nested/deep/private.py"
+    decision = sb.engine.decide(
+        sb.intent("agent-alpha", resource, operation="CREATE", new_content=b"SECRET = True\n"),
+        sb.tick(),
+    )
+    _expect(decision.decision == ALLOW, f"setup ALLOW failed: {decision.reason}")
+    assert decision.receipt is not None
+    real_fsync = os.fsync
+    append_failed = False
+    rollback_dir_fsyncs: list[int] = []
+
+    def recording_fsync(fd: int) -> None:
+        if append_failed and stat.S_ISDIR(os.fstat(fd).st_mode):
+            rollback_dir_fsyncs.append(fd)
+        real_fsync(fd)
+
+    def failing_append(*_a: object, **_k: object) -> None:
+        nonlocal append_failed
+        append_failed = True
+        raise OSError("simulated audit-chain append failure")
+
+    with (
+        patch.object(effect_module.os, "fsync", recording_fsync),
+        patch.object(sb.ledger, "append", side_effect=failing_append),
+    ):
+        try:
+            sb.binder.commit(decision.receipt, b"SECRET = True\n", sb.tick())
+        except EffectRecordingError:
+            pass
+        else:
+            raise CheckFailure("unrecordable nested CREATE did not fail loudly")
+    # Target parent (src/nested/deep) plus each removed created parent
+    # (deep out of nested, nested out of src): three directory entries whose
+    # rollback must be durable before the exception propagates.
+    _expect(
+        len(rollback_dir_fsyncs) >= 3,
+        "rollback after a failed COMMIT append did not fsync the rolled-back "
+        f"directory entries (saw {len(rollback_dir_fsyncs)} directory fsyncs)",
+    )
+    _expect(
+        not (sb.repo / "src" / "nested").exists(),
+        "rollback left the created parent directories behind",
+    )
+    sb.ledger.verify_chain()
+    _expect(
+        repository_violations(sb.ledger, sb.repo, sb.root.governed_prefixes()) == [],
+        "rollback left the repository diverged from the chain",
+    )
+    return "failed COMMIT append ⇒ rollback fsyncs target parent and removed created parents"
+
+
 def attack_ad_target_replaced_during_audit_append(base: Path) -> str:
     """Replace the target with rogue bytes while the COMMIT event is being
     appended: the commit must revalidate the exact target state after the
@@ -1634,6 +1693,10 @@ CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     (
         "ATTACK AD: target replaced during the audit append",
         attack_ad_target_replaced_during_audit_append,
+    ),
+    (
+        "rollback directory entries fsynced after a failed COMMIT append",
+        check_rollback_dir_entries_fsynced_after_failed_append,
     ),
 ]
 

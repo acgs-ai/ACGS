@@ -104,10 +104,25 @@ def read_registry(path: Path) -> list[dict[str, Any]]:
 
 def append_record(path: Path, record: dict[str, Any]) -> None:
     line = json.dumps(record, sort_keys=True, ensure_ascii=False)
-    opened = _open_registry_fd(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND)
+    # O_RDWR (not O_WRONLY) so the tail can be inspected through the SAME
+    # descriptor the append writes to; O_APPEND still forces writes to EOF.
+    opened = _open_registry_fd(path, os.O_RDWR | os.O_CREAT | os.O_APPEND)
     assert opened is not None  # O_CREAT: only a raised RegistryError returns no fd
     fd, parent_fd = opened
     try:
+        # JSONL framing check on the opened descriptor: a registry whose last
+        # record lacks its terminating newline still parses via read_registry,
+        # but appending directly after the closing brace would fuse two
+        # records into one line ({"x":1}{"y":2}) — the fsynced append then
+        # "succeeds" while every subsequent registry read raises
+        # RegistryError, blocking the entire authority layer. Fail closed
+        # BEFORE extending an unterminated tail.
+        size = os.fstat(fd).st_size
+        if size > 0 and os.pread(fd, 1, size - 1) != b"\n":
+            raise RegistryError(
+                f"registry tail is not newline-terminated — appending would "
+                f"corrupt the JSONL framing: {path}"
+            )
         data = (line + "\n").encode("utf-8")
         view = memoryview(data)
         while view:

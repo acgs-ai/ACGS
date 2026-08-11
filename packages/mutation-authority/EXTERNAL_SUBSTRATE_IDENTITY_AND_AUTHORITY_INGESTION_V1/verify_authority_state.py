@@ -256,9 +256,17 @@ def compute_state(
     counts_ok = all(
         live_counts.get(k) == manifest["expected_counts"][k] for k in manifest["expected_counts"]
     )
+    # A schema-invalid registry row never raises RegistryError (it parses as
+    # JSON), so without this gate a registry full of rows that fail
+    # validate_evidence() would read as "no evidence on file" and the verdict
+    # would claim a healthy AUTHORITY_LAYER_READY. Unclassifiable evidence is
+    # a blocked integration, not an empty registry (fail closed).
+    registry_ok = not malformed
     if not identity_ok:
         verdict = SUBSTRATE_DIVERGED
-    elif not (counts_ok and invariants_hold and receipt_failures == 0 and trust_root_ok):
+    elif not (
+        counts_ok and invariants_hold and receipt_failures == 0 and trust_root_ok and registry_ok
+    ):
         verdict = INTEGRATION_BLOCKED
     elif ready == 0:
         verdict = AUTHORITY_LAYER_READY

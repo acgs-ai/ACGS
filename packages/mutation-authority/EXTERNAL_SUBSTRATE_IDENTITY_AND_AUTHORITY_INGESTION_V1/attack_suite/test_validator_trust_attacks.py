@@ -851,6 +851,82 @@ def test_validator_admin_lifecycle_and_bindings(tmp_path):
             assert sha256_hex((ks / e["key_id"]).read_bytes()) == e["key_fingerprint"]
 
 
+def test_rotation_key_durable_before_registry_event(tmp_path, monkeypatch):
+    # An HMAC rotation's successor key must be durably persisted (key bytes
+    # fsynced AND the keystore directory entry fsynced) BEFORE the ROTATE
+    # event is appended: a short write or host failure after the registry
+    # event is fsynced would otherwise leave a durable ROTATE whose
+    # registered fingerprint has no usable key — trust verification rejects
+    # the validator while retrying the rotation is refused because that key
+    # id is already in its history.
+    import os
+    import stat as stat_module
+
+    import validator_admin as VA
+
+    reg = tmp_path / "vreg.jsonl"
+    ks = tmp_path / "vks"
+    fingerprint = VA._write_key(ks, "dur-k1")
+    VA._append(
+        reg,
+        {
+            "schema": EVENT_SCHEMA,
+            "event": "REGISTER",
+            "validator_id": "[FIXTURE] vld-dur",
+            "validator_identity": "[FIXTURE] Durability Validator",
+            "authorized_classes": ["DATA_CONTROLLER"],
+            "appointment_authority": "[FIXTURE] General Counsel",
+            "key_id": "dur-k1",
+            "key_fingerprint": fingerprint,
+            "effective_from": "2026-01-01T00:00:00Z",
+            "effective_until": None,
+            "onboarding": "EXTERNAL_VALIDATOR_ONBOARDING_V1",
+            "appointment_binding": sha256_hex(b"[FIXTURE] appointment binding"),
+            "appointment_evidence_digests": [sha256_hex(b"[FIXTURE] appointment deed")],
+        },
+    )
+    base = ["--registry", str(reg), "--keystore", str(ks)]
+    rotate = ["rotate", "--validator-id", "[FIXTURE] vld-dur", "--key-id", "dur-k2"]
+
+    # (a) A successor key that cannot be made durable refuses the rotation:
+    # no ROTATE lands in the registry, and the partial key is removed so the
+    # SAME key id can be retried (O_EXCL must not turn the retry into a
+    # spurious duplicate).
+    real_fsync = os.fsync
+    fired: list[int] = []
+
+    def failing_first_fsync(fd):
+        if not fired:
+            fired.append(fd)
+            raise OSError("simulated key fsync failure")
+        real_fsync(fd)
+
+    monkeypatch.setattr(VA.os, "fsync", failing_first_fsync)
+    assert VA.main([*base, *rotate, "--instant", "2026-06-01T00:00:00Z"]) == 3
+    monkeypatch.undo()
+    assert fired, "the simulated durability failure was never reached"
+    events = load_validator_events(reg)
+    assert [e["event"] for e in events] == ["REGISTER"]  # no unusable ROTATE
+    assert not (ks / "dur-k2").exists()  # no partial key shadowing the retry
+
+    # (b) The retry with the same key id succeeds, and the key bytes plus the
+    # keystore directory entry are fsynced BEFORE the registry append's fsync.
+    kinds: list[str] = []
+
+    def recording_fsync(fd):
+        kinds.append("dir" if stat_module.S_ISDIR(os.fstat(fd).st_mode) else "file")
+        real_fsync(fd)
+
+    monkeypatch.setattr(VA.os, "fsync", recording_fsync)
+    assert VA.main([*base, *rotate, "--instant", "2026-06-01T00:00:00Z"]) == 0
+    monkeypatch.undo()
+    assert kinds[:2] == ["file", "dir"], f"key + keystore not durable first: {kinds}"
+    assert "file" in kinds[2:], f"registry append was never fsynced: {kinds}"
+    events = load_validator_events(reg)
+    assert [e["event"] for e in events] == ["REGISTER", "ROTATE"]
+    assert sha256_hex((ks / "dur-k2").read_bytes()) == events[-1]["key_fingerprint"]
+
+
 def test_symlinked_registry_refuses_lifecycle_append(tmp_path):
     import validator_admin as VA
 

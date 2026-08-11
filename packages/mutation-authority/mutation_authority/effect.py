@@ -104,12 +104,18 @@ def _create_missing_parents(
         raise
 
 
-def _remove_created_parents(created: list[tuple[int, str]]) -> None:
-    """Remove newly created empty parents in reverse order and close refs."""
+def _remove_created_parents(created: list[tuple[int, str]], durable: bool = False) -> None:
+    """Remove newly created empty parents in reverse order and close refs.
+
+    With ``durable`` the removal of each directory entry is fsynced before
+    its parent descriptor is closed: after ``_sync_publication`` the created
+    entries are durable, so an unsynced rmdir could be undone by a crash."""
     first_error: OSError | None = None
     for parent_fd, name in reversed(created):
         try:
             os.rmdir(name, dir_fd=parent_fd)
+            if durable:
+                os.fsync(parent_fd)
         except OSError as exc:
             first_error = first_error or exc
         finally:
@@ -280,15 +286,26 @@ def _rollback_transaction(
     prior_bytes: bytes | None,
     prior_mode: int,
     created_parents: list[tuple[int, str]],
+    durable: bool = False,
 ) -> None:
-    """Restore the target and remove directories created by this attempt."""
+    """Restore the target and remove directories created by this attempt.
+
+    ``durable`` must be set once ``_sync_publication`` has made the effect's
+    directory entries durable: restoring the prior pathname in page cache
+    only is not a rollback — a crash after the caller returns would recover
+    the durably published NEW entry while the COMMIT was truncated or never
+    written, leaving an unaudited repository side effect. The rolled-back
+    target's parent entry and every removed created-parent entry are fsynced
+    before the rollback is treated as complete."""
     first_error: OSError | None = None
     try:
         _rollback_at(parent_fd, target_name, prior_bytes, prior_mode)
+        if durable:
+            os.fsync(parent_fd)
     except OSError as exc:
         first_error = exc
     try:
-        _remove_created_parents(created_parents)
+        _remove_created_parents(created_parents, durable=durable)
     except OSError as exc:
         first_error = first_error or exc
     if first_error is not None:
@@ -539,6 +556,7 @@ class EffectBinder:
                         prior_bytes,
                         prior_mode,
                         created_parents,
+                        durable=True,
                     )
                 except OSError as exc:
                     raise EffectRecordingError(
@@ -562,12 +580,17 @@ class EffectBinder:
                     effective_now,
                 )
             except Exception as exc:
+                # The publication is already durable (_sync_publication ran):
+                # the rollback's directory entries must be fsynced too, or a
+                # crash could recover the durable new entry with the COMMIT
+                # truncated or never written — an unaudited side effect.
                 _rollback_transaction(
                     parent_fd,
                     target_name,
                     prior_bytes,
                     prior_mode,
                     created_parents,
+                    durable=True,
                 )
                 raise EffectRecordingError(
                     "effect could not be bound to the audit chain; filesystem change rolled back"
@@ -598,6 +621,7 @@ class EffectBinder:
                         prior_bytes,
                         prior_mode,
                         created_parents,
+                        durable=True,
                     )
                     self.ledger.rollback_last(commit_event)
                 except Exception as exc:

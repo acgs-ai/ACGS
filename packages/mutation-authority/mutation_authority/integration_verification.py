@@ -509,6 +509,43 @@ def attack_l_malformed_evidence_projection(base: Path) -> str:
     return "malformed evidence projection rejects the request before any effect"
 
 
+def attack_s_non_object_evidence_record(base: Path) -> str:
+    """A parseable NON-OBJECT evidence line (JSON list or scalar) must fail
+    the gateway's pre-effect readability check exactly like corrupt JSON:
+    admitting it would let the mutation commit and then crash
+    recover_missing() (which calls .get() on every record) AFTER the effect
+    and its COMMIT are durable — the governed file changes while the gateway
+    raises instead of returning APPLIED."""
+    sb = IntegrationSandbox.build(base)
+    sb.gateway.request_mutation(sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 2\n")
+    for hostile in ("[1, 2, 3]\n", '"scalar"\n'):
+        with sb.evidence.path.open("a", encoding="utf-8") as fh:
+            fh.write(hostile)
+        target = sb.kernel.repo / "src/module_a.py"
+        before = target.read_bytes()
+        before_events = sum(1 for _ in sb.kernel.ledger.events())
+        res = sb.gateway.request_mutation(
+            sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 3\n"
+        )
+        _expect(
+            res.status == GW_REJECTED,
+            f"non-object line {hostile!r}: expected REJECTED, got {res.status}: {res.reason}",
+        )
+        _expect("evidence projection" in res.reason, res.reason)
+        _expect(
+            target.read_bytes() == before,
+            f"side effect ran despite non-object evidence line {hostile!r}",
+        )
+        _expect(
+            sum(1 for _ in sb.kernel.ledger.events()) == before_events,
+            "non-object evidence rejection appended ledger events",
+        )
+        # Restore a clean projection for the next hostile shape.
+        lines = sb.evidence.path.read_text(encoding="utf-8").splitlines(keepends=True)
+        sb.evidence.path.write_text("".join(lines[:-1]), encoding="utf-8")
+    return "non-object evidence lines reject the request before any effect"
+
+
 def attack_n_concurrent_evidence_recovery(base: Path) -> str:
     """Two emitters recovering missing evidence concurrently (as two gateways
     finishing commits would) must serialize the read-check-append sequence:
@@ -659,6 +696,10 @@ INTEGRATION_CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     (
         "ATTACK R: receipt replay via duplicate COMMIT events",
         attack_r_duplicate_commit_receipt_reuse,
+    ),
+    (
+        "ATTACK S: non-object evidence record blocks before effect",
+        attack_s_non_object_evidence_record,
     ),
     ("compatibility: full kernel suite re-run", check_kernel_suite_compatibility),
 ]
