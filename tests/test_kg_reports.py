@@ -264,6 +264,19 @@ def test_catalog_q2_covers_every_extractor_source_language():
         assert f"'{language}'" in q2, f"Q2 omits {language}:\n{q2}"
 
 
+def test_catalog_q5_covers_every_extractor_source_language():
+    """REGRESSION. Q5's language predicate admitted only Python and
+    TypeScript, so a live analyzed JavaScript, Rust, or Shell file with
+    hotspot > 0.05 and no live TESTED_BY edge was excluded entirely — even
+    though the extractor classifies those languages as source and Q2, Q10,
+    and the generated hotspot report all include them. The advertised
+    "hotspots with no test edge" result was silently incomplete."""
+    q5 = _catalog_query(5)
+
+    for language in ("Python", "TypeScript", "JavaScript", "Rust", "Shell"):
+        assert f"'{language}'" in q5, f"Q5 omits {language}:\n{q5}"
+
+
 def test_code_evidence_extensions_cover_every_extractor_source_extension():
     """REGRESSION. CODE_EXT — and verify.py's SOURCE_EXT and the Q6/Q6b
     extension filters, which must stay in lockstep — omitted `.jsx` and

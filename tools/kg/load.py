@@ -173,6 +173,30 @@ def main() -> int:
         )
         return 1
 
+    # The node loader MERGEs on (label, key), so two input rows sharing an
+    # identity silently collapse into one Neo4j node with the later row's
+    # SET overwriting the earlier row's properties — while the counters
+    # still log every input row as loaded. After an explicit --wipe the
+    # command replaces the database with fewer nodes than supplied and
+    # exits 0, so duplicate identities are refused before connecting or
+    # deleting anything.
+    node_keys: set[tuple[str, str]] = set()
+    duplicates: list[tuple[str, str]] = []
+    for n in nodes:
+        ident = (n["label"], n["key"])
+        if ident in node_keys:
+            duplicates.append(ident)
+        node_keys.add(ident)
+    if duplicates:
+        for label, key in duplicates[:10]:
+            log(f"ERROR: duplicate node identity (:{label} {{key: {key!r}}})")
+        log(
+            f"ERROR: {len(duplicates)} duplicate node identit"
+            f"{'y' if len(duplicates) == 1 else 'ies'}: MERGE would silently "
+            "collapse the rows and overwrite their properties; refusing"
+        )
+        return 1
+
     # The relationship loader MATCHes both endpoints before MERGE, so Cypher
     # silently discards a row whose endpoint is absent — a dangling rel after
     # an extractor-schema change, or a hand-built --graph override — while
@@ -180,7 +204,6 @@ def main() -> int:
     # linked graph published as success is false governance evidence, so
     # endpoint identities are prevalidated against the input nodes and the
     # whole load is refused before connecting or wiping anything.
-    node_keys = {(n["label"], n["key"]) for n in nodes}
     dangling = [
         r
         for r in rels

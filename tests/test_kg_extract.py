@@ -994,6 +994,41 @@ def test_resolve_link_falls_back_to_doc_relative():
     assert extract.resolve_link("docs/index.md", "adr/0001-thing.md") == "docs/adr/0001-thing.md"
 
 
+def test_markdown_links_resolve_relative_to_the_source_document_first():
+    """REGRESSION. Markdown resolves an unprefixed relative link against the
+    linking document's directory, but resolve_link tried repo-root first, so
+    `[x](COMPARISON.md)` in docs/AGENT_STACK_GOVERNANCE.md bound to the
+    distinct root COMPARISON.md whenever both existed — leaving the intended
+    docs/COMPARISON.md orphaned in Q8 and inflating the root file's Q12
+    authority. Tokens from link syntax must resolve doc-relative first."""
+    _files("COMPARISON.md", "docs/COMPARISON.md")
+
+    assert (
+        extract.resolve_link("docs/AGENT_STACK_GOVERNANCE.md", "COMPARISON.md", markdown_link=True)
+        == "docs/COMPARISON.md"
+    )
+    # Backticked path tokens keep the repo-root-relative dominant style.
+    assert (
+        extract.resolve_link("docs/AGENT_STACK_GOVERNANCE.md", "COMPARISON.md") == "COMPARISON.md"
+    )
+
+
+def test_markdown_links_still_fall_back_to_repo_root():
+    """Many docs write repo-root-relative paths inside link syntax; when the
+    doc-relative candidate does not exist, the root candidate must still
+    resolve."""
+    _files("packages/gove-zone/src/gove_zone/receipt.py")
+
+    assert (
+        extract.resolve_link(
+            "docs/compliance.md",
+            "packages/gove-zone/src/gove_zone/receipt.py",
+            markdown_link=True,
+        )
+        == "packages/gove-zone/src/gove_zone/receipt.py"
+    )
+
+
 def test_resolve_link_normalises_parent_traversal():
     _files("scripts/build.py")
 
@@ -1222,6 +1257,26 @@ def test_doc_links_resolve_bare_root_document_citations(tmp_path, monkeypatch):
 
     assert ("LINKS_TO", "File", "CLAUDE.md", "File", "CONCEPTS.md") in extract.G.rels
     assert ("LINKS_TO", "File", "CLAUDE.md", "File", "docs/plan.md") in extract.G.rels
+
+
+def test_doc_links_bind_markdown_links_to_the_doc_relative_target(tmp_path, monkeypatch):
+    """REGRESSION. A nested document's unprefixed relative Markdown link
+    (`[c](COMPARISON.md)` in docs/) was bound to the same-named root file
+    whenever both existed, because every token was resolved repo-root first
+    regardless of syntax. The LINKS_TO edge must follow Markdown semantics;
+    a backticked citation of the same bare name keeps the root binding."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    doc = tmp_path / "docs" / "guide.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text("See the [comparison](COMPARISON.md) and `README.md`.\n")
+    _files("docs/guide.md", "COMPARISON.md", "docs/COMPARISON.md", "README.md", "docs/README.md")
+
+    extract.build_doc_links()
+
+    assert ("LINKS_TO", "File", "docs/guide.md", "File", "docs/COMPARISON.md") in extract.G.rels
+    assert ("LINKS_TO", "File", "docs/guide.md", "File", "COMPARISON.md") not in extract.G.rels
+    # The backticked bare filename is not link syntax: repo-root still wins.
+    assert ("LINKS_TO", "File", "docs/guide.md", "File", "README.md") in extract.G.rels
 
 
 def test_doc_links_do_not_link_a_document_to_itself(tmp_path, monkeypatch):

@@ -938,21 +938,29 @@ def doc_scope(src: str) -> set[str]:
         f = ROOT / src
         if f.is_file():
             text = f.read_text(errors="replace")
-            for tok in set(PATH_TOKEN.findall(text)) | set(MD_LINK.findall(text)):
-                hit = resolve_link(src, tok.split(":")[0])
-                if hit:
-                    scope.add(hit)
+            # Markdown-link tokens keep their syntax provenance: an
+            # unprefixed relative link resolves doc-relative first.
+            for toks, is_md in ((PATH_TOKEN.findall(text), False), (MD_LINK.findall(text), True)):
+                for tok in set(toks):
+                    hit = resolve_link(src, tok.split(":")[0], markdown_link=is_md)
+                    if hit:
+                        scope.add(hit)
         _DOC_SCOPE[src] = scope
     return _DOC_SCOPE[src]
 
 
-def resolve_token(src: str, token: str) -> tuple[str | None, int | None, str | None]:
+def resolve_token(
+    src: str, token: str, markdown_link: bool = False
+) -> tuple[str | None, int | None, str | None]:
     """Resolve a doc token to (path, line, method).
 
     method is how much the resolution is worth: `path` (explicit and
     unambiguous), `basename` (bare name that happens to be unique in the
     workspace), `basename-docscope` (bare name disambiguated by a full path the
     same document names elsewhere). None when unresolved.
+
+    markdown_link records that the token came from Markdown link syntax, so
+    an unprefixed relative form resolves against the source document first.
     """
     line = None
     # A range citation ("receipt.py:132-133", en dash included) resolves to
@@ -960,7 +968,7 @@ def resolve_token(src: str, token: str) -> tuple[str | None, int | None, str | N
     m = re.match(r"^(.*?):(\d+)(?:[-\u2013]\d+)?$", token)
     if m:
         token, line = m.group(1), int(m.group(2))
-    hit = resolve_link(src, token)
+    hit = resolve_link(src, token, markdown_link=markdown_link)
     if hit:
         return hit, line, "path"
     if "/" in token:
@@ -994,7 +1002,7 @@ def file_is_live(key: str) -> bool:
     return bool(props.get("present", True)) and bool(props.get("tracked", True))
 
 
-def resolve_link(src: str, target: str) -> str | None:
+def resolve_link(src: str, target: str, markdown_link: bool = False) -> str | None:
     if target.startswith(("http://", "https://", "mailto:")):
         return None
     target = target.split("#")[0].strip()
@@ -1008,6 +1016,18 @@ def resolve_link(src: str, target: str) -> str | None:
         cands = [target.lstrip("/")]
     elif target.startswith(("./", "../")):
         cands = [os.path.normpath(os.path.join(os.path.dirname(src), target))]
+    elif markdown_link:
+        # Markdown resolves an unprefixed relative link against the linking
+        # document's directory: `[x](COMPARISON.md)` in docs/ means
+        # docs/COMPARISON.md. Trying repo-root first bound such links to a
+        # same-named root file whenever both exist, leaving the intended
+        # target orphaned in Q8 and inflating the wrong document's Q12
+        # authority. Repo-root stays as the fallback because many docs
+        # still write root-relative paths inside link syntax.
+        cands = [
+            os.path.normpath(os.path.join(os.path.dirname(src), target)),  # doc-relative
+            target,  # repo-root-relative
+        ]
     else:
         cands = [
             target,  # repo-root-relative
@@ -1103,15 +1123,14 @@ def build_adrs() -> None:
         for m in re.finditer(r"[Ss]uperseded by\s+ADR[- ](\d{4})", text):
             if G.has("ADR", f"ADR-{m.group(1)}"):
                 G.rel("SUPERSEDES", "ADR", f"ADR-{m.group(1)}", "ADR", akey)
-        toks = (
-            set(PATH_TOKEN.findall(text))
-            | set(MD_LINK.findall(text))
-            | set(CODE_TOKEN.findall(text))
-        )
-        for tok in toks:
-            tgt, _, _ = resolve_token(rel, tok)
-            if tgt and tgt != rel:
-                G.rel("DECIDES_ON", "ADR", akey, "File", tgt)
+        # Markdown-link tokens are resolved with their syntax provenance so
+        # an unprefixed relative link binds to the ADR-relative target first.
+        backticked = set(PATH_TOKEN.findall(text)) | set(CODE_TOKEN.findall(text))
+        for toks, is_md in ((backticked, False), (set(MD_LINK.findall(text)), True)):
+            for tok in toks:
+                tgt, _, _ = resolve_token(rel, tok, markdown_link=is_md)
+                if tgt and tgt != rel:
+                    G.rel("DECIDES_ON", "ADR", akey, "File", tgt)
     log(f"E2. adrs: {count} ADRs")
 
 
@@ -1136,12 +1155,17 @@ def build_doc_links() -> None:
         # MD_LINK requires link syntax, so those citations vanished and Q8
         # reported the target as orphaned. CODE_TOKEN keeps its optional
         # `:line` suffix inside the capture; strip it before resolving.
-        toks = set(MD_LINK.findall(text)) | set(PATH_TOKEN.findall(text))
-        toks |= {tok.split(":")[0] for tok in CODE_TOKEN.findall(text)}
-        for tok in toks:
-            tgt = resolve_link(key, tok)
-            if tgt and tgt != key:
-                targets.add(tgt)
+        # Markdown-link tokens keep their syntax provenance: Markdown
+        # resolves an unprefixed relative link against the linking document,
+        # so `[x](COMPARISON.md)` in docs/ must bind to docs/COMPARISON.md
+        # even when a same-named root file exists.
+        backticked = set(PATH_TOKEN.findall(text))
+        backticked |= {tok.split(":")[0] for tok in CODE_TOKEN.findall(text)}
+        for toks, is_md in ((backticked, False), (set(MD_LINK.findall(text)), True)):
+            for tok in toks:
+                tgt = resolve_link(key, tok, markdown_link=is_md)
+                if tgt and tgt != key:
+                    targets.add(tgt)
         for tgt in targets:
             G.rel("LINKS_TO", "File", key, "File", tgt)
             n += 1

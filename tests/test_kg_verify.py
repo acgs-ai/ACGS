@@ -469,6 +469,19 @@ def test_catalog_q5_requires_analyzed_subjects():
     assert "f.ua_covered" in q5
 
 
+def test_catalog_q5_covers_every_extractor_source_language():
+    """REGRESSION. The verifier's Q5 admitted only Python and TypeScript, so
+    an analyzed JavaScript, Rust, or Shell hotspot with no live test edge
+    never appeared in the catalog check even though the extractor classifies
+    those languages as source and Q2, Q10, and the generated hotspot report
+    include them. It must use the same full source-language set as the
+    queries.cypher catalog."""
+    q5 = dict(verify.CATALOG)["Q5 hotspots with no test edge"]
+
+    for language in ("Python", "TypeScript", "JavaScript", "Rust", "Shell"):
+        assert f"'{language}'" in q5, f"verifier Q5 omits {language}:\n{q5}"
+
+
 def test_catalog_queries_are_distinct():
     queries = [q for _, q in verify.CATALOG]
 

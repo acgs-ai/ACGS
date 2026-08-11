@@ -204,6 +204,42 @@ def test_a_dangling_relationship_is_refused_before_touching_the_database(
     assert "driver" not in captured  # never connected, so nothing was wiped
 
 
+def test_duplicate_node_identities_are_refused_before_touching_the_database(
+    tmp_path, monkeypatch, capsys
+):
+    """REGRESSION. The node loader MERGEs on (label, key), so two input rows
+    sharing an identity silently collapsed into one Neo4j node with the later
+    row's SET overwriting the earlier row's properties — after an explicit
+    --wipe the database held fewer nodes than supplied while the loader
+    exited 0 and logged every input row as loaded. Duplicate identities must
+    be refused before connecting or deleting anything."""
+    graph_path = tmp_path / "graph.json"
+    graph_path.write_text(json.dumps(_graph(nodes=[_node("a.py", size=1), _node("a.py", size=2)])))
+    captured = fake_neo4j(monkeypatch, lambda query: [])
+    monkeypatch.setattr(sys, "argv", ["load.py", "--graph", str(graph_path), "--wipe"])
+
+    code = load.main()
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "duplicate node identity (:File {key: 'a.py'})" in err
+    assert "refusing" in err
+    assert "driver" not in captured  # never connected, so nothing was wiped
+
+
+def test_same_key_under_different_labels_is_not_a_duplicate(run_load):
+    """(label, key) is the identity: a File and a Package sharing a key are
+    distinct nodes and must still load."""
+    graph = _graph(nodes=[_node("core"), _node("core", label="Package")])
+
+    code, driver, _ = run_load(graph)
+
+    assert code == 0
+    merges = [q for q, _ in driver.sessions[0].calls if "MERGE" in q]
+    assert any("MERGE (n:`File`" in q for q in merges)
+    assert any("MERGE (n:`Package`" in q for q in merges)
+
+
 def test_a_structurally_incomplete_node_is_refused_before_touching_the_database(
     tmp_path, monkeypatch, capsys
 ):

@@ -82,9 +82,12 @@ ORDER BY joint_commits DESC LIMIT 20;
 // file has unknown coverage, not a missing test, and reporting it here
 // turns an absent semantic snapshot into an apparent test gap. Unanalyzed
 // files belong to Q10 (and the hotspot report's "not analyzed" state).
+// The language filter is the extractor's full source-language set (matching
+// Q2 and Q10): admitting only Python and TypeScript hid analyzed JavaScript,
+// Rust, and Shell hotspots from the "no test edge" result entirely.
 MATCH (f:File)
 WHERE f.tracked AND coalesce(f.present, true) AND NOT f.is_test AND f.hotspot > 0.05
-  AND f.language IN ['Python', 'TypeScript'] AND f.ua_covered
+  AND f.language IN ['Python', 'TypeScript', 'JavaScript', 'Rust', 'Shell'] AND f.ua_covered
   AND NOT EXISTS {
     MATCH (f)-[:TESTED_BY]->(tt)
     WHERE coalesce(tt.present, true) AND coalesce(tt.tracked, true)
