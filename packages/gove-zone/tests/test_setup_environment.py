@@ -147,14 +147,18 @@ def test_a_writable_audit_path_passes_and_leaves_no_probe_behind(tmp_path: Path)
     assert not (tmp_path / "audit" / ".gove-zone-write-probe").exists()
 
 
-def test_an_unwritable_audit_path_reports_not_ok_with_the_error(tmp_path: Path):
-    readonly = tmp_path / "readonly"
-    readonly.mkdir()
-    readonly.chmod(0o500)
-    try:
-        check = setup_mod._check_writable(readonly / "audit.jsonl")
-    finally:
-        readonly.chmod(0o700)
+def test_an_unwritable_audit_path_reports_not_ok_with_the_error(tmp_path: Path, monkeypatch):
+    """Privilege-independent failure injection: a chmod(0o500) directory does
+    not stop root from writing, so under a root-run container the probe would
+    succeed and the assertion would test the wrong branch. Failing the probe
+    write itself exercises the not-ok path on every uid."""
+
+    def _deny(self: Path, *args: object, **kwargs: object) -> int:
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(Path, "write_text", _deny)
+
+    check = setup_mod._check_writable(tmp_path / "readonly" / "audit.jsonl")
 
     assert check["ok"] is False
     assert check["name"] == "audit_path_writable"

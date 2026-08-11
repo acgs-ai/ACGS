@@ -149,6 +149,25 @@ def test_is_test_path_matches_a_top_level_tests_directory():
 
 
 # --------------------------------------------------------------------------- #
+# File spine
+# --------------------------------------------------------------------------- #
+def test_build_spine_marks_an_unstaged_tracked_deletion_as_absent(tmp_path, monkeypatch):
+    """REGRESSION. `git ls-files` still lists a tracked file whose unstaged
+    deletion removed it from the working tree; hard-coding present=True let
+    file_is_live() keep resolving citations to the deleted file, so compliance
+    reports counted deleted source as live Tier B evidence."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    monkeypatch.setattr(extract, "run", lambda *a: "live.py\ngone.py\n")
+    monkeypatch.setattr(extract, "initialized_submodules", lambda: [])
+    (tmp_path / "live.py").write_text("x = 1\n")
+
+    extract.build_spine()
+
+    assert extract.G.nodes[("File", "live.py")]["props"]["present"] is True
+    assert extract.G.nodes[("File", "gone.py")]["props"]["present"] is False
+
+
+# --------------------------------------------------------------------------- #
 # Semantic-layer reference mapping
 # --------------------------------------------------------------------------- #
 def test_ua_ref_prefers_the_file_spine_join_key():
@@ -295,6 +314,41 @@ def test_build_workflows_applies_negative_filters_when_minting_gates_edges(
         "File",
         "acgi-ai/infra/main.tf",
     ) not in extract.G.rels
+
+
+def test_build_workflows_preserves_the_triggering_event_on_each_gates_edge(
+    tmp_path, monkeypatch
+):
+    """REGRESSION. Push and pull_request filter lists were collapsed with
+    any(), so a deploy workflow whose push filter matches ordinary source
+    paths was reported as PR coverage for those paths."""
+    pytest.importorskip("yaml")
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "deploy.yml").write_text(
+        "name: deploy\n"
+        "on:\n"
+        "  push:\n"
+        "    paths:\n"
+        "      - 'packages/analyzer/**'\n"
+        "  pull_request:\n"
+        "    paths:\n"
+        "      - 'deploy/**'\n"
+        "jobs:\n"
+        "  build:\n"
+        "    steps: []\n"
+    )
+    _files(".github/workflows/deploy.yml", "packages/analyzer/main.py", "deploy/chart.yaml")
+
+    extract.build_workflows(["packages/analyzer/main.py", "deploy/chart.yaml"])
+
+    push_gate = extract.G.rels[
+        ("GATES", "Workflow", "deploy", "File", "packages/analyzer/main.py")
+    ]
+    pr_gate = extract.G.rels[("GATES", "Workflow", "deploy", "File", "deploy/chart.yaml")]
+    assert push_gate["props"]["events"] == ["push"]
+    assert pr_gate["props"]["events"] == ["pull_request"]
 
 
 # --------------------------------------------------------------------------- #
@@ -809,6 +863,69 @@ def test_collect_dirty_paths_tolerates_a_failing_submodule_status(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# Topology
+# --------------------------------------------------------------------------- #
+def test_build_topology_assigns_a_gitlink_file_to_its_own_submodule_package(
+    tmp_path, monkeypatch
+):
+    """REGRESSION. A submodule gitlink's File key equals the package path with
+    no trailing segment, so the prefix-only predicate assigned every gitlink —
+    and its pointer-change history — to the workspace root package."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    (tmp_path / ".gitmodules").write_text(
+        '[submodule "acgs-lite"]\n'
+        "\tpath = packages/acgs-lite\n"
+        "\turl = git@example.com:acgs-lite.git\n"
+    )
+    monkeypatch.setattr(extract, "run", lambda *a: "-abc123 packages/acgs-lite\n")
+    _files("packages/acgs-lite")
+
+    extract.build_topology([])
+
+    assert (
+        extract.G.nodes[("File", "packages/acgs-lite")]["props"]["package"]
+        == "packages/acgs-lite"
+    )
+    assert (
+        "IN_PACKAGE",
+        "File",
+        "packages/acgs-lite",
+        "Package",
+        "packages/acgs-lite",
+    ) in extract.G.rels
+
+
+# --------------------------------------------------------------------------- #
+# Sealed constitutional-hash markers
+# --------------------------------------------------------------------------- #
+def test_hash_marker_is_imported_from_the_gate():
+    """The extractor must share the gate's marker syntax, never keep a
+    narrower copy that drifts the day the gate changes."""
+    import verify_constitutional_hashes
+
+    assert extract.HASH_MARKER is verify_constitutional_hashes.MARKER_RE
+
+
+def test_build_sealed_accepts_the_gate_marker_syntax_including_uppercase_hex(
+    tmp_path, monkeypatch
+):
+    """REGRESSION. A local lowercase-only regex recorded files the real
+    constitutional-hash gate accepts — uppercase markers are pinned valid by
+    tests/test_verify_constitutional_hashes.py — as unsealed, so Q3 and the
+    governance reports silently omitted them."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    (tmp_path / "sealed.md").write_text("Constitutional Hash: `DEADBEEFCAFEBABE`\n")
+    _files("sealed.md")
+
+    extract.build_sealed(["sealed.md"])
+
+    props = extract.G.nodes[("File", "sealed.md")]["props"]
+    assert props["sealed"] is True
+    assert props["sealed_hash"] == "DEADBEEFCAFEBABE"
+    assert ("SEALED_WITH", "File", "sealed.md", "Hash", "DEADBEEFCAFEBABE") in extract.G.rels
+
+
+# --------------------------------------------------------------------------- #
 # ADR layer
 # --------------------------------------------------------------------------- #
 def test_build_adrs_extracts_title_status_and_date(tmp_path, monkeypatch):
@@ -923,6 +1040,28 @@ def test_build_adrs_does_not_swallow_the_following_section_into_status(tmp_path,
     props = extract.G.nodes[("ADR", "ADR-0010")]["props"]
     assert props["status"] == "Accepted"
     assert "alternatives" not in props["status_text"]
+
+
+def test_build_adrs_reads_a_list_style_status(tmp_path, monkeypatch):
+    """REGRESSION. ADRs using the repository's list-style metadata (e.g.
+    docs/adr/0008: `- Status: Accepted`) were recorded as Unknown because only
+    a `## Status` heading was recognised, so Q7/Q7b misreported them."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    adr_dir = tmp_path / "docs" / "adr"
+    adr_dir.mkdir(parents=True)
+    (adr_dir / "0008-authz.md").write_text(
+        "# 0008. Kernel-side principal authz enforcement\n\n"
+        "- Status: Accepted\n"
+        "- Date: 2026-08-09\n\n"
+        "## Context\n\nx\n"
+    )
+    _files("docs/adr/0008-authz.md")
+
+    extract.build_adrs()
+
+    props = extract.G.nodes[("ADR", "ADR-0008")]["props"]
+    assert props["status"] == "Accepted"
+    assert props["status_text"] == "Accepted"
 
 
 def test_build_adrs_defaults_unknown_status(tmp_path, monkeypatch):

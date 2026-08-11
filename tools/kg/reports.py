@@ -106,6 +106,7 @@ RETURN f.key AS path, coalesce(f.package,'.') AS package,
        coalesce(f.ua_covered,false) AS ua_covered,
        coalesce(f.sealed,false) AS sealed,
        coalesce(f.in_submodule,false) AS in_submodule,
+       coalesce(f.is_test,false) AS is_test,
        test_edges, gates, count(a) AS adrs
 ORDER BY commits DESC, path ASC
 """
@@ -241,7 +242,10 @@ def main() -> int:
         for r in cplane
     ]
     unanalyzed_top = sum(1 for r in hot if not r["ua_covered"])
-    _cp_tests = [r for r in cplane if "/tests/" in r["path"] or "test_" in r["path"]]
+    # The graph's own is_test classification, not a second heuristic: a bare
+    # `test_` substring also matched source modules such as
+    # tenant_bootstrap_test_worker.py and overstated the test-file count.
+    _cp_tests = [r for r in cplane if r["is_test"]]
     cp_test_files = len(_cp_tests)
     cp_test_commits = sum(r["commits"] for r in _cp_tests)
 
@@ -344,7 +348,9 @@ Requested focus area. This submodule is **not** initialized by
 - `governance coverage` for these files reflects parent-repo controls only.
   Any gate defined inside the submodule's own CI is invisible to this graph.
 - To convert the unknowns into observations, re-run the semantic layer with
-  submodules checked out — see `SEMANTIC_REFRESH_PLAN_V1.md`.
+  submodules checked out: `git submodule update --init`, regenerate
+  `.understand-anything/knowledge-graph.json` with the understand-anything
+  analyzer, then `cd tools/kg && make reload`.
 """
 
     # ---------------- Report 2: compliance evidence tiers ----------------

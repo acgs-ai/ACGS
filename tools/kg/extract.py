@@ -230,7 +230,11 @@ def build_spine() -> list[str]:
             language=LANG_BY_EXT.get(ext, "Other"),
             dir=path.rsplit("/", 1)[0] if "/" in path else ".",
             tracked=True,
-            present=True,
+            # Derived from the working tree, never assumed: `git ls-files`
+            # still lists a tracked file whose unstaged deletion removed it
+            # from disk, and recording it as present would let file_is_live()
+            # keep resolving citations to it as live Tier B evidence.
+            present=(ROOT / path).is_file(),
             is_test=is_test_path(path),
             ua_covered=False,
             sealed=False,
@@ -637,7 +641,10 @@ def build_topology(tracked: list[str]) -> dict[str, str]:
     for lbl, key in list(G.nodes):
         if lbl != "File":
             continue
-        pkg = next((p for p in pkg_paths if key.startswith(p + "/")), ".")
+        # A submodule gitlink's File key IS the package path (no trailing
+        # segment), so the prefix test alone assigned every gitlink — and its
+        # pointer-change history — to the workspace root.
+        pkg = next((p for p in pkg_paths if key == p or key.startswith(p + "/")), ".")
         owner[key] = pkg
         G.nodes[(lbl, key)]["props"]["package"] = pkg
         G.rel("IN_PACKAGE", "File", key, "Package", pkg)
@@ -653,16 +660,18 @@ def build_topology(tracked: list[str]) -> dict[str, str]:
 # --------------------------------------------------------------------------- #
 # E. Governance
 # --------------------------------------------------------------------------- #
-HASH_MARKER = re.compile(r"Constitutional Hash:\s*`?([0-9a-f]{8,64})`?")
-
 # Imported, never copied. A hand-duplicated copy of the gate's coverage goes
 # stale the day the gate changes, and the graph would then report a governance
-# gap that no longer exists — or miss one that does.
+# gap that no longer exists — or miss one that does. The marker regex is the
+# gate's own for the same reason: a narrower local copy (lowercase-only hex)
+# recorded files the real gate accepts — e.g. uppercase markers — as unsealed.
 sys.path.insert(0, str(ROOT / "scripts"))
 try:
+    from verify_constitutional_hashes import MARKER_RE as HASH_MARKER
     from verify_constitutional_hashes import SCAN_EXTENSIONS as HASH_GATED_EXTENSIONS
     from verify_constitutional_hashes import SKIP_FILES as _GATE_SKIP_FILES
 except ImportError:  # degrade loudly, never silently
+    HASH_MARKER = re.compile(r"Constitutional Hash:[\s`'\"]*([0-9a-fA-F]+)")
     HASH_GATED_EXTENSIONS = set()
     _GATE_SKIP_FILES = frozenset()
     print(
@@ -889,6 +898,11 @@ def build_adrs() -> None:
         # Without the \Z alternative an ADR whose Status is its last section
         # parsed as "Unknown" — a silent field loss, not an error.
         st = re.search(r"^##\s+Status\s*\n+(.+?)(?:\n\s*\n|\n##|\Z)", text, re.M | re.S)
+        # The repository's other metadata style is a list item near the top
+        # (`- Status: Accepted`, e.g. docs/adr/0008). Recognising only the
+        # `## Status` heading recorded those ADRs as Unknown.
+        if not st:
+            st = re.search(r"^\s*[-*]\s*Status:\s*(.+?)\s*$", text, re.M)
         status_raw = " ".join(st.group(1).split()) if st else "Unknown"
         # An EMPTY Status section runs straight into the next heading, and the
         # capture then holds that heading's text ("## Context"). The derived
@@ -1144,13 +1158,16 @@ def build_workflows(files: list[str]) -> None:
             on = {k: {} for k in on}
         triggers = sorted(str(k) for k in on)
         # One ordered filter list per triggering event: push and pull_request
-        # may declare different filters, and order matters within each.
-        filter_lists: list[list[str]] = []
+        # may declare different filters, and order matters within each. The
+        # matching event(s) are preserved on every GATES edge — collapsing
+        # them with any() reported a deploy workflow whose push filter matches
+        # ordinary source paths as PR coverage for those paths.
+        filters_by_event: dict[str, list[str]] = {}
         for ev in ("push", "pull_request"):
             cfg = on.get(ev) or {}
             if isinstance(cfg, dict) and cfg.get("paths"):
-                filter_lists.append([str(g) for g in cfg["paths"]])
-        globs = sorted({g for fl in filter_lists for g in fl})
+                filters_by_event[ev] = [str(g) for g in cfg["paths"]]
+        globs = sorted({g for fl in filters_by_event.values() for g in fl})
         jobs = sorted((doc.get("jobs") or {}).keys())
         wkey = doc.get("name") or f.stem
         G.node(
@@ -1166,12 +1183,15 @@ def build_workflows(files: list[str]) -> None:
             path_filtered=bool(globs),
         )
         G.rel("DEFINED_IN", "Workflow", wkey, "File", rel)
-        if not filter_lists:
+        if not filters_by_event:
             continue
-        compiled = [compile_path_filters(fl) for fl in filter_lists]
+        compiled = {ev: compile_path_filters(fl) for ev, fl in filters_by_event.items()}
         for path in files:
-            if any(match_path_filters(path, filters) for filters in compiled):
-                G.rel("GATES", "Workflow", wkey, "File", path)
+            events = sorted(
+                ev for ev, filters in compiled.items() if match_path_filters(path, filters)
+            )
+            if events:
+                G.rel("GATES", "Workflow", wkey, "File", path, events=events)
                 gates += 1
     log(
         f"E5. workflows: {sum(1 for (l, _) in G.nodes if l == 'Workflow')} workflows, "

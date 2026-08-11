@@ -50,6 +50,7 @@ def _hot(path: str, **over) -> dict:
         "ua_covered": True,
         "sealed": False,
         "in_submodule": False,
+        "is_test": False,
         "test_edges": 1,
         "gates": 1,
         "adrs": 0,
@@ -345,17 +346,44 @@ def test_hotspot_rows_carry_the_three_state_evidence_column(run_reports):
     assert "1 of these 2 rows are outside the semantic snapshot" in hotspot
 
 
-def test_control_plane_focus_section_counts_test_files_by_path_convention(run_reports):
+def test_control_plane_focus_section_counts_test_files_by_the_graphs_classification(run_reports):
+    """REGRESSION. A bare `test_` substring heuristic also matched source
+    modules such as tenant_bootstrap_test_worker.py, overstating how many
+    focus paths are tests and their combined commit count. The graph's own
+    File.is_test classification is the single authority."""
     _, hotspot, _, _ = run_reports(
         cplane=[
-            _hot("packages/acgs-control-plane/tests/test_app.py", commits=5, ua_covered=False),
+            _hot(
+                "packages/acgs-control-plane/tests/test_app.py",
+                commits=5,
+                ua_covered=False,
+                is_test=True,
+            ),
+            _hot(
+                "packages/acgs-control-plane/src/acgs_control_plane/"
+                "tenant_bootstrap_test_worker.py",
+                commits=9,
+                ua_covered=False,
+            ),
             _hot("packages/acgs-control-plane/app.py", commits=9, ua_covered=False),
         ]
     )
 
-    assert "2 of the 2 focus-area paths" not in hotspot
-    assert "1 of the 2 focus-area paths are\n  themselves test files" in hotspot
+    assert "1 of the 3 focus-area paths are\n  themselves test files" in hotspot
     assert "carrying 5 commits" in hotspot
+
+
+def test_semantic_refresh_guidance_names_real_commands_not_a_missing_doc(run_reports):
+    """REGRESSION. The hotspot report pointed readers at
+    SEMANTIC_REFRESH_PLAN_V1.md, a file that exists nowhere in the repo — the
+    prescribed path for converting unknowns into observations led nowhere."""
+    _, hotspot, _, _ = run_reports(
+        cplane=[_hot("packages/acgs-control-plane/app.py", ua_covered=False)]
+    )
+
+    assert "SEMANTIC_REFRESH_PLAN_V1.md" not in hotspot
+    assert "git submodule update --init" in hotspot
+    assert "make reload" in hotspot
 
 
 def test_control_plane_section_keeps_the_no_claim_wording_when_nothing_is_analyzed(run_reports):

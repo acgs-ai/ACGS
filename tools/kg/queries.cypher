@@ -115,8 +115,13 @@ RETURN la.name AS from_layer, lb.name AS to_layer, count(*) AS imports
 ORDER BY imports DESC LIMIT 20;
 
 // --- Q10. Semantic blind spots: tracked code the summariser never saw -----
+// "Code" is the source-language set the other code-oriented queries use
+// (Q2/Q5, plus Rust and Shell to mirror the tier report's source extensions).
+// `language <> 'Other'` also admitted Markdown/JSON/YAML/TOML/lock files,
+// which dominate a checkout without a semantic snapshot.
 MATCH (f:File)
-WHERE f.tracked AND NOT f.ua_covered AND f.language <> 'Other'
+WHERE f.tracked AND NOT f.ua_covered
+  AND f.language IN ['Python', 'TypeScript', 'JavaScript', 'Rust', 'Shell']
 RETURN f.package AS package, count(*) AS uncovered,
        collect(f.key)[0..6] AS examples
 ORDER BY uncovered DESC LIMIT 15;
