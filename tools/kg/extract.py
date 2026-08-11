@@ -81,6 +81,7 @@ LANG_BY_EXT = {
     ".jsx": "JavaScript",
     ".mjs": "JavaScript",
     ".cjs": "JavaScript",
+    ".rs": "Rust",
     ".md": "Markdown",
     ".mdx": "Markdown",
     ".yml": "YAML",
