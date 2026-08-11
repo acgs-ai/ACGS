@@ -518,6 +518,62 @@ def attack_l_unrecordable_effect_rolled_back(base: Path) -> str:
     raise CheckFailure("recording failure did not raise EffectRecordingError")
 
 
+def attack_m_reinitialize_governance_root(base: Path) -> str:
+    """Re-running the bootstrap ceremony over an existing root must be
+    refused: initialize() rewrites policy/actors and re-signs a fresh
+    manifest, so a silent re-run would replace the governance contract in
+    place — the exact mutation the sealed root exists to prevent."""
+    sb = Sandbox.build(base)
+    policy_path = sb.repo / "governance" / "policy.json"
+    before = policy_path.read_bytes()
+    hostile_policy = {**POLICY, "governed_prefixes": []}  # ungovern everything
+    try:
+        GovernanceRoot.initialize(
+            root_dir=sb.repo / "governance",
+            keystore_dir=sb.base / "keystore",
+            policy=hostile_policy,
+            actors=ACTORS,
+        )
+    except RootIntegrityError as exc:
+        _expect("already initialized" in str(exc), str(exc))
+        _expect(policy_path.read_bytes() == before, "reinit altered sealed policy bytes")
+        sb.root.verify_integrity()  # the original root still stands
+        return "second initialize() refused; sealed root bytes untouched"
+    raise CheckFailure("bootstrap ceremony re-ran over an existing governance root")
+
+
+def attack_n_glob_prefix_rogue_artifacts(base: Path) -> str:
+    """Artifacts planted under a GLOB governed prefix — including dangling
+    symlinks — must surface as unauthorized creations. The scan must apply
+    the engine's own governed predicate (src/*.py is a pattern, not a
+    directory) and must not follow symlinks (is_file() on a broken link is
+    False, so a follow-the-link walk would never enumerate it)."""
+    sb = Sandbox.build(base)
+    prefixes = ["src/*.py"]
+    _expect(
+        repository_violations(sb.ledger, sb.repo, prefixes) == [],
+        "clean repo reported violations under a glob prefix",
+    )
+
+    # (1) Rogue regular file matching the glob prefix.
+    rogue = sb.repo / "src" / "rogue_new.py"
+    rogue.write_bytes(b"print('rogue')\n")
+    violations = repository_violations(sb.ledger, sb.repo, prefixes)
+    _expect(len(violations) == 1, f"glob-prefix rogue file not detected: {violations}")
+    _expect(violations[0]["resource"] == "src/rogue_new.py", str(violations[0]))
+    _expect(violations[0]["kind"] == "unauthorized_create", "wrong violation kind")
+    rogue.unlink()
+
+    # (2) Dangling symlink planted under the governed prefix.
+    dangle = sb.repo / "src" / "dangling.py"
+    dangle.symlink_to(sb.base / "no-such-target")
+    violations = repository_violations(sb.ledger, sb.repo, prefixes)
+    _expect(len(violations) == 1, f"dangling symlink not detected: {violations}")
+    _expect(violations[0]["resource"] == "src/dangling.py", str(violations[0]))
+    _expect(violations[0]["kind"] == "unauthorized_create", "wrong violation kind")
+    return "glob-prefix rogue file and dangling symlink surface as unauthorized_create"
+
+
 def check_unanchored_ledger_refused(base: Path) -> str:
     """Constructing a ledger without an anchor must be an explicit, loud
     opt-in — never a silent default that disables truncation detection."""
@@ -552,6 +608,14 @@ CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     (
         "ATTACK L (bonus): effect applied but unrecordable is rolled back",
         attack_l_unrecordable_effect_rolled_back,
+    ),
+    (
+        "ATTACK M (bonus): re-initialize the governance root in place",
+        attack_m_reinitialize_governance_root,
+    ),
+    (
+        "ATTACK N (bonus): rogue artifacts under a glob governed prefix",
+        attack_n_glob_prefix_rogue_artifacts,
     ),
     ("ledger is bound to its governance root", check_ledger_root_binding),
     ("unanchored ledger construction is refused", check_unanchored_ledger_refused),

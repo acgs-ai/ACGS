@@ -22,6 +22,7 @@ from .intent import OPERATIONS, SignedIntent
 from .ledger import EVENT_DECISION, AuditLedger, LedgerIntegrityError
 from .receipt import MutationDecisionReceipt
 from .root import GovernanceRoot, UnknownActorError
+from .state import governed_match
 
 ALLOW = "ALLOW"
 DENY = "DENY"
@@ -122,11 +123,11 @@ class DecisionEngine:
             if resource == prefix or resource.startswith(prefix.rstrip("/") + "/"):
                 return "resource is inside the immutable governance root"
 
-        # 5. Resource must be governed at all.
-        if not any(
-            resource.startswith(p.rstrip("/") + "/") or fnmatchcase(resource, p)
-            for p in self.root.governed_prefixes()
-        ):
+        # 5. Resource must be governed at all. governed_match is the SAME
+        #    predicate the repository scan (state.repository_violations)
+        #    applies, so what is gated on write is exactly what verification
+        #    watches on disk.
+        if not governed_match(resource, self.root.governed_prefixes()):
             return "resource is outside every governed prefix"
 
         # 6. Scope permission: requested scope must cover the resource AND

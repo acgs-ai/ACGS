@@ -186,15 +186,28 @@ class ReplayLedger:
                     self._seen.add(rid)
 
     def consume(self, receipt_id: str) -> None:
-        if receipt_id in self._seen:
-            raise ReceiptError(f"receipt replay: {receipt_id} already consumed")
+        self.consume_many([receipt_id])
+
+    def consume_many(self, receipt_ids: list[str]) -> None:
+        """Consume a batch of receipt_ids as ONE atomic operation: either every
+        id is recorded or none is. A multi-receipt transition (e.g. the paired
+        ROUTING_REQUIRED->ROUTING_RESOLVED->READY_TO_SEND receipts for one
+        request) must not be able to half-consume — two racing evaluations
+        checking then appending id-by-id could interleave and each consume one
+        receipt of the pair, leaving both requests half-advanced."""
+        if len(set(receipt_ids)) != len(receipt_ids):
+            raise ReceiptError("receipt replay: duplicate receipt_id within one batch")
+        for rid in receipt_ids:
+            if rid in self._seen:
+                raise ReceiptError(f"receipt replay: {rid} already consumed")
         if self._path is not None:
             # The uniqueness check and the append must be ONE atomic
             # operation across processes: two ReplayLedger instances loaded
             # before either consumed would otherwise both pass a process-
             # local check and both append the same id. An exclusive file
             # lock serializes consumers; the on-disk state is re-read under
-            # the lock so any id another process consumed since load is seen.
+            # the lock so any id another process consumed since load is seen,
+            # and the whole batch is checked and written under that one lock.
             self._path.parent.mkdir(parents=True, exist_ok=True)
             with self._path.open("a+", encoding="utf-8") as fh:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
@@ -203,14 +216,15 @@ class ReplayLedger:
                     rid = line.strip()
                     if rid:
                         self._seen.add(rid)
-                if receipt_id in self._seen:
-                    raise ReceiptError(f"receipt replay: {receipt_id} already consumed")
+                for rid in receipt_ids:
+                    if rid in self._seen:
+                        raise ReceiptError(f"receipt replay: {rid} already consumed")
                 fh.seek(0, os.SEEK_END)
-                fh.write(receipt_id + "\n")
+                fh.write("".join(rid + "\n" for rid in receipt_ids))
                 fh.flush()
                 os.fsync(fh.fileno())
                 # flock releases on close
-        self._seen.add(receipt_id)
+        self._seen.update(receipt_ids)
 
     def has(self, receipt_id: str) -> bool:
         return receipt_id in self._seen

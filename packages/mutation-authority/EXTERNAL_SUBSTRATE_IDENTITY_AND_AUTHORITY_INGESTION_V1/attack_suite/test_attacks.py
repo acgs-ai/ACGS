@@ -396,6 +396,49 @@ def test_attack19_replayed_receipt():
         ledger.consume(r["receipt_id"])
 
 
+def test_attack19b_paired_receipts_consume_atomically(tmp_path):
+    # The two receipts of one request transition are consumed as ONE batch:
+    # if any member is already consumed, NONE is recorded — a request can
+    # never half-advance, even across ledger instances sharing the file.
+    path = tmp_path / "replay.jsonl"
+    ledger = ReplayLedger(path)
+    minted = [
+        mint_receipt(
+            KEY,
+            request_id="R1",
+            prior_state=prior,
+            new_state=new,
+            authority_subject="X",
+            authority_evidence_id="AE-1",
+            evidence_digest="a" * 64,
+            authority_scope={"asset_ids": "ALL", "requirement_ids": "ALL"},
+            substrate_critical_set_digest="d" * 64,
+            decision="ALLOW",
+            decision_reason="x",
+            created_at=INSTANT,
+        )
+        for prior, new in (
+            ("ROUTING_REQUIRED", "ROUTING_RESOLVED"),
+            ("ROUTING_RESOLVED", "READY_TO_SEND"),
+        )
+    ]
+    first, second = (r["receipt_id"] for r in minted)
+    # Another process already consumed the SECOND receipt of the pair.
+    ReplayLedger(path).consume(second)
+    with pytest.raises(ReceiptError):
+        ledger.consume_many([first, second])
+    assert not ledger.has(first)  # nothing half-consumed
+    assert first not in path.read_text(encoding="utf-8")
+    # A duplicate inside one batch is refused before anything is recorded.
+    with pytest.raises(ReceiptError):
+        ledger.consume_many([first, first])
+    assert not ledger.has(first)
+    # With the conflict gone, the batch consumes and persists atomically.
+    fresh = ReplayLedger(path)
+    fresh.consume_many([first])
+    assert ReplayLedger(path).has(first) and ReplayLedger(path).has(second)
+
+
 def test_keystore_key_with_whitespace_edge_bytes_round_trips(tmp_path):
     # Regression: the key is raw random bytes; roughly 1 in 22 generated keys
     # begins or ends with an ASCII-whitespace byte. Loading must return the

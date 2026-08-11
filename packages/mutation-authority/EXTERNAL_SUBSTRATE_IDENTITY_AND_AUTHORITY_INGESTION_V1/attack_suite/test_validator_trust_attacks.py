@@ -27,6 +27,8 @@ from _canonical import hash_obj, hmac_sign, sha256_hex  # noqa: E402
 from authority_lifecycle import (  # noqa: E402
     ACTIVE,
     DISCOVERED,
+    SUPERSEDED,
+    VALIDATED,
     OnboardingError,
     attestation_binding,
     validate_onboarding_record,
@@ -52,7 +54,9 @@ from validator_trust import (  # noqa: E402
     attestation_payload,
     derive_governed_state,
     event_binding,
+    governed_lifecycle_distribution,
     load_validator_events,
+    rotation_payload,
     verify_attestation_trust,
 )
 
@@ -68,6 +72,14 @@ def _append_event(trust, event: dict) -> None:
     event["event_binding"] = event_binding(event)
     with trust["registry"].open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(event, sort_keys=True) + "\n")
+
+
+def _authorized_rotation(event: dict, predecessor_key: bytes = FIX_KEY) -> dict:
+    """A ROTATE event carrying the predecessor-key signature verification now
+    demands: unauthorized rotations derive `unauthenticated_rotation`."""
+    event = dict(event)
+    event["rotation_authorization"] = hmac_sign(predecessor_key, rotation_payload(event))
+    return event
 
 
 _DEFAULT = object()  # sentinel so policy=None (malformed) can be passed through
@@ -234,14 +246,16 @@ def test_vt7_replayed_attestation_fails_closed(tmp_path):
     # instant: the key window closed at rotation, so trust fails.
     _append_event(
         trust,
-        {
-            "schema": EVENT_SCHEMA,
-            "event": "ROTATE",
-            "validator_id": FIX_VALIDATOR,
-            "key_id": "vk-2",
-            "key_fingerprint": sha256_hex(b"w" * 32),
-            "instant": "2026-07-01T00:00:00Z",
-        },
+        _authorized_rotation(
+            {
+                "schema": EVENT_SCHEMA,
+                "event": "ROTATE",
+                "validator_id": FIX_VALIDATOR,
+                "key_id": "vk-2",
+                "key_fingerprint": sha256_hex(b"w" * 32),
+                "instant": "2026-07-01T00:00:00Z",
+            }
+        ),
     )
     (trust["keystore"] / "vk-2").write_bytes(b"w" * 32)
     stale = _attested(_evidence())  # validated_at 2026-08-10, signed with vk-1
@@ -259,14 +273,16 @@ def test_vt7c_retired_key_attestation_requires_review(tmp_path):
     assert _gstate(ev, trust) == ACTIVE
     _append_event(
         trust,
-        {
-            "schema": EVENT_SCHEMA,
-            "event": "ROTATE",
-            "validator_id": FIX_VALIDATOR,
-            "key_id": "vk-2",
-            "key_fingerprint": sha256_hex(b"w" * 32),
-            "instant": "2026-08-11T00:00:00Z",  # AFTER validated_at
-        },
+        _authorized_rotation(
+            {
+                "schema": EVENT_SCHEMA,
+                "event": "ROTATE",
+                "validator_id": FIX_VALIDATOR,
+                "key_id": "vk-2",
+                "key_fingerprint": sha256_hex(b"w" * 32),
+                "instant": "2026-08-11T00:00:00Z",  # AFTER validated_at
+            }
+        ),
     )
     (trust["keystore"] / "vk-2").write_bytes(b"w" * 32)
     assert _gstate(ev, trust, instant="2026-08-12T00:00:00Z") == REQUIRES_REVIEW
@@ -321,6 +337,117 @@ def test_vt10_fabricated_commercial_rights_inference_rejected(substrate, tmp_pat
     assert st["report"]["rights_assertions"] == 0  # ...and asserted no right
     assert st["invariants"]["I6_ready_does_not_imply_rights_cleared"]
     assert st["invariants"]["I7_routing_creates_no_rights_assertion"]
+
+
+def test_vt11_unauthenticated_rotation_fails_closed(tmp_path):
+    # An attacker who can APPEND registry lines (chain-valid tail extension)
+    # rotates the trusted validator onto a key they hold, then signs a
+    # perfect attestation with it. Without a signature by the key the
+    # rotation retires, the whole validator history is untrustworthy.
+    trust = fixture_trust(tmp_path)
+    attacker_key = b"z" * 32
+    _append_event(
+        trust,
+        {
+            "schema": EVENT_SCHEMA,
+            "event": "ROTATE",
+            "validator_id": FIX_VALIDATOR,
+            "key_id": "vk-evil",
+            "key_fingerprint": sha256_hex(attacker_key),
+            "instant": "2026-08-01T00:00:00Z",
+            # no rotation_authorization — the attacker cannot produce one
+        },
+    )
+    ev = _attested(_evidence())
+    att = dict(ev["validation"], key_id="vk-evil")
+    att["attestation_signature"] = hmac_sign(attacker_key, attestation_payload(att))
+    ev["validation"] = att
+    ok, reason = verify_attestation_trust(
+        ev,
+        att,
+        events=load_validator_events(trust["registry"]),
+        keystore_dir=trust["keystore"],
+    )
+    assert not ok and reason == "unauthenticated_rotation"
+    assert _gstate(ev, trust) == INVALIDATED
+    # A garbage authorization string is just as dead as a missing one.
+    trust2 = fixture_trust(tmp_path / "b")
+    _append_event(
+        trust2,
+        {
+            "schema": EVENT_SCHEMA,
+            "event": "ROTATE",
+            "validator_id": FIX_VALIDATOR,
+            "key_id": "vk-evil",
+            "key_fingerprint": sha256_hex(attacker_key),
+            "instant": "2026-08-01T00:00:00Z",
+            "rotation_authorization": hmac_sign(attacker_key, "self-signed"),
+        },
+    )
+    ok2, reason2 = verify_attestation_trust(
+        ev,
+        att,
+        events=load_validator_events(trust2["registry"]),
+        keystore_dir=trust2["keystore"],
+    )
+    assert not ok2 and reason2 == "unauthenticated_rotation"
+
+
+def test_vt12_future_dated_attestation_fails_closed(tmp_path):
+    # validated_at is signer-supplied: an attestation dated in the FUTURE of
+    # the evaluation instant pre-authorizes trust for a moment that has not
+    # happened yet and must not verify at that instant.
+    trust = fixture_trust(tmp_path)
+    ev = _attested(_evidence())
+    att = dict(ev["validation"])
+    att["validated_at"] = "2026-08-10T13:00:00Z"  # one hour after INSTANT
+    ev["validation"] = _sign_att(att)
+    ok, reason = verify_attestation_trust(
+        ev,
+        ev["validation"],
+        events=load_validator_events(trust["registry"]),
+        keystore_dir=trust["keystore"],
+        instant=INSTANT,
+    )
+    assert not ok and reason == "attestation_future_dated"
+    assert _gstate(ev, trust) == INVALIDATED  # derivation evaluates at INSTANT
+    # Once the claimed instant has actually passed, the same record stands.
+    assert _gstate(ev, trust, instant="2026-08-10T14:00:00Z") == ACTIVE
+
+
+def test_vt13_supersession_requires_verified_ingestion_receipt(tmp_path):
+    # `supersedes` + a receipt-SHAPED string must not deactivate an
+    # established record: the successor's ingestion receipt is verified
+    # cryptographically against the authority receipt key, not by truthiness.
+    trust = fixture_trust(tmp_path)
+    events = load_validator_events(trust["registry"])
+    old = _attested(_evidence(ev_id="AE-OLD"))
+    pretender = _attested(
+        dict(_evidence(ev_id="AE-NEW"), supersedes="AE-OLD"), receipt="r-invented"
+    )
+    dist = governed_lifecycle_distribution(
+        [old, pretender],
+        INSTANT,
+        events=events,
+        keystore_dir=trust["keystore"],
+        policy=dict(DEFAULT_POLICY),
+        receipt_key=FIX_AUTH_KEY,
+    )
+    assert dist[SUPERSEDED] == 0  # the established record stands
+    assert dist[ACTIVE] == 1
+    assert dist[VALIDATED] == 1  # the pretender never rose past VALIDATED
+    # A successor whose receipt genuinely verifies DOES supersede.
+    real = _attested(dict(_evidence(ev_id="AE-NEW2"), supersedes="AE-OLD"))
+    dist2 = governed_lifecycle_distribution(
+        [old, real],
+        INSTANT,
+        events=events,
+        keystore_dir=trust["keystore"],
+        policy=dict(DEFAULT_POLICY),
+        receipt_key=FIX_AUTH_KEY,
+    )
+    assert dist2[SUPERSEDED] == 1
+    assert dist2[ACTIVE] == 1
 
 
 # --------------------------------------------------------------------------- #

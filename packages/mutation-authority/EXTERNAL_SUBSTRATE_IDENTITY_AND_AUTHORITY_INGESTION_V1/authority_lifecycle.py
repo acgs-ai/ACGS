@@ -203,10 +203,14 @@ def superseded_ids_of(
     deactivate a record, appending a bogus successor would be a denial-of-
     authority primitive. A successor only counts when it would itself stand:
     schema-valid, not revoked, carrying a valid attestation and an ingestion
-    receipt, and in effect at `instant`. `successor_trusted` lets the validator-
-    trust layer additionally require the successor's attestations to be
-    trust-verified. Anything less leaves the predecessor in place (fail closed
-    in favor of established authority)."""
+    receipt, and in effect at `instant`. The receipt check here is STRUCTURAL
+    only (a non-empty string) — this layer has no receipt key. Governed
+    callers must pass `successor_trusted` so the validator-trust layer
+    additionally requires the successor's attestations to be trust-verified
+    and its ingestion receipt to verify cryptographically against the
+    authority receipt key (see `_trusted_superseded_ids`). Anything less
+    leaves the predecessor in place (fail closed in favor of established
+    authority)."""
     out: set[str] = set()
     for r in records:
         sid = r.get("supersedes")

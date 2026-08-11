@@ -41,6 +41,7 @@ from validator_trust import (  # noqa: E402
     attestation_payload_v2,
     event_binding,
     load_validator_events,
+    rotation_payload,
     verify_attestation_trust,
 )
 
@@ -255,19 +256,19 @@ def test_revoked_key_fails(tmp_path):
 def test_rotated_key_history_remains_auditable(tmp_path):
     trust = ed_trust(tmp_path)
     priv2, pub2 = _ed25519.generate()
-    _append(
-        trust,
-        {
-            "schema": EVENT_SCHEMA,
-            "event": "ROTATE",
-            "validator_id": ED_VALIDATOR,
-            "key_id": "ed-k2",
-            "key_algorithm": ED25519,
-            "key_fingerprint": sha256_hex(pub2),
-            "public_key": pub2.hex(),
-            "instant": "2026-09-01T00:00:00Z",
-        },
-    )
+    rot = {
+        "schema": EVENT_SCHEMA,
+        "event": "ROTATE",
+        "validator_id": ED_VALIDATOR,
+        "key_id": "ed-k2",
+        "key_algorithm": ED25519,
+        "key_fingerprint": sha256_hex(pub2),
+        "public_key": pub2.hex(),
+        "instant": "2026-09-01T00:00:00Z",
+    }
+    # The predecessor key (ed-k1) authorizes its own retirement.
+    rot["rotation_authorization"] = _ed25519.sign(trust["priv"], rotation_payload(rot))
+    _append(trust, rot)
     # An attestation signed with ed-k1 INSIDE its window stays verifiable
     # forever — rotation does not orphan history.
     old = _ed_evidence(trust, validated_at="2026-08-10T11:00:00Z")
@@ -316,32 +317,82 @@ def test_algorithm_mode_confusion_refused(tmp_path):
 def test_cli_rotation_preserves_ed25519_algorithm(tmp_path):
     # Rotating an Ed25519 validator must not silently downgrade it to a
     # locally minted HMAC key: without an explicit successor public key the
-    # rotation is refused; with one, the ROTATE event stays Ed25519.
+    # rotation is refused; with one, the ROTATE event stays Ed25519 — and it
+    # must carry the predecessor key's rotation authorization, which the CLI
+    # cannot synthesize because the private key never leaves the validator.
     import validator_admin as VA
 
     trust = ed_trust(tmp_path)
     base = ["--registry", str(trust["registry"]), "--keystore", str(trust["keystore"])]
     rotate = ["rotate", "--validator-id", ED_VALIDATOR, "--key-id", "ed-k2"]
     assert VA.main([*base, *rotate, "--instant", "2026-09-01T00:00:00Z"]) == 3
-    _priv2, pub2 = _ed25519.generate()
-    assert (
-        VA.main(
-            [
-                *base,
-                *rotate,
-                "--instant",
-                "2026-09-01T00:00:00Z",
-                "--public-key",
-                pub2.hex(),
-            ]
-        )
-        == 0
-    )
+    priv2, pub2 = _ed25519.generate()
+    with_pub = [
+        *base,
+        *rotate,
+        "--instant",
+        "2026-09-01T00:00:00Z",
+        "--public-key",
+        pub2.hex(),
+    ]
+    # Without the predecessor's signature the rotation is refused.
+    assert VA.main(with_pub) == 3
+    # The validator signs the exact rotation payload the CLI will append.
+    expected_event = {
+        "schema": EVENT_SCHEMA,
+        "event": "ROTATE",
+        "validator_id": ED_VALIDATOR,
+        "key_id": "ed-k2",
+        "key_algorithm": ED25519,
+        "instant": "2026-09-01T00:00:00Z",
+        "public_key": pub2.hex(),
+        "key_fingerprint": sha256_hex(pub2),
+    }
+    authorization = _ed25519.sign(trust["priv"], rotation_payload(expected_event))
+    assert VA.main([*with_pub, "--rotation-authorization", authorization]) == 0
     events = load_validator_events(trust["registry"])
     rot = events[-1]
     assert rot["event"] == "ROTATE"
     assert rot["key_algorithm"] == ED25519
     assert rot["public_key"] == pub2.hex()
     assert rot["key_fingerprint"] == sha256_hex(pub2)
+    assert rot["rotation_authorization"] == authorization
     # No HMAC key material was minted for the ed25519 successor.
     assert not (trust["keystore"] / "ed-k2").exists()
+    # The rotated registry verifies end to end: post-rotation attestations
+    # under the new key are trusted (the rotation authenticates).
+    trust2 = dict(trust, priv=priv2, pub=pub2)
+    fresh = _ed_evidence(trust2, validated_at="2026-09-15T00:00:00Z", key_id="ed-k2")
+    ok, reason = _trusted(fresh, trust2)
+    assert ok, reason
+
+
+def test_unauthorized_ed25519_rotation_fails_closed(tmp_path):
+    # Attacker appends a chain-valid ROTATE naming a keypair they generated:
+    # no signature by the retired key -> nothing the validator "signs" after
+    # that rotation is trusted, including attacker attestations under the
+    # planted key.
+    trust = ed_trust(tmp_path)
+    evil_priv, evil_pub = _ed25519.generate()
+    _append(
+        trust,
+        {
+            "schema": EVENT_SCHEMA,
+            "event": "ROTATE",
+            "validator_id": ED_VALIDATOR,
+            "key_id": "ed-evil",
+            "key_algorithm": ED25519,
+            "key_fingerprint": sha256_hex(evil_pub),
+            "public_key": evil_pub.hex(),
+            "instant": "2026-08-01T00:00:00Z",
+        },
+    )
+    evil_trust = dict(trust, priv=evil_priv, pub=evil_pub)
+    forged = _ed_evidence(evil_trust, key_id="ed-evil")
+    ok, reason = _trusted(forged, evil_trust)
+    assert not ok and reason == "unauthenticated_rotation"
+    # And even legitimate old-key attestations demand review of the tainted
+    # history — the whole validator fails closed, not just the planted key.
+    legit = _ed_evidence(trust, validated_at="2026-07-01T00:00:00Z")
+    ok2, reason2 = _trusted(legit, trust)
+    assert not ok2 and reason2 == "unauthenticated_rotation"

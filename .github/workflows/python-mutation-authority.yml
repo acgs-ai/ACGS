@@ -30,9 +30,37 @@ defaults:
 
 jobs:
   test:
-    # Block fork PRs: untrusted code must not run on the self-hosted runner.
+    # Same-repo events only: untrusted fork code must not run on the
+    # self-hosted runner. Fork PRs get the same coverage from `test-fork`
+    # on a GitHub-hosted runner below.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: CLI verification gate
+        run: |
+          uv run --no-project --python 3.11 python verify_mutation_governance.py
+
+      - name: Test
+        # `cryptography` is provisioned so the Ed25519 attack suite
+        # (test_asymmetric_keys.py) actually runs in CI instead of skipping.
+        run: |
+          uv run --no-project --python 3.11 --with pytest --with cryptography \
+            python -m pytest tests integration_tests \
+            EXTERNAL_SUBSTRATE_IDENTITY_AND_AUTHORITY_INGESTION_V1/attack_suite \
+            -q --import-mode=importlib
+
+  test-fork:
+    # Fork PRs run the SAME gates on a GitHub-hosted, ephemeral runner
+    # (deliberately not self-hosted): external contributions still get CI
+    # instead of being silently skipped, while their untrusted code never
+    # touches infrastructure we own.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

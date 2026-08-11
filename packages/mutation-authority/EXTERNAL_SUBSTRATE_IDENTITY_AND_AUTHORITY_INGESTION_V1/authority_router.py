@@ -228,10 +228,12 @@ def route(
         ev_id = match["authority_evidence_id"]
         ev_digest = match["source_digest"]
         # Mint-then-consume atomically per request: both receipts are minted
-        # first, then consumed against the replay ledger. If either receipt is
-        # a replay (already consumed in a prior evaluation against a persistent
-        # ledger), the whole request stays in its prior state and contributes
-        # no transitions — a request never half-advances (fail closed).
+        # first, then consumed against the replay ledger as ONE batch under a
+        # single ledger lock. If either receipt is a replay (already consumed
+        # in a prior evaluation against a persistent ledger), NEITHER is
+        # recorded and the whole request stays in its prior state — a request
+        # never half-advances, even against a concurrent evaluation racing on
+        # the same persistent ledger (fail closed).
         minted = []
         for prior, new in ((ROUTING_REQUIRED, ROUTING_RESOLVED), (ROUTING_RESOLVED, READY_TO_SEND)):
             minted.append(
@@ -251,8 +253,7 @@ def route(
                 )
             )
         try:
-            for receipt in minted:
-                replay.consume(receipt["receipt_id"])
+            replay.consume_many([receipt["receipt_id"] for receipt in minted])
         except ReceiptError:
             continue
         result.transitions.extend(minted)

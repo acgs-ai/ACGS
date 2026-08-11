@@ -377,6 +377,69 @@ def public_key_of(evts: list[dict[str, Any]], key_id: str) -> str | None:
     return pk if isinstance(pk, str) else None
 
 
+def rotation_payload(event: dict[str, Any]) -> str:
+    """Canonical signed content of a ROTATE event: everything except the
+    rotation authorization itself and the chain-link fields, which are
+    appended after signing. The successor key id, algorithm, fingerprint,
+    public key, and rotation instant are all inside the signature."""
+    return canonical_json(
+        {
+            k: v
+            for k, v in event.items()
+            if k not in ("rotation_authorization", "prev_event_binding", "event_binding")
+        }
+    )
+
+
+def rotations_authenticated(evts: list[dict[str, Any]], keystore_dir: Path) -> bool:
+    """Every ROTATE event must carry a `rotation_authorization` signature made
+    by the key it retires (the chronologically previous signing key). The
+    registry file is append-writable, so an unauthenticated ROTATE would let
+    anyone who can append a line rotate a trusted validator onto an
+    attacker-held key and sign 'trusted' attestations with it. A rotation the
+    predecessor key did not sign authenticates nothing — fail closed."""
+    keyed: list[tuple[datetime, dict[str, Any]]] = []
+    for e in evts:
+        if e.get("event") == "REGISTER":
+            start = _parse_z(e.get("effective_from"))
+        elif e.get("event") == "ROTATE":
+            start = _parse_z(e.get("instant"))
+        else:
+            continue
+        if start is None or not e.get("key_id"):
+            return False  # malformed chronology — no rotation is verifiable
+        keyed.append((start, e))
+    keyed.sort(key=lambda t: t[0])
+    for i, (_start, e) in enumerate(keyed):
+        if e.get("event") != "ROTATE":
+            continue
+        if i == 0:
+            return False  # a rotation with no predecessor key retires nothing
+        pred = keyed[i - 1][1]
+        auth = e.get("rotation_authorization")
+        if not isinstance(auth, str) or not auth.strip():
+            return False
+        payload = rotation_payload(e)
+        pred_fp = pred.get("key_fingerprint")
+        if pred.get("key_algorithm", HMAC_SHA256) == ED25519:
+            pk = pred.get("public_key")
+            try:
+                pub = bytes.fromhex(pk) if isinstance(pk, str) else None
+            except ValueError:
+                pub = None
+            if pub is None or sha256_hex(pub) != pred_fp:
+                return False
+            if not _ed25519.verify(pub, payload, auth):
+                return False
+        else:
+            key = _load_key(keystore_dir, pred.get("key_id") or "")
+            if key is None or sha256_hex(key) != pred_fp:
+                return False
+            if not hmac_verify(key, payload, auth):
+                return False
+    return True
+
+
 def revoked_after(evts: list[dict[str, Any]], validated_at: str) -> bool:
     """True if the validator was revoked AFTER this attestation was made — the
     attestation was valid when issued, but the trust behind it is now in doubt
@@ -458,12 +521,20 @@ def verify_attestation_trust(
     *,
     events: list[dict[str, Any]] | None,
     keystore_dir: Path,
+    instant: str | None = None,
 ) -> tuple[bool, str]:
     """Full trust verification of one attestation. Every check fails closed.
 
     Order: metadata completeness -> record binding -> registry integrity ->
-    registration + class authorization -> authority valid at validated_at ->
-    key current at validated_at -> key fingerprint -> signature.
+    registration + class authorization -> rotation authentication ->
+    authority valid at validated_at -> key current at validated_at ->
+    key fingerprint -> signature.
+
+    When an evaluation `instant` is supplied, an attestation whose
+    `validated_at` lies in the future of that instant is rejected:
+    validated_at is signer-supplied, and a forward-dated attestation would
+    pre-authorize trust for a moment that has not happened yet (e.g. dodging
+    an upcoming revocation or rotation window).
     """
     if events is None:
         return False, "validator_registry_unreadable"
@@ -480,8 +551,15 @@ def verify_attestation_trust(
         return False, "unknown_disposition"
     if att["record_binding"] != attestation_binding(record):
         return False, "record_binding_mismatch"
-    if _parse_z(att["validated_at"]) is None:
+    v_dt = _parse_z(att["validated_at"])
+    if v_dt is None:
         return False, "validated_at_not_utc"
+    if instant is not None:
+        now_dt = _parse_z(instant)
+        if now_dt is None:
+            return False, "evaluation_instant_not_utc"
+        if v_dt > now_dt:
+            return False, "attestation_future_dated"
 
     evts = _events_for(events, att["validator_id"])
     if not evts:
@@ -493,6 +571,11 @@ def verify_attestation_trust(
         return False, "validator_never_registered"
     if not _register_has_onboarding_provenance(reg, keystore_dir):
         return False, "register_missing_onboarding_provenance"
+    # Every rotation in this validator's history must have been authorized by
+    # the key it retired — otherwise an appended ROTATE would swap in an
+    # attacker-held key and every later signature check would bless it.
+    if not rotations_authenticated(evts, keystore_dir):
+        return False, "unauthenticated_rotation"
     # The attestation's human identity must be the registered one: a trusted
     # key must not lend its signature to a different claimed validator.
     if att["validator_identity"] != reg.get("validator_identity"):
@@ -669,7 +752,7 @@ def derive_governed_state(
     atts = _attestations(record)
     for att in atts:
         ok, _reason = verify_attestation_trust(
-            record, att, events=events, keystore_dir=keystore_dir
+            record, att, events=events, keystore_dir=keystore_dir, instant=instant
         )
         if not ok:
             return INVALIDATED
@@ -721,17 +804,25 @@ def _trusted_superseded_ids(
     *,
     events: list[dict[str, Any]] | None,
     keystore_dir: Path,
+    receipt_key: bytes | None = None,
 ) -> set[str]:
     """Ids displaced by a successor whose attestations are all trust-verified.
     `supersedes` is attacker-writable, so only a successor that would itself
-    stand under full validator-trust verification may deactivate a record."""
+    stand under full validator-trust verification may deactivate a record.
+    The successor's ingestion receipt is verified CRYPTOGRAPHICALLY against
+    the authority receipt key — the base layer's structural check accepts any
+    non-empty receipt string, which a registry writer can invent."""
 
     def successor_trusted(r: dict[str, Any]) -> bool:
         atts = _attestations(r)
         if not atts:
             return False
+        if not ingestion_receipt_verified(r, receipt_key):
+            return False
         return all(
-            verify_attestation_trust(r, a, events=events, keystore_dir=keystore_dir)[0]
+            verify_attestation_trust(
+                r, a, events=events, keystore_dir=keystore_dir, instant=instant
+            )[0]
             for a in atts
         )
 
@@ -752,7 +843,9 @@ def governed_active_records(
     only. INVALIDATED, CONFLICTED, and REQUIRES_REVIEW never route. When
     `artifact_dir` is given, the retained source artifact must still hash to
     the record's source_digest — an unverifiable source document never routes."""
-    sids = _trusted_superseded_ids(records, instant, events=events, keystore_dir=keystore_dir)
+    sids = _trusted_superseded_ids(
+        records, instant, events=events, keystore_dir=keystore_dir, receipt_key=receipt_key
+    )
     out = []
     for r in records:
         try:
@@ -783,7 +876,9 @@ def governed_lifecycle_distribution(
     policy: dict[str, Any] | None,
     receipt_key: bytes | None = None,
 ) -> dict[str, int]:
-    sids = _trusted_superseded_ids(records, instant, events=events, keystore_dir=keystore_dir)
+    sids = _trusted_superseded_ids(
+        records, instant, events=events, keystore_dir=keystore_dir, receipt_key=receipt_key
+    )
     dist = dict.fromkeys(GOVERNED_STATES, 0)
     for r in records:
         try:

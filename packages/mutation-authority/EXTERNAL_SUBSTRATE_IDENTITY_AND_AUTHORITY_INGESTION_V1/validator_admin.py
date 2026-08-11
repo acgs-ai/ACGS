@@ -35,7 +35,7 @@ import secrets
 import sys
 from pathlib import Path
 
-from _canonical import sha256_hex
+from _canonical import hmac_sign, sha256_hex
 from validator_trust import (
     ED25519,
     EVENT_SCHEMA,
@@ -48,6 +48,7 @@ from validator_trust import (
     chain_intact,
     event_binding,
     load_validator_events,
+    rotation_payload,
 )
 
 HERE = Path(__file__).resolve().parent
@@ -105,6 +106,16 @@ def main(argv: list[str]) -> int:
         "--public-key",
         default=None,
         help="ed25519 successor public key (raw hex); the private key never leaves the validator",
+    )
+    rot.add_argument(
+        "--rotation-authorization",
+        default=None,
+        help=(
+            "signature by the CURRENT (predecessor) key over the rotation "
+            "payload — required when the predecessor key is ed25519 (the "
+            "private key never leaves the validator). HMAC predecessors are "
+            "signed automatically from the keystore."
+        ),
     )
 
     rev = sub.add_parser("revoke")
@@ -178,6 +189,41 @@ def main(argv: list[str]) -> int:
             except ValueError as exc:
                 print(f"REFUSED: {exc}", file=sys.stderr)
                 return 3
+
+        # A rotation must be authorized by the key it retires: verification
+        # refuses any ROTATE without a predecessor signature
+        # (`unauthenticated_rotation`), so an attacker who can append registry
+        # lines cannot rotate a trusted validator onto a key they hold.
+        pred = current[-1] if current else None
+        if pred is None:
+            print("REFUSED: no current key to authorize this rotation", file=sys.stderr)
+            return 3
+        if pred.get("key_algorithm", HMAC_SHA256) == ED25519:
+            if not args.rotation_authorization:
+                print(
+                    "REFUSED: rotating away from an ed25519 key requires "
+                    "--rotation-authorization (signature by the current key over "
+                    "the rotation payload; the private key never leaves the "
+                    "validator)",
+                    file=sys.stderr,
+                )
+                return 3
+            event["rotation_authorization"] = args.rotation_authorization
+        else:
+            if args.rotation_authorization:
+                event["rotation_authorization"] = args.rotation_authorization
+            else:
+                pred_key_path = keystore / str(pred.get("key_id"))
+                if not pred_key_path.is_file():
+                    print(
+                        "REFUSED: predecessor key not in keystore — cannot "
+                        "authorize this rotation",
+                        file=sys.stderr,
+                    )
+                    return 3
+                event["rotation_authorization"] = hmac_sign(
+                    pred_key_path.read_bytes(), rotation_payload(event)
+                )
         _append(registry, event)
         print(
             f"ROTATED {args.validator_id} -> key={args.key_id} "

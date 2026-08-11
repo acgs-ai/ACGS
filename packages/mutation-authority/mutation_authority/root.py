@@ -85,7 +85,32 @@ class GovernanceRoot:
 
         Initialization is a bootstrap ceremony: it happens once, before any
         agent runs, and is the only code path that writes to the root.
+
+        Re-running it against a directory that already holds root or keystore
+        material is refused outright: silently rewriting policy.json /
+        actors.json and re-signing a fresh manifest over them would let anyone
+        who can invoke initialize() replace the governance contract in place —
+        the exact mutation the sealed root exists to prevent. Fail closed;
+        replacing a root is a deliberate operator action (new directories),
+        never an overwrite.
         """
+        existing = [
+            p.name
+            for p in (
+                root_dir / POLICY_FILE,
+                root_dir / ACTORS_FILE,
+                root_dir / MANIFEST_FILE,
+                keystore_dir / ROOT_KEY_FILE,
+            )
+            if p.exists()
+        ]
+        if keystore_dir.is_dir():
+            existing.extend(sorted(p.name for p in keystore_dir.glob("actor_*.key")))
+        if existing:
+            raise RootIntegrityError(
+                "governance root already initialized — refusing to overwrite "
+                f"existing material: {existing}"
+            )
         root_dir.mkdir(parents=True, exist_ok=True)
         keystore_dir.mkdir(parents=True, exist_ok=True)
 
