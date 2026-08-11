@@ -302,7 +302,26 @@ def _admin(args: argparse.Namespace, registry: Path, keystore: Path) -> int:
                         file=sys.stderr,
                     )
                     return 3
-                event["rotation_authorization"] = hmac_sign(pred_key_path.read_bytes(), payload)
+                # Sign only with the key the registry actually registered: a
+                # corrupted or swapped keystore file would produce a ROTATE
+                # that rotations_authenticated() rejects at read time, silently
+                # bricking the validator's whole history while this command
+                # reports success.
+                pred_key = pred_key_path.read_bytes()
+                if sha256_hex(pred_key) != pred.get("key_fingerprint"):
+                    if algorithm != ED25519:
+                        # Remove the successor key minted above so a retry
+                        # with the same --key-id (after the keystore is
+                        # repaired) is not refused as a duplicate.
+                        (keystore / args.key_id).unlink(missing_ok=True)
+                    print(
+                        "REFUSED: keystore predecessor key does not match its "
+                        "registered fingerprint — signing with it would append "
+                        "an unauthenticated rotation",
+                        file=sys.stderr,
+                    )
+                    return 3
+                event["rotation_authorization"] = hmac_sign(pred_key, payload)
         _append(registry, event)
         print(
             f"ROTATED {args.validator_id} -> key={args.key_id} "

@@ -124,8 +124,15 @@ def main(argv: list[str]) -> int:
     for att in [record.get("validation"), *(record.get("co_validations") or [])]:
         if att is None:
             continue
+        # The onboarding instant is passed through so attestation_future_dated
+        # runs: a validated_at in the future of --instant must leave the
+        # registry untouched instead of pre-authorizing a later activation.
         ok, reason = VT.verify_attestation_trust(
-            record, att, events=events, keystore_dir=Path(args.validator_keystore)
+            record,
+            att,
+            events=events,
+            keystore_dir=Path(args.validator_keystore),
+            instant=args.instant,
         )
         if not ok:
             print(f"VALIDATOR TRUST FAILED: {reason}", file=sys.stderr)

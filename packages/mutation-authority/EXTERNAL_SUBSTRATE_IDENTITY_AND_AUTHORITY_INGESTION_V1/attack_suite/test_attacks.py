@@ -608,6 +608,36 @@ def test_attack19b_paired_receipts_consume_atomically(tmp_path):
     assert ReplayLedger(path).has(first) and ReplayLedger(path).has(second)
 
 
+def test_replay_ledger_refuses_symlinked_path(tmp_path):
+    # A persistent replay path replaced by a symlink must be refused with
+    # no-follow opens: following it would read prior ids from — and append
+    # consumed ids into — an arbitrary writable target while the replay
+    # guard reports success.
+    victim = tmp_path / "victim.txt"
+    victim.write_text("innocent\n", encoding="utf-8")
+
+    # (1) Constructor: loading through a symlinked ledger path is refused.
+    linked = tmp_path / "replay.jsonl"
+    linked.symlink_to(victim)
+    with pytest.raises(ReceiptError):
+        ReplayLedger(linked)
+
+    # (2) Consume: a symlink planted after construction is refused, nothing
+    # is appended to the external target, and nothing is half-consumed.
+    late = tmp_path / "replay2.jsonl"
+    ledger = ReplayLedger(late)  # nothing on disk yet
+    late.symlink_to(victim)
+    with pytest.raises(ReceiptError):
+        ledger.consume("a" * 64)
+    assert victim.read_text(encoding="utf-8") == "innocent\n"
+    assert not ledger.has("a" * 64)
+
+    # (3) A real regular file at the same path still works end to end.
+    late.unlink()
+    ledger.consume("a" * 64)
+    assert ReplayLedger(late).has("a" * 64)
+
+
 def test_keystore_key_with_whitespace_edge_bytes_round_trips(tmp_path):
     # Regression: the key is raw random bytes; roughly 1 in 22 generated keys
     # begins or ends with an ASCII-whitespace byte. Loading must return the
@@ -878,6 +908,22 @@ def test_compute_state_layer_ready_on_confirmed_empty(substrate, tmp_path):
     assert all(st["invariants"].values())
 
 
+def test_verifier_emits_blocked_verdict_on_malformed_manifest(tmp_path, monkeypatch, capsys):
+    # A truncated / invalid-JSON substrate_identity.json must produce the
+    # required primary verdict (INTEGRATION_BLOCKED), never an uncaught
+    # traceback that makes manifest corruption look like a verifier crash.
+    import verify_authority_state as V
+
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "substrate_identity.json").write_text('{"substrate_id": "trunc', encoding="utf-8")
+    monkeypatch.setattr(V, "HERE", home)
+    rc = V.main([str(tmp_path / "substrate"), f"--instant={INSTANT}"])
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert f"VERDICT: {V.INTEGRATION_BLOCKED}" in out
+
+
 def test_supersession_requires_qualified_successor(substrate, tmp_path):
     # `supersedes` is attacker-writable content: a successor that would not
     # itself stand (here: unattested, IDENTITY_EVIDENCED, no ingestion receipt)
@@ -1046,6 +1092,47 @@ def test_ingest_refuses_symlinked_artifact_store(tmp_path):
     assert ING.main(list(base)) == 0
     assert (store / digest).read_bytes() == b"appointment"
     assert not (store / digest).is_symlink()
+
+
+def test_ingest_repairs_mismatched_retained_artifact(tmp_path):
+    # A regular file already occupying the digest path — a partial file left
+    # by an interrupted earlier write, or a preplanted wrong-content file —
+    # must be re-hashed and repaired from the verified source document before
+    # the record is appended. Merely accepting it would leave the evidence
+    # permanently non-routable (source_artifact_intact re-hashes the retained
+    # bytes) while later same-id ingests hit the idempotent path first.
+    import ingest_authority_evidence as ING
+
+    doc = tmp_path / "doc"
+    doc.write_text("appointment")
+    digest = sha256_hex(b"appointment")
+    rec = tmp_path / "rec.json"
+    rec.write_text(json.dumps(_evidence(ev_id="AE-REPAIR", source_digest="")))
+    reg = tmp_path / "reg.jsonl"
+    store = tmp_path / ".authority_artifacts"
+    store.mkdir()
+    (store / digest).write_bytes(b"appoin")  # truncated/preplanted occupant
+    assert (
+        ING.main(
+            [
+                "--record",
+                str(rec),
+                "--registry",
+                str(reg),
+                "--keystore",
+                str(tmp_path / "ks"),
+                "--instant",
+                INSTANT,
+                "--document",
+                str(doc),
+            ]
+        )
+        == 0
+    )
+    # The retained artifact now re-verifies against the record's digest.
+    assert (store / digest).read_bytes() == b"appointment"
+    assert not (store / digest).is_symlink()
+    assert len(reg.read_text(encoding="utf-8").splitlines()) == 1
 
 
 def test_attack24_aggregate_counts_are_derived_not_stored():

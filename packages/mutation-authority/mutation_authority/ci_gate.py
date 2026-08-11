@@ -72,10 +72,15 @@ def _run_ci_gate(
         if receipt is None:
             failures.append(f"COMMIT seq={event.seq} references a receipt never issued in-chain")
             continue
+        # The COMPLETE receipt/COMMIT binding, including the authorized
+        # post-state: without the after_hash check, a chain-valid COMMIT
+        # appended directly to the ledger could launder arbitrary bytes
+        # under a legitimately issued receipt.
         if (
             receipt["actor"] != event.payload["actor"]
             or receipt["resource"] != event.payload["resource"]
             or receipt["previous_state_hash"] != event.payload["before_hash"]
+            or receipt["expected_state_hash"] != event.payload["after_hash"]
         ):
             failures.append(f"COMMIT seq={event.seq} does not match its receipt's binding")
 

@@ -346,11 +346,44 @@ class ReplayLedger:
     def __init__(self, path: Path | None = None) -> None:
         self._seen: set[str] = set()
         self._path = path
-        if path is not None and path.is_file():
-            for line in path.read_text(encoding="utf-8").splitlines():
-                rid = line.strip()
-                if rid:
-                    self._seen.add(rid)
+        if path is not None and os.path.lexists(path):
+            fd = self._open_pinned_ledger(os.O_RDONLY)
+            if fd is not None:
+                with os.fdopen(fd, "r", encoding="utf-8") as fh:
+                    for line in fh.read().splitlines():
+                        rid = line.strip()
+                        if rid:
+                            self._seen.add(rid)
+
+    def _open_pinned_ledger(self, flags: int) -> int | None:
+        """Open the persistent ledger with no-follow, regular-file checks.
+
+        A replay path replaced by a symlink (or reached through a symlinked
+        ancestor) must be refused: following it would read prior ids from —
+        and append consumed ids into — an arbitrary writable target while the
+        replay guard reports success. Returns None only when the ledger does
+        not exist and O_CREAT was not requested."""
+        assert self._path is not None
+        parent_fd, name, parent = _open_trusted_parent(self._path)
+        try:
+            try:
+                fd = os.open(name, flags | os.O_NOFOLLOW, 0o600, dir_fd=parent_fd)
+            except FileNotFoundError:
+                return None
+            except OSError as exc:
+                raise ReceiptError(
+                    f"cannot securely open replay ledger {self._path}: {exc}"
+                ) from exc
+            try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    raise ReceiptError(f"replay ledger is not a regular file: {self._path}")
+                _validate_pinned_parent(parent_fd, parent)
+            except Exception:
+                os.close(fd)
+                raise
+            return fd
+        finally:
+            os.close(parent_fd)
 
     def consume(self, receipt_id: str) -> None:
         self.consume_many([receipt_id])
@@ -375,8 +408,10 @@ class ReplayLedger:
             # lock serializes consumers; the on-disk state is re-read under
             # the lock so any id another process consumed since load is seen,
             # and the whole batch is checked and written under that one lock.
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            with self._path.open("a+", encoding="utf-8") as fh:
+            self._path.absolute().parent.mkdir(parents=True, exist_ok=True)
+            fd = self._open_pinned_ledger(os.O_RDWR | os.O_CREAT)
+            assert fd is not None
+            with os.fdopen(fd, "r+", encoding="utf-8") as fh:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
                 fh.seek(0)
                 for line in fh.read().splitlines():

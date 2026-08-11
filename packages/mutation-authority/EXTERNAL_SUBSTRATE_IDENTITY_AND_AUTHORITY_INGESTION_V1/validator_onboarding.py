@@ -268,10 +268,15 @@ def derive_ceremony_state(
     if reg is None or not registration_provenance_ok(appointment, reg)[0]:
         return KEY_BOUND
 
-    # Temporal / revocation dominate registration.
+    # Temporal / revocation dominate registration. A revocation applies only
+    # from its effective instant (consistent with authority_valid_at: rev <=
+    # at), so a REVOKE scheduled for the future must not report REVOKED at an
+    # earlier evaluation instant. An unparseable revocation instant — or no
+    # evaluation instant to place it against — fails closed as REVOKED.
     now = _parse_z(instant) if instant else None
     until = appointment.get("effective_until")
-    if any(e.get("event") == "REVOKE" for e in mine):
+    revs = [_parse_z(e.get("instant")) for e in mine if e.get("event") == "REVOKE"]
+    if revs and (now is None or any(r is None or r <= now for r in revs)):
         return REVOKED
     if now is not None:
         frm = _parse_z(appointment["effective_from"])

@@ -358,6 +358,45 @@ def attack_k_gateway_path_escape(base: Path) -> str:
     return "absolute/traversal paths rejected before any read; zero events, zero effects"
 
 
+def attack_m_commit_post_state_laundering(base: Path) -> str:
+    """A chain-valid COMMIT referencing a legitimately issued receipt but
+    recording a DIFFERENT after_hash (arbitrary bytes written in-process,
+    evidence then 'recovered') must fail the gate on the receipt binding:
+    the receipt authorized exactly one post-state."""
+    sb = IntegrationSandbox.build(base)
+    decision = sb.kernel.engine.decide(
+        sb.kernel.intent("agent-alpha", "src/module_a.py"), sb.kernel.tick()
+    )
+    _expect(decision.decision == "ALLOW" and decision.receipt is not None, "setup failed")
+    receipt = decision.receipt
+    assert receipt is not None
+    from .canonical import sha256_hex
+
+    malicious = b"MALICIOUS = 666\n"
+    _expect(sha256_hex(malicious) != receipt.expected_state_hash, "fixture must differ")
+    (sb.kernel.repo / "src/module_a.py").write_bytes(malicious)
+    sb.kernel.ledger.append(
+        "COMMIT",
+        {
+            "receipt_id": receipt.receipt_id,
+            "actor": receipt.actor,
+            "resource": receipt.resource,
+            "before_hash": receipt.previous_state_hash,
+            "after_hash": sha256_hex(malicious),
+            "decision": "ALLOW",
+        },
+        sb.kernel.tick(),
+    )
+    sb.evidence.recover_missing(sb.kernel.root, sb.kernel.ledger)
+    gate = sb.gate()
+    _expect(not gate.passed, "gate laundered unauthorized bytes under a real receipt")
+    _expect(
+        any("does not match its receipt's binding" in f for f in gate.failures),
+        str(gate.failures),
+    )
+    return "COMMIT post-state must equal the receipt's expected_state_hash; gate FAIL"
+
+
 def attack_l_malformed_evidence_projection(base: Path) -> str:
     """A corrupt evidence_graph.jsonl must block the mutation BEFORE the
     effect (fail closed, side effect did not run) instead of surfacing as an
@@ -401,6 +440,10 @@ INTEGRATION_CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     (
         "ATTACK L: malformed evidence projection blocks before effect",
         attack_l_malformed_evidence_projection,
+    ),
+    (
+        "ATTACK M: COMMIT post-state laundering under an issued receipt",
+        attack_m_commit_post_state_laundering,
     ),
     ("compatibility: full kernel suite re-run", check_kernel_suite_compatibility),
 ]

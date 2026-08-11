@@ -223,7 +223,15 @@ def test_ova5_revoked_appointment_derives_revoked(tmp_path):
         )
         == 0
     )
-    assert _ceremony(app, tmp_path) == REVOKED
+    # The revocation is scheduled for Aug 11: at the earlier evaluation
+    # instant (Aug 10) it has not taken effect yet (consistent with
+    # authority_valid_at: rev <= at), so the ceremony is still ACTIVE.
+    assert _ceremony(app, tmp_path) == ACTIVE
+    # From its effective instant onward it derives REVOKED.
+    assert _ceremony(app, tmp_path, instant="2026-08-11T00:00:00Z") == REVOKED
+    assert _ceremony(app, tmp_path, instant="2026-08-12T00:00:00Z") == REVOKED
+    # No evaluation instant to place the revocation against -> fail closed.
+    assert _ceremony(app, tmp_path, instant=None) == REVOKED
     # And the appointment period ending derives REVOKED too (no event needed).
     app2, _ = fixture_appointment(tmp_path)
     assert (
@@ -287,6 +295,40 @@ def test_ova7_registry_rollback_detected(tmp_path):
         keystore_dir=tmp_path / "vks",
     )
     assert not ok and reason == "validator_registry_chain_broken"
+
+
+def test_rotate_refuses_corrupted_predecessor_keystore_key(tmp_path):
+    # The auto-sign rotate path must verify the keystore bytes against the
+    # predecessor's REGISTERED fingerprint before signing: signing with
+    # corrupted/replaced key bytes would append a ROTATE that
+    # rotations_authenticated() rejects at read time — the command would
+    # report success while silently untrusting the validator's whole history.
+    import validator_admin as VA
+
+    app, deed = fixture_appointment(tmp_path)
+    assert _onboard(tmp_path, app, deed) == 0
+    (tmp_path / "vks" / EXT_KEY_ID).write_bytes(b"z" * 32)  # corrupted key file
+    base = ["--registry", str(tmp_path / "vreg.jsonl"), "--keystore", str(tmp_path / "vks")]
+    assert (
+        VA.main(
+            [
+                *base,
+                "rotate",
+                "--validator-id",
+                EXT_VALIDATOR,
+                "--key-id",
+                "ext-k2",
+                "--instant",
+                "2026-08-11T00:00:00Z",
+            ]
+        )
+        == 3
+    )
+    # Nothing appended: the registry still holds only the REGISTER event.
+    events = load_validator_events(tmp_path / "vreg.jsonl")
+    assert [e["event"] for e in events] == ["REGISTER"]
+    # No stray successor key was left behind either.
+    assert not (tmp_path / "vks" / "ext-k2").exists()
 
 
 def test_ova8_forged_onboarding_evidence_refused(tmp_path):
@@ -384,14 +426,17 @@ def test_ceremony_ladder_derives_each_state(tmp_path):
         == 0
     )
     assert _ceremony(app, tmp_path) == ROTATED
-    # REVOKED: terminal.
+    # REVOKED: terminal from its effective instant onward. Before that
+    # instant the scheduled revocation has not taken effect (consistent
+    # with authority_valid_at), so the ceremony is still ROTATED.
     assert (
         VA.main(
             [*base, "revoke", "--validator-id", EXT_VALIDATOR, "--instant", "2026-08-12T00:00:00Z"]
         )
         == 0
     )
-    assert _ceremony(app, tmp_path) == REVOKED
+    assert _ceremony(app, tmp_path) == ROTATED
+    assert _ceremony(app, tmp_path, instant="2026-08-12T00:00:00Z") == REVOKED
 
 
 def test_onboarded_validator_attestations_are_trusted(tmp_path):

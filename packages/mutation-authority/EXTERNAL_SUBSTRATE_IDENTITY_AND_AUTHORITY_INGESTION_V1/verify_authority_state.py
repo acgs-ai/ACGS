@@ -293,7 +293,10 @@ def main(argv: list[str]) -> int:
             HERE / ".authority_keystore",
             instant,
         )
-    except ReceiptError as exc:
+    except (ReceiptError, OSError, json.JSONDecodeError) as exc:
+        # A truncated, unreadable, or non-JSON substrate identity manifest is
+        # a blocked integration, not a verifier crash: the required primary
+        # verdict must still be emitted.
         print(f"VERDICT: {INTEGRATION_BLOCKED}")
         print(f"  {exc}", file=sys.stderr)
         return 2

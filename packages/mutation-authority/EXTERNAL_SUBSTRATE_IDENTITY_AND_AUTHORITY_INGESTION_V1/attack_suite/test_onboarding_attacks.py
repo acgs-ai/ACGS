@@ -607,6 +607,32 @@ def test_pipeline_attested_onboards_active(tmp_path):
     assert _state(stored[0]) == ACTIVE
 
 
+def test_pipeline_future_dated_attestation_exits_5(tmp_path):
+    # Gate 3b receives the onboarding --instant: an otherwise valid signed
+    # attestation whose validated_at lies in the FUTURE of that instant must
+    # leave the registry untouched — otherwise a pre-authorized record would
+    # become routable once the claimed time arrives, without any new
+    # validation ceremony.
+    import onboard_authority_evidence as OB
+
+    trust = fixture_trust(tmp_path)
+    doc = tmp_path / "deed"
+    doc.write_text("[FIXTURE] appointment deed")
+    rec = dict(_evidence(source_digest=sha256_hex(doc.read_bytes())))
+    rec["issuer_or_appointing_party"] = "[FIXTURE] Board"
+    rec["validation"] = _sign_att(
+        {
+            "validator_identity": "[FIXTURE] Legal Validator",
+            "validation_method": "[FIXTURE] reviewed deed",
+            "validated_at": "2026-08-10T13:00:00Z",  # after INSTANT (12:00)
+            "record_binding": attestation_binding(rec),
+        }
+    )
+    rc = OB.main(_pipeline_args(tmp_path, rec, doc, trust))
+    assert rc == 5
+    assert not (tmp_path / "reg.jsonl").exists()
+
+
 def test_pipeline_untrusted_validator_exits_5(tmp_path):
     # Attested, binding intact — but the validator is not in the registry
     # (empty trust context). Gate 3b refuses; the registry is untouched.

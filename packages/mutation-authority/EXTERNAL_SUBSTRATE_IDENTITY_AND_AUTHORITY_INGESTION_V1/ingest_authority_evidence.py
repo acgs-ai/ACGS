@@ -208,7 +208,38 @@ def main(argv: list[str]) -> int:
                         file=sys.stderr,
                     )
                     return 2
-                # already retained; idempotent
+                # Retained means BYTES-VERIFIED, not merely present: a partial
+                # file left by an interrupted earlier write (or a preplanted
+                # wrong-content file) would fail source_artifact_intact
+                # forever, while every later same-id ingest returns the
+                # idempotent path before reaching this code. Re-hash the
+                # occupant and atomically repair it from the verified source
+                # document (still under the registry lock) before appending.
+                rf = os.open(record["source_digest"], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+                with os.fdopen(rf, "rb") as fh:
+                    retained_digest = sha256_hex(fh.read())
+                if retained_digest != record["source_digest"]:
+                    tmp_name = "." + record["source_digest"] + ".repair"
+                    try:
+                        os.unlink(tmp_name, dir_fd=dir_fd)
+                    except FileNotFoundError:
+                        pass
+                    wf = os.open(
+                        tmp_name,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                        0o666,
+                        dir_fd=dir_fd,
+                    )
+                    with os.fdopen(wf, "wb") as fh:
+                        fh.write(doc_path.read_bytes())
+                        fh.flush()
+                        os.fsync(fh.fileno())
+                    os.replace(
+                        tmp_name,
+                        record["source_digest"],
+                        src_dir_fd=dir_fd,
+                        dst_dir_fd=dir_fd,
+                    )
             except OSError as exc:
                 print(
                     f"FATAL: cannot retain source artifact (symlinked digest "
