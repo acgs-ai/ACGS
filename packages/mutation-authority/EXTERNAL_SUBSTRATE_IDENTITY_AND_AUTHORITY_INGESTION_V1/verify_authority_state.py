@@ -23,7 +23,13 @@ from _identity import IDENTITY_CONFIRMED, MANIFEST_NAME, verify_manifest
 from _registry import REGISTRY_NAME, read_registry
 from _substrate import SubstrateError, derive_counts, load_requests, resolve_root
 from authority_lifecycle import superseded_ids_of
-from authority_receipt import ReceiptError, ReplayLedger, load_key, verify_receipt
+from authority_receipt import (
+    ReceiptError,
+    ReplayLedger,
+    load_key,
+    require_substrate_binding,
+    verify_receipt,
+)
 from authority_router import (
     AUTHORITY_EVIDENCED,
     IDENTITY_EVIDENCED,
@@ -66,6 +72,7 @@ def compute_state(
     Section 23 report, and the verdict.
     """
     manifest = json.loads((manifest_path or (HERE / MANIFEST_NAME)).read_text(encoding="utf-8"))
+    require_substrate_binding(manifest.get("substrate_id"), manifest.get("critical_set_digest"))
     identity = verify_manifest(manifest, substrate_root)
     confirmed = identity["state"] == IDENTITY_CONFIRMED
 

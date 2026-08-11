@@ -50,7 +50,7 @@ from authority_lifecycle import (
     superseded_ids_of,
     validate_onboarding_record,
 )
-from authority_receipt import load_or_create_key
+from authority_receipt import load_or_create_key, require_substrate_binding
 
 HERE = Path(__file__).resolve().parent
 
@@ -175,6 +175,7 @@ def main(argv: list[str]) -> int:
         record,
     )
     manifest = json.loads((HERE / "substrate_identity.json").read_text(encoding="utf-8"))
+    require_substrate_binding(manifest.get("substrate_id"), manifest.get("critical_set_digest"))
     state = VT.derive_governed_state(
         mine,
         instant=args.instant,

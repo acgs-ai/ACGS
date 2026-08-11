@@ -26,7 +26,12 @@ from typing import Any
 
 from _canonical import sha256_hex
 from _substrate import BASIS_CONTROLLER, BASIS_COUNSEL, READY_TO_SEND, ROUTING_REQUIRED
-from authority_receipt import ReceiptError, ReplayLedger, mint_receipt
+from authority_receipt import (
+    ReceiptError,
+    ReplayLedger,
+    mint_receipt,
+    substrate_binding_valid,
+)
 
 DATA_CONTROLLER = "DATA_CONTROLLER"
 COUNSEL_OR_RIGHTS_AUTHORITY = "COUNSEL_OR_RIGHTS_AUTHORITY"
@@ -209,8 +214,15 @@ def route(
     never touched (I7); no recipient is fabricated (I10) — the recipient is the
     evidenced subject_identity from a real record or nothing.
     """
+    result = RouteResult(
+        request_final_state={
+            request.get("request_id", ""): request.get("routing_state", ROUTING_REQUIRED)
+            for request in requests
+        }
+    )
+    if not substrate_binding_valid(substrate_identity, substrate_digest):
+        return result
     replay = replay or ReplayLedger()
-    result = RouteResult(request_final_state={})
     verified_evidence = sorted(
         (e for e in evidence), key=lambda e: e.get("authority_evidence_id", "")
     )

@@ -32,7 +32,11 @@ from pathlib import Path
 from _canonical import sha256_hex
 from _identity import MANIFEST_NAME
 from _registry import REGISTRY_NAME, append_record, read_registry
-from authority_receipt import load_or_create_key, mint_receipt
+from authority_receipt import (
+    load_or_create_key,
+    mint_receipt,
+    require_substrate_binding,
+)
 from authority_router import validate_evidence
 
 HERE = Path(__file__).resolve().parent
@@ -119,6 +123,9 @@ def main(argv: list[str]) -> int:
 
         key = load_or_create_key(Path(args.keystore))
         manifest = json.loads((HERE / MANIFEST_NAME).read_text(encoding="utf-8"))
+        require_substrate_binding(
+            manifest.get("substrate_id"), manifest.get("critical_set_digest")
+        )
         receipt = mint_receipt(
             key,
             request_id=f"INGEST::{record['authority_evidence_id']}",

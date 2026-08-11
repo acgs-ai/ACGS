@@ -21,7 +21,8 @@ PKG = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PKG))
 
 import authority_receipt as AR  # noqa: E402
-from _canonical import sha256_hex  # noqa: E402
+import authority_router as Router  # noqa: E402
+from _canonical import canonical_json, hash_obj, hmac_sign, sha256_hex  # noqa: E402
 from _identity import (  # noqa: E402
     IDENTITY_CONFIRMED,
     IDENTITY_MISMATCH,
@@ -610,6 +611,97 @@ def test_keystore_key_with_whitespace_edge_bytes_round_trips(tmp_path):
     created = load_or_create_key(ks2)
     assert len(created) == 32
     assert load_or_create_key(ks2) == created
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("substrate_identity", None),
+        ("substrate_identity", 7),
+        ("substrate_identity", ""),
+        ("substrate_identity", "   "),
+        ("substrate_critical_set_digest", None),
+        ("substrate_critical_set_digest", 7),
+        ("substrate_critical_set_digest", ""),
+        ("substrate_critical_set_digest", "   "),
+    ],
+)
+def test_receipt_mint_and_verify_reject_invalid_substrate_binding(field, invalid):
+    kwargs = {
+        "request_id": "R1",
+        "prior_state": "ROUTING_REQUIRED",
+        "new_state": "ROUTING_RESOLVED",
+        "authority_subject": "Evidenced Entity",
+        "authority_evidence_id": "AE-1",
+        "evidence_digest": "a" * 64,
+        "authority_scope": {"asset_ids": "ALL", "requirement_ids": "ALL"},
+        "substrate_identity": "fixture-substrate",
+        "substrate_critical_set_digest": "d" * 64,
+        "decision": "ALLOW",
+        "decision_reason": "fixture",
+        "created_at": INSTANT,
+    }
+    invalid_kwargs = dict(kwargs, **{field: invalid})
+    with pytest.raises(ReceiptError):
+        mint_receipt(KEY, **invalid_kwargs)
+
+    forged = mint_receipt(KEY, **kwargs)
+    forged[field] = invalid
+    inputs = AR._decision_inputs(
+        request_id=forged["request_id"],
+        prior_state=forged["prior_state"],
+        new_state=forged["new_state"],
+        authority_subject=forged["authority_subject"],
+        authority_evidence_id=forged["authority_evidence_id"],
+        evidence_digest=forged["evidence_digest"],
+        authority_scope=forged["authority_scope"],
+        substrate_identity=forged["substrate_identity"],
+        substrate_critical_set_digest=forged["substrate_critical_set_digest"],
+        decision=forged["decision"],
+        decision_reason=forged["decision_reason"],
+    )
+    forged["decision_inputs_digest"] = hash_obj(inputs)
+    forged["receipt_id"] = hash_obj({"decision_inputs_digest": forged["decision_inputs_digest"]})
+    body = {key: value for key, value in forged.items() if key != "signature"}
+    forged["signature"] = hmac_sign(KEY, canonical_json(body))
+    assert not verify_receipt(KEY, forged)
+
+
+@pytest.mark.parametrize(
+    ("identity", "digest"),
+    [
+        (None, "d" * 64),
+        (7, "d" * 64),
+        ("", "d" * 64),
+        ("   ", "d" * 64),
+        ("fixture-substrate", None),
+        ("fixture-substrate", 7),
+        ("fixture-substrate", ""),
+        ("fixture-substrate", "   "),
+    ],
+)
+def test_route_denies_invalid_substrate_binding_before_receipt(identity, digest, monkeypatch):
+    minted = False
+
+    def forbidden_mint(*_args, **_kwargs):
+        nonlocal minted
+        minted = True
+        raise AssertionError("router attempted to mint against an invalid substrate")
+
+    monkeypatch.setattr(Router, "mint_receipt", forbidden_mint)
+    result = Router.route(
+        _requests(),
+        [_evidence()],
+        substrate_identity=identity,
+        substrate_digest=digest,
+        key=KEY,
+        eval_instant=INSTANT,
+        replay=ReplayLedger(),
+    )
+    assert not minted
+    assert result.transitions == []
+    assert all(state == "ROUTING_REQUIRED" for state in result.request_final_state.values())
+    assert derived_counts(_requests(), result.request_final_state)["ready_to_send"] == 0
 
 
 def test_attack20_receipt_for_request_a_used_for_request_b():

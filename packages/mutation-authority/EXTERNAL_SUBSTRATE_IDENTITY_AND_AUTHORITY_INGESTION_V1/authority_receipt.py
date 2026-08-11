@@ -31,6 +31,21 @@ class ReceiptError(RuntimeError):
     """Receipt invalid, replayed, or bound to different inputs — fail closed."""
 
 
+def substrate_binding_valid(identity: Any, critical_set_digest: Any) -> bool:
+    """Both current-substrate bindings must be non-empty strings."""
+    return (
+        isinstance(identity, str)
+        and bool(identity.strip())
+        and isinstance(critical_set_digest, str)
+        and bool(critical_set_digest.strip())
+    )
+
+
+def require_substrate_binding(identity: Any, critical_set_digest: Any) -> None:
+    if not substrate_binding_valid(identity, critical_set_digest):
+        raise ReceiptError("substrate identity and critical-set digest must be non-empty strings")
+
+
 def _read_secure_key(parent_fd: int, name: str, display: Path) -> bytes:
     """Read raw key bytes verbatim through a no-follow, pinned parent fd."""
     try:
@@ -223,6 +238,7 @@ def mint_receipt(
     created_at: str,
 ) -> dict[str, Any]:
     """Mint a signed receipt. created_at is a logical instant, not wall time."""
+    require_substrate_binding(substrate_identity, substrate_critical_set_digest)
     inputs = _decision_inputs(
         request_id=request_id,
         prior_state=prior_state,
@@ -265,6 +281,11 @@ def verify_receipt(key: bytes, receipt: dict[str, Any]) -> bool:
     Any mismatch — including a body field altered after minting — returns
     False. Fail closed on a malformed receipt."""
     try:
+        if not substrate_binding_valid(
+            receipt.get("substrate_identity"),
+            receipt.get("substrate_critical_set_digest"),
+        ):
+            return False
         sig = receipt["signature"]
         body = {k: v for k, v in receipt.items() if k != "signature"}
         if not hmac_verify(key, canonical_json(body), sig):
