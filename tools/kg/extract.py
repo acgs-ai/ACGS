@@ -567,7 +567,12 @@ def build_history(commits: list[dict]) -> None:
     for (a, b), n in pair_counts.most_common():
         if n < COCHANGE_MIN_COUNT or kept >= COCHANGE_TOP_N:
             break
-        if not (G.has("File", a) and G.has("File", b)):
+        # Same live-and-tracked predicate as hotspot scoring: a stale semantic
+        # snapshot retains a File node for a deleted or index-removed path, so
+        # node existence alone let CO_CHANGED edges bind dead paths and Q4
+        # (which filters neither present nor tracked) reported package
+        # coupling through files absent from a checkout.
+        if not (_scores_hotspot(a) and _scores_hotspot(b)):
             continue
         ca, cb = stats[a]["commits"], stats[b]["commits"]
         jaccard = round(n / (ca + cb - n), 4) if (ca + cb - n) else 0.0
@@ -1041,8 +1046,14 @@ def build_doc_links() -> None:
     for (lbl, key), _slot in list(G.nodes.items()):
         if lbl != "File" or not key.endswith((".md", ".mdx")):
             continue
+        # The source document must itself be live: a semantic-retained node
+        # for a Markdown file removed from the index but left on disk
+        # (tracked=false, present=true) will not exist in a checkout, so its
+        # citations must not suppress a target from Q8's orphan report or
+        # inflate Q12 authority. Same predicate build_controls() applies to
+        # mapping documents.
         f = ROOT / key
-        if not f.is_file():
+        if not f.is_file() or not file_is_live(key):
             continue
         text = f.read_text(errors="replace")
         targets = set()
@@ -1300,7 +1311,13 @@ def build_workflows(files: list[str]) -> None:
             if isinstance(cfg, dict) and cfg.get("if") is not None
         )
         all_jobs_conditional = bool(jobs) and len(conditional_jobs) == len(jobs)
-        wkey = doc.get("name") or f.stem
+        # The graph key is the repository-relative workflow path: two workflow
+        # files may share one display `name:`, and keying on the name made the
+        # second file overwrite the first's node (path, jobs, filters) while
+        # both files' GATES edges were attributed to a single workflow,
+        # undercounting distinct gates in Q1/Q2. `name` stays display-only.
+        wkey = rel
+        wname = doc.get("name") or f.stem
         # path_filters is a sorted union kept for cross-event overviews; it
         # loses both event association and pattern order, so each event's
         # filter list is also published verbatim (path_filters_push,
@@ -1312,7 +1329,7 @@ def build_workflows(files: list[str]) -> None:
             "Workflow",
             wkey,
             extra_labels=("CIGate",),
-            name=wkey,
+            name=wname,
             path=rel,
             triggers=triggers,
             path_filters=globs,

@@ -516,11 +516,12 @@ def test_build_workflows_applies_negative_filters_when_minting_gates_edges(tmp_p
 
     extract.build_workflows(["acgi-ai/src/App.tsx", "acgi-ai/infra/main.tf"])
 
-    assert ("GATES", "Workflow", "marketing", "File", "acgi-ai/src/App.tsx") in extract.G.rels
+    wkey = ".github/workflows/marketing.yml"
+    assert ("GATES", "Workflow", wkey, "File", "acgi-ai/src/App.tsx") in extract.G.rels
     assert (
         "GATES",
         "Workflow",
-        "marketing",
+        wkey,
         "File",
         "acgi-ai/infra/main.tf",
     ) not in extract.G.rels
@@ -551,8 +552,9 @@ def test_build_workflows_preserves_the_triggering_event_on_each_gates_edge(tmp_p
 
     extract.build_workflows(["packages/analyzer/main.py", "deploy/chart.yaml"])
 
-    push_gate = extract.G.rels[("GATES", "Workflow", "deploy", "File", "packages/analyzer/main.py")]
-    pr_gate = extract.G.rels[("GATES", "Workflow", "deploy", "File", "deploy/chart.yaml")]
+    wkey = ".github/workflows/deploy.yml"
+    push_gate = extract.G.rels[("GATES", "Workflow", wkey, "File", "packages/analyzer/main.py")]
+    pr_gate = extract.G.rels[("GATES", "Workflow", wkey, "File", "deploy/chart.yaml")]
     assert push_gate["props"]["events"] == ["push"]
     assert pr_gate["props"]["events"] == ["pull_request"]
 
@@ -586,7 +588,7 @@ def test_build_workflows_publishes_each_events_filter_list_in_declaration_order(
 
     extract.build_workflows([])
 
-    props = extract.G.nodes[("Workflow", "deploy")]["props"]
+    props = extract.G.nodes[("Workflow", ".github/workflows/deploy.yml")]["props"]
     assert props["path_filters_push"] == [
         "packages/analyzer/**",
         "!packages/analyzer/docs/**",
@@ -627,11 +629,12 @@ def test_build_workflows_does_not_gate_submodule_internal_paths(tmp_path, monkey
 
     extract.build_workflows(["packages/swarm", "packages/swarm/src/main.py"])
 
-    assert ("GATES", "Workflow", "swarm", "File", "packages/swarm") in extract.G.rels
+    wkey = ".github/workflows/swarm.yml"
+    assert ("GATES", "Workflow", wkey, "File", "packages/swarm") in extract.G.rels
     assert (
         "GATES",
         "Workflow",
-        "swarm",
+        wkey,
         "File",
         "packages/swarm/src/main.py",
     ) not in extract.G.rels
@@ -664,10 +667,11 @@ def test_build_workflows_marks_coverage_conditional_when_every_job_carries_an_if
 
     extract.build_workflows(["src/main.py"])
 
-    props = extract.G.nodes[("Workflow", "tests")]["props"]
+    wkey = ".github/workflows/tests.yml"
+    props = extract.G.nodes[("Workflow", wkey)]["props"]
     assert props["conditional_jobs"] == ["test"]
     assert props["all_jobs_conditional"] is True
-    gate = extract.G.rels[("GATES", "Workflow", "tests", "File", "src/main.py")]
+    gate = extract.G.rels[("GATES", "Workflow", wkey, "File", "src/main.py")]
     assert gate["props"]["conditional"] is True
 
 
@@ -695,11 +699,62 @@ def test_build_workflows_keeps_gates_unconditional_while_any_job_always_runs(tmp
 
     extract.build_workflows(["src/main.py"])
 
-    props = extract.G.nodes[("Workflow", "ci")]["props"]
+    wkey = ".github/workflows/ci.yml"
+    props = extract.G.nodes[("Workflow", wkey)]["props"]
     assert props["conditional_jobs"] == ["test"]
     assert props["all_jobs_conditional"] is False
-    gate = extract.G.rels[("GATES", "Workflow", "ci", "File", "src/main.py")]
+    gate = extract.G.rels[("GATES", "Workflow", wkey, "File", "src/main.py")]
     assert gate["props"]["conditional"] is False
+
+
+def test_build_workflows_keys_nodes_by_path_so_same_named_files_stay_distinct(
+    tmp_path, monkeypatch
+):
+    """REGRESSION. The display `name:` was the graph key, so two workflow
+    files sharing a name collapsed into one node: the second file overwrote
+    the first's path, jobs, and filters, and both files' GATES edges were
+    attributed to a single workflow, undercounting distinct gates in Q1/Q2.
+    The repo-relative path is the stable key; `name` is display-only."""
+    pytest.importorskip("yaml")
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "tests-a.yml").write_text(
+        "name: tests\n"
+        "on:\n"
+        "  pull_request:\n"
+        "    paths:\n"
+        "      - 'a/**'\n"
+        "jobs:\n"
+        "  alpha:\n"
+        "    steps: []\n"
+    )
+    (wf_dir / "tests-b.yml").write_text(
+        "name: tests\n"
+        "on:\n"
+        "  pull_request:\n"
+        "    paths:\n"
+        "      - 'b/**'\n"
+        "jobs:\n"
+        "  beta:\n"
+        "    steps: []\n"
+    )
+    _files(".github/workflows/tests-a.yml", ".github/workflows/tests-b.yml", "a/x.py", "b/y.py")
+
+    extract.build_workflows(["a/x.py", "b/y.py"])
+
+    a_key, b_key = ".github/workflows/tests-a.yml", ".github/workflows/tests-b.yml"
+    a_props = extract.G.nodes[("Workflow", a_key)]["props"]
+    b_props = extract.G.nodes[("Workflow", b_key)]["props"]
+    assert a_props["name"] == b_props["name"] == "tests"
+    assert a_props["path"] == a_key
+    assert b_props["path"] == b_key
+    assert a_props["jobs"] == ["alpha"]
+    assert b_props["jobs"] == ["beta"]
+    assert ("GATES", "Workflow", a_key, "File", "a/x.py") in extract.G.rels
+    assert ("GATES", "Workflow", b_key, "File", "b/y.py") in extract.G.rels
+    assert ("GATES", "Workflow", a_key, "File", "b/y.py") not in extract.G.rels
+    assert ("GATES", "Workflow", b_key, "File", "a/x.py") not in extract.G.rels
 
 
 # --------------------------------------------------------------------------- #
@@ -1066,6 +1121,24 @@ def test_doc_links_do_not_link_a_document_to_itself(tmp_path, monkeypatch):
     assert ("LINKS_TO", "File", "README.md", "File", "CONCEPTS.md") in extract.G.rels
 
 
+def test_doc_links_skip_source_documents_that_are_not_live(tmp_path, monkeypatch):
+    """REGRESSION. A Markdown file removed from the index but left on disk
+    keeps a semantic-retained node with tracked=false, and only the on-disk
+    check gated the scan, so its citations minted LINKS_TO edges from a
+    document that will not exist in a checkout — suppressing live targets
+    from Q8's orphan report and inflating their Q12 authority. The source
+    must pass the same file_is_live() predicate build_controls() applies to
+    mapping documents."""
+    monkeypatch.setattr(extract, "ROOT", tmp_path)
+    (tmp_path / "GHOST.md").write_text("See `CONCEPTS.md` for details.\n")
+    _files("CONCEPTS.md")
+    extract.G.node("File", "GHOST.md", path="GHOST.md", present=True, tracked=False)
+
+    extract.build_doc_links()
+
+    assert ("LINKS_TO", "File", "GHOST.md", "File", "CONCEPTS.md") not in extract.G.rels
+
+
 # --------------------------------------------------------------------------- #
 # Git history parsing
 # --------------------------------------------------------------------------- #
@@ -1318,6 +1391,36 @@ def test_build_history_normalizes_hotspots_over_live_tracked_nodes_only():
 
     assert extract.G.nodes[("File", "live.py")]["props"]["hotspot"] == 1.0
     assert "hotspot" not in extract.G.nodes[("File", "stale.py")]["props"]
+
+
+def test_build_history_mints_co_change_edges_only_between_live_tracked_files():
+    """REGRESSION. CO_CHANGED endpoints were gated on node existence alone,
+    but build_semantic() deliberately retains a File node for a deleted or
+    index-removed path (present/tracked record the truth), so dead paths kept
+    receiving co-change edges. Q4 filters neither present nor tracked, so
+    architecture-erosion results reported package coupling through files
+    absent from a checkout. Endpoints must pass the same live-and-tracked
+    predicate as hotspot scoring."""
+    _files("live_a.py", "live_b.py")
+    extract.G.node("File", "stale.py", path="stale.py", present=False, tracked=False)
+    commits = [
+        {
+            "sha": f"{i:040x}",
+            "ts": 1_700_000_000 + i,
+            "author": "A",
+            "email": "a@example.com",
+            "subject": "x",
+            "repo": ".",
+            "files": {"live_a.py": (1, 0), "live_b.py": (1, 0), "stale.py": (1, 0)},
+        }
+        for i in range(extract.COCHANGE_MIN_COUNT)
+    ]
+
+    extract.build_history(commits)
+
+    assert ("CO_CHANGED", "File", "live_a.py", "File", "live_b.py") in extract.G.rels
+    assert ("CO_CHANGED", "File", "live_a.py", "File", "stale.py") not in extract.G.rels
+    assert ("CO_CHANGED", "File", "live_b.py", "File", "stale.py") not in extract.G.rels
 
 
 # --------------------------------------------------------------------------- #

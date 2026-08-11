@@ -191,6 +191,27 @@ def test_governance_coverage_reports_absence_as_absence_of_evidence():
     assert reports.governance_coverage({"gates": 0, "sealed": False, "adrs": 0}) == "none observed"
 
 
+def test_governance_coverage_surfaces_hash_drift_instead_of_sealed():
+    """REGRESSION. A pinned file whose working-tree marker was removed (or
+    disagrees with the pin) carries sealed=true and hash_drift=true, but the
+    formatter emitted only `sealed` — the label the report defines as
+    observing a constitutional-hash marker — so the extractor's drift
+    evidence was discarded and the report presented the opposite of the
+    observed marker state."""
+    drifted = {"gates": 0, "sealed": True, "hash_drift": True, "adrs": 0}
+    healthy = {"gates": 0, "sealed": True, "hash_drift": False, "adrs": 0}
+
+    assert reports.governance_coverage(drifted) == "hash drift"
+    assert reports.governance_coverage(healthy) == "sealed"
+
+
+def test_report_queries_return_hash_drift_for_governance_coverage():
+    """Both report queries must ship hash_drift to the formatter, defaulting
+    to false for graphs from older extractions."""
+    for query in (reports.HOTSPOT_Q, reports.CONTROL_PLANE_Q):
+        assert "coalesce(f.hash_drift" in query, query
+
+
 @pytest.mark.parametrize("query", [reports.HOTSPOT_Q, reports.CONTROL_PLANE_Q])
 def test_report_gate_counts_only_include_unconditional_pr_workflows(query):
     """GATES edges carry their triggering events. Governance coverage is PR

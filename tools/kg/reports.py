@@ -60,8 +60,13 @@ def governance_coverage(rec: dict) -> str:
     bits = []
     if rec["gates"]:
         bits.append(f"CI\u00d7{rec['gates']}")
+    # `sealed` is defined below as observing a constitutional-hash marker.
+    # A pinned file whose working-tree marker was removed (or disagrees with
+    # the pin) carries sealed=true AND hash_drift=true; collapsing that to
+    # `sealed` reported the opposite of the observed marker state, so drift
+    # gets its own label instead of inheriting the healthy one.
     if rec["sealed"]:
-        bits.append("sealed")
+        bits.append("hash drift" if rec.get("hash_drift") else "sealed")
     if rec["adrs"]:
         bits.append(f"ADR\u00d7{rec['adrs']}")
     return ", ".join(bits) if bits else "none observed"
@@ -100,6 +105,7 @@ RETURN f.key AS path,
        coalesce(f.churn, 0) AS churn,
        coalesce(f.ua_covered, false) AS ua_covered,
        coalesce(f.sealed, false) AS sealed,
+       coalesce(f.hash_drift, false) AS hash_drift,
        coalesce(f.in_submodule, false) AS in_submodule,
        test_edges, gates, adrs
 ORDER BY commits DESC, churn DESC, path ASC
@@ -126,6 +132,7 @@ RETURN f.key AS path, coalesce(f.package,'.') AS package,
        coalesce(f.churn,0) AS churn,
        coalesce(f.ua_covered,false) AS ua_covered,
        coalesce(f.sealed,false) AS sealed,
+       coalesce(f.hash_drift,false) AS hash_drift,
        coalesce(f.in_submodule,false) AS in_submodule,
        coalesce(f.is_test,false) AS is_test,
        test_edges, gates, count(a) AS adrs
@@ -328,9 +335,11 @@ Test-evidence has **three** states, not two:
 | `not analyzed — outside semantic snapshot` | The summariser never saw this file. **Nothing at all is known** about its test coverage from this graph |
 
 Governance coverage lists observed controls: `CI\u00d7N` path-filtered pull-request
-workflows gating the file, `sealed` for a constitutional-hash marker, `ADR\u00d7N` for ADRs
-citing it. `none observed` means no such edge exists — not that the file is
-ungoverned by other means.
+workflows gating the file, `sealed` for an observed constitutional-hash marker
+in agreement with any lock pin, `hash drift` when the hash lock pins the file
+but the working-tree marker is missing or disagrees with the pin, `ADR\u00d7N`
+for ADRs citing it. `none observed` means no such edge exists — not that the
+file is ungoverned by other means.
 
 ## Commit-node distribution by repo
 
