@@ -45,7 +45,7 @@ from authority_lifecycle import (  # noqa: E402
     lifecycle_distribution,
     validate_onboarding_record,
 )
-from authority_receipt import mint_receipt  # noqa: E402
+from authority_receipt import ReceiptError, mint_receipt  # noqa: E402
 from test_attacks import (  # noqa: E402
     FIXTURE_DOC,
     INSTANT,
@@ -359,6 +359,9 @@ def test_ob8_relocation_with_changed_content_blocks(substrate, tmp_path):
     (moved / "README.md").write_text("# changed during relocation\n")
     reg = tmp_path / "reg8.jsonl"
     append_record(reg, _attested(_evidence()))
+    # The record carries an ingestion receipt, so verification demands the
+    # real trust root on file (it never mints one).
+    (tmp_path / "ks8").write_bytes(FIX_AUTH_KEY)
     st = V.compute_state(
         moved,
         reg,
@@ -371,6 +374,46 @@ def test_ob8_relocation_with_changed_content_blocks(substrate, tmp_path):
     assert st["verdict"] == V.SUBSTRATE_DIVERGED
     assert st["report"]["authority_receipts"] == 0
     assert len(st["transitions"]) == 0
+
+
+def test_verification_never_mints_the_receipt_key(substrate, tmp_path):
+    # A registry whose records claim ingestion receipts, verified against a
+    # MISSING keystore, must hard-block: minting a fresh key during
+    # verification would silently invalidate every receipt on file while
+    # presenting as a healthy trust root.
+    trust = fixture_trust(tmp_path)
+    mpath = tmp_path / "m.json"
+    mpath.write_text(json.dumps(build_manifest(substrate, "TEST_SUBSTRATE")), encoding="utf-8")
+    reg = tmp_path / "reg_nokey.jsonl"
+    append_record(reg, _attested(_evidence()))
+    missing_ks = tmp_path / "no_such_ks"
+    with pytest.raises(ReceiptError):
+        V.compute_state(
+            substrate,
+            reg,
+            missing_ks,
+            INSTANT,
+            manifest_path=mpath,
+            validator_registry_path=trust["registry"],
+            validator_keystore=trust["keystore"],
+        )
+    assert not missing_ks.exists()  # verification created no key material
+    # Receipt-free records still verify: an absent trust root is tolerable
+    # only while nothing claims an ingestion receipt — and still no key is
+    # minted as a side effect.
+    reg2 = tmp_path / "reg_bare.jsonl"
+    append_record(reg2, _evidence())
+    st = V.compute_state(
+        substrate,
+        reg2,
+        missing_ks,
+        INSTANT,
+        manifest_path=mpath,
+        validator_registry_path=trust["registry"],
+        validator_keystore=trust["keystore"],
+    )
+    assert st["report"]["ready_to_send"] == 0
+    assert not missing_ks.exists()
 
 
 # --------------------------------------------------------------------------- #

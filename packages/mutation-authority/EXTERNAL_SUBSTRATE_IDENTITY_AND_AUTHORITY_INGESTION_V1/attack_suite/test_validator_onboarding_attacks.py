@@ -146,6 +146,38 @@ def test_ova2_copied_validator_identity_refused(tmp_path):
     assert len([e for e in events if e["event"] == "REGISTER"]) == 1
 
 
+def test_onboarding_serializes_on_the_registry_lock(tmp_path):
+    # The conflict checks (gate 5) and the append (gate 6) run under ONE
+    # exclusive registry lock: while another process holds it, onboarding
+    # blocks instead of racing the read-check-append sequence and
+    # double-registering against the same registry snapshot.
+    import fcntl
+    import threading
+
+    app, deed = fixture_appointment(tmp_path)
+    lock_path = tmp_path / "vreg.jsonl.lock"
+    fh = lock_path.open("a", encoding="utf-8")
+    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+    done = threading.Event()
+    rc: list[int] = []
+
+    def run():
+        rc.append(_onboard(tmp_path, app, deed))
+        done.set()
+
+    t = threading.Thread(target=run)
+    t.start()
+    try:
+        assert not done.wait(1.0)  # onboarding is blocked on the held lock
+    finally:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        fh.close()
+    t.join(10)
+    assert done.is_set() and rc == [0]  # proceeds once the lock releases
+    events = load_validator_events(tmp_path / "vreg.jsonl")
+    assert len([e for e in events if e["event"] == "REGISTER"]) == 1
+
+
 def test_ova3_unauthorized_scope_expansion_detected(tmp_path):
     # A forged REGISTER event claiming MORE classes than the appointment
     # grants fails provenance and can never derive ACTIVE.

@@ -30,8 +30,10 @@ Exit codes: 0 registered · 3 refused (contract/evidence/temporal/conflict)
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 from _canonical import sha256_hex
@@ -58,6 +60,22 @@ from validator_trust import (
 )
 
 HERE = Path(__file__).resolve().parent
+
+
+@contextmanager
+def _registry_lock(registry: Path):
+    """Exclusive cross-process lock over the registry for the whole
+    read-check-append sequence. Two onboarding runs racing on the same
+    registry would otherwise both read the same events, both pass the
+    conflict gates (duplicate validator_id / reused appointment evidence),
+    and both append — exactly the double-registration those gates exist to
+    refuse. The lock lives in a sidecar file (never the registry itself, so
+    locking cannot create or truncate it) and releases on close."""
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = registry.with_name(registry.name + ".lock")
+    with lock_path.open("a", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        yield
 
 
 def main(argv: list[str]) -> int:
@@ -140,81 +158,90 @@ def main(argv: list[str]) -> int:
         )
         return 4
 
-    # Gate 5 — no conflicting registration.
+    # Gates 5 and 6 run under ONE exclusive registry lock: the conflict
+    # checks read the registry and the append writes it, so two racing
+    # onboarding runs must serialize across the whole read-check-append
+    # sequence or both could pass gate 5 against the same snapshot and both
+    # register (duplicate validator_id / reused appointment evidence).
     registry = Path(args.registry)
-    events = load_validator_events(registry)
-    if events is None:
-        print("FATAL: validator registry is malformed — refusing to append", file=sys.stderr)
-        return 2
-    if not chain_intact(events):
-        print(
-            "FATAL: validator registry hash chain is broken — refusing to append "
-            "(appending would launder tampered history behind a fresh chain link)",
-            file=sys.stderr,
-        )
-        return 2
-    vid = appointment["validator_id"]
-    if any(e.get("event") == "REGISTER" and e.get("validator_id") == vid for e in events):
-        print(f"REFUSED: conflicting appointment — {vid} is already registered", file=sys.stderr)
-        return 3
-    consumed = {
-        d
-        for e in events
-        if e.get("event") == "REGISTER" and e.get("validator_id") != vid
-        for d in e.get("appointment_evidence_digests") or []
-    }
-    reused = [d for d in required if d in consumed]
-    if reused:
-        print(
-            "REFUSED: copied validator identity — appointment evidence "
-            f"{[d[:16] + '…' for d in reused]} already backs another validator",
-            file=sys.stderr,
-        )
-        return 3
+    with _registry_lock(registry):
+        # Gate 5 — no conflicting registration.
+        events = load_validator_events(registry)
+        if events is None:
+            print("FATAL: validator registry is malformed — refusing to append", file=sys.stderr)
+            return 2
+        if not chain_intact(events):
+            print(
+                "FATAL: validator registry hash chain is broken — refusing to append "
+                "(appending would launder tampered history behind a fresh chain link)",
+                file=sys.stderr,
+            )
+            return 2
+        vid = appointment["validator_id"]
+        if any(e.get("event") == "REGISTER" and e.get("validator_id") == vid for e in events):
+            print(
+                f"REFUSED: conflicting appointment — {vid} is already registered",
+                file=sys.stderr,
+            )
+            return 3
+        consumed = {
+            d
+            for e in events
+            if e.get("event") == "REGISTER" and e.get("validator_id") != vid
+            for d in e.get("appointment_evidence_digests") or []
+        }
+        reused = [d for d in required if d in consumed]
+        if reused:
+            print(
+                "REFUSED: copied validator identity — appointment evidence "
+                f"{[d[:16] + '…' for d in reused]} already backs another validator",
+                file=sys.stderr,
+            )
+            return 3
 
-    # Gate 6 — chain-linked REGISTER with full provenance.
-    kb = appointment["key_binding"]
-    event = {
-        "schema": EVENT_SCHEMA,
-        "event": "REGISTER",
-        "validator_id": vid,
-        "validator_identity": appointment["subject_identity"],
-        "organization": appointment["organization"],
-        "authorized_classes": sorted(appointment["authorized_classes"]),
-        "jurisdiction": appointment["jurisdiction"],
-        "appointment_authority": appointment["appointment_authority"],
-        "key_id": kb["key_id"],
-        "key_algorithm": kb["key_algorithm"],
-        "key_fingerprint": kb["key_fingerprint"],
-        "effective_from": appointment["effective_from"],
-        "effective_until": appointment.get("effective_until"),
-        "appointment_binding": appointment_binding(appointment),
-        "appointment_evidence_digests": sorted(required),
-        "onboarding": "EXTERNAL_VALIDATOR_ONBOARDING_V1",
-    }
-    if kb["key_algorithm"] == ED25519:
-        event["public_key"] = kb["public_key"]
+        # Gate 6 — chain-linked REGISTER with full provenance.
+        kb = appointment["key_binding"]
+        event = {
+            "schema": EVENT_SCHEMA,
+            "event": "REGISTER",
+            "validator_id": vid,
+            "validator_identity": appointment["subject_identity"],
+            "organization": appointment["organization"],
+            "authorized_classes": sorted(appointment["authorized_classes"]),
+            "jurisdiction": appointment["jurisdiction"],
+            "appointment_authority": appointment["appointment_authority"],
+            "key_id": kb["key_id"],
+            "key_algorithm": kb["key_algorithm"],
+            "key_fingerprint": kb["key_fingerprint"],
+            "effective_from": appointment["effective_from"],
+            "effective_until": appointment.get("effective_until"),
+            "appointment_binding": appointment_binding(appointment),
+            "appointment_evidence_digests": sorted(required),
+            "onboarding": "EXTERNAL_VALIDATOR_ONBOARDING_V1",
+        }
+        if kb["key_algorithm"] == ED25519:
+            event["public_key"] = kb["public_key"]
 
-    # Retain the verified appointment record AND the immutable artifact bytes
-    # BEFORE appending: REGISTER provenance is only meaningful if later
-    # verification can re-validate the appointment material — including
-    # re-hashing the actual evidence artifacts — independently of the
-    # registry event itself. A validator whose appointment artifacts stop
-    # verifying stops being trusted.
-    retained_dir = Path(args.keystore) / APPOINTMENTS_DIR_NAME
-    retained_dir.mkdir(parents=True, exist_ok=True)
-    retained_path = retained_dir / f"{event['appointment_binding']}.json"
-    retained_path.write_text(
-        json.dumps(appointment, sort_keys=True, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    artifact_dir = Path(args.keystore) / APPOINTMENT_ARTIFACTS_DIR_NAME
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-    for digest in required:
-        retained_artifact = artifact_dir / digest
-        if not retained_artifact.exists():
-            retained_artifact.write_bytes(supplied[digest].read_bytes())
-    _append(registry, event)
+        # Retain the verified appointment record AND the immutable artifact
+        # bytes BEFORE appending: REGISTER provenance is only meaningful if
+        # later verification can re-validate the appointment material —
+        # including re-hashing the actual evidence artifacts — independently
+        # of the registry event itself. A validator whose appointment
+        # artifacts stop verifying stops being trusted.
+        retained_dir = Path(args.keystore) / APPOINTMENTS_DIR_NAME
+        retained_dir.mkdir(parents=True, exist_ok=True)
+        retained_path = retained_dir / f"{event['appointment_binding']}.json"
+        retained_path.write_text(
+            json.dumps(appointment, sort_keys=True, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        artifact_dir = Path(args.keystore) / APPOINTMENT_ARTIFACTS_DIR_NAME
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        for digest in required:
+            retained_artifact = artifact_dir / digest
+            if not retained_artifact.exists():
+                retained_artifact.write_bytes(supplied[digest].read_bytes())
+        _append(registry, event)
 
     state = derive_ceremony_state(
         appointment,

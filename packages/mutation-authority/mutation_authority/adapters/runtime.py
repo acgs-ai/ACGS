@@ -22,7 +22,7 @@ from pathlib import Path
 
 from ..canonical import hash_file, hash_obj
 from ..effect import ACCEPTED, EffectBinder
-from ..engine import ALLOW, DecisionEngine
+from ..engine import ALLOW, DecisionEngine, _normalized
 from ..evidence_emitter import EvidenceEmitter
 from ..intent import OPERATIONS, MutationIntent, SignedIntent
 from ..ledger import AuditLedger
@@ -86,20 +86,54 @@ class MutationGateway:
         if operation not in OPERATIONS:
             return GatewayResult(REJECTED, f"unknown operation: {operation}")
 
+        # 1b. The resource path must stay inside the governed repository
+        #     BEFORE anything touches the filesystem: the pre-state hash
+        #     below reads `repo_dir / resource_path`, so an absolute or
+        #     traversal path would hash (and leak the existence of) files
+        #     outside the repository before the engine ever saw the intent.
+        #     Same normalization + resolved-containment predicate the engine
+        #     enforces; the gateway just applies it before its own read.
+        resource = _normalized(resource_path)
+        if resource is None:
+            return GatewayResult(REJECTED, "resource path escapes governed repository")
+        resolved = (self.repo_dir / resource).resolve()
+        repo_root = self.repo_dir.resolve()
+        if resolved != repo_root and not resolved.is_relative_to(repo_root):
+            return GatewayResult(
+                REJECTED, "resource resolves outside the governed repository (symlink escape)"
+            )
+
+        # 1c. The evidence projection must be readable and well formed BEFORE
+        #     any effect: a corrupt evidence_graph.jsonl would otherwise
+        #     surface only AFTER the mutation was committed (recover_missing
+        #     parses the file), turning a durable, receipted effect into an
+        #     uncaught crash. Fail closed with the side effect not run.
+        try:
+            self.evidence.records()
+        except (OSError, ValueError) as exc:
+            return GatewayResult(
+                REJECTED,
+                f"evidence projection unreadable or malformed — refusing to mutate: {exc}",
+            )
+
         # 2. Build + sign the intent (CAS read of current pre-state).
         now = self._next_tick()
+        try:
+            expected_pre_hash = hash_file(self.repo_dir / resource)
+        except OSError as exc:
+            return GatewayResult(REJECTED, f"cannot read pre-state of {resource}: {exc}")
         intent = MutationIntent(
             actor_identity=context.actor_id,
-            resource_path=resource_path,
+            resource_path=resource,
             operation=operation,
-            expected_pre_hash=hash_file(self.repo_dir / resource_path),
-            requested_change_scope=resource_path,
+            expected_pre_hash=expected_pre_hash,
+            requested_change_scope=resource,
             timestamp=now,
             task_reference=context.task_reference,
             nonce=hash_obj(
                 {
                     "actor": context.actor_id,
-                    "resource": resource_path,
+                    "resource": resource,
                     "chain_head": self.ledger.head_hash(),
                     "tick": now,
                 }
@@ -124,12 +158,16 @@ class MutationGateway:
         #    projection of the ledger and is re-emitted from it — here on the
         #    next successful request, or explicitly via
         #    EvidenceEmitter.recover_missing — restoring the COMMIT-to-
-        #    evidence bijection the CI gate enforces.
+        #    evidence bijection the CI gate enforces. ValueError covers a
+        #    JSONDecodeError from an evidence file corrupted between the
+        #    pre-effect readability check and here: the mutation is already
+        #    durable, so parse failure defers emission instead of masking a
+        #    committed effect behind an uncaught exception.
         try:
             # Heal any earlier deferred emissions first, then emit this one.
             self.evidence.recover_missing(self.root, self.ledger)
             record = self.evidence.emit_for_receipt(self.root, self.ledger, decision.receipt)
-        except OSError:
+        except (OSError, ValueError):
             return GatewayResult(
                 APPLIED,
                 "mutation applied under receipt; evidence emission deferred "

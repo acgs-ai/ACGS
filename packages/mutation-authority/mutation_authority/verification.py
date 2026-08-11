@@ -574,6 +574,29 @@ def attack_n_glob_prefix_rogue_artifacts(base: Path) -> str:
     return "glob-prefix rogue file and dangling symlink surface as unauthorized_create"
 
 
+def attack_o_in_memory_root_mutation(base: Path) -> str:
+    """Mutating the CACHED policy/actors dicts (the dataclass is frozen, its
+    dict fields are not) must fail closed at the next decision exactly like a
+    disk tamper: decisions consult root.policy/root.actors, so an in-memory
+    grant would authorize what the sealed, signed files never did."""
+    sb = Sandbox.build(base / "actors")
+    sb.root.actors["agent-gamma"]["scopes"] = ["src/*"]  # in-memory scope grant
+    try:
+        sb.engine.decide(sb.intent("agent-gamma", "src/module_a.py"), sb.tick())
+    except RootIntegrityError:
+        pass
+    else:
+        raise CheckFailure("engine decided on an in-memory-tampered actor registry")
+
+    sb2 = Sandbox.build(base / "policy")
+    sb2.root.policy["protected_prefixes"] = []  # in-memory unprotect
+    try:
+        sb2.engine.decide(sb2.intent("agent-alpha", "src/module_a.py"), sb2.tick())
+    except RootIntegrityError:
+        return "in-memory actors/policy tamper ⇒ engine fails closed entirely"
+    raise CheckFailure("engine decided on an in-memory-tampered policy")
+
+
 def check_unanchored_ledger_refused(base: Path) -> str:
     """Constructing a ledger without an anchor must be an explicit, loud
     opt-in — never a silent default that disables truncation detection."""
@@ -616,6 +639,10 @@ CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     (
         "ATTACK N (bonus): rogue artifacts under a glob governed prefix",
         attack_n_glob_prefix_rogue_artifacts,
+    ),
+    (
+        "ATTACK O (bonus): in-memory governance root mutation",
+        attack_o_in_memory_root_mutation,
     ),
     ("ledger is bound to its governance root", check_ledger_root_binding),
     ("unanchored ledger construction is refused", check_unanchored_ledger_refused),

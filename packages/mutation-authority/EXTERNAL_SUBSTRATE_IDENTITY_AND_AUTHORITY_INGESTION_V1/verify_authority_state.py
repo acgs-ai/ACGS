@@ -23,7 +23,7 @@ from _identity import IDENTITY_CONFIRMED, MANIFEST_NAME, verify_manifest
 from _registry import REGISTRY_NAME, read_registry
 from _substrate import SubstrateError, derive_counts, load_requests, resolve_root
 from authority_lifecycle import superseded_ids_of
-from authority_receipt import ReplayLedger, load_or_create_key, verify_receipt
+from authority_receipt import ReceiptError, ReplayLedger, load_key, verify_receipt
 from authority_router import (
     AUTHORITY_EVIDENCED,
     IDENTITY_EVIDENCED,
@@ -107,7 +107,17 @@ def compute_state(
     policy = VT.load_policy(policy_path or (HERE / VT.POLICY_NAME))
     # The authority receipt key gates INGESTED/ACTIVE: a record must carry a
     # verifiable ingestion receipt, not just a receipt-shaped string.
-    key = load_or_create_key(keystore)
+    # Verification NEVER mints the key (load_key, not load_or_create_key):
+    # creating a fresh key here would silently invalidate every receipt on
+    # file while presenting as a healthy trust root. An absent keystore is
+    # tolerable only while no record claims an ingestion receipt.
+    key = load_key(keystore)
+    if key is None and any(isinstance(r, dict) and r.get("ingestion_receipt") for r in records):
+        raise ReceiptError(
+            "authority keystore is missing but registry records carry ingestion "
+            "receipts — refusing to verify against a trust root that does not "
+            "exist (verification must not mint a new receipt key)"
+        )
     routable = VT.governed_active_records(
         records,
         eval_instant,
@@ -264,12 +274,17 @@ def main(argv: list[str]) -> int:
         )
         return 2
 
-    state = compute_state(
-        substrate_root,
-        HERE / REGISTRY_NAME,
-        HERE / ".authority_keystore",
-        instant,
-    )
+    try:
+        state = compute_state(
+            substrate_root,
+            HERE / REGISTRY_NAME,
+            HERE / ".authority_keystore",
+            instant,
+        )
+    except ReceiptError as exc:
+        print(f"VERDICT: {INTEGRATION_BLOCKED}")
+        print(f"  {exc}", file=sys.stderr)
+        return 2
     print("=== Section 23 — authority state report ===")
     print(json.dumps(state["report"], indent=1))
     print("\n=== invariants ===")

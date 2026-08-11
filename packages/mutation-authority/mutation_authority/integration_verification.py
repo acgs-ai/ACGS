@@ -338,6 +338,49 @@ def attack_j_gate_exception_safe(base: Path) -> str:
     return "malformed evidence and ledger payloads both fail closed (no raw raise)"
 
 
+def attack_k_gateway_path_escape(base: Path) -> str:
+    """Absolute/traversal resource paths are rejected BEFORE the gateway
+    touches the filesystem: no pre-state hash of files outside the repo,
+    no intent, no ledger event, no effect."""
+    sb = IntegrationSandbox.build(base)
+    outside = base / "outside.txt"
+    outside.write_text("untouchable", encoding="utf-8")
+    before_events = sum(1 for _ in sb.kernel.ledger.events())
+    for path in ("../outside.txt", "/etc/hostname", "src/../../outside.txt", ""):
+        res = sb.gateway.request_mutation(sb.ctx("agent-alpha"), path, "UPDATE", b"pwn")
+        _expect(res.status == GW_REJECTED, f"escaping path {path!r} not rejected: {res.status}")
+        _expect(res.receipt is None, f"escaping path {path!r} produced a receipt")
+    _expect(
+        sum(1 for _ in sb.kernel.ledger.events()) == before_events,
+        "path-escape rejection appended ledger events",
+    )
+    _expect(outside.read_text(encoding="utf-8") == "untouchable", "outside file was mutated")
+    return "absolute/traversal paths rejected before any read; zero events, zero effects"
+
+
+def attack_l_malformed_evidence_projection(base: Path) -> str:
+    """A corrupt evidence_graph.jsonl must block the mutation BEFORE the
+    effect (fail closed, side effect did not run) instead of surfacing as an
+    uncaught JSONDecodeError after the effect is already durable."""
+    sb = IntegrationSandbox.build(base)
+    sb.gateway.request_mutation(sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 2\n")
+    sb.evidence.path.write_text("{ not json\n", encoding="utf-8")
+    target = sb.kernel.repo / "src/module_a.py"
+    before = target.read_bytes()
+    before_events = sum(1 for _ in sb.kernel.ledger.events())
+    res = sb.gateway.request_mutation(
+        sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 3\n"
+    )
+    _expect(res.status == GW_REJECTED, f"expected REJECTED, got {res.status}: {res.reason}")
+    _expect("evidence projection" in res.reason, res.reason)
+    _expect(target.read_bytes() == before, "side effect ran despite a malformed projection")
+    _expect(
+        sum(1 for _ in sb.kernel.ledger.events()) == before_events,
+        "malformed-projection rejection appended ledger events",
+    )
+    return "malformed evidence projection rejects the request before any effect"
+
+
 INTEGRATION_CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     (
         "integrated happy path: adapter → receipt → effect → evidence → gate",
@@ -354,6 +397,11 @@ INTEGRATION_CHECKS: list[tuple[str, Callable[[Path], str]]] = [
     ("ATTACK H: clock-skew receipt-expiry DoS", attack_h_clock_skew_dos),
     ("ATTACK I: evidence forgery / duplicate shadowing", attack_i_evidence_forgery),
     ("ATTACK J: ci_gate exception-safety (malformed input)", attack_j_gate_exception_safe),
+    ("ATTACK K: gateway path escape (absolute / traversal)", attack_k_gateway_path_escape),
+    (
+        "ATTACK L: malformed evidence projection blocks before effect",
+        attack_l_malformed_evidence_projection,
+    ),
     ("compatibility: full kernel suite re-run", check_kernel_suite_compatibility),
 ]
 

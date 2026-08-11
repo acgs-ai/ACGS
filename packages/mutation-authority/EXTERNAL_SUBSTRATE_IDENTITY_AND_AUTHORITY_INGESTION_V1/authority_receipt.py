@@ -30,6 +30,22 @@ class ReceiptError(RuntimeError):
     """Receipt invalid, replayed, or bound to different inputs — fail closed."""
 
 
+def load_key(keystore: Path) -> bytes | None:
+    """Load the HMAC key WITHOUT creating one. Verification paths must use
+    this: minting a fresh key during verification would silently invalidate
+    every receipt on file (they were signed with the real key) while looking
+    like a healthy trust root. Returns None when no keystore exists — the
+    caller decides whether an absent trust root is tolerable — and raises
+    ReceiptError when a keystore exists but holds no usable key."""
+    if not keystore.exists():
+        return None
+    if keystore.is_file():
+        data = keystore.read_bytes()
+        if len(data) >= 32:
+            return data
+    raise ReceiptError(f"keystore exists but holds no usable key: {keystore}")
+
+
 def load_or_create_key(keystore: Path) -> bytes:
     """Load the HMAC key from a keystore outside the substrate, creating it on
     first use. The keystore lives in this package (gitignored), never in the

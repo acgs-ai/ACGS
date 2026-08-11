@@ -149,13 +149,20 @@ def build_fixture_substrate(tmp_path):
     w(f"{ex}/COMMERCIAL_RIGHTS_REQUEST_SCHEMA.json", {"schema": "x"})
     w(f"{ex}/CRE_INDEX.json", {"requests": 4})
     w(f"{ex}/verify_commercial_rights_requests.py", "# verifier\n")
-    w(f"{ex}/sha256sums.txt", "sums\n")
     w(f"{md}/COMMERCIAL_RIGHTS_REQUIREMENTS.json", _requirements())
     w(f"{md}/RIGHTS_REQUEST_MAPPING.json", _mappings())
     w(f"{md}/RIGHTS_REQUIREMENT_SCHEMA.json", {"schema": "x"})
     w(f"{md}/CR_INDEX.json", {"requirements": 2})
     w(f"{md}/verify_rights_requirements.py", "# verifier\n")
-    w(f"{md}/sha256sums.txt", "sums\n")
+    # Real coreutils-format checksum manifests: verify_manifest honors the
+    # transitive pin, so the sums files must actually name and hash the
+    # layer's files (a placeholder string would fail identity as malformed).
+    for layer in (ex, md):
+        entries = sorted(p for p in (root / layer).iterdir() if p.name != "sha256sums.txt")
+        w(
+            f"{layer}/sha256sums.txt",
+            "".join(f"{sha256_hex(p.read_bytes())}  {p.name}\n" for p in entries),
+        )
     return root
 
 
@@ -299,6 +306,56 @@ def test_attack08_stale_manifest_detects_change(manifest, substrate):
     assert verify_manifest(manifest, substrate)["state"] == IDENTITY_MISMATCH
 
 
+def _rewrite_layer_sums(substrate, layer):
+    d = substrate / layer
+    entries = sorted(p for p in d.iterdir() if p.name != "sha256sums.txt")
+    (d / "sha256sums.txt").write_text(
+        "".join(f"{sha256_hex(p.read_bytes())}  {p.name}\n" for p in entries),
+        encoding="utf-8",
+    )
+
+
+def test_sums_pinned_file_altered_or_removed_fails_identity(substrate, tmp_path):
+    # The identity claims each layer's sha256sums.txt "transitively pins its
+    # files" — so a file LISTED in the sums but not itself a critical object
+    # must fail identity when altered or removed, even though every critical
+    # object's own bytes (including the sums file) are unchanged.
+    ex = "COMMERCIAL_RIGHTS_REQUEST_EXECUTION_V1"
+    extra = substrate / ex / "extra_evidence_bundle.json"
+    extra.write_text('{"pinned": true}', encoding="utf-8")
+    _rewrite_layer_sums(substrate, ex)
+    m = build_manifest(substrate, "TEST_SUBSTRATE")
+    assert verify_manifest(m, substrate)["state"] == IDENTITY_CONFIRMED
+    extra.write_text('{"pinned": false}', encoding="utf-8")  # altered after binding
+    res = verify_manifest(m, substrate)
+    assert res["state"] == IDENTITY_MISMATCH
+    assert f"{ex}/extra_evidence_bundle.json" in res["mismatched"]
+    extra.unlink()  # removed after binding
+    res = verify_manifest(m, substrate)
+    assert res["state"] == IDENTITY_UNVERIFIABLE
+    assert f"{ex}/extra_evidence_bundle.json" in res["absent"]
+
+
+def test_malformed_or_traversal_sums_manifest_fails_identity(substrate):
+    # A sums file that cannot be parsed pins nothing — fail closed as a
+    # mismatch, never confirm. Same for an entry whose name escapes the layer.
+    ex = "COMMERCIAL_RIGHTS_REQUEST_EXECUTION_V1"
+    sums = substrate / ex / "sha256sums.txt"
+    sums.write_text("sums\n", encoding="utf-8")
+    m = build_manifest(substrate, "TEST_SUBSTRATE")
+    res = verify_manifest(m, substrate)
+    assert res["state"] == IDENTITY_MISMATCH
+    assert f"{ex}/sha256sums.txt" in res["mismatched"]
+    sums.write_text(f"{'0' * 64}  ../../../etc/passwd\n", encoding="utf-8")
+    m2 = build_manifest(substrate, "TEST_SUBSTRATE")
+    assert verify_manifest(m2, substrate)["state"] == IDENTITY_MISMATCH
+
+
+def test_unknown_identity_class_refused(substrate):
+    with pytest.raises(ValueError, match="unknown identity_class"):
+        build_manifest(substrate, "TOTALLY_LEGIT_SUBSTRATE")
+
+
 # --------------------------------------------------------------------------- #
 # Authority attacks 9–25
 # --------------------------------------------------------------------------- #
@@ -313,6 +370,20 @@ def test_attack10_invented_counsel_no_reference_rejected():
     bad["source_reference"] = ""
     with pytest.raises(EvidenceError):
         validate_evidence(bad)
+
+
+def test_malformed_scope_shape_rejected_not_crash():
+    # Scope ids must be "ALL" or a list of strings: a dict/list/None element
+    # would raise TypeError deep inside _scope_covers (set() of unhashables)
+    # instead of failing validation cleanly.
+    for bad_scope in (
+        _evidence(assets={"asset:1": True}),
+        _evidence(assets=[{"asset": 1}]),
+        _evidence(requirements="SOME"),
+        _evidence(requirements=[None]),
+    ):
+        with pytest.raises(EvidenceError):
+            validate_evidence(bad_scope)
 
 
 def test_attack11_document_digest_changed_after_ingestion():
@@ -535,6 +606,9 @@ def test_attack23_manual_ready_without_receipt_blocks(substrate, tmp_path):
     data = json.loads(reg.read_text())
     data["requests"][0]["routing_state"] = "READY_TO_SEND"  # forged, no transition
     reg.write_text(json.dumps(data))
+    # Refresh the layer's checksum manifest too: identity now honors the
+    # transitive pin, and this test must reach the I11 audit, not identity.
+    _rewrite_layer_sums(substrate, "COMMERCIAL_RIGHTS_REQUEST_EXECUTION_V1")
     mpath = _fixture_manifest_path(substrate, tmp_path)  # built AFTER the forge → counts match
     st = V.compute_state(
         substrate, tmp_path / "empty.jsonl", tmp_path / "ks", INSTANT, manifest_path=mpath

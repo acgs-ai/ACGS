@@ -348,6 +348,9 @@ def test_cli_rotation_preserves_ed25519_algorithm(tmp_path):
         "public_key": pub2.hex(),
         "key_fingerprint": sha256_hex(pub2),
     }
+    # A garbage authorization is refused at write time (verified against the
+    # predecessor public key before append), not laundered into the registry.
+    assert VA.main([*with_pub, "--rotation-authorization", "deadbeef"]) == 3
     authorization = _ed25519.sign(trust["priv"], rotation_payload(expected_event))
     assert VA.main([*with_pub, "--rotation-authorization", authorization]) == 0
     events = load_validator_events(trust["registry"])

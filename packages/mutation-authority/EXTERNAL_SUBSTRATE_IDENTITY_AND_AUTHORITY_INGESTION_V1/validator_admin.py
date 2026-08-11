@@ -35,7 +35,8 @@ import secrets
 import sys
 from pathlib import Path
 
-from _canonical import hmac_sign, sha256_hex
+import _ed25519
+from _canonical import hmac_sign, hmac_verify, sha256_hex
 from validator_trust import (
     ED25519,
     EVENT_SCHEMA,
@@ -198,6 +199,13 @@ def main(argv: list[str]) -> int:
         if pred is None:
             print("REFUSED: no current key to authorize this rotation", file=sys.stderr)
             return 3
+        # A SUPPLIED authorization is verified against the predecessor key
+        # BEFORE it is appended: copying an arbitrary string into the registry
+        # would produce a chain-valid ROTATE that every later verification
+        # rejects as `unauthenticated_rotation`, silently bricking the
+        # validator's whole history at read time instead of failing loudly
+        # here at write time.
+        payload = rotation_payload(event)
         if pred.get("key_algorithm", HMAC_SHA256) == ED25519:
             if not args.rotation_authorization:
                 print(
@@ -208,12 +216,48 @@ def main(argv: list[str]) -> int:
                     file=sys.stderr,
                 )
                 return 3
+            pk = pred.get("public_key")
+            try:
+                pred_pub = bytes.fromhex(pk) if isinstance(pk, str) else b""
+            except ValueError:
+                pred_pub = b""
+            if len(pred_pub) != 32 or sha256_hex(pred_pub) != pred.get("key_fingerprint"):
+                print(
+                    "REFUSED: predecessor ed25519 public key is missing or does "
+                    "not match its registered fingerprint",
+                    file=sys.stderr,
+                )
+                return 3
+            if not _ed25519.verify(pred_pub, payload, args.rotation_authorization):
+                print(
+                    "REFUSED: --rotation-authorization does not verify against "
+                    "the predecessor key over this rotation payload",
+                    file=sys.stderr,
+                )
+                return 3
             event["rotation_authorization"] = args.rotation_authorization
         else:
+            pred_key_path = keystore / str(pred.get("key_id"))
             if args.rotation_authorization:
+                if not pred_key_path.is_file():
+                    print(
+                        "REFUSED: predecessor key not in keystore — cannot "
+                        "verify the supplied rotation authorization",
+                        file=sys.stderr,
+                    )
+                    return 3
+                pred_key = pred_key_path.read_bytes()
+                if sha256_hex(pred_key) != pred.get("key_fingerprint") or not hmac_verify(
+                    pred_key, payload, args.rotation_authorization
+                ):
+                    print(
+                        "REFUSED: --rotation-authorization does not verify against "
+                        "the predecessor key over this rotation payload",
+                        file=sys.stderr,
+                    )
+                    return 3
                 event["rotation_authorization"] = args.rotation_authorization
             else:
-                pred_key_path = keystore / str(pred.get("key_id"))
                 if not pred_key_path.is_file():
                     print(
                         "REFUSED: predecessor key not in keystore — cannot "
@@ -221,9 +265,7 @@ def main(argv: list[str]) -> int:
                         file=sys.stderr,
                     )
                     return 3
-                event["rotation_authorization"] = hmac_sign(
-                    pred_key_path.read_bytes(), rotation_payload(event)
-                )
+                event["rotation_authorization"] = hmac_sign(pred_key_path.read_bytes(), payload)
         _append(registry, event)
         print(
             f"ROTATED {args.validator_id} -> key={args.key_id} "

@@ -573,6 +573,23 @@ def test_validator_admin_lifecycle_and_bindings(tmp_path):
         },
     )
     assert VA.main([*base, *rotate, "--instant", "2026-06-01T00:00:00Z"]) == 0
+    # A SUPPLIED authorization is verified against the predecessor key BEFORE
+    # append: garbage is refused at write time, never laundered into the
+    # registry to derive `unauthenticated_rotation` at every later read.
+    bad_rotate = ["rotate", "--validator-id", "[FIXTURE] vld-cli", "--key-id", "cli-k3-bad"]
+    assert (
+        VA.main(
+            [
+                *base,
+                *bad_rotate,
+                "--instant",
+                "2026-06-15T00:00:00Z",
+                "--rotation-authorization",
+                "not-a-predecessor-signature",
+            ]
+        )
+        == 3
+    )
     revoke = ["revoke", "--validator-id", "[FIXTURE] vld-cli"]
     assert VA.main([*base, *revoke, "--instant", "2026-07-01T00:00:00Z"]) == 0
     events = load_validator_events(reg)

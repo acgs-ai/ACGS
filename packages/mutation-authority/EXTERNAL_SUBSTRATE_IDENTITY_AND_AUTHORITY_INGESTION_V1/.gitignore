@@ -3,6 +3,7 @@
 .validator_keystore/
 .authority_artifacts/
 .authority_replay.jsonl
+*.lock
 .claude/
 .mcp.json
 .omc/

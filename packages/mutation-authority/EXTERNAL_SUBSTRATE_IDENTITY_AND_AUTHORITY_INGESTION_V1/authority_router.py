@@ -80,6 +80,14 @@ def validate_evidence(record: dict[str, Any]) -> None:
     scope = record["authority_scope"]
     if not isinstance(scope, dict) or "asset_ids" not in scope or "requirement_ids" not in scope:
         raise EvidenceError("authority_scope must carry asset_ids and requirement_ids")
+    for field_name in ("asset_ids", "requirement_ids"):
+        value = scope[field_name]
+        if value == "ALL":
+            continue
+        if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
+            raise EvidenceError(
+                f'authority_scope.{field_name} must be "ALL" or a list of id strings'
+            )
     for k in ("subject_identity", "source_reference", "source_digest"):
         if not isinstance(record[k], str) or not record[k].strip():
             raise EvidenceError(

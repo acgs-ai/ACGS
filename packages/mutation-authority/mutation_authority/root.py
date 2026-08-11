@@ -152,10 +152,17 @@ class GovernanceRoot:
     # -- integrity --------------------------------------------------------
 
     def verify_integrity(self) -> None:
-        """Re-hash sealed files and re-check the manifest signature.
+        """Re-hash sealed files, re-check the manifest signature, and re-check
+        the CACHED policy/actors/manifest against the sealed on-disk state.
 
         Raises RootIntegrityError on any mismatch. Called before every
         decision and every effect binding — never cached.
+
+        The in-memory comparison matters because every decision reads policy
+        and actor records from ``self.policy`` / ``self.actors``: mutating
+        those dicts in place (the dataclass is frozen, its dict fields are
+        not) would grant scopes or activate actors that the sealed, signed
+        files never authorized, while the disk-only checks kept passing.
         """
         try:
             manifest = json.loads((self.root_dir / MANIFEST_FILE).read_text())
@@ -170,13 +177,27 @@ class GovernanceRoot:
         if not hmac_verify(self.root_key(), hash_obj({"files": files}), signature):
             raise RootIntegrityError("manifest signature invalid")
 
+        disk: dict[str, Any] = {}
         for name in _SEALED_FILES:
             path = self.root_dir / name
             if not path.exists():
                 raise RootIntegrityError(f"sealed root file missing: {name}")
-            actual = sha256_hex(path.read_bytes())
-            if files.get(name) != actual:
+            data = path.read_bytes()
+            if files.get(name) != sha256_hex(data):
                 raise RootIntegrityError(f"sealed root file modified: {name}")
+            try:
+                disk[name] = json.loads(data)
+            except json.JSONDecodeError as exc:
+                raise RootIntegrityError(f"sealed root file unparseable: {name}: {exc}") from exc
+
+        # Disk is verified; now the cached copies every decision actually
+        # consults must agree with it (in-memory tamper fails closed too).
+        if manifest != self.manifest:
+            raise RootIntegrityError("cached manifest diverges from the sealed manifest on disk")
+        if disk[POLICY_FILE] != self.policy:
+            raise RootIntegrityError("cached policy diverges from the sealed policy on disk")
+        if disk[ACTORS_FILE] != self.actors:
+            raise RootIntegrityError("cached actor registry diverges from the sealed actors file")
 
     def manifest_hash(self) -> str:
         return hash_obj(self.manifest)
