@@ -1921,6 +1921,49 @@ def test_install_with_scripts_disabled_does_not_claim_lifecycle_enablement(
     assert tools == [ACTION_PACKAGE_INSTALL]
 
 
+#: npm's own CLI declares these as ``install`` aliases (npm 11
+#: ``npm install --help`` lists them verbatim).
+_NPM_INSTALL_ALIAS_SPELLINGS = (
+    "in",
+    "ins",
+    "inst",
+    "insta",
+    "instal",
+    "isnt",
+    "isnta",
+    "isntal",
+    "isntall",
+)
+
+
+@pytest.mark.parametrize("alias", _NPM_INSTALL_ALIAS_SPELLINGS)
+def test_npm_install_aliases_classify_as_installs(alias: str) -> None:
+    """``npm in left-pad`` runs the same install as ``npm install left-pad``
+    (npm's help declares the alias), but the missing table entry classified it
+    as a plain package invocation — no install surface, no lifecycle record."""
+    event = classify_command(f"npm {alias} left-pad")
+
+    assert event.action == ACTION_PACKAGE_INSTALL
+    assert event.facts["scripts_disabled"] is False
+
+
+@pytest.mark.parametrize("alias", _NPM_INSTALL_ALIAS_SPELLINGS)
+def test_npm_install_aliases_record_the_lifecycle_enablement_surface(alias: str) -> None:
+    """ADR-0010 D2: every supported install spelling must emit the separately
+    recorded lifecycle-enablement decision, not only ``install``/``i``."""
+    calls = execution_tool_calls_from_hook_payload(
+        bash_payload(f"npm {alias} left-pad"),
+        action_kind="PreToolUse",
+        actor="operator-a",
+        canonical_package_manager="npm",
+    )
+
+    assert [call.name for call in calls] == [
+        ACTION_PACKAGE_LIFECYCLE_ENABLE,
+        ACTION_PACKAGE_INSTALL,
+    ]
+
+
 def test_npx_in_a_pnpm_workspace_is_denied_before_any_fetch(tmp_path: Path) -> None:
     gateway = make_execution_gateway(tmp_path)
 
@@ -2440,6 +2483,96 @@ def test_files_merely_near_manifest_names_stay_on_the_source_tier(tmp_path: Path
         response = governed_write(gateway, file_path)
         assert permission(response) == "allow"
         assert response["gove_zone"]["receipts"]
+
+
+def test_writes_to_configured_evidence_paths_are_denied(tmp_path: Path) -> None:
+    """The gateway here writes its chain to ``<tmp>/audit.jsonl`` — no
+    ``.gove-zone`` segment anywhere — so the segment rule alone assigned the
+    source tier and a governed ``Write`` could truncate the exact chain that
+    had just recorded it. The configured evidence files must be denied by
+    target, not only by the default directory name."""
+    audit = tmp_path / "audit.jsonl"
+    ledger = tmp_path / "ledger.jsonl"
+    gateway = make_execution_gateway(tmp_path)
+    factory = make_execution_call_factory("pnpm", audit_path=audit, ledger_path=ledger)
+
+    for target in (audit, ledger):
+        response = gateway.handle_claude_hook(
+            {"tool_name": "Write", "tool_input": {"file_path": str(target), "content": ""}},
+            actor="operator-a",
+            call_factory=factory,
+        )
+
+        assert permission(response) == "deny"
+        assert "gove_zone" not in response
+        event = audit_events(tmp_path)[-1]
+        assert event["tool"] == "runtime.Write"
+        assert "deny-trust-root-path-mutation" in event["matched_rules"]
+
+    # Positive control: a neighboring file in the same directory is not
+    # evidence and stays an ordinary source-tier write.
+    response = gateway.handle_claude_hook(
+        {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "notes.txt")}},
+        actor="operator-a",
+        call_factory=factory,
+    )
+    assert permission(response) == "allow"
+
+
+def test_env_configured_audit_path_is_protected_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``GOVE_ZONE_AUDIT_PATH=/tmp/custom-audit.jsonl`` places the chain outside
+    any ``.gove-zone`` directory; with no explicit ``audit_path`` argument the
+    classifier must still resolve and protect it (and the sibling ledger),
+    exactly as ``build_execution_gateway`` resolves where it writes."""
+    evidence = tmp_path / "custom-audit.jsonl"
+    monkeypatch.setenv("GOVE_ZONE_AUDIT_PATH", str(evidence))
+
+    for target in (evidence, evidence.parent / "ledger.jsonl"):
+        (call,) = execution_tool_calls_from_hook_payload(
+            {"tool_name": "Write", "tool_input": {"file_path": str(target), "content": ""}},
+            action_kind="PreToolUse",
+            actor="operator-a",
+        )
+
+        assert call.args["governance_path_tier"] == "trust-root"
+        assert call.state["governance_path_tier"] == "trust-root"
+
+
+def test_relative_spelling_of_the_configured_evidence_path_is_protected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The host write resolves a relative target against the working directory,
+    so a relative respelling of the configured absolute path names the same
+    file and must carry the same trust-root tier."""
+    evidence = tmp_path / "custom-audit.jsonl"
+    monkeypatch.setenv("GOVE_ZONE_AUDIT_PATH", str(evidence))
+    monkeypatch.chdir(tmp_path)
+
+    (call,) = execution_tool_calls_from_hook_payload(
+        {"tool_name": "Write", "tool_input": {"file_path": "custom-audit.jsonl"}},
+        action_kind="PreToolUse",
+        actor="operator-a",
+    )
+
+    assert call.state["governance_path_tier"] == "trust-root"
+
+
+def test_non_evidence_paths_carry_no_tier_under_a_custom_audit_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Positive control: the exact-target rule protects the two configured
+    files, not the directory around them."""
+    monkeypatch.setenv("GOVE_ZONE_AUDIT_PATH", str(tmp_path / "custom-audit.jsonl"))
+
+    (call,) = execution_tool_calls_from_hook_payload(
+        {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "notes.txt")}},
+        action_kind="PreToolUse",
+        actor="operator-a",
+    )
+
+    assert "governance_path_tier" not in call.state
 
 
 def test_batch_wrapped_install_is_still_classified(tmp_path: Path) -> None:

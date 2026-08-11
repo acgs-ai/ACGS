@@ -70,6 +70,7 @@ What this module deliberately does NOT claim
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import hashlib
 import json
@@ -277,8 +278,17 @@ _FIND_EXEC_PRIMARIES = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
 #: one manager contract.
 _MANAGER_EXECUTABLE_ALIASES: Mapping[str, str] = {"yarnpkg": "yarn"}
 
+#: Abbreviated and typo spellings npm's own CLI declares as ``install``
+#: aliases (``npm install --help`` on npm 11 lists them verbatim). Each runs
+#: the same install with lifecycle scripts enabled, so a spelling missing
+#: from the npm row would classify as a plain ``env.package.invoke`` and skip
+#: the separately recorded lifecycle-enablement decision.
+_NPM_INSTALL_ALIASES = frozenset(
+    {"in", "ins", "inst", "insta", "instal", "isnt", "isnta", "isntal", "isntall"}
+)
+
 _INSTALL_SUBCOMMANDS: Mapping[str, frozenset[str]] = {
-    "npm": frozenset({"install", "i", "ci", "add", "update", "up"}),
+    "npm": frozenset({"install", "i", "ci", "add", "update", "up"}) | _NPM_INSTALL_ALIASES,
     "pnpm": frozenset({"install", "i", "add", "update", "up"}),
     "yarn": frozenset({"install", "add", "up", "upgrade"}),
     "bun": frozenset({"install", "i", "add", "update"}),
@@ -2170,6 +2180,75 @@ _FILE_MUTATION_TOOLS = frozenset(
     {"runtime.Edit", "runtime.MultiEdit", "runtime.NotebookEdit", "runtime.Write"}
 )
 
+#: Target keys a file-mutation payload may carry, in the same precedence order
+#: as :func:`gove_zone.integration.tool_call_from_hook_payload` uses to build
+#: ``ToolCall.path`` — the evidence-target check must judge the same target the
+#: segment rules judge.
+_FILE_MUTATION_TARGET_KEYS = ("file_path", "path", "notebook_path")
+
+
+def _casefolded_path_spellings(path: Path) -> tuple[str, ...]:
+    """Comparable spellings of a filesystem path: absolute and symlink-resolved.
+
+    Both are kept: :func:`os.path.abspath` normalizes ``.``/``..`` and anchors a
+    relative spelling to the working directory without touching symlinks, while
+    :meth:`~pathlib.Path.resolve` also follows symlinks — and a write may name
+    the evidence file through either spelling. Casefolded for the same reason as
+    :func:`_governance_path_tier`: on a case-insensitive filesystem a respelled
+    path resolves to the protected file, and the over-approximation on a
+    case-sensitive one is a deny, never a false allow.
+    """
+    expanded = path.expanduser()
+    spellings = {Path(os.path.abspath(expanded)).as_posix().casefold()}
+    # An unresolvable spelling (symlink loop, permission error) still leaves
+    # the abspath form above to compare against.
+    with contextlib.suppress(OSError, RuntimeError):
+        spellings.add(expanded.resolve().as_posix().casefold())
+    return tuple(spellings)
+
+
+def _protected_evidence_targets(
+    audit_path: str | Path | None, ledger_path: str | Path | None
+) -> frozenset[str]:
+    """Casefolded spellings of the configured audit-chain and ledger files.
+
+    :func:`_governance_path_tier` protects the default ``.gove-zone`` directory
+    by segment name, but ``GOVE_ZONE_AUDIT_PATH`` — or the public ``audit_path``
+    / ``ledger_path`` arguments — may place the evidence anywhere. A ``Write``
+    naming that exact configured file previously evaluated as an ordinary
+    source-tier allow, so the host write could truncate the chain right after
+    the decision was appended to it. Defaults mirror
+    :func:`build_execution_gateway` exactly, so the files the gateway writes
+    are the files this protects.
+    """
+    from gove_zone.integration import resolve_audit_path
+
+    resolved_audit = Path(audit_path) if audit_path is not None else resolve_audit_path()
+    resolved_ledger = (
+        Path(ledger_path) if ledger_path is not None else resolved_audit.parent / "ledger.jsonl"
+    )
+    targets: set[str] = set()
+    for evidence in (resolved_audit, resolved_ledger):
+        targets.update(_casefolded_path_spellings(evidence))
+    return frozenset(targets)
+
+
+def _mutation_targets_evidence(child: Mapping[str, Any], evidence_targets: frozenset[str]) -> bool:
+    """True when a file-mutation payload names a configured evidence file."""
+    if not evidence_targets:
+        return False
+    try:
+        _name, tool_input = tool_name_and_input(dict(child))
+    except Exception:  # noqa: BLE001 - an unreadable payload has no readable target
+        return False
+    for key in _FILE_MUTATION_TARGET_KEYS:
+        value = tool_input.get(key)
+        if isinstance(value, str) and value:
+            return any(
+                spelling in evidence_targets for spelling in _casefolded_path_spellings(Path(value))
+            )
+    return False
+
 
 def _governance_path_tier(path: Sequence[str]) -> str:
     """The governance tier a file path belongs to, or ``""`` for ordinary paths.
@@ -2224,6 +2303,8 @@ def execution_tool_calls_from_hook_payload(
     actor: str,
     canonical_package_manager: str = "",
     run_context: Mapping[str, Any] | None = None,
+    audit_path: str | Path | None = None,
+    ledger_path: str | Path | None = None,
 ) -> tuple[ToolCall, ...]:
     """Normalize a runtime hook event into governed calls, classifying shells.
 
@@ -2253,8 +2334,18 @@ def execution_tool_calls_from_hook_payload(
     ADR-0010 D2 declares script enablement a separately recorded, escalated
     decision taken before the manager runs. It records that decision; it does
     not gate the scripts (see the module docstring).
+
+    ``audit_path`` / ``ledger_path`` name the evidence files this boundary
+    writes, defaulting exactly as :func:`build_execution_gateway` defaults them
+    (``GOVE_ZONE_AUDIT_PATH`` via
+    :func:`gove_zone.integration.resolve_audit_path`, ledger beside the audit
+    chain). A file mutation whose target resolves to either configured file
+    carries the trust-root path tier even when the file lives outside a
+    ``.gove-zone`` directory: the chain that records a decision must not be
+    rewritable by the call it judged.
     """
     context = {str(k): v for k, v in dict(run_context or {}).items()}
+    evidence_targets: frozenset[str] | None = None
     calls: list[ToolCall] = []
     for child in individual_tool_payloads(dict(payload)):
         call = tool_call_from_hook_payload(child, action_kind=action_kind, actor=actor)
@@ -2326,6 +2417,15 @@ def execution_tool_calls_from_hook_payload(
         extra: dict[str, Any] = {}
         if call.name in _FILE_MUTATION_TOOLS:
             governance_tier = _governance_path_tier(call.path)
+            if governance_tier != TIER_TRUST_ROOT:
+                # GOVE_ZONE_AUDIT_PATH (or explicit audit_path/ledger_path
+                # arguments) may place the evidence outside any `.gove-zone`
+                # directory; a mutation naming that exact configured file must
+                # hit the same trust-root deny as the default chain location.
+                if evidence_targets is None:
+                    evidence_targets = _protected_evidence_targets(audit_path, ledger_path)
+                if _mutation_targets_evidence(child, evidence_targets):
+                    governance_tier = TIER_TRUST_ROOT
             if governance_tier:
                 # Fail-closed path rule input: a Write to the gate-mode file,
                 # the hook, or the audit chain must not evaluate as an ordinary
@@ -2352,14 +2452,22 @@ def make_execution_call_factory(
     canonical_package_manager: str = "",
     *,
     run_context: Mapping[str, Any] | None = None,
+    audit_path: str | Path | None = None,
+    ledger_path: str | Path | None = None,
 ) -> Any:
     """Bind deployment configuration into a ``call_factory`` for the gateway.
 
     :meth:`~gove_zone.gateway.UniversalGateway.handle_claude_hook` calls its
     factory as ``factory(payload, action_kind=..., actor=...)``. The canonical
-    manager and the run context are deployment/session facts, not per-call data,
-    so they are closed over here rather than read from the payload — a payload
-    that could name its own canonical manager would be able to exempt itself.
+    manager, the run context, and the evidence locations are deployment/session
+    facts, not per-call data, so they are closed over here rather than read from
+    the payload — a payload that could name its own canonical manager would be
+    able to exempt itself.
+
+    ``audit_path`` / ``ledger_path`` default exactly as
+    :func:`build_execution_gateway` defaults them; a caller that passes explicit
+    evidence paths to the gateway must pass the same paths here so mutations of
+    those exact files stay on the trust-root tier.
     """
     bound_context = dict(run_context or {})
 
@@ -2370,6 +2478,8 @@ def make_execution_call_factory(
             actor=actor,
             canonical_package_manager=canonical_package_manager,
             run_context=bound_context,
+            audit_path=audit_path,
+            ledger_path=ledger_path,
         )
 
     return factory
