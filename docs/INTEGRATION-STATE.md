@@ -179,8 +179,13 @@ merges). LANDED means every touched blob is byte-identical on master.
 ## Reapable branches (content already on master, or no content)
 
 Do **not** delete a branch that still has an open PR (deleting the
-remote branch closes it and discards its review context), and verify
-the live ref still points at the classified tip SHA before deleting.
+remote branch closes it and discards its review context). Before
+deleting, verify **both** that the live ref still points at the
+classified tip SHA **and** that `origin/master` still points at the
+base SHA above: these verdicts are only valid against that exact
+base, and if master has moved (e.g. a revert removed content that
+made a branch LANDED) a listed branch may now be the last ref
+holding its content; regenerate and reclassify first.
 
 | Branch | Status | Tip SHA | Tip date | Open PR |
 |---|---|---|---|---|

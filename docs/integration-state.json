@@ -1,6 +1,7 @@
 {
   "base": "origin/master",
   "base_sha": "bee922df",
+  "base_full_sha": "bee922df3d6f4dd22fd4bdbea3cf25e72e038d36",
   "generated_at": "2026-08-13T03:11:08+00:00",
   "summary": {
     "NO-OP": 115,

@@ -46,17 +46,32 @@ JSON_OUT = Path("docs/integration-state.json")
 # empty child of master yields two empty diffs and a false NO-OP even though
 # the real tip holds a unique file. Classification must see only the objects
 # stored in the remote refs, never local rewrites.
+#
+# --no-replace-objects does NOT disable the legacy graft overlay
+# ($GIT_DIR/info/grafts / $GIT_GRAFT_FILE), which rewrites commit *parents*
+# during traversal: grafting a branch tip onto a commit with the same tree
+# makes merge-base select that parent, empties the touched-path diff, and
+# falsely labels the branch NO-OP. There is no CLI flag to ignore grafts, so
+# both helpers pin GIT_GRAFT_FILE to the null device (an empty graft list),
+# which also overrides any hostile GIT_GRAFT_FILE already in the environment.
+_GIT_ENV = {**os.environ, "GIT_GRAFT_FILE": os.devnull}
 
 
 def git(*args: str) -> str:
     result = subprocess.run(
-        ["git", "--no-replace-objects", *args], capture_output=True, text=True, check=True
+        ["git", "--no-replace-objects", *args],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=_GIT_ENV,
     )
     return result.stdout
 
 
 def git_bytes(*args: str) -> bytes:
-    result = subprocess.run(["git", "--no-replace-objects", *args], capture_output=True, check=True)
+    result = subprocess.run(
+        ["git", "--no-replace-objects", *args], capture_output=True, check=True, env=_GIT_ENV
+    )
     return result.stdout
 
 
@@ -376,8 +391,13 @@ def render_markdown(
         "## Reapable branches (content already on master, or no content)",
         "",
         "Do **not** delete a branch that still has an open PR (deleting the",
-        "remote branch closes it and discards its review context), and verify",
-        "the live ref still points at the classified tip SHA before deleting.",
+        "remote branch closes it and discards its review context). Before",
+        "deleting, verify **both** that the live ref still points at the",
+        "classified tip SHA **and** that `origin/master` still points at the",
+        "base SHA above: these verdicts are only valid against that exact",
+        "base, and if master has moved (e.g. a revert removed content that",
+        "made a branch LANDED) a listed branch may now be the last ref",
+        "holding its content; regenerate and reclassify first.",
         "",
         "| Branch | Status | Tip SHA | Tip date | Open PR |",
         "|---|---|---|---|---|",
@@ -484,6 +504,12 @@ def main() -> int:
     payload = {
         "base": BASE,
         "base_sha": base_sha,
+        # Full object ID of the base every verdict was computed against: a
+        # reaper must require the live BASE ref to still equal it (and each
+        # branch's live ref to equal tip_sha) before deleting: a base moved
+        # by e.g. a revert can turn a LANDED branch back into the sole holder
+        # of its content while the branch tip itself is unchanged.
+        "base_full_sha": base_full_sha,
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "summary": dict(counts),
         "pr_data_available": pr_data_available,
