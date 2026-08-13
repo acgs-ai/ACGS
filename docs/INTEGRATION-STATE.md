@@ -184,17 +184,27 @@ PR column is a snapshot from generation time, a PR can be opened
 afterwards without moving any ref, and local tracking refs go stale
 the moment another checkout pushes (they only move on a successful
 fetch), so a check-then-delete against local refs can pass and still
-destroy fresh commits. Immediately before deleting, verify **all
-five** against the live remote:
+destroy fresh commits. Immediately before deleting, run **all
+six** checks:
 
-1. `git push origin` targets exactly the repository the other
+1. the ledger itself records the pasted branch/tip pair as
+   reapable: `--assert-reapable` requires an exact branch and
+   full-tip match in `integration-state.json` with a `LANDED` or
+   `NO-OP` verdict, and requires the ledger's base to equal the
+   base this chain pins (so instructions and data from different
+   generations cannot be mixed). Nothing else in the chain reads
+   the ledger, so without this check a STRANDED branch pasted with
+   its correct tip would pass every remote-side comparison below
+   and be deleted while the ledger explicitly says its content
+   never landed;
+2. `git push origin` targets exactly the repository the other
    checks inspect: `git remote get-url --push --all origin` must
    print exactly the fetch URL. A configured `remote.origin.pushurl`
    (possibly several) makes the push modify repositories other than
    the one answering the `ls-remote` and PR queries, so a matching
    lease there proves nothing about the repository actually being
    modified;
-2. the live `origin` still names the repository this ledger
+3. the live `origin` still names the repository this ledger
    inventoried. The SHA checks below compare content, not identity:
    a `remote.origin.url` rewritten after generation — commonly to a
    fork holding identical branch and base SHAs — passes every SHA
@@ -204,10 +214,18 @@ five** against the live remote:
    discarded. The selector is re-derived from the live fetch URL
    (`scripts/integration_state.py --print-selector`) and must equal
    the recorded one;
-3. an authoritative `git ls-remote` lookup (never the local
+4. an authoritative `git ls-remote` lookup (never the local
    tracking ref) shows the remote `master` still at the
    classified base, compared as the **full** object ID (a later
-   commit can share an abbreviated prefix):
+   commit can share an abbreviated prefix). The lookup pins
+   `--upload-pack=git-upload-pack`: a configured
+   `remote.origin.uploadpack` replaces the program serving every
+   read from origin, so a wrapper serving another repository would
+   answer this check (and any refetch) with that repository's refs
+   while the pinned receive-pack still delivers the deletion to the
+   real origin; the command-line option overrides the config
+   (generation additionally rejects checkouts carrying the
+   override):
 
    `bee922df3d6f4dd22fd4bdbea3cf25e72e038d36`
 
@@ -215,20 +233,33 @@ five** against the live remote:
    master has moved (e.g. a revert removed content that made a
    branch LANDED) a listed branch may now be the last ref holding
    its content;
-4. live PR queries report no open PR using the branch as *head*
-   and none using it as *base*. A stacked PR that targets the
-   branch keeps it an active review base even when the branch
-   has no PR of its own, and deleting it would retarget or
-   invalidate the child PR's comparison and review context, so
-   both queries must come back empty. They are pinned to the
-   credential-free `HOST/OWNER/REPO` selector of the repository
-   backing `origin` (an ambient `GH_REPO` override would
-   silently query another repository, and forwarding the raw origin
-   URL would expose credentials embedded in an HTTPS remote to the
-   process table via argv). The branch is passed as one quoted
-   argument (ref names may legally contain `;` or `$()`, which an
-   unquoted substitution would execute);
-5. the deletion pushes with `--atomic`, an expected-value lease on
+5. live PR queries report no open PR using the branch as *head*
+   and none using it as *base*. The head check must see PRs in
+   *other* repositories too: when `origin` is a fork, an open PR
+   into an upstream repository has this branch as its head but
+   belongs to that base repository, so a `gh pr list` pinned to
+   origin returns empty and the deletion would close the active
+   PR. The chain therefore asks GraphQL for the ref's associated
+   open pull requests (cross-repository ones included, since the
+   head ref lives in origin) and requires the count to render
+   exactly `0`; a failed query exits non-zero, and a missing ref
+   or repository renders nothing rather than `0`, so the chain
+   stops whenever the check cannot be completed. A PR using the
+   branch as *base* necessarily lives
+   in origin itself, so the base check stays a `gh pr list`
+   pinned to origin. Both queries use the credential-free
+   `HOST/OWNER/REPO` selector of the repository backing `origin`
+   (an ambient `GH_REPO` override would silently query another
+   repository, and forwarding the raw origin URL would expose
+   credentials embedded in an HTTPS remote to the process table
+   via argv). A stacked PR that targets the branch keeps it an
+   active review base even when the branch has no PR of its own,
+   and deleting it would retarget or invalidate the child PR's
+   comparison and review context, so both checks must come back
+   empty. The branch is passed as one quoted argument (ref names
+   may legally contain `;` or `$()`, which an unquoted
+   substitution would execute);
+6. the deletion pushes with `--atomic`, an expected-value lease on
    the branch ref (`--force-with-lease=<refname>:<expect>` makes
    the server reject the deletion unless the ref still equals
    `<expect>`), an archival tag `refs/tags/reaped/<branch>`
@@ -302,24 +333,33 @@ five** against the live remote:
    unconditionally.
 
 The commands form one `&&` chain because a found PR is successful
-output, not a failing exit status: both PR lists (head and base)
-are captured and required to be empty, the push targets and the
-live base SHA are compared explicitly, and any failed lookup or
-check stops the chain before the push runs:
+output, not a failing exit status: the head-PR count is captured
+and required to render exactly `0`, the base-PR list is captured
+and required to be empty, the push targets, the ledger verdict,
+and the live base SHA are checked explicitly, and any failed
+lookup or check stops the chain before the push runs:
 
 ```sh
 IFS= read -r branch   # paste the branch name, press Enter
 IFS= read -r tip      # paste the branch's full tip SHA
                       # (tip_sha in integration-state.json)
 base=bee922df3d6f4dd22fd4bdbea3cf25e72e038d36 &&
+python3 scripts/integration_state.py \
+  --assert-reapable "$branch" "$tip" "$base" &&
 [ "$(git remote get-url --push --all origin)" \
   = "$(git remote get-url origin)" ] &&
 [ "$(python3 scripts/integration_state.py --print-selector)" \
   = "github.com/acgs-ai/ACGS" ] &&
-[ "$(git ls-remote origin refs/heads/master | cut -f1)" = "$base" ] &&
-prs=$(gh pr list --repo "github.com/acgs-ai/ACGS" --state open \
-  --head "$branch" --json number --jq '.[].number') &&
-[ -z "$prs" ] &&
+[ "$(git ls-remote --upload-pack=git-upload-pack origin \
+  refs/heads/master | cut -f1)" = "$base" ] &&
+head_prs=$(gh api graphql --hostname "github.com" \
+  -f owner="acgs-ai" -f name="ACGS" \
+  -f ref="refs/heads/$branch" \
+  -f query='query($owner:String!,$name:String!,$ref:String!){
+    repository(owner:$owner,name:$name){ref(qualifiedName:$ref){
+    associatedPullRequests(states:OPEN,first:1){totalCount}}}}' \
+  --jq '.data.repository.ref.associatedPullRequests.totalCount') &&
+[ "$head_prs" = "0" ] &&
 base_prs=$(gh pr list --repo "github.com/acgs-ai/ACGS" --state open \
   --base "$branch" --json number --jq '.[].number') &&
 [ -z "$base_prs" ] &&

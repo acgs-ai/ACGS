@@ -335,8 +335,8 @@ def divergent_push_urls() -> list[str]:
     return [url for url in (u.strip() for u in push_urls) if url and url != fetch_url]
 
 
-def reap_push_config_overrides() -> list[str]:
-    """Return origin push configuration that would subvert or break the reap push.
+def origin_transport_overrides() -> list[str]:
+    """Return origin transport configuration that would subvert or break the reap.
 
     ``remote.origin.receivepack`` replaces the receive-pack program ``git
     push`` runs on the remote side (see ``git push --receive-pack``), and
@@ -353,6 +353,23 @@ def reap_push_config_overrides() -> list[str]:
     instructions from a checkout carrying the override (nothing
     legitimate configures it here).
 
+    ``remote.origin.uploadpack`` is the *read-side* twin: it replaces the
+    upload-pack program that serves every fetch and ``ls-remote`` from
+    origin (see ``git fetch --upload-pack``), so a wrapper serving another
+    repository makes the documented ``git fetch --prune origin``, the
+    generation-time ``ls-remote`` completeness gate, and the rendered
+    chain's live base check all read repository B while the URL-derived
+    selector and the pinned receive-pack still target repository A: a
+    branch whose content landed only on B's master would be classified
+    LANDED here and then deleted from A, and the archive-tag cleanup could
+    later remove its last remaining ref. Generation refuses to run with
+    the override set (this gate runs before the first ``ls-remote``; a
+    fetch that already populated the inventory from B while the override
+    was configured is caught by the exact-object-ID upstream comparison
+    once the override is removed), and the rendered chain's ``ls-remote``
+    pins ``--upload-pack=git-upload-pack`` so an override configured after
+    generation cannot redirect the live base check either.
+
     ``remote.origin.mirror=true`` makes every ``git push origin`` behave
     as ``git push --mirror``, which cannot be combined with explicit
     refspecs: the rendered chain would pass every precheck and then die
@@ -367,12 +384,13 @@ def reap_push_config_overrides() -> list[str]:
     at generation time gives the operator one clear fix.
     """
     overrides = []
-    try:
-        receivepack = git("config", "--get", "remote.origin.receivepack").strip()
-    except subprocess.CalledProcessError:
-        receivepack = ""
-    if receivepack:
-        overrides.append(f"remote.origin.receivepack={receivepack}")
+    for key in ("remote.origin.receivepack", "remote.origin.uploadpack"):
+        try:
+            value = git("config", "--get", key).strip()
+        except subprocess.CalledProcessError:
+            value = ""
+        if value:
+            overrides.append(f"{key}={value}")
     try:
         mirror = git("config", "--get", "--type=bool", "remote.origin.mirror").strip()
     except subprocess.CalledProcessError as exc:
@@ -624,6 +642,14 @@ def render_markdown(
     # word; repo_selector_from_origin_url() already restricted it to
     # hostname/repository characters, so it cannot break out of the quotes.
     selector_arg = repo_selector if repo_selector is not None else "<HOST>/<OWNER>/<REPO>"
+    # The GraphQL head-PR check needs the selector's components separately:
+    # `gh api graphql` takes the host via --hostname and the repository via
+    # query variables. The same character restriction applies to each part.
+    if repo_selector is not None:
+        selector_host, _, selector_path = repo_selector.partition("/")
+        selector_owner, _, selector_repo = selector_path.partition("/")
+    else:
+        selector_host, selector_owner, selector_repo = "<HOST>", "<OWNER>", "<REPO>"
     counts = Counter(e["status"] for e in entries)
     stranded = [e for e in entries if e["status"] == "STRANDED"]
     stranded.sort(key=lambda e: (e["files_differing"], e["tip_date"]))
@@ -671,17 +697,27 @@ def render_markdown(
         "afterwards without moving any ref, and local tracking refs go stale",
         "the moment another checkout pushes (they only move on a successful",
         "fetch), so a check-then-delete against local refs can pass and still",
-        "destroy fresh commits. Immediately before deleting, verify **all",
-        "five** against the live remote:",
+        "destroy fresh commits. Immediately before deleting, run **all",
+        "six** checks:",
         "",
-        "1. `git push origin` targets exactly the repository the other",
+        "1. the ledger itself records the pasted branch/tip pair as",
+        "   reapable: `--assert-reapable` requires an exact branch and",
+        "   full-tip match in `integration-state.json` with a `LANDED` or",
+        "   `NO-OP` verdict, and requires the ledger's base to equal the",
+        "   base this chain pins (so instructions and data from different",
+        "   generations cannot be mixed). Nothing else in the chain reads",
+        "   the ledger, so without this check a STRANDED branch pasted with",
+        "   its correct tip would pass every remote-side comparison below",
+        "   and be deleted while the ledger explicitly says its content",
+        "   never landed;",
+        "2. `git push origin` targets exactly the repository the other",
         "   checks inspect: `git remote get-url --push --all origin` must",
         "   print exactly the fetch URL. A configured `remote.origin.pushurl`",
         "   (possibly several) makes the push modify repositories other than",
         "   the one answering the `ls-remote` and PR queries, so a matching",
         "   lease there proves nothing about the repository actually being",
         "   modified;",
-        "2. the live `origin` still names the repository this ledger",
+        "3. the live `origin` still names the repository this ledger",
         "   inventoried. The SHA checks below compare content, not identity:",
         "   a `remote.origin.url` rewritten after generation — commonly to a",
         "   fork holding identical branch and base SHAs — passes every SHA",
@@ -691,10 +727,18 @@ def render_markdown(
         "   discarded. The selector is re-derived from the live fetch URL",
         "   (`scripts/integration_state.py --print-selector`) and must equal",
         "   the recorded one;",
-        "3. an authoritative `git ls-remote` lookup (never the local",
+        "4. an authoritative `git ls-remote` lookup (never the local",
         f"   tracking ref) shows the remote `{_BASE_BRANCH}` still at the",
         "   classified base, compared as the **full** object ID (a later",
-        "   commit can share an abbreviated prefix):",
+        "   commit can share an abbreviated prefix). The lookup pins",
+        "   `--upload-pack=git-upload-pack`: a configured",
+        "   `remote.origin.uploadpack` replaces the program serving every",
+        "   read from origin, so a wrapper serving another repository would",
+        "   answer this check (and any refetch) with that repository's refs",
+        "   while the pinned receive-pack still delivers the deletion to the",
+        "   real origin; the command-line option overrides the config",
+        "   (generation additionally rejects checkouts carrying the",
+        "   override):",
         "",
         f"   `{base_full_sha}`",
         "",
@@ -702,20 +746,33 @@ def render_markdown(
         "   master has moved (e.g. a revert removed content that made a",
         "   branch LANDED) a listed branch may now be the last ref holding",
         "   its content;",
-        "4. live PR queries report no open PR using the branch as *head*",
-        "   and none using it as *base*. A stacked PR that targets the",
-        "   branch keeps it an active review base even when the branch",
-        "   has no PR of its own, and deleting it would retarget or",
-        "   invalidate the child PR's comparison and review context, so",
-        "   both queries must come back empty. They are pinned to the",
-        "   credential-free `HOST/OWNER/REPO` selector of the repository",
-        "   backing `origin` (an ambient `GH_REPO` override would",
-        "   silently query another repository, and forwarding the raw origin",
-        "   URL would expose credentials embedded in an HTTPS remote to the",
-        "   process table via argv). The branch is passed as one quoted",
-        "   argument (ref names may legally contain `;` or `$()`, which an",
-        "   unquoted substitution would execute);",
-        "5. the deletion pushes with `--atomic`, an expected-value lease on",
+        "5. live PR queries report no open PR using the branch as *head*",
+        "   and none using it as *base*. The head check must see PRs in",
+        "   *other* repositories too: when `origin` is a fork, an open PR",
+        "   into an upstream repository has this branch as its head but",
+        "   belongs to that base repository, so a `gh pr list` pinned to",
+        "   origin returns empty and the deletion would close the active",
+        "   PR. The chain therefore asks GraphQL for the ref's associated",
+        "   open pull requests (cross-repository ones included, since the",
+        "   head ref lives in origin) and requires the count to render",
+        "   exactly `0`; a failed query exits non-zero, and a missing ref",
+        "   or repository renders nothing rather than `0`, so the chain",
+        "   stops whenever the check cannot be completed. A PR using the",
+        "   branch as *base* necessarily lives",
+        "   in origin itself, so the base check stays a `gh pr list`",
+        "   pinned to origin. Both queries use the credential-free",
+        "   `HOST/OWNER/REPO` selector of the repository backing `origin`",
+        "   (an ambient `GH_REPO` override would silently query another",
+        "   repository, and forwarding the raw origin URL would expose",
+        "   credentials embedded in an HTTPS remote to the process table",
+        "   via argv). A stacked PR that targets the branch keeps it an",
+        "   active review base even when the branch has no PR of its own,",
+        "   and deleting it would retarget or invalidate the child PR's",
+        "   comparison and review context, so both checks must come back",
+        "   empty. The branch is passed as one quoted argument (ref names",
+        "   may legally contain `;` or `$()`, which an unquoted",
+        "   substitution would execute);",
+        "6. the deletion pushes with `--atomic`, an expected-value lease on",
         "   the branch ref (`--force-with-lease=<refname>:<expect>` makes",
         "   the server reject the deletion unless the ref still equals",
         "   `<expect>`), an archival tag `refs/tags/reaped/<branch>`",
@@ -789,24 +846,33 @@ def render_markdown(
         "   unconditionally.",
         "",
         "The commands form one `&&` chain because a found PR is successful",
-        "output, not a failing exit status: both PR lists (head and base)",
-        "are captured and required to be empty, the push targets and the",
-        "live base SHA are compared explicitly, and any failed lookup or",
-        "check stops the chain before the push runs:",
+        "output, not a failing exit status: the head-PR count is captured",
+        "and required to render exactly `0`, the base-PR list is captured",
+        "and required to be empty, the push targets, the ledger verdict,",
+        "and the live base SHA are checked explicitly, and any failed",
+        "lookup or check stops the chain before the push runs:",
         "",
         "```sh",
         "IFS= read -r branch   # paste the branch name, press Enter",
         "IFS= read -r tip      # paste the branch's full tip SHA",
         "                      # (tip_sha in integration-state.json)",
         f"base={base_full_sha} &&",
+        "python3 scripts/integration_state.py \\",
+        '  --assert-reapable "$branch" "$tip" "$base" &&',
         '[ "$(git remote get-url --push --all origin)" \\',
         '  = "$(git remote get-url origin)" ] &&',
         '[ "$(python3 scripts/integration_state.py --print-selector)" \\',
         f'  = "{selector_arg}" ] &&',
-        f'[ "$(git ls-remote origin refs/heads/{_BASE_BRANCH} | cut -f1)" = "$base" ] &&',
-        f'prs=$(gh pr list --repo "{selector_arg}" --state open \\',
-        "  --head \"$branch\" --json number --jq '.[].number') &&",
-        '[ -z "$prs" ] &&',
+        '[ "$(git ls-remote --upload-pack=git-upload-pack origin \\',
+        f'  refs/heads/{_BASE_BRANCH} | cut -f1)" = "$base" ] &&',
+        f'head_prs=$(gh api graphql --hostname "{selector_host}" \\',
+        f'  -f owner="{selector_owner}" -f name="{selector_repo}" \\',
+        '  -f ref="refs/heads/$branch" \\',
+        "  -f query='query($owner:String!,$name:String!,$ref:String!){",
+        "    repository(owner:$owner,name:$name){ref(qualifiedName:$ref){",
+        "    associatedPullRequests(states:OPEN,first:1){totalCount}}}}' \\",
+        "  --jq '.data.repository.ref.associatedPullRequests.totalCount') &&",
+        '[ "$head_prs" = "0" ] &&',
         f'base_prs=$(gh pr list --repo "{selector_arg}" --state open \\',
         "  --base \"$branch\" --json number --jq '.[].number') &&",
         '[ -z "$base_prs" ] &&',
@@ -865,6 +931,17 @@ def main() -> int:
         " repointed at another repository — e.g. a fork with identical"
         " SHAs — stops the chain instead of deleting uninspected branches)",
     )
+    parser.add_argument(
+        "--assert-reapable",
+        nargs=3,
+        metavar=("BRANCH", "TIP", "BASE"),
+        help="exit 0 only when docs/integration-state.json was generated against"
+        " exactly the full base object ID BASE and records BRANCH at exactly the"
+        " full tip object ID TIP with a LANDED or NO-OP verdict (the rendered"
+        " reap chain runs this before any ref update: every other check can pass"
+        " for a mispasted STRANDED branch, whose deletion would discard unlanded"
+        " content)",
+    )
     args = parser.parse_args()
     if args.check:
         ok = MD_OUT.exists() and JSON_OUT.exists()
@@ -884,6 +961,49 @@ def main() -> int:
             )
             return 1
         print(selector)
+        return 0
+    if args.assert_reapable:
+        branch, tip, base = args.assert_reapable
+        try:
+            payload = json.loads(JSON_OUT.read_text())
+        except (OSError, ValueError) as exc:
+            print(f"error: cannot read {JSON_OUT}: {exc}", file=sys.stderr)
+            return 1
+        # The verdicts in the ledger are only meaningful against the base they
+        # were computed from; requiring the caller's base to match binds the
+        # pasted chain (which pins its own base literal) to the checked-in
+        # ledger, so instructions and data from different generations cannot
+        # be mixed.
+        ledger_base = payload.get("base_full_sha")
+        if ledger_base != base:
+            print(
+                f"error: {JSON_OUT} was generated against base {ledger_base},"
+                f" not {base}; regenerate and use the matching instructions",
+                file=sys.stderr,
+            )
+            return 1
+        entry = next(
+            (e for e in payload.get("branches", []) if e.get("branch") == branch),
+            None,
+        )
+        if entry is None:
+            print(f"error: branch {branch!r} is not in {JSON_OUT}", file=sys.stderr)
+            return 1
+        if entry.get("tip_sha") != tip:
+            print(
+                f"error: {JSON_OUT} records {branch!r} at tip"
+                f" {entry.get('tip_sha')}, not {tip}",
+                file=sys.stderr,
+            )
+            return 1
+        if entry.get("status") not in ("LANDED", "NO-OP"):
+            print(
+                f"error: {JSON_OUT} records {branch!r} as {entry.get('status')},"
+                " not LANDED or NO-OP; refusing to treat it as reapable",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"reapable: {branch} @ {tip} ({entry['status']})")
         return 0
 
     if not fetch_refspec_covers_all_heads():
@@ -919,19 +1039,23 @@ def main() -> int:
         )
         return 1
 
-    push_overrides = reap_push_config_overrides()
-    if push_overrides:
-        listing = "\n".join(f"  {o}" for o in push_overrides)
+    transport_overrides = origin_transport_overrides()
+    if transport_overrides:
+        listing = "\n".join(f"  {o}" for o in transport_overrides)
         print(
-            "error: origin push configuration would subvert or break the reap push:\n"
+            "error: origin transport configuration would subvert or break the reap:\n"
             f"{listing}\n"
             "remote.origin.receivepack replaces the receive-pack program `git push`\n"
             "runs on the remote side and can deliver the ref updates to a repository\n"
             "other than the one this ledger's ls-remote/selector/PR checks inspect;\n"
+            "remote.origin.uploadpack replaces the upload-pack program serving every\n"
+            "fetch and ls-remote, so classification and the live base check could\n"
+            "read a repository other than the one the push modifies;\n"
             "remote.origin.mirror=true turns every push into a full-mirror update,\n"
             "which cannot be combined with the reap chain's explicit refspecs. Fix\n"
             "with (whichever applies):\n"
             "  git config --unset-all remote.origin.receivepack\n"
+            "  git config --unset-all remote.origin.uploadpack\n"
             "  git config --unset-all remote.origin.mirror\n"
             "then regenerate.",
             file=sys.stderr,
