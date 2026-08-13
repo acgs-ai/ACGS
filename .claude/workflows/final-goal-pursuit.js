@@ -356,20 +356,28 @@ const outcomes = await pipeline(
     // be committed at the correct boundary. Dispatch those through a worktree
     // of the nested repository itself (mirrors acgs-lite-pep-closure-pursuit).
     if (item.nestedRepoDir) {
+      // The planner's packageDir (and any absolute paths inside its plan text)
+      // point into the SHARED checkout, but the implementation happens in the
+      // temporary worktree created in step 2. Hand the lane the package path
+      // RELATIVE to the nested repo root so following it lands inside the
+      // worktree, and mark the shared checkout as read-only: an implementer
+      // following absolute plan paths would edit the original submodule while
+      // the reviewer and verifier inspect the worktree.
+      const nestedRel = item.packageDir === item.nestedRepoDir ? '.' : item.packageDir.slice(item.nestedRepoDir.length + 1)
       return agent(
-        `You are the implementation lane for ONE work item toward the ACGS final goal. The work lives in ${item.packageDir}, which is inside a NESTED git repository (${item.nestedRepoDir} has its own .git, registered as a submodule of ${REPO}). A worktree of the parent repo records it as an empty gitlink, so you MUST create and work in a worktree of the nested repo itself.
+        `You are the implementation lane for ONE work item toward the ACGS final goal. The work targets a NESTED git repository (${item.nestedRepoDir} has its own .git, registered as a submodule of ${REPO}); inside that repository the work lives at ${JSON.stringify(nestedRel)} relative to the repo root. A worktree of the parent repo records the nested repo as an empty gitlink, so you MUST create and work in a worktree of the nested repo itself.
 
 ${REPO_RULES}
 
 Work item (criterion ${item.criterionId}): ${JSON.stringify(item.title)}
 
-Plan:
+Plan (any absolute paths in it refer to the shared checkout; translate them to the same paths relative to YOUR worktree root before acting, and never follow them into the shared checkout):
 ${JSON.stringify(item.plan)}
 
 Procedure:
 1. Determine the nested repo's base branch explicitly (NEVER base on the shared checkout's current HEAD, which may sit on an unrelated in-flight branch): base="$(git -C ${shq(item.nestedRepoDir)} symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"; if that is empty, use main if "git -C ${shq(item.nestedRepoDir)} show-ref --verify --quiet refs/heads/main" succeeds, else master.
 2. Create an isolated worktree of the NESTED repo (not the parent), branching from that base: git -C ${shq(item.nestedRepoDir)} worktree add "$(mktemp -d)/wt" -b ${shq(`final-goal/${slug}`)} "$base" (if the branch already exists, append a -2 suffix).
-3. cd into that worktree. Read the package-local CLAUDE.md / AGENTS.md first and obey them.
+3. cd into that worktree and do ALL reading, editing, running, and staging from inside it, addressing files by paths relative to its root (the work lives at ${JSON.stringify(nestedRel)}). The shared checkout at ${item.nestedRepoDir} is the source for "git worktree add" ONLY: never edit, run validation in, or stage files there. Read the package-local CLAUDE.md / AGENTS.md first and obey them.
 4. Make the smallest safe change that closes the gap, WITH tests (TDD where practical).
 5. Run the validation command locally from inside the worktree: ${JSON.stringify(item.validationCommand)}
 6. Stage ONLY the files you changed (explicit paths, never -A), commit on the feature branch with a conventional message. Do NOT push. NEVER touch the parent repo or its submodule pointer.
@@ -430,6 +438,16 @@ If you determine the criterion is ALREADY satisfied and zero changes are require
     }
     const reviewBase = impl.baseBranch
     assertShellSafe(reviewBase, 'impl.baseBranch', RE_REF)
+    // A syntactically valid baseBranch can still be the WRONG ref: if the
+    // implementer reports its own feature branch (or HEAD) as the base, the
+    // instructed diff is empty and the change would be approved with zero
+    // hunks reviewed. Refuse the obvious self-references deterministically
+    // here; the remaining properties (base resolves, is an ancestor, and the
+    // diff actually covers the reported files) can only be proven inside the
+    // worktree, so the reviewer preflights them below and blocks on failure.
+    if (reviewBase === impl.branch || reviewBase.toUpperCase() === 'HEAD' || reviewBase === '@') {
+      return { impl, review: { verdict: 'block', issues: [`implementer reported baseBranch=${JSON.stringify(reviewBase)}, which is the feature branch itself (or HEAD): diffing it against HEAD is empty, so the change cannot receive an effective review`] } }
+    }
     return agent(
       `You are the review lane — you did NOT write this change. Review it adversarially against the repo's rules.
 
@@ -443,9 +461,13 @@ Files changed: ${JSON.stringify(impl.filesChanged)}
 Implementer's summary: ${JSON.stringify(impl.summary)}
 
 Procedure:
-1. cd ${shq(impl.worktree)} && git diff ${shq(reviewBase)}...HEAD (or the merge-base diff against ${shq(reviewBase)}) — review every hunk.
-2. Check: fail-closed behavior preserved? sealed/hash-marked files untouched? handler actually WIRED into the dispatch path (grep the symbol outside its own file — zero hits = not wired = block)? tests exercise the registration path, not just the function? scope stayed inside ${item.packageDir}? no new runtime deps in gove-zone?
-3. Verdict: approve / request-changes (fixable nits) / block (correctness, security, or boundary violation).`,
+1. cd ${shq(impl.worktree)}, then PREFLIGHT the diff basis before reviewing anything. The base branch above was reported by the implementation lane and may be wrong; verdict=block (do not review further) if ANY of these fails:
+   a. git rev-parse --verify ${shq(`${reviewBase}^{commit}`)} succeeds, and its commit differs from "git rev-parse HEAD" (a base equal to the tip diffs empty: nothing would be reviewed).
+   b. git merge-base --is-ancestor ${shq(reviewBase)} HEAD exits 0 (the base must be an ancestor of the feature branch).
+   c. git diff --name-only ${shq(reviewBase)}...HEAD is non-empty and includes EVERY file in the "Files changed" list above (a diff that misses reported files means the base is wrong and hunks would silently escape review).
+2. git diff ${shq(reviewBase)}...HEAD: review every hunk.
+3. Check: fail-closed behavior preserved? sealed/hash-marked files untouched? handler actually WIRED into the dispatch path (grep the symbol outside its own file; zero hits = not wired = block)? tests exercise the registration path, not just the function? scope stayed inside ${item.packageDir}? no new runtime deps in gove-zone?
+4. Verdict: approve / request-changes (fixable nits) / block (correctness, security, or boundary violation).`,
       { label: `review:${item.criterionId}`, phase: 'Review', schema: REVIEW_SCHEMA },
     ).then(review => ({ impl, review }))
   },
