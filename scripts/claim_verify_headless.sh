@@ -27,12 +27,32 @@ NAMES=(
   "receipt-demo"
   "tamper-demo"
 )
+# Display strings for the JSON report only. Execution happens in run_claim
+# below as literal argument arrays, never via `bash -c` re-parsing, so a
+# TMPDIR containing whitespace or shell metacharacters cannot change the
+# audit argument or inject commands into the verification process. The
+# gove-zone-smoke entry shows the $TMP placeholder unexpanded on purpose.
 COMMANDS=(
-  "uv run python -m pytest tests/docs --import-mode=importlib -q"
-  "uv run --package gove-zone gove-zone smoke --audit $TMP/audit.jsonl"
-  "uv run --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py"
-  "uv run --package gove-zone python examples/tamper_demo/demo.py"
+  'uv run --offline python -m pytest tests/docs --import-mode=importlib -q'
+  'uv run --offline --package gove-zone gove-zone smoke --audit $TMP/audit.jsonl'
+  'uv run --offline --extra crypto --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py'
+  'uv run --offline --package gove-zone python examples/tamper_demo/demo.py'
 )
+
+# Run one claim by name. --offline enforces the documented no-network
+# contract: an incomplete uv environment or dependency cache fails the claim
+# loudly instead of silently resolving from package indexes. The receipt demo
+# needs --extra crypto (per AGENTS.md) because Ed25519Signer requires the
+# optional cryptography dependency.
+run_claim() {
+  case "$1" in
+    root-docs-smoke) uv run --offline python -m pytest tests/docs --import-mode=importlib -q ;;
+    gove-zone-smoke) uv run --offline --package gove-zone gove-zone smoke --audit "$TMP/audit.jsonl" ;;
+    receipt-demo) uv run --offline --extra crypto --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py ;;
+    tamper-demo) uv run --offline --package gove-zone python examples/tamper_demo/demo.py ;;
+    *) return 127 ;;
+  esac
+}
 
 # One record per claim: name \x1f exit_code \x1f command (the unit separator
 # never appears in the names/commands above).
@@ -41,7 +61,7 @@ for i in "${!NAMES[@]}"; do
   name="${NAMES[$i]}"
   cmd="${COMMANDS[$i]}"
   printf '==> %s: %s\n' "$name" "$cmd" >&2
-  bash -c "$cmd" 1>&2 2>&2
+  run_claim "$name" >&2
   code=$?
   printf '<== %s exit %d\n' "$name" "$code" >&2
   RECORDS+=("${name}"$'\x1f'"${code}"$'\x1f'"${cmd}")

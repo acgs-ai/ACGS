@@ -263,14 +263,17 @@ Be skeptical: a unit test importing a function directly does NOT prove the gate 
 // Silently dropping it would shrink the scoreboard and could make "remaining
 // gaps are human-gated" a statement about criteria that were never evaluated
 // (with the default exclusions, a dropped G5 lane can empty `candidates`).
+// Each lane must also report the criterion it was asked to audit: a result
+// with the wrong id (e.g. the G1 lane labeling itself G2) would duplicate one
+// criterion while silently omitting another, so require r.id === c.id.
 const auditedCriteria = CRITERIA.filter(c => c.id !== 'G6')
 const audits = auditedCriteria.map((c, i) => {
   const r = auditResults[i]
-  return r && r.id ? r : {
+  return r && r.id === c.id ? r : {
     id: c.id,
     status: 'unknown',
     evidence: '',
-    gapSummary: 'audit lane crashed or returned no structured result: criterion NOT evaluated',
+    gapSummary: 'audit lane crashed, returned no structured result, or reported a mismatched criterion id: criterion NOT evaluated',
     agentImplementable: false,
     nextAction: 're-run this audit lane',
     scope: 'small',

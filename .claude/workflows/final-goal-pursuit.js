@@ -78,7 +78,14 @@ function resolveBoundary(dir, label) {
   if (s.split('/').includes('..')) {
     throw new Error(`final-goal-pursuit: refusing to run: \`${label}\` = ${JSON.stringify(s)} contains a ".." segment (path escape).`)
   }
-  const abs = s.startsWith('/') ? s.replace(/\/+$/, '') : `${REPO}/${s.replace(/\/+$/, '')}`
+  // Normalize BEFORE containment and nested-owner matching: drop "." segments,
+  // repeated slashes, and trailing slashes. A valid but noncanonical path such
+  // as "packages/./acgs-lite" or "packages//acgs-lite" would otherwise pass
+  // containment yet miss NESTED_REPOS and get dispatched through a parent
+  // worktree, where the nested repo is only an empty gitlink.
+  const segs = s.split('/').filter(seg => seg !== '' && seg !== '.')
+  const joined = segs.join('/')
+  const abs = s.startsWith('/') ? (joined ? `/${joined}` : '/') : (joined ? `${REPO}/${joined}` : REPO)
   if (abs !== REPO && !abs.startsWith(`${REPO}/`)) {
     throw new Error(`final-goal-pursuit: refusing to run: \`${label}\` = ${JSON.stringify(s)} resolves outside the repository boundary ${REPO}. Work outside the selected subproject cannot be reviewed or committed at the correct boundary.`)
   }
@@ -231,14 +238,17 @@ Be skeptical: a unit test that imports a handler directly does NOT prove wiring;
   // Fail closed on missing lanes: a crashed audit agent (null result) must stay
   // visible as an explicit "unknown" for its criterion — silently dropping it
   // would shrink the scoreboard and could make "no implementable gaps remain"
-  // a statement about criteria that were never evaluated.
+  // a statement about criteria that were never evaluated. Each lane must also
+  // report the criterion it was asked to audit: a result with the wrong id
+  // would duplicate one criterion while silently omitting another, so require
+  // r.id === c.id.
   wave.forEach((c, j) => {
     const r = results[j]
-    audits.push(r && r.id ? r : {
+    audits.push(r && r.id === c.id ? r : {
       id: c.id,
       status: 'unknown',
       evidence: '',
-      gapSummary: 'audit lane crashed or returned no structured result — criterion NOT evaluated',
+      gapSummary: 'audit lane crashed, returned no structured result, or reported a mismatched criterion id: criterion NOT evaluated',
       agentImplementable: false,
       nextAction: 're-run this audit lane',
       scope: 'small',
@@ -356,11 +366,12 @@ Plan:
 ${JSON.stringify(item.plan)}
 
 Procedure:
-1. Create an isolated worktree of the NESTED repo (not the parent): git -C ${shq(item.nestedRepoDir)} worktree add "$(mktemp -d)/wt" -b ${shq(`final-goal/${slug}`)} (if the branch already exists, append a -2 suffix).
-2. cd into that worktree. Read the package-local CLAUDE.md / AGENTS.md first and obey them.
-3. Make the smallest safe change that closes the gap, WITH tests (TDD where practical).
-4. Run the validation command locally from inside the worktree: ${JSON.stringify(item.validationCommand)}
-5. Stage ONLY the files you changed (explicit paths, never -A), commit on the feature branch with a conventional message. Do NOT push. NEVER touch the parent repo or its submodule pointer.
+1. Determine the nested repo's base branch explicitly (NEVER base on the shared checkout's current HEAD, which may sit on an unrelated in-flight branch): base="$(git -C ${shq(item.nestedRepoDir)} symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"; if that is empty, use main if "git -C ${shq(item.nestedRepoDir)} show-ref --verify --quiet refs/heads/main" succeeds, else master.
+2. Create an isolated worktree of the NESTED repo (not the parent), branching from that base: git -C ${shq(item.nestedRepoDir)} worktree add "$(mktemp -d)/wt" -b ${shq(`final-goal/${slug}`)} "$base" (if the branch already exists, append a -2 suffix).
+3. cd into that worktree. Read the package-local CLAUDE.md / AGENTS.md first and obey them.
+4. Make the smallest safe change that closes the gap, WITH tests (TDD where practical).
+5. Run the validation command locally from inside the worktree: ${JSON.stringify(item.validationCommand)}
+6. Stage ONLY the files you changed (explicit paths, never -A), commit on the feature branch with a conventional message. Do NOT push. NEVER touch the parent repo or its submodule pointer.
 Report the absolute worktree path, branch name, and the files you changed. If you hit a hard blocker, set completed=false and explain in blockers.
 If you determine the criterion is ALREADY satisfied and zero changes are required: set completed=true, noChangesNeeded=true, branch="" (empty — NEVER prose in the branch field), filesChanged=[], and put the evidence in summary.`,
         { label: `impl:${item.criterionId}`, phase: 'Implement', schema: IMPL_SCHEMA },
