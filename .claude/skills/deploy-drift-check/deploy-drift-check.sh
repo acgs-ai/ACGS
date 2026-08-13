@@ -84,8 +84,14 @@ if [ "$PROBE_RC" -ne 0 ]; then
 else
   case "$PROBE" in
     200\ text/html*) warn "missing asset served as 200 text/html — SPA fallback swallowing static 404s (breaks agent-discovery scanners)" ;;
+    200*)            warn "missing asset served as HTTP 200 ($PROBE): a definitely-missing asset must not succeed, so the edge is swallowing static 404s" ;;
     404*)            ok "missing asset correctly 404s ($PROBE)" ;;
-    *)               warn "missing-asset probe returned unexpected response ($PROBE): SPA-fallback invariant NOT verified" ;;
+    # curl exited 0, so the response completed and cannot be the 200 text/html
+    # SPA fallback this probe exists to detect (the skill's contract). An edge
+    # that intentionally answers a missing asset with another definitive status
+    # (e.g. 410 Gone) is not drift; report it informationally, do not fail.
+    000*)            warn "missing-asset probe reported no HTTP status ($PROBE) despite curl exit 0: SPA-fallback invariant NOT verified" ;;
+    *)               note "note  missing asset -> $PROBE (definitive non-200 response, not the SPA HTML fallback; informational only)" ;;
   esac
 fi
 

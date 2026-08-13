@@ -480,10 +480,7 @@ If you determine the criterion is ALREADY satisfied and zero changes are require
     // master. The PR-facing name is fully determined by the start ref (strip a
     // single origin/ prefix, nothing else, exactly as the implementer prompts
     // instruct), so derive it here and block on mismatch instead of trusting
-    // the reported field. Consistency also makes the reviewer's step-1a
-    // rev-parse of baseRef prove the PR target exists: a resolvable local
-    // <name> or remote-tracking origin/<name> is precisely the branch the
-    // handoff will name.
+    // the reported field.
     const expectedBaseBranch = reviewBase.startsWith('origin/') ? reviewBase.slice('origin/'.length) : reviewBase
     if (impl.baseBranch !== expectedBaseBranch) {
       return { impl, review: { verdict: 'block', issues: [`implementer reported baseBranch=${JSON.stringify(impl.baseBranch)} inconsistent with baseRef=${JSON.stringify(reviewBase)} (the PR-facing base derived from that ref is ${JSON.stringify(expectedBaseBranch)}): the review preflight validates only baseRef, so the handoff would target a base the review never checked`] } }
@@ -499,6 +496,17 @@ If you determine the criterion is ALREADY satisfied and zero changes are require
     if (reviewBase === impl.branch || reviewBase === `origin/${impl.branch}` || reviewBase.toUpperCase() === 'HEAD' || reviewBase === '@') {
       return { impl, review: { verdict: 'block', issues: [`implementer reported baseRef=${JSON.stringify(reviewBase)}, which is the feature branch itself (or HEAD): diffing it against HEAD is empty, so the change cannot receive an effective review`] } }
     }
+    // RE_REF still admits REVISION EXPRESSIONS (HEAD~1, master^2, a raw SHA):
+    // with baseRef=baseBranch="HEAD~1" every preflight above passes when that
+    // commit is an ancestor and the diff covers the files, yet the handoff
+    // would advertise a PR base that is not a branch at all (gh pr create
+    // --base takes the branch the change merges into). The base must identify
+    // an ACTUAL branch, so pin every git command below to the fully qualified
+    // form: refs/remotes/origin/<name> when the ref is origin/<name>, else
+    // refs/heads/<name>. Qualifying also removes rev-parse's name-resolution
+    // ambiguity (an unqualified name preferring a same-named tag over the
+    // branch). HEAD~1, SHAs, and tags fail the step-1a verify and block.
+    const qualifiedBase = reviewBase.startsWith('origin/') ? `refs/remotes/${reviewBase}` : `refs/heads/${reviewBase}`
     return agent(
       `You are the review lane — you did NOT write this change. Review it adversarially against the repo's rules.
 
@@ -507,16 +515,16 @@ ${REPO_RULES}
 Change under review: criterion ${item.criterionId} — ${JSON.stringify(item.title)}
 Worktree: ${impl.worktree}
 Branch: ${impl.branch}
-Base ref: ${reviewBase} (the exact commit-ish the feature branch was created from; PR-facing base name: ${impl.baseBranch})
+Base ref: ${reviewBase} (the branch the feature branch was created from; PR-facing base name: ${impl.baseBranch}; validated below as ${qualifiedBase})
 Files changed: ${JSON.stringify(impl.filesChanged)}
 Implementer's summary: ${JSON.stringify(impl.summary)}
 
 Procedure:
 1. cd ${shq(impl.worktree)}, then PREFLIGHT the diff basis before reviewing anything. The base ref above was reported by the implementation lane and may be wrong; verdict=block (do not review further) if ANY of these fails:
-   a. git rev-parse --verify ${shq(`${reviewBase}^{commit}`)} succeeds, and its commit differs from "git rev-parse HEAD" (a base equal to the tip diffs empty: nothing would be reviewed).
-   b. git merge-base --is-ancestor ${shq(reviewBase)} HEAD exits 0 (the base must be an ancestor of the feature branch).
-   c. git diff --name-only ${shq(reviewBase)}...HEAD is non-empty and includes EVERY file in the "Files changed" list above (a diff that misses reported files means the base is wrong and hunks would silently escape review).
-2. git diff ${shq(reviewBase)}...HEAD: review every hunk.
+   a. git rev-parse --verify ${shq(`${qualifiedBase}^{commit}`)} succeeds (the fully qualified form proves the base is an ACTUAL branch a PR can target, not a revision expression, SHA, or tag), and its commit differs from "git rev-parse HEAD" (a base equal to the tip diffs empty: nothing would be reviewed).
+   b. git merge-base --is-ancestor ${shq(qualifiedBase)} HEAD exits 0 (the base must be an ancestor of the feature branch).
+   c. git diff --name-only ${shq(qualifiedBase)}...HEAD is non-empty and includes EVERY file in the "Files changed" list above (a diff that misses reported files means the base is wrong and hunks would silently escape review).
+2. git diff ${shq(qualifiedBase)}...HEAD: review every hunk.
 3. Check: fail-closed behavior preserved? sealed/hash-marked files untouched? handler actually WIRED into the dispatch path (grep the symbol outside its own file; zero hits = not wired = block)? tests exercise the registration path, not just the function? scope stayed inside ${item.packageDir}? no new runtime deps in gove-zone?
 4. Verdict: approve / request-changes (fixable nits) / block (correctness, security, or boundary violation).`,
       { label: `review:${item.criterionId}`, phase: 'Review', schema: REVIEW_SCHEMA },

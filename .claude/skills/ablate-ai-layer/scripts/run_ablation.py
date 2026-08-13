@@ -79,6 +79,42 @@ def owning_git_root(root: Path, rel: str) -> Path:
     return root
 
 
+def missing_workspace_members(root: Path, sha: str) -> list[str]:
+    """uv workspace members a fresh worktree of `root` cannot contain.
+
+    Every run happens in a detached worktree created from `sha`, and uv
+    validates the ROOT workspace before running ANY command. A member owned by
+    a nested repo/submodule is recorded in root's tree as a bare 160000
+    gitlink, so the worktree holds only an empty directory with no
+    pyproject.toml and every `uv run` there exits with a setup error before
+    the probe task starts, in BOTH arms. That is checkout topology, not agent
+    behavior. Preflight a REPRESENTATIVE worktree (exactly what the runs will
+    see) so a broken experiment stops before anything is spent."""
+    tmp = Path(tempfile.mkdtemp(prefix="ablate-preflight-"))
+    wt = tmp / "repo"
+    try:
+        git(["worktree", "add", "--detach", "--quiet", str(wt), sha], root)
+        manifest = wt / "pyproject.toml"
+        if not manifest.is_file():
+            return []
+        import tomllib  # local: only repos with a root pyproject need py>=3.11
+        with open(manifest, "rb") as f:
+            data = tomllib.load(f)
+        members = data.get("tool", {}).get("uv", {}).get("workspace", {}).get("members", [])
+        missing: list[str] = []
+        for pattern in members:
+            for p in sorted(wt.glob(pattern)) or [wt / pattern]:
+                if not (p / "pyproject.toml").is_file():
+                    missing.append(p.relative_to(wt).as_posix())
+        return missing
+    finally:
+        subprocess.run(["git", "worktree", "remove", "--force", str(wt)],
+                       cwd=str(root), capture_output=True, text=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+        subprocess.run(["git", "worktree", "prune"], cwd=str(root),
+                       capture_output=True, text=True)
+
+
 # ---------------------------------------------------------------- the layer
 
 def layer_targets(root: Path, scope: str) -> list[dict]:
@@ -363,6 +399,35 @@ def main() -> int:
     if args.dry_run:
         print("\n--dry-run: nothing executed.")
         return 0
+
+    # Excluding nested-owned TARGETS above is not enough: even a purely
+    # root-owned experiment launches into worktrees where every nested repo is
+    # an empty gitlink. If those paths are uv workspace members, the repo's
+    # normal uv commands exit with a setup error before the probe runs, in
+    # BOTH arms, and an expensive result would measure checkout topology
+    # rather than agent behavior. Preflight a representative worktree and stop
+    # as a broken experiment instead.
+    try:
+        missing = missing_workspace_members(root, sha)
+    except Exception as exc:
+        print(f"Workspace preflight failed ({type(exc).__name__}: {exc}): cannot "
+              "prove a fresh worktree of this repo can run its uv commands, so "
+              "the experiment would be uninterpretable.", file=sys.stderr)
+        return 2
+    if missing:
+        print("\nBROKEN EXPERIMENT PREVENTED: a fresh worktree of this repo is "
+              "missing these uv workspace members (nested repos recorded as "
+              "empty gitlinks):", file=sys.stderr)
+        for m in missing:
+            print(f"          - {m}", file=sys.stderr)
+        print("        Every `uv run` inside such a worktree fails with a setup "
+              "error before the probe task starts, in BOTH arms, so any probe "
+              "using this repo's normal uv commands measures checkout topology, "
+              "not agent behavior. If the probe targets one of those packages, "
+              "re-run with that repo as <repo>; otherwise run from a checkout "
+              "whose workspace declares only members this repo owns.",
+              file=sys.stderr)
+        return 2
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     # Results default to a location OUTSIDE the repo: this script promises the
