@@ -298,9 +298,13 @@ def main() -> int:
         for owner in sorted(nested):
             for path in nested[owner]:
                 print(f"          - {path}  (owned by {owner.relative_to(root).as_posix()})")
+        # Print a command that is runnable as-is: this script does not live at
+        # the repo root, so name its real path (and the absolute nested-repo
+        # path, so the command works from any working directory).
+        script = Path(__file__).resolve()
         print("        If the probe task works inside one of those packages, re-run with")
-        print(f"        that path as <repo> (e.g. `python run_ablation.py "
-              f"{sorted(nested)[0].relative_to(root).as_posix()} ...`) so worktrees are")
+        print(f"        that path as <repo> (e.g. `python {script} "
+              f"{sorted(nested)[0]} ...`) so worktrees are")
         print("        created from the nested repository itself.")
     targets = own_targets
     if not targets:

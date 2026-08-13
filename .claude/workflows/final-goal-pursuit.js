@@ -167,6 +167,7 @@ const IMPL_SCHEMA = {
     completed: { type: 'boolean' },
     noChangesNeeded: { type: 'boolean', description: 'true when the criterion is already satisfied and ZERO changes were made — then branch must be "" and filesChanged []' },
     branch: { type: 'string', description: 'git ref name only (e.g. final-goal/g1-2); empty string when noChangesNeeded — never prose' },
+    baseBranch: { type: 'string', description: 'git ref the feature branch was created from (e.g. master, or main in a nested repo); empty string when noChangesNeeded' },
     worktree: { type: 'string', description: 'Absolute path of the worktree the changes live in' },
     filesChanged: { type: 'array', items: { type: 'string' } },
     summary: { type: 'string' },
@@ -372,8 +373,8 @@ Procedure:
 4. Make the smallest safe change that closes the gap, WITH tests (TDD where practical).
 5. Run the validation command locally from inside the worktree: ${JSON.stringify(item.validationCommand)}
 6. Stage ONLY the files you changed (explicit paths, never -A), commit on the feature branch with a conventional message. Do NOT push. NEVER touch the parent repo or its submodule pointer.
-Report the absolute worktree path, branch name, and the files you changed. If you hit a hard blocker, set completed=false and explain in blockers.
-If you determine the criterion is ALREADY satisfied and zero changes are required: set completed=true, noChangesNeeded=true, branch="" (empty — NEVER prose in the branch field), filesChanged=[], and put the evidence in summary.`,
+Report the absolute worktree path, branch name, the base branch you resolved in step 1 (as baseBranch, e.g. main), and the files you changed. If you hit a hard blocker, set completed=false and explain in blockers.
+If you determine the criterion is ALREADY satisfied and zero changes are required: set completed=true, noChangesNeeded=true, branch="" (empty — NEVER prose in the branch field), baseBranch="", filesChanged=[], and put the evidence in summary.`,
         { label: `impl:${item.criterionId}`, phase: 'Implement', schema: IMPL_SCHEMA },
       )
     }
@@ -395,8 +396,8 @@ Procedure:
 3. Make the smallest safe change that closes the gap, WITH tests (TDD where practical).
 4. Run the validation command locally: ${JSON.stringify(item.validationCommand)}
 5. Stage ONLY the files you changed (explicit paths, never -A), commit on the feature branch with a conventional message. Do NOT push.
-Report the absolute worktree path, branch name, and the files you changed. If you hit a hard blocker, set completed=false and explain in blockers.
-If you determine the criterion is ALREADY satisfied and zero changes are required: set completed=true, noChangesNeeded=true, branch="" (empty — NEVER prose in the branch field), filesChanged=[], and put the evidence in summary.`,
+Report the absolute worktree path, branch name, the ref your feature branch was created from (the branch the worktree was on before step 2, as baseBranch), and the files you changed. If you hit a hard blocker, set completed=false and explain in blockers.
+If you determine the criterion is ALREADY satisfied and zero changes are required: set completed=true, noChangesNeeded=true, branch="" (empty — NEVER prose in the branch field), baseBranch="", filesChanged=[], and put the evidence in summary.`,
       { label: `impl:${item.criterionId}`, phase: 'Implement', isolation: 'worktree', schema: IMPL_SCHEMA },
     )
   },
@@ -418,6 +419,11 @@ If you determine the criterion is ALREADY satisfied and zero changes are require
     // to escape newlines/control chars (prompt-injection defense).
     assertShellSafe(impl.worktree, 'impl.worktree', RE_PATH)
     assertShellSafe(impl.branch, 'impl.branch', RE_REF)
+    // The base the implementer branched from (nested repos usually expose main,
+    // not master), so the reviewer diffs against a ref that actually exists.
+    // Fall back to this repo's default branch when the implementer omitted it.
+    const reviewBase = impl.baseBranch || 'master'
+    assertShellSafe(reviewBase, 'impl.baseBranch', RE_REF)
     return agent(
       `You are the review lane — you did NOT write this change. Review it adversarially against the repo's rules.
 
@@ -426,11 +432,12 @@ ${REPO_RULES}
 Change under review: criterion ${item.criterionId} — ${JSON.stringify(item.title)}
 Worktree: ${impl.worktree}
 Branch: ${impl.branch}
+Base branch: ${reviewBase}
 Files changed: ${JSON.stringify(impl.filesChanged)}
 Implementer's summary: ${JSON.stringify(impl.summary)}
 
 Procedure:
-1. cd ${shq(impl.worktree)} && git diff master...HEAD (or the merge-base diff) — review every hunk.
+1. cd ${shq(impl.worktree)} && git diff ${shq(reviewBase)}...HEAD (or the merge-base diff against ${shq(reviewBase)}) — review every hunk.
 2. Check: fail-closed behavior preserved? sealed/hash-marked files untouched? handler actually WIRED into the dispatch path (grep the symbol outside its own file — zero hits = not wired = block)? tests exercise the registration path, not just the function? scope stayed inside ${item.packageDir}? no new runtime deps in gove-zone?
 3. Verdict: approve / request-changes (fixable nits) / block (correctness, security, or boundary violation).`,
       { label: `review:${item.criterionId}`, phase: 'Review', schema: REVIEW_SCHEMA },

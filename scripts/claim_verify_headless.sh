@@ -18,6 +18,14 @@ set -u
 # Run from the repo root regardless of the caller's cwd.
 cd "$(dirname "$0")/.." || exit 1
 
+# Preflight the proof runner. A missing uv is an INTERNAL error (exit 1, no
+# JSON), not claim evidence: otherwise every claim would report passed:false
+# and /claim-verify would propose wording downgrades for a local setup gap.
+if ! command -v uv >/dev/null 2>&1; then
+  echo "internal error: 'uv' not found on PATH; cannot run the proof commands" >&2
+  exit 1
+fi
+
 TMP="$(mktemp -d)" || exit 1
 trap 'rm -rf "$TMP"' EXIT
 
@@ -64,6 +72,12 @@ for i in "${!NAMES[@]}"; do
   run_claim "$name" >&2
   code=$?
   printf '<== %s exit %d\n' "$name" "$code" >&2
+  # 126/127 mean the command itself could not be executed (not found / not
+  # runnable). That is an internal error, never evidence about the claim.
+  if [ "$code" -eq 126 ] || [ "$code" -eq 127 ]; then
+    printf 'internal error: %s exited %d (proof command could not run; not claim evidence)\n' "$name" "$code" >&2
+    exit 1
+  fi
   RECORDS+=("${name}"$'\x1f'"${code}"$'\x1f'"${cmd}")
 done
 

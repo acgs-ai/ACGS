@@ -16,8 +16,10 @@ rules file against what just changed and proposes the **smallest** edit that kee
 
 ## Input
 - `$ARGUMENTS` — optional diff range. Default: uncommitted + staged (`git diff HEAD`); if the worktree is clean,
-  fall back to diffing against the default branch (`master...HEAD` in this repo; when unsure, resolve it with
-  `git symbolic-ref --short refs/remotes/origin/HEAD`).
+  fall back to diffing `<default>...HEAD` against a default branch that actually exists in the checkout: use
+  `git symbolic-ref --short refs/remotes/origin/HEAD` when that ref is set; otherwise pick whichever of
+  `master` or `main` exists (`git show-ref --verify --quiet refs/heads/master || git show-ref --verify --quiet refs/remotes/origin/master`,
+  then the same for `main`). Never hardcode a branch name that the checkout does not have.
 - **Scope: the project's rules file(s)** — `CLAUDE.md` and/or `AGENTS.md`, the root file + any package-level
   ones. (If `CLAUDE.md` is just a `@AGENTS.md` import, check `AGENTS.md`.) Ignore README, `docs/`, and `.claude/`
   agent/command/skill files. This skill exists to keep the *rules* honest, nothing else.
