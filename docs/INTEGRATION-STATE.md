@@ -228,11 +228,23 @@ five** against the live remote:
    the server reject the deletion unless the ref still equals
    `<expect>`), an archival tag `refs/tags/reaped/<branch>`
    pointing at the classified tip, created in the same transaction,
-   and `--no-follow-tags`: `push.followTags=true` would otherwise
+   `--no-follow-tags` (`push.followTags=true` would otherwise
    implicitly add every missing annotated tag reachable from the
-   pushed tip, publishing unrelated local tags (e.g. a private
-   release tag) to origin as a side effect of the reap, so the
-   transaction is pinned to exactly the two refspecs listed.
+   pushed tip, publishing unrelated local tags, e.g. a private
+   release tag, to origin as a side effect of the reap), and
+   `--recurse-submodules=no` (`push.recurseSubmodules=on-demand`
+   in the checkout's config would otherwise first push changed
+   nested submodules to their own remotes, side effects outside
+   the atomic transaction that persist even when the branch-tip
+   lease then rejects the reap), so the transaction is pinned to
+   exactly the two refspecs listed. The tag's source is the
+   temporary ref `refs/reap/src`, bound to the recorded tip and
+   verified before the push: a refspec source undergoes ref-name
+   resolution before object-ID interpretation, so a local ref
+   whose short name is exactly the tip SHA would silently make
+   the archival tag point at a different object while the branch
+   is still deleted (a leftover `refs/reap/src` from a stopped
+   chain is overwritten by the next run).
    A lease can only guard a ref the transaction actually updates:
    Git drops an already-up-to-date refspec from the push before
    leases are evaluated, so a no-op base refspec cannot detect a
@@ -264,9 +276,12 @@ base=bee922df3d6f4dd22fd4bdbea3cf25e72e038d36 &&
 prs=$(gh pr list --repo "github.com/acgs-ai/ACGS" --state open \
   --head "$branch" --json number --jq '.[].number') &&
 [ -z "$prs" ] &&
-git push --atomic --no-follow-tags \
+git update-ref refs/reap/src "$tip" &&
+[ "$(git rev-parse --verify refs/reap/src)" = "$tip" ] &&
+git push --atomic --no-follow-tags --recurse-submodules=no \
   --force-with-lease="refs/heads/$branch:$tip" \
-  origin "$tip:refs/tags/reaped/$branch" ":refs/heads/$branch"
+  origin "refs/reap/src:refs/tags/reaped/$branch" ":refs/heads/$branch" &&
+git update-ref -d refs/reap/src
 ```
 
 If the chain stops early, or the push is rejected (a moved tip,
