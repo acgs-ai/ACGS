@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import re
 import shlex
 import shutil
 import subprocess
@@ -406,28 +407,35 @@ def main() -> int:
     # normal uv commands exit with a setup error before the probe runs, in
     # BOTH arms, and an expensive result would measure checkout topology
     # rather than agent behavior. Preflight a representative worktree and stop
-    # as a broken experiment instead.
-    try:
-        missing = missing_workspace_members(root, sha)
-    except Exception as exc:
-        print(f"Workspace preflight failed ({type(exc).__name__}: {exc}): cannot "
-              "prove a fresh worktree of this repo can run its uv commands, so "
-              "the experiment would be uninterpretable.", file=sys.stderr)
-        return 2
-    if missing:
-        print("\nBROKEN EXPERIMENT PREVENTED: a fresh worktree of this repo is "
-              "missing these uv workspace members (nested repos recorded as "
-              "empty gitlinks):", file=sys.stderr)
-        for m in missing:
-            print(f"          - {m}", file=sys.stderr)
-        print("        Every `uv run` inside such a worktree fails with a setup "
-              "error before the probe task starts, in BOTH arms, so any probe "
-              "using this repo's normal uv commands measures checkout topology, "
-              "not agent behavior. If the probe targets one of those packages, "
-              "re-run with that repo as <repo>; otherwise run from a checkout "
-              "whose workspace declares only members this repo owns.",
-              file=sys.stderr)
-        return 2
+    # as a broken experiment instead. Gate the stop on the probe task actually
+    # invoking uv: a frontend/docs/other probe validated with pnpm or make
+    # cannot hit the uv workspace error, and aborting it unconditionally would
+    # disable EVERY root ablation on a repo with submodule workspace members.
+    if re.search(r"\buv\b", prompt):
+        try:
+            missing = missing_workspace_members(root, sha)
+        except Exception as exc:
+            print(f"Workspace preflight failed ({type(exc).__name__}: {exc}): cannot "
+                  "prove a fresh worktree of this repo can run its uv commands, so "
+                  "the experiment would be uninterpretable.", file=sys.stderr)
+            return 2
+        if missing:
+            print("\nBROKEN EXPERIMENT PREVENTED: the probe task invokes uv, and a "
+                  "fresh worktree of this repo is missing these uv workspace members "
+                  "(nested repos recorded as empty gitlinks):", file=sys.stderr)
+            for m in missing:
+                print(f"          - {m}", file=sys.stderr)
+            print("        Every `uv run` inside such a worktree fails with a setup "
+                  "error before the probe task starts, in BOTH arms, so the runs "
+                  "would measure checkout topology, not agent behavior. If the "
+                  "probe targets one of those packages, re-run with that repo as "
+                  "<repo>; otherwise run from a checkout whose workspace declares "
+                  "only members this repo owns.", file=sys.stderr)
+            return 2
+    else:
+        print("\nnote    uv workspace preflight skipped: the probe task never mentions "
+              "uv. If the agent still runs `uv ...` on its own, empty nested-repo "
+              "gitlinks in the worktrees will fail it at setup, in both arms.")
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     # Results default to a location OUTSIDE the repo: this script promises the
