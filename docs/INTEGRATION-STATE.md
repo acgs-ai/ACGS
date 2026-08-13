@@ -199,7 +199,10 @@ six** checks:
    never landed;
 2. `git push origin` targets exactly the repository the other
    checks inspect: `git remote get-url --push --all origin` must
-   print exactly the fetch URL. A configured `remote.origin.pushurl`
+   print exactly the fetch URL — a single line, so duplicate push
+   URLs (even identical ones) fail this check, and generation
+   refuses to render instructions from such a configuration. A
+   configured `remote.origin.pushurl`
    (possibly several) makes the push modify repositories other than
    the one answering the `ls-remote` and PR queries, so a matching
    lease there proves nothing about the repository actually being
@@ -265,7 +268,8 @@ six** checks:
    closed by the deletion, not preserved. The archival tag pushed
    in the same transaction keeps the tip reachable, so such a PR
    is recoverable (restore the branch at the recorded tip from
-   `reaped/<branch>`, then reopen it), but its open state and
+   the archival tag the chain prints, then reopen it), but its
+   open state and
    review context are not preserved automatically. The branch is
    passed as one quoted argument (ref names
    may legally contain `;` or `$()`, which an unquoted
@@ -273,8 +277,23 @@ six** checks:
 6. the deletion pushes with `--atomic`, an expected-value lease on
    the branch ref (`--force-with-lease=<refname>:<expect>` makes
    the server reject the deletion unless the ref still equals
-   `<expect>`), an archival tag `refs/tags/reaped/<branch>`
-   pointing at the classified tip, created in the same transaction,
+   `<expect>`), and an archival tag pointing at the classified
+   tip, created in the same transaction. The tag's name
+   `reaped/<branch>-<UTC stamp>-<shell PID>` is minted fresh by
+   the chain (and printed on success — record it for the cleanup
+   below): Git drops an already-up-to-date refspec from the push
+   before leases are evaluated, so a fixed `reaped/<branch>` name
+   already existing at the tip would leave the branch deletion
+   the only ref update in the transaction, and another actor
+   deleting or retargeting that pre-existing tag between ref
+   advertisement and completion would leave the branch deleted
+   with no remote ref holding its tip. A name that cannot
+   pre-exist always participates in the transaction, and its
+   refspec carries an empty-expect lease
+   (`--force-with-lease="refs/tags/$archive:"`: the named ref
+   must not already exist), so creation is compare-and-create
+   and a colliding name rejects the whole transaction instead
+   of being force-updated. The push also passes
    `--no-follow-tags` (`push.followTags=true` would otherwise
    implicitly add every missing annotated tag reachable from the
    pushed tip, publishing unrelated local tags, e.g. a private
@@ -297,11 +316,21 @@ six** checks:
    configured origin URL; the command-line option pins the
    default program and takes precedence over the config, which
    a `-c` value would not: the key is multi-valued and the push
-   uses the *first* configured value), and
+   uses the *first* configured value),
    `-c remote.origin.mirror=false` (`remote.origin.mirror=true`
    silently turns the push into a full-mirror update, which
    cannot be combined with explicit refspecs, so the command
    would die with `--mirror can't be combined with refspecs`),
+   `--no-verify` (a configured `pre-push` hook runs before the
+   server is contacted, so its side effects would happen outside
+   the atomic transaction and persist even when the lease then
+   rejects the push; bypassing it keeps the operation pinned to
+   the displayed ref updates), and `--no-signed`
+   (`push.gpgSign=true` requests a signed push, which dies with
+   `fatal: the receiving end does not support --signed push`
+   against a remote not advertising signed-push support, making
+   every rendered instruction unusable; the command-line option
+   overrides the configuration),
    so the transaction is pinned to exactly
    the two refspecs listed. The tag's source is a per-operation
    temporary ref `refs/reap/src-<tip>`, bound to the recorded
@@ -338,30 +367,53 @@ six** checks:
    content stays reachable under the tag. Delete the tag only
    after confirming the live `master` still holds the
    content, and only with a lease pinning the remote tag to the
-   archived tip. This cleanup typically runs long after the reap,
-   so it re-runs the reap chain's push-target checks: origin can
+   archived tip. This cleanup typically runs long after the reap
+   and in a different shell, so it re-prompts for the archive
+   tag name and tip instead of reusing the reap chain's
+   variables: a fresh shell has neither `$archive` nor `$tip`,
+   so the push would address an invalid, empty tag ref, while a
+   shell reused across reaps may still hold a *different* reap's
+   pair — satisfying that older archive's lease and deleting it
+   before its content was ever confirmed on the base. The pasted
+   pair is validated first: the tag must be a well-formed ref
+   name inside the `reaped/` namespace (so a mispasted value
+   cannot address an unrelated tag) and the tip a full 40-hex
+   object ID. The cleanup also re-runs the reap chain's
+   push-target checks: origin can
    have been repointed or a `remote.origin.pushurl` added
    meanwhile, and a matching tag lease in the newly selected
-   repository only proves *that* repository has `reaped/$branch`
+   repository only proves *that* repository has the archive tag
    at `$tip`; a fork or mirror can legitimately hold the same
    tag and object, so an unvalidated push could delete its last
    archive. It also carries the reap push's protections:
    `--no-follow-tags` (with `push.followTags=true` even this
    deletion-only refspec would implicitly publish missing local
-   annotated tags reachable from local refs) and
+   annotated tags reachable from local refs),
    `-c push.pushOption=` (configured push options would otherwise
    be transmitted and can trigger server-side hook behavior even
-   when the lease rejects the ref update):
+   when the lease rejects the ref update), `--no-verify` (a
+   `pre-push` hook's side effects would run and persist even
+   when the lease rejects the deletion), and `--no-signed`
+   (`push.gpgSign=true` would otherwise abort this push against
+   a remote without signed-push support):
 
    ```sh
+   IFS= read -r archive  # paste the tag name the reap chain printed
+                         # (reaped/<branch>-<stamp>-<pid>, no refs/tags/)
+   IFS= read -r tip      # paste that reap's archived tip SHA
+   case "$archive" in reaped/?*) ;; *) false ;; esac &&
+   git check-ref-format "refs/tags/$archive" &&
+   [ "${#tip}" -eq 40 ] &&
+   case "$tip" in *[!0-9a-f]*) false ;; *) ;; esac &&
    [ "$(git remote get-url --push --all origin)" \
      = "$(git remote get-url origin)" ] &&
    [ "$(python3 scripts/integration_state.py --print-selector)" \
      = "github.com/acgs-ai/ACGS" ] &&
    git -c push.pushOption= -c remote.origin.mirror=false push \
-     --no-follow-tags --receive-pack=git-receive-pack \
-     --force-with-lease="refs/tags/reaped/$branch:$tip" \
-     origin ":refs/tags/reaped/$branch"
+     --no-follow-tags --no-verify --no-signed \
+     --receive-pack=git-receive-pack \
+     --force-with-lease="refs/tags/$archive:$tip" \
+     origin ":refs/tags/$archive"
    ```
 
    An unleased deletion would unconditionally discard a tag
@@ -401,20 +453,23 @@ head_prs=$(gh api graphql --hostname "github.com" \
 base_prs=$(gh pr list --repo "github.com/acgs-ai/ACGS" --state open \
   --base "$branch" --json number --jq '.[].number') &&
 [ -z "$base_prs" ] &&
+archive="reaped/$branch-$(date -u +%Y%m%dT%H%M%SZ)-$$" &&
 { git update-ref --no-deref "refs/reap/src-$tip" "$tip" "" 2>/dev/null ||
   git update-ref --no-deref "refs/reap/src-$tip" "$tip" "$tip"; } &&
 [ "$(git rev-parse --verify "refs/reap/src-$tip")" = "$tip" ] &&
 git -c push.pushOption= -c remote.origin.mirror=false push --atomic \
-  --no-follow-tags --receive-pack=git-receive-pack \
-  --recurse-submodules=no \
+  --no-follow-tags --no-verify --no-signed \
+  --receive-pack=git-receive-pack --recurse-submodules=no \
   --force-with-lease="refs/heads/$branch:$tip" \
-  origin "refs/reap/src-$tip:refs/tags/reaped/$branch" ":refs/heads/$branch" &&
+  --force-with-lease="refs/tags/$archive:" \
+  origin "refs/reap/src-$tip:refs/tags/$archive" ":refs/heads/$branch" &&
+printf 'archived: refs/tags/%s\n' "$archive" &&
 git update-ref --no-deref -d "refs/reap/src-$tip" "$tip"
 ```
 
 If the chain stops early, or the push is rejected (a moved tip,
-or a pre-existing `reaped/<branch>` tag at a different commit),
-regenerate and reclassify first.
+or an archive-tag name collision), regenerate and reclassify
+first.
 
 | Branch | Status | Tip SHA | Tip date | Open PR |
 |---|---|---|---|---|
