@@ -55,7 +55,17 @@ for pattern in workspace.get("exclude", []):
     excluded.add(os.path.normpath(pattern))
     excluded.update(os.path.normpath(p) for p in glob.glob(pattern))
 for pattern in workspace.get("members", []):
-    for path in sorted(glob.glob(pattern)) or [pattern]:
+    matches = sorted(glob.glob(pattern))
+    if not matches:
+        # An unmatched GLOB is zero members, not a missing one: uv accepts
+        # members = ["packages/*"] with no matching directories (e.g. a
+        # sparse checkout) and runs fine. Only a LITERAL member entry with
+        # no directory behind it is a real gap, so only non-glob entries
+        # synthesize a fallback path.
+        if any(ch in pattern for ch in "*?["):
+            continue
+        matches = [pattern]
+    for path in matches:
         if os.path.normpath(path) in excluded:
             continue
         if not os.path.isfile(os.path.join(path, "pyproject.toml")):

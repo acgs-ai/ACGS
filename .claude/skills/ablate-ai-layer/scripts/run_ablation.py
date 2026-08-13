@@ -80,8 +80,13 @@ def owning_git_root(root: Path, rel: str) -> Path:
     return root
 
 
-def missing_workspace_members(root: Path, sha: str) -> list[str]:
+def missing_workspace_members(root: Path, sha: str) -> list[str] | None:
     """uv workspace members a fresh worktree of `root` cannot contain.
+
+    Returns None when no TOML parser is available (Python 3.10 without the
+    tomli backport): the preflight cannot run, but that is a limitation of
+    THIS check, not evidence the experiment is broken, so the caller skips
+    the preflight with a note instead of aborting a valid ablation.
 
     Every run happens in a detached worktree created from `sha`, and uv
     validates the ROOT workspace before running ANY command. A member owned by
@@ -98,7 +103,17 @@ def missing_workspace_members(root: Path, sha: str) -> list[str]:
         manifest = wt / "pyproject.toml"
         if not manifest.is_file():
             return []
-        import tomllib  # local: only repos with a root pyproject need py>=3.11
+        # This repository-agnostic runner supports Python 3.10, whose stdlib
+        # has no tomllib (3.11+). Fall back to the tomli backport when
+        # present; with neither, report the preflight as unavailable (None)
+        # rather than raising and aborting an otherwise valid experiment.
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            try:
+                import tomli as tomllib  # type: ignore[no-redef]
+            except ModuleNotFoundError:
+                return None
         with open(manifest, "rb") as f:
             data = tomllib.load(f)
         workspace = data.get("tool", {}).get("uv", {}).get("workspace", {})
@@ -115,7 +130,18 @@ def missing_workspace_members(root: Path, sha: str) -> list[str]:
             excluded.update(wt.glob(pattern))
         missing: list[str] = []
         for pattern in members:
-            for p in sorted(wt.glob(pattern)) or [wt / pattern]:
+            matches = sorted(wt.glob(pattern))
+            if not matches:
+                # An unmatched GLOB is zero members, not a missing one: uv
+                # accepts members = ["packages/*"] with no matching
+                # directories and runs fine, so fabricating "packages/*" as
+                # a required path would abort a valid experiment. Only a
+                # LITERAL member entry with no directory behind it is a real
+                # gap, so only non-glob entries synthesize a fallback path.
+                if any(ch in pattern for ch in "*?["):
+                    continue
+                matches = [wt / pattern]
+            for p in matches:
                 if p in excluded:
                     continue
                 if not (p / "pyproject.toml").is_file():
@@ -720,7 +746,15 @@ def main() -> int:
                   "prove a fresh worktree of this repo can run its uv commands, so "
                   "the experiment would be uninterpretable.", file=sys.stderr)
             return 2
-        if missing:
+        if missing is None:
+            print("\nnote    uv workspace preflight skipped: this Python has no "
+                  "TOML parser (stdlib tomllib needs 3.11+, and the tomli "
+                  "backport is not installed), so the root workspace could not "
+                  "be inspected. If this repo's workspace declares nested-repo "
+                  "members, every `uv run` in the worktrees will fail at setup "
+                  "in both arms; run with Python 3.11+ or `pip install tomli` "
+                  "to preflight that before spending budget.")
+        elif missing:
             print(f"\nBROKEN EXPERIMENT PREVENTED: executing the probe task can "
                   f"reach uv ({uv_reason}), and a fresh worktree of this repo is "
                   "missing these uv workspace members (nested repos recorded as "
