@@ -308,6 +308,16 @@ six** checks:
    without it, a pre-existing symbolic ref at that name would
    be followed, silently moving and then deleting whatever
    local branch it targets instead of the scratch ref itself.
+   `--no-deref` establishes no ownership of an existing *direct*
+   ref at that name, so creation passes `update-ref` an expected
+   old value: the empty string (the ref must not already exist),
+   falling back to `$tip` itself (accepting only the identical
+   value a concurrent chain reaping the same tip writes). A
+   pre-existing direct ref at any other object stops the chain
+   instead of being overwritten (and then deleted by the final
+   cleanup) as possibly the last local reference to unrelated
+   work; that final cleanup passes `$tip` as the expected value
+   too, so it can never delete a ref it does not own.
    A lease can only guard a ref the transaction actually updates:
    Git drops an already-up-to-date refspec from the push before
    leases are evaluated, so a no-op base refspec cannot detect a
@@ -317,11 +327,28 @@ six** checks:
    content stays reachable under the tag. Delete the tag only
    after confirming the live `master` still holds the
    content, and only with a lease pinning the remote tag to the
-   archived tip:
+   archived tip. This cleanup typically runs long after the reap,
+   so it re-runs the reap chain's push-target checks: origin can
+   have been repointed or a `remote.origin.pushurl` added
+   meanwhile, and a matching tag lease in the newly selected
+   repository only proves *that* repository has `reaped/$branch`
+   at `$tip`; a fork or mirror can legitimately hold the same
+   tag and object, so an unvalidated push could delete its last
+   archive. It also carries the reap push's protections:
+   `--no-follow-tags` (with `push.followTags=true` even this
+   deletion-only refspec would implicitly publish missing local
+   annotated tags reachable from local refs) and
+   `-c push.pushOption=` (configured push options would otherwise
+   be transmitted and can trigger server-side hook behavior even
+   when the lease rejects the ref update):
 
    ```sh
-   git -c remote.origin.mirror=false push \
-     --receive-pack=git-receive-pack \
+   [ "$(git remote get-url --push --all origin)" \
+     = "$(git remote get-url origin)" ] &&
+   [ "$(python3 scripts/integration_state.py --print-selector)" \
+     = "github.com/acgs-ai/ACGS" ] &&
+   git -c push.pushOption= -c remote.origin.mirror=false push \
+     --no-follow-tags --receive-pack=git-receive-pack \
      --force-with-lease="refs/tags/reaped/$branch:$tip" \
      origin ":refs/tags/reaped/$branch"
    ```
@@ -363,14 +390,15 @@ head_prs=$(gh api graphql --hostname "github.com" \
 base_prs=$(gh pr list --repo "github.com/acgs-ai/ACGS" --state open \
   --base "$branch" --json number --jq '.[].number') &&
 [ -z "$base_prs" ] &&
-git update-ref --no-deref "refs/reap/src-$tip" "$tip" &&
+{ git update-ref --no-deref "refs/reap/src-$tip" "$tip" "" 2>/dev/null ||
+  git update-ref --no-deref "refs/reap/src-$tip" "$tip" "$tip"; } &&
 [ "$(git rev-parse --verify "refs/reap/src-$tip")" = "$tip" ] &&
 git -c push.pushOption= -c remote.origin.mirror=false push --atomic \
   --no-follow-tags --receive-pack=git-receive-pack \
   --recurse-submodules=no \
   --force-with-lease="refs/heads/$branch:$tip" \
   origin "refs/reap/src-$tip:refs/tags/reaped/$branch" ":refs/heads/$branch" &&
-git update-ref --no-deref -d "refs/reap/src-$tip"
+git update-ref --no-deref -d "refs/reap/src-$tip" "$tip"
 ```
 
 If the chain stops early, or the push is rejected (a moved tip,

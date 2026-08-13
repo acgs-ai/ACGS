@@ -61,10 +61,20 @@ JSON_OUT = Path("docs/integration-state.json")
 # which also overrides any hostile GIT_GRAFT_FILE already in the environment.
 _GIT_ENV = {**os.environ, "GIT_GRAFT_FILE": os.devnull}
 
+# Because the pinned GIT_GRAFT_FILE names an existing file, Git (2.43)
+# prepends a ~300-byte graft-file deprecation advice to stderr of every
+# command that reads commits; a failing helper command's real fatal error
+# would then be pushed past the 200-character truncation applied to the
+# per-branch Errors section, rendering every failure as the same partial
+# deprecation hint. The advice is disabled for exactly these commands.
+# Error reporting in main() slices this fixed argv prefix off exc.cmd when
+# summarizing a failed command.
+_GIT_PREFIX = ("git", "-c", "advice.graftFileDeprecated=false", "--no-replace-objects")
+
 
 def git(*args: str) -> str:
     result = subprocess.run(
-        ["git", "--no-replace-objects", *args],
+        [*_GIT_PREFIX, *args],
         capture_output=True,
         text=True,
         check=True,
@@ -74,9 +84,7 @@ def git(*args: str) -> str:
 
 
 def git_bytes(*args: str) -> bytes:
-    result = subprocess.run(
-        ["git", "--no-replace-objects", *args], capture_output=True, check=True, env=_GIT_ENV
-    )
+    result = subprocess.run([*_GIT_PREFIX, *args], capture_output=True, check=True, env=_GIT_ENV)
     return result.stdout
 
 
@@ -384,13 +392,19 @@ def origin_transport_overrides() -> list[str]:
     at generation time gives the operator one clear fix.
     """
     overrides = []
+    # Every configured value is read (--get-all) and any of them (an empty
+    # one included) rejects: both keys are multi-valued and Git executes
+    # the *first* value ("error: more than one uploadpack given, using the
+    # first"), while --get reports only the *last*, so a trailing empty
+    # entry would pass a single-value gate even though the first, custom
+    # program still serves every fetch or receives every push.
     for key in ("remote.origin.receivepack", "remote.origin.uploadpack"):
         try:
-            value = git("config", "--get", key).strip()
+            values = git("config", "--get-all", key).splitlines()
         except subprocess.CalledProcessError:
-            value = ""
-        if value:
-            overrides.append(f"{key}={value}")
+            values = []
+        for value in values:
+            overrides.append(f"{key}={value.strip()}")
     try:
         mirror = git("config", "--get", "--type=bool", "remote.origin.mirror").strip()
     except subprocess.CalledProcessError as exc:
@@ -821,6 +835,16 @@ def render_markdown(
         "   without it, a pre-existing symbolic ref at that name would",
         "   be followed, silently moving and then deleting whatever",
         "   local branch it targets instead of the scratch ref itself.",
+        "   `--no-deref` establishes no ownership of an existing *direct*",
+        "   ref at that name, so creation passes `update-ref` an expected",
+        "   old value: the empty string (the ref must not already exist),",
+        "   falling back to `$tip` itself (accepting only the identical",
+        "   value a concurrent chain reaping the same tip writes). A",
+        "   pre-existing direct ref at any other object stops the chain",
+        "   instead of being overwritten (and then deleted by the final",
+        "   cleanup) as possibly the last local reference to unrelated",
+        "   work; that final cleanup passes `$tip` as the expected value",
+        "   too, so it can never delete a ref it does not own.",
         "   A lease can only guard a ref the transaction actually updates:",
         "   Git drops an already-up-to-date refspec from the push before",
         "   leases are evaluated, so a no-op base refspec cannot detect a",
@@ -830,11 +854,28 @@ def render_markdown(
         "   content stays reachable under the tag. Delete the tag only",
         f"   after confirming the live `{_BASE_BRANCH}` still holds the",
         "   content, and only with a lease pinning the remote tag to the",
-        "   archived tip:",
+        "   archived tip. This cleanup typically runs long after the reap,",
+        "   so it re-runs the reap chain's push-target checks: origin can",
+        "   have been repointed or a `remote.origin.pushurl` added",
+        "   meanwhile, and a matching tag lease in the newly selected",
+        "   repository only proves *that* repository has `reaped/$branch`",
+        "   at `$tip`; a fork or mirror can legitimately hold the same",
+        "   tag and object, so an unvalidated push could delete its last",
+        "   archive. It also carries the reap push's protections:",
+        "   `--no-follow-tags` (with `push.followTags=true` even this",
+        "   deletion-only refspec would implicitly publish missing local",
+        "   annotated tags reachable from local refs) and",
+        "   `-c push.pushOption=` (configured push options would otherwise",
+        "   be transmitted and can trigger server-side hook behavior even",
+        "   when the lease rejects the ref update):",
         "",
         "   ```sh",
-        "   git -c remote.origin.mirror=false push \\",
-        "     --receive-pack=git-receive-pack \\",
+        '   [ "$(git remote get-url --push --all origin)" \\',
+        '     = "$(git remote get-url origin)" ] &&',
+        '   [ "$(python3 scripts/integration_state.py --print-selector)" \\',
+        f'     = "{selector_arg}" ] &&',
+        "   git -c push.pushOption= -c remote.origin.mirror=false push \\",
+        "     --no-follow-tags --receive-pack=git-receive-pack \\",
         '     --force-with-lease="refs/tags/reaped/$branch:$tip" \\',
         '     origin ":refs/tags/reaped/$branch"',
         "   ```",
@@ -876,14 +917,15 @@ def render_markdown(
         f'base_prs=$(gh pr list --repo "{selector_arg}" --state open \\',
         "  --base \"$branch\" --json number --jq '.[].number') &&",
         '[ -z "$base_prs" ] &&',
-        'git update-ref --no-deref "refs/reap/src-$tip" "$tip" &&',
+        '{ git update-ref --no-deref "refs/reap/src-$tip" "$tip" "" 2>/dev/null ||',
+        '  git update-ref --no-deref "refs/reap/src-$tip" "$tip" "$tip"; } &&',
         '[ "$(git rev-parse --verify "refs/reap/src-$tip")" = "$tip" ] &&',
         "git -c push.pushOption= -c remote.origin.mirror=false push --atomic \\",
         "  --no-follow-tags --receive-pack=git-receive-pack \\",
         "  --recurse-submodules=no \\",
         '  --force-with-lease="refs/heads/$branch:$tip" \\',
         '  origin "refs/reap/src-$tip:refs/tags/reaped/$branch" ":refs/heads/$branch" &&',
-        'git update-ref --no-deref -d "refs/reap/src-$tip"',
+        'git update-ref --no-deref -d "refs/reap/src-$tip" "$tip"',
         "```",
         "",
         "If the chain stops early, or the push is rejected (a moved tip,",
@@ -1166,11 +1208,11 @@ def main() -> int:
                 stderr = stderr.decode(errors="replace")
             # `git merge-base --all` fails with *empty* stderr when the branch
             # shares no ancestor with BASE; synthesize a message so the Errors
-            # section never renders a blank cell. cmd[2:4] skips the fixed
-            # "git --no-replace-objects" prefix the helpers prepend.
+            # section never renders a blank cell. Slicing off len(_GIT_PREFIX)
+            # skips the fixed argv prefix the helpers prepend.
             message = stderr.strip() or (
-                f"git {' '.join(map(str, exc.cmd[2:4]))} exited {exc.returncode}"
-                " (no merge base with BASE?)"
+                f"git {' '.join(map(str, exc.cmd[len(_GIT_PREFIX) : len(_GIT_PREFIX) + 2]))}"
+                f" exited {exc.returncode} (no merge base with BASE?)"
             )
             entries.append(
                 {
