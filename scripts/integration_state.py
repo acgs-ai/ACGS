@@ -75,8 +75,22 @@ def git_bytes(*args: str) -> bytes:
     return result.stdout
 
 
-def list_remote_branches() -> list[tuple[str, str]]:
-    """Return ``(origin-prefixed name, tip SHA)`` pairs for every remote branch.
+def list_remote_branches() -> tuple[list[tuple[str, str]], list[str]]:
+    """Return ``(branches, unexpected_symrefs)`` for the origin namespace.
+
+    ``branches`` holds ``(origin-prefixed name, tip SHA)`` pairs for every
+    direct (non-symbolic) remote branch. ``unexpected_symrefs`` lists every
+    symbolic ref under ``refs/remotes/origin`` other than ``origin/HEAD``; the
+    caller must reject the run when it is non-empty. Only ``origin/HEAD`` is a
+    legitimate symbolic tracking ref (maintained by ``git clone`` /
+    ``git remote set-head``). Any other symbolic ref — in particular a
+    symbolic ``origin/master`` — is silently dereferenced by ``rev-parse``
+    (symbolic refs are recursively dereferenced by default), so the base and
+    every verdict would be computed against whatever branch the alias points
+    at, while the documented ``git fetch --prune origin`` never replaces a
+    symbolic destination and the prescribed live SHA rechecks compare the
+    same alias. Deleting a branch falsely classified NO-OP against its own
+    tip would then lose content absent from the real upstream master.
 
     Tip SHAs are captured in a single atomic ref enumeration so a concurrent
     `git fetch` (IDE, another process) cannot move a ref between the moment a
@@ -95,8 +109,8 @@ def list_remote_branches() -> list[tuple[str, str]]:
     handling runs. Newline is a safe record delimiter because ref names cannot
     contain ASCII control characters.
 
-    Only *symbolic* refs are excluded (via ``%(symref)``), not the literal
-    name ``origin/HEAD``: ``refs/heads/HEAD`` is a valid upstream branch name
+    Symbolic-ness is detected via ``%(symref)``, not the literal name
+    ``origin/HEAD``: ``refs/heads/HEAD`` is a valid upstream branch name
     (Git's ref-name rules do not reserve ``HEAD`` below ``refs/heads``), so
     when ``refs/remotes/origin/HEAD`` is a direct ref it is a real fetched
     branch and must be inventoried. The symbolic ref maintained by
@@ -109,16 +123,21 @@ def list_remote_branches() -> list[tuple[str, str]]:
         "refs/remotes/origin",
     )
     branches = []
+    unexpected_symrefs = []
     for line in out.split(b"\n"):
         if not line:
             continue
         ref_bytes, sha_bytes, symref_bytes = line.split(b"\0", 2)
         ref = os.fsdecode(ref_bytes).removeprefix("refs/remotes/")
         sha = sha_bytes.decode("ascii")
-        if symref_bytes or ref == BASE:
+        if symref_bytes:
+            if ref != "origin/HEAD":
+                unexpected_symrefs.append(ref)
+            continue
+        if ref == BASE:
             continue
         branches.append((ref, sha))
-    return branches
+    return branches, unexpected_symrefs
 
 
 def upstream_head_branch_hidden(branches: list[tuple[str, str]]) -> bool:
@@ -164,10 +183,15 @@ def fetch_refspec_covers_all_heads() -> bool:
     refreshes ``refs/remotes/origin/*``, the namespace
     :func:`list_remote_branches` enumerates — a fresh checkout would generate
     an empty ledger and a checkout with old origin refs would classify stale
-    tips. Only the canonical ``refs/heads/*:refs/remotes/origin/*`` mapping is
-    accepted; any other destination (or a broader ``refs/*`` source, which
-    would land heads at ``refs/remotes/origin/heads/*`` and corrupt branch
-    names) does not count as coverage.
+    tips. Only the *forced* canonical mapping
+    ``+refs/heads/*:refs/remotes/origin/*`` is accepted: per the refspec
+    rules the optional leading ``+`` is what permits a ref update that is not
+    a fast-forward, so without it a force-pushed upstream branch leaves its
+    tracking ref stale after the documented fetch and the ledger classifies
+    an outdated tip as deletable. Any other destination (or a broader
+    ``refs/*`` source, which would land heads at
+    ``refs/remotes/origin/heads/*`` and corrupt branch names) does not count
+    as coverage.
 
     Additional mappings whose destination lands inside
     ``refs/remotes/origin/*`` (e.g. ``+refs/pull/*/head:refs/remotes/origin/pr/*``)
@@ -193,7 +217,15 @@ def fetch_refspec_covers_all_heads() -> bool:
             if prefix.startswith("refs/heads/") or "refs/heads/".startswith(prefix):
                 return False
             continue
-        if spec.removeprefix("+") == "refs/heads/*:refs/remotes/origin/*":
+        # The leading "+" is required, not optional: without it, git fetch
+        # refuses non-fast-forward updates, so a force-pushed upstream branch
+        # leaves its tracking ref stale. Classifying that stale tip can mark
+        # the branch NO-OP/LANDED (and the local SHA recheck still passes)
+        # while the real upstream tip holds unique commits — deleting the
+        # branch would discard them. Only the forced canonical mapping counts
+        # as coverage; the unforced variant falls through to the destination
+        # check below and disqualifies the clone.
+        if spec == "+refs/heads/*:refs/remotes/origin/*":
             covered = True
             continue
         # Any other mapping into refs/remotes/origin/* fills the scanned
@@ -496,11 +528,12 @@ def main() -> int:
 
     if not fetch_refspec_covers_all_heads():
         print(
-            "error: remote.origin.fetch does not map refs/heads/* to\n"
-            "refs/remotes/origin/* (single-branch, narrowed, or remapped clone), or\n"
-            "maps extra refs (e.g. refs/pull/*) into refs/remotes/origin/* —\n"
-            "`git fetch --prune origin` would not refresh exactly the namespace this\n"
-            "script enumerates and the ledger would omit or invent remote branches.\n"
+            "error: remote.origin.fetch does not force-map refs/heads/* to\n"
+            "refs/remotes/origin/* (single-branch, narrowed, remapped, or unforced\n"
+            "clone), or maps extra refs (e.g. refs/pull/*) into refs/remotes/origin/*\n"
+            "— `git fetch --prune origin` would not refresh exactly the namespace this\n"
+            "script enumerates (an unforced mapping leaves force-pushed branches\n"
+            "stale) and the ledger would omit, invent, or misclassify remote branches.\n"
             "Fix with:\n"
             "  git config --unset-all remote.origin.fetch\n"
             "  git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'\n"
@@ -525,6 +558,30 @@ def main() -> int:
         )
         return 1
 
+    # Enumerate the namespace (and detect symbolic refs) *before* resolving
+    # the base: rev-parse recursively dereferences symbolic refs, so a
+    # symbolic refs/remotes/origin/master aliased to another tracking ref
+    # would silently resolve to that branch's tip, classify the branch as
+    # NO-OP against itself, and pass the prescribed live SHA rechecks (which
+    # compare the same alias) — while `git fetch --prune origin` never
+    # replaces a symbolic destination. The same applies to any other
+    # unexpected symbolic tracking ref, so all of them are rejected here.
+    branches, unexpected_symrefs = list_remote_branches()
+    if unexpected_symrefs:
+        listing = "\n".join(f"  refs/remotes/{ref}" for ref in unexpected_symrefs)
+        print(
+            "error: symbolic ref(s) under refs/remotes/origin other than\n"
+            f"origin/HEAD:\n{listing}\n"
+            "A symbolic tracking ref is recursively dereferenced, so the base and\n"
+            "every verdict would be computed against whatever branch the alias\n"
+            "points at, and `git fetch --prune origin` does not replace a symbolic\n"
+            "destination. Delete each one and refetch, e.g.:\n"
+            "  git symbolic-ref --delete refs/remotes/<name>\n"
+            "  git fetch --prune origin",
+            file=sys.stderr,
+        )
+        return 1
+
     # Freeze the base and every branch tip to immutable object IDs up front;
     # all classification below uses only these SHAs (see classify()).
     #
@@ -532,10 +589,11 @@ def main() -> int:
     # "origin/master" is ambiguity-dependent — a local branch literally named
     # refs/heads/origin/master takes precedence in Git's ref-resolution order,
     # so every verdict would be computed against the wrong commit while the
-    # ledger labels it as the remote base.
+    # ledger labels it as the remote base. A symbolic origin/master cannot be
+    # silently followed here: the gate above already rejected every
+    # non-HEAD symbolic ref in the namespace.
     base_full_sha = git("rev-parse", "--verify", f"refs/remotes/{BASE}^{{commit}}").strip()
     base_sha = git("rev-parse", "--short", base_full_sha).strip()
-    branches = list_remote_branches()
     if upstream_head_branch_hidden(branches):
         print(
             "error: the remote has a branch literally named HEAD (refs/heads/HEAD)\n"
