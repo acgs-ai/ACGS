@@ -96,6 +96,16 @@ def fetch_refspec_covers_all_heads() -> bool:
     mapping, so a config can contain the full ``refs/heads/*`` entry and still
     omit part of the head namespace. Any exclusion that can intersect
     ``refs/heads/*`` therefore disqualifies the clone.
+
+    Both sides of the mapping are validated: a refspec like
+    ``+refs/heads/*:refs/backup/origin/*`` covers every head but never
+    refreshes ``refs/remotes/origin/*``, the namespace
+    :func:`list_remote_branches` enumerates — a fresh checkout would generate
+    an empty ledger and a checkout with old origin refs would classify stale
+    tips. Only the canonical ``refs/heads/*:refs/remotes/origin/*`` mapping is
+    accepted; any other destination (or a broader ``refs/*`` source, which
+    would land heads at ``refs/remotes/origin/heads/*`` and corrupt branch
+    names) does not count as coverage.
     """
     try:
         specs = git("config", "--get-all", "remote.origin.fetch").splitlines()
@@ -112,8 +122,7 @@ def fetch_refspec_covers_all_heads() -> bool:
             if prefix.startswith("refs/heads/") or "refs/heads/".startswith(prefix):
                 return False
             continue
-        src = spec.removeprefix("+").split(":", 1)[0]
-        if src in ("refs/heads/*", "refs/*"):
+        if spec.removeprefix("+") == "refs/heads/*:refs/remotes/origin/*":
             covered = True
     return covered
 
@@ -197,39 +206,63 @@ def try_open_prs() -> tuple[dict[str, int], bool]:
     """Map head branch name -> PR number for open same-repo PRs targeting master.
 
     Returns ``(mapping, available)``. ``available`` is False only when the
-    ``gh`` query itself failed; an empty mapping with ``available=True`` means
-    the query succeeded and there are genuinely no open PRs. Cross-repository
-    (fork) PRs are excluded because their head branch names are not unique to
-    origin refs. The query is filtered to PRs based on master: this ledger
-    tracks integration into master, so a PR targeting a release or staging
-    branch is not an integration route and must not be attached to a branch
-    here. GitHub allows at most one open PR per (head, base) pair, so the
-    filter also makes the mapping collision-free.
+    ``gh`` query itself failed or could not be proven complete; an empty
+    mapping with ``available=True`` means the query succeeded and there are
+    genuinely no open PRs. Cross-repository (fork) PRs are excluded because
+    their head branch names are not unique to origin refs. The query is
+    filtered to PRs based on master: this ledger tracks integration into
+    master, so a PR targeting a release or staging branch is not an
+    integration route and must not be attached to a branch here. GitHub
+    allows at most one open PR per (head, base) pair, so the filter also
+    makes the mapping collision-free.
+
+    The query is pinned with ``--repo`` to the repository backing ``origin``
+    (the remote whose refs are inventoried): ambient CLI resolution — a
+    ``GH_REPO`` override, or a multi-remote checkout resolving to another
+    remote — would otherwise "successfully" return an unrelated repository's
+    PRs, hiding real origin PRs behind ``—`` and attaching foreign PR numbers
+    to matching head names.
+
+    ``--limit`` truncates silently on success, and an omitted PR would render
+    a reapable branch as deletable, so the limit is doubled until the response
+    is provably complete (fewer rows than requested); if completeness cannot
+    be established the mapping degrades to unavailable rather than wrong.
     """
     try:
-        out = subprocess.run(
-            [
-                "gh",
-                "pr",
-                "list",
-                "--state",
-                "open",
-                "--base",
-                BASE.removeprefix("origin/"),
-                "--limit",
-                "500",
-                "--json",
-                "number,headRefName,isCrossRepository",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=True,
-        ).stdout
+        origin_url = git("remote", "get-url", "origin").strip()
+        limit = 1000
+        while True:
+            out = subprocess.run(
+                [
+                    "gh",
+                    "pr",
+                    "list",
+                    "--repo",
+                    origin_url,
+                    "--state",
+                    "open",
+                    "--base",
+                    BASE.removeprefix("origin/"),
+                    "--limit",
+                    str(limit),
+                    "--json",
+                    "number,headRefName,isCrossRepository",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=True,
+            ).stdout
+            rows = json.loads(out)
+            if len(rows) < limit:
+                break
+            if limit >= 16000:
+                return {}, False
+            limit *= 2
         return (
             {
                 row["headRefName"]: row["number"]
-                for row in json.loads(out)
+                for row in rows
                 if not row.get("isCrossRepository")
             },
             True,
@@ -346,9 +379,10 @@ def main() -> int:
 
     if not fetch_refspec_covers_all_heads():
         print(
-            "error: remote.origin.fetch does not cover refs/heads/* (single-branch\n"
-            "or narrowed clone) — `git fetch --prune origin` would only refresh the\n"
-            "configured branch and the ledger would silently omit remote branches.\n"
+            "error: remote.origin.fetch does not map refs/heads/* to\n"
+            "refs/remotes/origin/* (single-branch, narrowed, or remapped clone) —\n"
+            "`git fetch --prune origin` would not refresh the namespace this script\n"
+            "enumerates and the ledger would silently omit remote branches.\n"
             "Fix with:\n"
             "  git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'\n"
             "  git fetch --prune origin",
