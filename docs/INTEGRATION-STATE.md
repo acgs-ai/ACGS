@@ -231,30 +231,53 @@ five** against the live remote:
    `--no-follow-tags` (`push.followTags=true` would otherwise
    implicitly add every missing annotated tag reachable from the
    pushed tip, publishing unrelated local tags, e.g. a private
-   release tag, to origin as a side effect of the reap), and
+   release tag, to origin as a side effect of the reap),
    `--recurse-submodules=no` (`push.recurseSubmodules=on-demand`
    in the checkout's config would otherwise first push changed
    nested submodules to their own remotes, side effects outside
    the atomic transaction that persist even when the branch-tip
-   lease then rejects the reap), so the transaction is pinned to
-   exactly the two refspecs listed. The tag's source is the
-   temporary ref `refs/reap/src`, bound to the recorded tip and
-   verified before the push: a refspec source undergoes ref-name
-   resolution before object-ID interpretation, so a local ref
-   whose short name is exactly the tip SHA would silently make
-   the archival tag point at a different object while the branch
-   is still deleted (a leftover `refs/reap/src` from a stopped
-   chain is overwritten by the next run).
+   lease then rejects the reap), and `-c push.pushOption=`
+   (configured `push.pushOption` values are transmitted to the
+   server even when none appear on the command line, and
+   server-specific options can trigger pre-receive behavior
+   beyond the two advertised ref updates; the empty value clears
+   the configured list), so the transaction is pinned to exactly
+   the two refspecs listed. The tag's source is a per-operation
+   temporary ref `refs/reap/src-<tip>`, bound to the recorded
+   tip and verified before the push: a refspec source undergoes
+   ref-name resolution before object-ID interpretation, so a
+   local ref whose short name is exactly the tip SHA would
+   silently make the archival tag point at a different object
+   while the branch is still deleted. The name is keyed by the
+   tip so concurrent reap chains in the same checkout never
+   share a scratch ref (a shared name could be rewritten by a
+   second chain between this chain's verification and its push,
+   archiving the wrong object while the branch lease still
+   passes; two chains reaping the same tip write the identical
+   value). The ref is written and deleted with `--no-deref`:
+   without it, a pre-existing symbolic ref at that name would
+   be followed, silently moving and then deleting whatever
+   local branch it targets instead of the scratch ref itself.
    A lease can only guard a ref the transaction actually updates:
    Git drops an already-up-to-date refspec from the push before
    leases are evaluated, so a no-op base refspec cannot detect a
    `master` reverted or force-pushed after the `ls-remote`
    check. The atomic tag makes that residual race non-destructive
    instead: whatever happens to the base, the deleted branch's
-   content stays reachable under the tag. Delete the tag
-   (`git push origin ":refs/tags/reaped/$branch"`) only after
-   confirming the live `master` still holds the content.
-   Never use a bare `git push origin --delete`, which deletes
+   content stays reachable under the tag. Delete the tag only
+   after confirming the live `master` still holds the
+   content, and only with a lease pinning the remote tag to the
+   archived tip:
+
+   ```sh
+   git push origin --force-with-lease="refs/tags/reaped/$branch:$tip" \
+     ":refs/tags/reaped/$branch"
+   ```
+
+   An unleased deletion would unconditionally discard a tag
+   moved meanwhile by a concurrent archival or forced retag,
+   losing content unrelated to this completed reap. Never use a
+   bare `git push origin --delete`, which deletes
    unconditionally.
 
 The commands form one `&&` chain because a found PR is successful
@@ -276,12 +299,13 @@ base=bee922df3d6f4dd22fd4bdbea3cf25e72e038d36 &&
 prs=$(gh pr list --repo "github.com/acgs-ai/ACGS" --state open \
   --head "$branch" --json number --jq '.[].number') &&
 [ -z "$prs" ] &&
-git update-ref refs/reap/src "$tip" &&
-[ "$(git rev-parse --verify refs/reap/src)" = "$tip" ] &&
-git push --atomic --no-follow-tags --recurse-submodules=no \
+git update-ref --no-deref "refs/reap/src-$tip" "$tip" &&
+[ "$(git rev-parse --verify "refs/reap/src-$tip")" = "$tip" ] &&
+git -c push.pushOption= push --atomic --no-follow-tags \
+  --recurse-submodules=no \
   --force-with-lease="refs/heads/$branch:$tip" \
-  origin "refs/reap/src:refs/tags/reaped/$branch" ":refs/heads/$branch" &&
-git update-ref -d refs/reap/src
+  origin "refs/reap/src-$tip:refs/tags/reaped/$branch" ":refs/heads/$branch" &&
+git update-ref --no-deref -d "refs/reap/src-$tip"
 ```
 
 If the chain stops early, or the push is rejected (a moved tip,

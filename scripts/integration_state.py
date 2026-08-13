@@ -145,8 +145,16 @@ def list_remote_branches() -> tuple[list[tuple[str, str]], list[str]]:
     return branches, unexpected_symrefs
 
 
-def missing_upstream_branches(branches: list[tuple[str, str]]) -> list[str]:
-    """Return upstream branch names absent from the local inventory.
+def upstream_inventory_mismatches(
+    branches: list[tuple[str, str]],
+) -> tuple[list[str], bool]:
+    """Compare origin's live heads with the local inventory, object ID by object ID.
+
+    Returns ``(mismatches, head_collision)``. ``mismatches`` lists every
+    disagreement between the authoritative ``ls-remote --heads`` listing and
+    the local inventory (plus the base tracking ref): a head present on only
+    one side, or present on both sides at different object IDs. The caller
+    must reject the run when it is non-empty.
 
     Enumerating ``refs/remotes/origin`` cannot prove completeness on its own:
     ``git for-each-ref`` silently omits a symbolic tracking ref whose target
@@ -156,12 +164,21 @@ def missing_upstream_branches(branches: list[tuple[str, str]]) -> list[str]:
     symref gate, which can only reject symrefs the enumeration reports) and
     the ledger would undercount the remote inventory while claiming every
     remote branch was classified. A fetch that simply predates a newly pushed
-    branch has the same signature. The authoritative upstream heads are
-    therefore listed with ``ls-remote --heads`` and compared by name; the
-    caller must reject the run when any of them was not inventoried.
+    branch has the same signature.
 
-    A branch literally named ``HEAD`` (``refs/heads/HEAD`` is accepted by
-    Git) is reported too: its canonical fetch destination
+    Matching by name alone is not enough either: an upstream branch
+    force-pushed after the last fetch keeps its name while a stale local tip
+    would be classified, and a base deleted upstream leaves the stale local
+    tracking ref silently standing in for a branch that no longer exists —
+    every verdict would then be computed against a base origin does not
+    hold. Every upstream head must therefore agree with the inventory on its
+    exact object ID, the base branch must itself exist upstream, and a local
+    tracking ref with no upstream counterpart (a deletion the documented
+    fetch would have pruned) is rejected too.
+
+    ``head_collision`` is True when origin has a branch literally named
+    ``HEAD`` (``refs/heads/HEAD`` is accepted by Git) that is absent from
+    the local inventory: its canonical fetch destination
     ``refs/remotes/origin/HEAD`` collides with the symbolic ref maintained
     by ``git clone``/``git remote set-head``, and when the symbolic ref wins
     the collision the real branch can never be materialized locally. The
@@ -172,16 +189,41 @@ def missing_upstream_branches(branches: list[tuple[str, str]]) -> list[str]:
     local ref enumeration: upstream ref names need not be valid UTF-8.
     """
     out = git_bytes("ls-remote", "--heads", "origin")
-    upstream = set()
+    upstream: dict[str, str] = {}
     for line in out.split(b"\n"):
-        ref = line.partition(b"\t")[2]
+        sha, _, ref = line.partition(b"\t")
         if ref.startswith(b"refs/heads/"):
-            upstream.add(os.fsdecode(ref.removeprefix(b"refs/heads/")))
-    inventoried = {ref.removeprefix("origin/") for ref, _ in branches}
-    # The base is excluded from ``branches`` by design but is still expected
-    # locally; origin/HEAD (when direct) is inventoried under its own name.
-    inventoried.add(_BASE_BRANCH)
-    return sorted(upstream - inventoried)
+            upstream[os.fsdecode(ref.removeprefix(b"refs/heads/"))] = sha.decode("ascii")
+    local = {ref.removeprefix("origin/"): sha for ref, sha in branches}
+    # The base is excluded from ``branches`` by design but its
+    # verdict-defining object ID must agree with upstream like every other
+    # head; origin/HEAD (when direct) is inventoried under its own name.
+    # rev-parse cannot be tricked into following a symbolic alias here: the
+    # caller runs the symref gate before this check.
+    try:
+        local[_BASE_BRANCH] = git("rev-parse", "--verify", f"refs/remotes/{BASE}").strip()
+    except subprocess.CalledProcessError:
+        pass  # absent locally: surfaces against the upstream listing below
+    mismatches = []
+    for name in sorted(upstream.keys() | local.keys()):
+        upstream_sha = upstream.get(name)
+        local_sha = local.get(name)
+        if upstream_sha == local_sha:
+            continue
+        if local_sha is None:
+            mismatches.append(f"refs/heads/{name}: on origin at {upstream_sha}, absent locally")
+        elif upstream_sha is None:
+            mismatches.append(f"refs/heads/{name}: inventoried at {local_sha}, absent on origin")
+        else:
+            mismatches.append(
+                f"refs/heads/{name}: on origin at {upstream_sha}, inventoried at {local_sha}"
+            )
+    if _BASE_BRANCH not in upstream:
+        mismatches.append(
+            f"refs/heads/{_BASE_BRANCH}: the base branch does not exist on origin"
+        )
+    head_collision = "HEAD" in upstream and "HEAD" not in local
+    return mismatches, head_collision
 
 
 def fetch_refspec_covers_all_heads() -> bool:
@@ -627,30 +669,53 @@ def render_markdown(
         "   `--no-follow-tags` (`push.followTags=true` would otherwise",
         "   implicitly add every missing annotated tag reachable from the",
         "   pushed tip, publishing unrelated local tags, e.g. a private",
-        "   release tag, to origin as a side effect of the reap), and",
+        "   release tag, to origin as a side effect of the reap),",
         "   `--recurse-submodules=no` (`push.recurseSubmodules=on-demand`",
         "   in the checkout's config would otherwise first push changed",
         "   nested submodules to their own remotes, side effects outside",
         "   the atomic transaction that persist even when the branch-tip",
-        "   lease then rejects the reap), so the transaction is pinned to",
-        "   exactly the two refspecs listed. The tag's source is the",
-        "   temporary ref `refs/reap/src`, bound to the recorded tip and",
-        "   verified before the push: a refspec source undergoes ref-name",
-        "   resolution before object-ID interpretation, so a local ref",
-        "   whose short name is exactly the tip SHA would silently make",
-        "   the archival tag point at a different object while the branch",
-        "   is still deleted (a leftover `refs/reap/src` from a stopped",
-        "   chain is overwritten by the next run).",
+        "   lease then rejects the reap), and `-c push.pushOption=`",
+        "   (configured `push.pushOption` values are transmitted to the",
+        "   server even when none appear on the command line, and",
+        "   server-specific options can trigger pre-receive behavior",
+        "   beyond the two advertised ref updates; the empty value clears",
+        "   the configured list), so the transaction is pinned to exactly",
+        "   the two refspecs listed. The tag's source is a per-operation",
+        "   temporary ref `refs/reap/src-<tip>`, bound to the recorded",
+        "   tip and verified before the push: a refspec source undergoes",
+        "   ref-name resolution before object-ID interpretation, so a",
+        "   local ref whose short name is exactly the tip SHA would",
+        "   silently make the archival tag point at a different object",
+        "   while the branch is still deleted. The name is keyed by the",
+        "   tip so concurrent reap chains in the same checkout never",
+        "   share a scratch ref (a shared name could be rewritten by a",
+        "   second chain between this chain's verification and its push,",
+        "   archiving the wrong object while the branch lease still",
+        "   passes; two chains reaping the same tip write the identical",
+        "   value). The ref is written and deleted with `--no-deref`:",
+        "   without it, a pre-existing symbolic ref at that name would",
+        "   be followed, silently moving and then deleting whatever",
+        "   local branch it targets instead of the scratch ref itself.",
         "   A lease can only guard a ref the transaction actually updates:",
         "   Git drops an already-up-to-date refspec from the push before",
         "   leases are evaluated, so a no-op base refspec cannot detect a",
         f"   `{_BASE_BRANCH}` reverted or force-pushed after the `ls-remote`",
         "   check. The atomic tag makes that residual race non-destructive",
         "   instead: whatever happens to the base, the deleted branch's",
-        "   content stays reachable under the tag. Delete the tag",
-        '   (`git push origin ":refs/tags/reaped/$branch"`) only after',
-        f"   confirming the live `{_BASE_BRANCH}` still holds the content.",
-        "   Never use a bare `git push origin --delete`, which deletes",
+        "   content stays reachable under the tag. Delete the tag only",
+        f"   after confirming the live `{_BASE_BRANCH}` still holds the",
+        "   content, and only with a lease pinning the remote tag to the",
+        "   archived tip:",
+        "",
+        "   ```sh",
+        '   git push origin --force-with-lease="refs/tags/reaped/$branch:$tip" \\',
+        '     ":refs/tags/reaped/$branch"',
+        "   ```",
+        "",
+        "   An unleased deletion would unconditionally discard a tag",
+        "   moved meanwhile by a concurrent archival or forced retag,",
+        "   losing content unrelated to this completed reap. Never use a",
+        "   bare `git push origin --delete`, which deletes",
         "   unconditionally.",
         "",
         "The commands form one `&&` chain because a found PR is successful",
@@ -672,12 +737,13 @@ def render_markdown(
         f'prs=$(gh pr list --repo "{selector_arg}" --state open \\',
         "  --head \"$branch\" --json number --jq '.[].number') &&",
         '[ -z "$prs" ] &&',
-        'git update-ref refs/reap/src "$tip" &&',
-        '[ "$(git rev-parse --verify refs/reap/src)" = "$tip" ] &&',
-        "git push --atomic --no-follow-tags --recurse-submodules=no \\",
+        'git update-ref --no-deref "refs/reap/src-$tip" "$tip" &&',
+        '[ "$(git rev-parse --verify "refs/reap/src-$tip")" = "$tip" ] &&',
+        "git -c push.pushOption= push --atomic --no-follow-tags \\",
+        "  --recurse-submodules=no \\",
         '  --force-with-lease="refs/heads/$branch:$tip" \\',
-        '  origin "refs/reap/src:refs/tags/reaped/$branch" ":refs/heads/$branch" &&',
-        "git update-ref -d refs/reap/src",
+        '  origin "refs/reap/src-$tip:refs/tags/reaped/$branch" ":refs/heads/$branch" &&',
+        'git update-ref --no-deref -d "refs/reap/src-$tip"',
         "```",
         "",
         "If the chain stops early, or the push is rejected (a moved tip,",
@@ -823,10 +889,14 @@ def main() -> int:
     # reports; a symbolic tracking ref whose target is missing is omitted by
     # for-each-ref entirely, and `git fetch --prune origin` leaves such a
     # dangling destination unchanged, so the branch it shadows would silently
-    # vanish from the inventory. Compare the authoritative upstream heads
-    # against the inventory by name before claiming completeness.
-    missing = missing_upstream_branches(branches)
-    if "HEAD" in missing:
+    # vanish from the inventory. Name matching alone is not enough either: a
+    # branch force-pushed (or the base deleted) upstream after the last fetch
+    # keeps its name while the ledger would classify stale or nonexistent
+    # objects. Require exact name-to-object-ID agreement between the
+    # authoritative upstream heads and the inventory before claiming
+    # completeness.
+    mismatches, head_collision = upstream_inventory_mismatches(branches)
+    if head_collision:
         print(
             "error: the remote has a branch literally named HEAD (refs/heads/HEAD)\n"
             "whose fetch destination collides with the symbolic refs/remotes/origin/HEAD,\n"
@@ -837,16 +907,15 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    if missing:
-        listing = "\n".join(f"  refs/heads/{name}" for name in missing)
+    if mismatches:
+        listing = "\n".join(f"  {m}" for m in mismatches)
         print(
-            "error: branch(es) exist on origin but are absent from the local\n"
-            f"inventory:\n{listing}\n"
-            "A symbolic tracking ref whose target is missing is silently omitted\n"
-            "by ref enumeration, and `git fetch --prune origin` leaves such a\n"
-            "dangling destination unchanged, so the ledger would undercount the\n"
-            "remote inventory. (A fetch that predates a newly pushed branch looks\n"
-            "the same.) Delete any dangling symbolic tracking ref and refetch:\n"
+            "error: origin's live heads disagree with the local inventory:\n"
+            f"{listing}\n"
+            "A stale fetch (a branch pushed, force-pushed, or deleted upstream —\n"
+            "including the base) or a dangling symbolic tracking ref would make\n"
+            "the ledger classify objects other than what origin actually holds.\n"
+            "Delete any dangling symbolic tracking ref, refetch, and regenerate:\n"
             "  git symbolic-ref --delete refs/remotes/origin/<name>\n"
             "  git fetch --prune origin",
             file=sys.stderr,
