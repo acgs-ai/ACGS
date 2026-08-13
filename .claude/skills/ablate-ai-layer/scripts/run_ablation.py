@@ -101,10 +101,23 @@ def missing_workspace_members(root: Path, sha: str) -> list[str]:
         import tomllib  # local: only repos with a root pyproject need py>=3.11
         with open(manifest, "rb") as f:
             data = tomllib.load(f)
-        members = data.get("tool", {}).get("uv", {}).get("workspace", {}).get("members", [])
+        workspace = data.get("tool", {}).get("uv", {}).get("workspace", {})
+        members = workspace.get("members", [])
+        # uv drops any member match covered by [tool.uv.workspace].exclude
+        # before requiring a pyproject.toml, so `members = ["packages/*"]`
+        # plus `exclude = ["packages/b"]` is a VALID workspace even when
+        # packages/b has no manifest. Expand the exclusions the same way the
+        # member globs are expanded and never report an excluded path missing.
+        excluded: set[Path] = set()
+        for pattern in workspace.get("exclude", []):
+            pattern = pattern.rstrip("/")
+            excluded.add(wt / pattern)
+            excluded.update(wt.glob(pattern))
         missing: list[str] = []
         for pattern in members:
             for p in sorted(wt.glob(pattern)) or [wt / pattern]:
+                if p in excluded:
+                    continue
                 if not (p / "pyproject.toml").is_file():
                     missing.append(p.relative_to(wt).as_posix())
         return missing
@@ -118,7 +131,29 @@ def missing_workspace_members(root: Path, sha: str) -> list[str]:
 
 # ------------------------------------------------------------ uv reachability
 
-RE_UV_WORD = re.compile(r"\buv\b")
+# A textual `uv` only matters when executing the text could RUN uv. Prose
+# ("do not run uv; validate with pnpm"), a `uv.lock` path, or a comment inside
+# an invoked script must not trigger the workspace preflight and veto a valid
+# frontend or docs ablation. A match therefore requires either command
+# position (start of line or right after a shell connector, optionally behind
+# make recipe prefixes or a common command wrapper) or `uv <subcommand>` with
+# one of uv's own CLI verbs, which is an instruction to run uv wherever it
+# appears. `uv.lock` and bare prose mentions satisfy neither.
+RE_UV_INVOKE = re.compile(
+    r"(?:^|[;&|`(]|\$\()[ \t]*(?:[@+-][ \t]*)*"
+    r"(?:(?:command|exec|env|nohup|time|xargs|sudo)[ \t]+)*uv(?=[ \t]|$)"
+    r"|\buv[ \t]+(?:run|sync|lock|add|remove|pip|venv|tool|export|build|"
+    r"publish|python|init|tree|cache|version|self)\b",
+    re.MULTILINE)
+
+
+def _drop_comments(text: str) -> str:
+    """Comment content never executes, so `uv` (or a make/script wrapper)
+    mentioned after `#` is prose, not an invocation. Splitting each line at
+    the first `#` is best effort: a `#` inside a quoted argument is rare in
+    probe prompts, makefile recipes, and the shell scripts under inspection,
+    and the skip note still warns about agent-initiated uv."""
+    return "\n".join(line.split("#", 1)[0] for line in text.splitlines())
 RE_MAKE_INVOKE = re.compile(r"(?:\bmake\b|\$[({]MAKE[)}])((?:\s+[A-Za-z0-9_./=-]+)*)")
 # A script counts as invoked when it follows an interpreter (bash x.sh,
 # python3 x.py, ./x.sh) or is a path-shaped .sh mention (scripts/x.sh). A bare
@@ -249,7 +284,8 @@ def probe_reaches_uv(prompt: str, root: Path) -> str | None:
         return text_reaches(body, "it", base)
 
     def text_reaches(text: str, origin: str, base: Path) -> str | None:
-        if RE_UV_WORD.search(text):
+        text = _drop_comments(text)
+        if RE_UV_INVOKE.search(text):
             return f"{origin} invokes uv directly"
         for m in RE_MAKE_INVOKE.finditer(text):
             mkdir = base
