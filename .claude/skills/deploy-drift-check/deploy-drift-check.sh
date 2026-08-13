@@ -71,16 +71,23 @@ else
 fi
 
 # --- 3. SPA-fallback misconfig: a missing asset must NOT come back as 200 html -
-PROBE=$(curl -s -o /dev/null -w '%{http_code} %{content_type}' --max-time 15 "$SITE/assets/__drift_probe_missing__.js" || echo "000")
-# Any response we cannot evaluate (curl transport failure -> "000", or an
-# unexpected status) means the SPA-fallback invariant was NOT verified; that
-# must fail the check, not pass as an informational note.
-case "$PROBE" in
-  200\ text/html*) warn "missing asset served as 200 text/html — SPA fallback swallowing static 404s (breaks agent-discovery scanners)" ;;
-  404*)            ok "missing asset correctly 404s ($PROBE)" ;;
-  000*)            warn "missing-asset probe failed in transport (timeout/TLS/connect: $PROBE): SPA-fallback invariant NOT verified" ;;
-  *)               warn "missing-asset probe returned unexpected response ($PROBE): SPA-fallback invariant NOT verified" ;;
-esac
+# curl's exit status is captured SEPARATELY from its --write-out text: -w emits
+# whatever headers arrived even when the transfer then fails (e.g. 404 headers
+# followed by a stalled body until --max-time), so appending a sentinel to the
+# same string ("... || echo 000") can yield "404 text/html000" and let a
+# transport failure match the healthy-404 case. Any nonzero curl status means
+# the probe did not complete and the invariant was NOT verified.
+PROBE=$(curl -s -o /dev/null -w '%{http_code} %{content_type}' --max-time 15 "$SITE/assets/__drift_probe_missing__.js")
+PROBE_RC=$?
+if [ "$PROBE_RC" -ne 0 ]; then
+  warn "missing-asset probe failed in transport (curl exit $PROBE_RC, partial response: ${PROBE:-<none>}): SPA-fallback invariant NOT verified"
+else
+  case "$PROBE" in
+    200\ text/html*) warn "missing asset served as 200 text/html — SPA fallback swallowing static 404s (breaks agent-discovery scanners)" ;;
+    404*)            ok "missing asset correctly 404s ($PROBE)" ;;
+    *)               warn "missing-asset probe returned unexpected response ($PROBE): SPA-fallback invariant NOT verified" ;;
+  esac
+fi
 
 # --- 4. console DNS -----------------------------------------------------------
 if timeout 5 getent hosts "$CONSOLE_HOST" >/dev/null 2>&1; then

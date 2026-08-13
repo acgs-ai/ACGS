@@ -510,6 +510,11 @@ return {
     criterion: o.item,
     noop: o.noop === true || undefined,
     branch: o.impl?.branch,
+    // The ref the feature branch was created from, as reported by the
+    // implementer and preflighted by the reviewer. The PR handoff MUST target
+    // this ref: nested repos expose main (not master), so assuming the parent
+    // repo's default branch would open PRs against a base that does not exist.
+    baseBranch: o.impl?.baseBranch,
     worktree: o.impl?.worktree,
     files: o.impl?.filesChanged,
     review: o.review?.verdict,
@@ -518,5 +523,5 @@ return {
     verifyOutput: o.verify?.outputTail,
   })),
   humanGated: audits.filter(a => a.status === 'blocked-human').map(a => ({ id: a.id, gap: a.gapSummary, nextAction: a.nextAction })),
-  nextSteps: 'Verified branches live in their worktrees — human opens PRs against master (gh pr merge is human-gated). Re-run this workflow for the next increment; pass {dryRun:true} for scoreboard only.',
+  nextSteps: 'Verified branches live in their worktrees. A human opens each PR against that result\'s baseBranch (nested repos expose main, not master; never assume the parent repo\'s default branch). gh pr merge is human-gated. Re-run this workflow for the next increment; pass {dryRun:true} for scoreboard only.',
 }

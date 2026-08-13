@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -298,14 +299,37 @@ def main() -> int:
         for owner in sorted(nested):
             for path in nested[owner]:
                 print(f"          - {path}  (owned by {owner.relative_to(root).as_posix()})")
-        # Print a command that is runnable as-is: this script does not live at
-        # the repo root, so name its real path (and the absolute nested-repo
-        # path, so the command works from any working directory).
-        script = Path(__file__).resolve()
+        # Print a command that is runnable as-is: real interpreter and script
+        # paths, the nested repo as <repo>, the ORIGINAL --task-file (required,
+        # resolved to an absolute path so the command works from any cwd), and
+        # every experiment-shaping option the user passed, each token
+        # shell-quoted. --out is deliberately NOT carried over: the nested run
+        # gets its own default results directory instead of writing into (and
+        # mixing with) this run's output.
+        carried: list[str] = []
+        if args.runs != 2:
+            carried += ["--runs", str(args.runs)]
+        if args.scope != "always":
+            carried += ["--scope", args.scope]
+        if args.model:
+            carried += ["--model", args.model]
+        if args.jobs != 2:
+            carried += ["--jobs", str(args.jobs)]
+        if args.timeout != 1800:
+            carried += ["--timeout", str(args.timeout)]
+        if args.runner:
+            carried += ["--runner", args.runner]
+        if args.keep_worktrees:
+            carried.append("--keep-worktrees")
+        if args.dry_run:
+            carried.append("--dry-run")
         print("        If the probe task works inside one of those packages, re-run with")
-        print(f"        that path as <repo> (e.g. `python {script} "
-              f"{sorted(nested)[0]} ...`) so worktrees are")
-        print("        created from the nested repository itself.")
+        print("        that path as <repo> so worktrees are created from the nested")
+        print("        repository itself:")
+        for owner in sorted(nested):
+            retry = [sys.executable, str(Path(__file__).resolve()), str(owner),
+                     "--task-file", str(Path(args.task_file).resolve()), *carried]
+            print(f"          {' '.join(shlex.quote(t) for t in retry)}")
     targets = own_targets
     if not targets:
         print(f"\nAll {args.scope}-scope artifacts under {root} belong to nested "
