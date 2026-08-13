@@ -190,8 +190,17 @@ verify **all three**:
    has moved (e.g. a revert removed content that made a branch
    LANDED) a listed branch may now be the last ref holding its
    content;
-3. a live PR query (e.g. `gh pr list --state open --head <branch>`)
-   reports no open PR for the branch.
+3. a live PR query reports no open PR for the branch. Pin the
+   query to the repository backing `origin` (an ambient `GH_REPO`
+   override would silently query another repository) and pass the
+   branch as one quoted argument (ref names may legally contain
+   `;` or `$()`, which an unquoted substitution would execute):
+
+   ```sh
+   IFS= read -r branch   # paste the branch name, press Enter
+   gh pr list --repo "$(git remote get-url origin)" \
+     --state open --head "$branch"
+   ```
 
 If any check fails, regenerate and reclassify first.
 
