@@ -17,7 +17,10 @@ rules file against what just changed and proposes the **smallest** edit that kee
 ## Input
 - `$ARGUMENTS` — optional diff range. Default: uncommitted + staged (`git diff HEAD`); if the worktree is clean,
   fall back to diffing `<default>...HEAD` against a default branch that actually exists in the checkout: use
-  `git symbolic-ref --short refs/remotes/origin/HEAD` when that ref is set; otherwise pick whichever of
+  the name `git symbolic-ref --short refs/remotes/origin/HEAD` prints only after verifying that target itself
+  resolves (`git show-ref --verify --quiet "refs/remotes/$(git symbolic-ref --short refs/remotes/origin/HEAD)"`;
+  after a default-branch rename or a partial fetch, `origin/HEAD` can dangle and name a ref that no longer
+  exists, so the diff would fail). When that ref is unset or its target does not resolve, pick whichever of
   `master` or `main` exists (`git show-ref --verify --quiet refs/heads/master || git show-ref --verify --quiet refs/remotes/origin/master`,
   then the same for `main`). Never hardcode a branch name that the checkout does not have.
 - **Scope: the project's rules file(s)** — `CLAUDE.md` and/or `AGENTS.md`, the root file + any package-level

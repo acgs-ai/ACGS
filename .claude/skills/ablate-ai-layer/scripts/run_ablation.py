@@ -219,6 +219,13 @@ def _drop_comments(text: str) -> str:
     and the skip note still warns about agent-initiated uv."""
     return "\n".join(line.split("#", 1)[0] for line in text.splitlines())
 RE_MAKE_INVOKE = re.compile(r"(?:\bmake\b|\$[({]MAKE[)}])((?:\s+[A-Za-z0-9_./=-]+)*)")
+# A probe often enters a package before running its gate (`cd pkg && make
+# verify`): every wrapper after the hop belongs to THAT directory. Command
+# position only (start of line or right after a shell connector), so prose
+# like "then cd into the frontend" never moves the inspection base.
+RE_CD = re.compile(
+    r"(?:^|[;&|`(]|\$\()[ \t]*(?:[@+-][ \t]*)*cd[ \t]+([^\s;&|`)]+)",
+    re.MULTILINE)
 # A script counts as invoked when it follows an interpreter (bash x.sh,
 # python3 x.py, ./x.sh) or is a path-shaped .sh mention (scripts/x.sh). A bare
 # .py mention without an interpreter is more likely an edit target than a
@@ -279,9 +286,9 @@ def probe_reaches_uv(prompt: str, root: Path) -> str | None:
     topology as agent behavior. So beyond the prompt text itself, every wrapper
     the prompt names is inspected: make targets are expanded through the
     makefile that owns them (recipes, prerequisites, nested `$(MAKE)` calls,
-    variables such as `$(UV)`), a `make -C <dir>` / `--directory` hop redirects
-    inspection into THAT directory's makefile, and invoked scripts are read,
-    all recursively. An invocation that opts out of project/workspace
+    variables such as `$(UV)`), a `make -C <dir>` / `--directory` hop or a
+    preceding `cd <dir> &&` redirects inspection into THAT directory's
+    makefile, and invoked scripts are read, all recursively. An invocation that opts out of project/workspace
     discovery with `--no-project` among uv's OWN options (a `--no-project`
     after the executed command belongs to the child program) does not count:
     it can never fail on missing workspace members, so a probe whose only
@@ -353,7 +360,26 @@ def probe_reaches_uv(prompt: str, root: Path) -> str | None:
         return text_reaches(body, "it", base)
 
     def text_reaches(text: str, origin: str, base: Path) -> str | None:
+        # `cd pkg && make verify` runs pkg's gate through pkg/Makefile, so
+        # wrappers after the hop must resolve against pkg, never against
+        # `base` (missing the hop inspects the root Makefile and skips the
+        # workspace preflight). Split at each command-position `cd` and scan
+        # every segment with the directory in effect there. Only a hop into
+        # a real directory inside the repo moves the base: a bare or
+        # unresolvable `cd` (prose like "cd into the frontend") keeps the
+        # current one, which at worst inspects an extra makefile and fails
+        # closed. Subshell scoping is out of scope for the same reason.
         text = _drop_comments(text)
+        pos, cwd = 0, base
+        for m in RE_CD.finditer(text):
+            reason = segment_reaches(text[pos:m.start()], origin, cwd)
+            if reason:
+                return reason
+            pos = m.end()
+            cwd = contained_dir(cwd, m.group(1).strip("'\"")) or cwd
+        return segment_reaches(text[pos:], origin, cwd)
+
+    def segment_reaches(text: str, origin: str, base: Path) -> str | None:
         for m in RE_UV_INVOKE.finditer(text):
             # Tokenize from the match START so uv's subcommand is always part
             # of the segment (the two RE_UV_INVOKE alternatives end at
