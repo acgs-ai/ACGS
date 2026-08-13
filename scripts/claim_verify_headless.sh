@@ -26,6 +26,43 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
+# Preflight the uv workspace. uv validates the ROOT workspace before running
+# any command, so a workspace member whose pyproject.toml is absent (typically
+# an uninitialized git submodule such as packages/acgs-lite or an unavailable
+# private one such as packages/clinicalguard) makes EVERY proof command fail
+# with a setup error before its proof runs. That is a supported checkout
+# state and a local setup gap, never claim evidence: report it as an INTERNAL
+# error (exit 1, no JSON) instead of letting /claim-verify read the failures
+# as claim downgrades. --no-project is not an alternative here because the
+# proofs themselves need workspace discovery (uv run --package gove-zone).
+MISSING="$(python3 - <<'PY'
+import glob
+import os
+import sys
+import tomllib
+
+with open("pyproject.toml", "rb") as f:
+    data = tomllib.load(f)
+members = data.get("tool", {}).get("uv", {}).get("workspace", {}).get("members", [])
+for pattern in members:
+    for path in sorted(glob.glob(pattern)) or [pattern]:
+        if not os.path.isfile(os.path.join(path, "pyproject.toml")):
+            print(path)
+PY
+)" || {
+  echo "internal error: could not enumerate uv workspace members from pyproject.toml (needs python3 >= 3.11 for tomllib); cannot preflight the workspace" >&2
+  exit 1
+}
+if [ -n "$MISSING" ]; then
+  {
+    echo "internal error: uv workspace members are missing their pyproject.toml:"
+    printf '%s\n' "$MISSING" | sed 's/^/  /'
+    echo "This is a checkout setup gap (usually uninitialized git submodules), not claim evidence."
+    echo "Initialize them (git submodule update --init <path>) or run from a fully initialized checkout, then re-run."
+  } >&2
+  exit 1
+fi
+
 TMP="$(mktemp -d)" || exit 1
 trap 'rm -rf "$TMP"' EXIT
 

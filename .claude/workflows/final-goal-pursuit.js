@@ -162,7 +162,7 @@ const PLAN_SCHEMA = {
 
 const IMPL_SCHEMA = {
   type: 'object',
-  required: ['completed', 'branch', 'worktree', 'filesChanged', 'summary'],
+  required: ['completed', 'branch', 'baseBranch', 'worktree', 'filesChanged', 'summary'],
   properties: {
     completed: { type: 'boolean' },
     noChangesNeeded: { type: 'boolean', description: 'true when the criterion is already satisfied and ZERO changes were made — then branch must be "" and filesChanged []' },
@@ -421,8 +421,14 @@ If you determine the criterion is ALREADY satisfied and zero changes are require
     assertShellSafe(impl.branch, 'impl.branch', RE_REF)
     // The base the implementer branched from (nested repos usually expose main,
     // not master), so the reviewer diffs against a ref that actually exists.
-    // Fall back to this repo's default branch when the implementer omitted it.
-    const reviewBase = impl.baseBranch || 'master'
+    // No fallback: guessing "master" makes the diff exit 128 in nested
+    // checkouts that only have main, and the change would sail through with
+    // no effective review. A non-no-op result without a baseBranch is blocked
+    // fail-closed instead.
+    if (!impl.baseBranch) {
+      return { impl, review: { verdict: 'block', issues: ['implementer reported no baseBranch: the reviewer cannot diff against the ref the feature branch was created from, so the change cannot receive an effective review'] } }
+    }
+    const reviewBase = impl.baseBranch
     assertShellSafe(reviewBase, 'impl.baseBranch', RE_REF)
     return agent(
       `You are the review lane — you did NOT write this change. Review it adversarially against the repo's rules.
