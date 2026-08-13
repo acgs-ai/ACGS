@@ -116,6 +116,145 @@ def missing_workspace_members(root: Path, sha: str) -> list[str]:
                        capture_output=True, text=True)
 
 
+# ------------------------------------------------------------ uv reachability
+
+RE_UV_WORD = re.compile(r"\buv\b")
+RE_MAKE_INVOKE = re.compile(r"(?:\bmake\b|\$[({]MAKE[)}])((?:\s+[A-Za-z0-9_./=-]+)*)")
+# A script counts as invoked when it follows an interpreter (bash x.sh,
+# python3 x.py, ./x.sh) or is a path-shaped .sh mention (scripts/x.sh). A bare
+# .py mention without an interpreter is more likely an edit target than a
+# command, so it does not trigger inspection on its own.
+RE_SCRIPT_INVOKE = re.compile(
+    r"(?:\b(?:bash|sh|zsh|source|python3?)\s+|\./)([A-Za-z0-9_./-]+\.(?:sh|bash|py))\b"
+    r"|(?<![\w/.@-])((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.(?:sh|bash))(?![\w.-])")
+
+
+def _parse_makefile(root: Path) -> tuple[dict[str, str], dict[str, tuple[list[str], list[str]]]]:
+    """Best-effort parse of the root Makefile: variable values plus, per target,
+    (prerequisites, recipe lines). Deliberately not a make implementation; it
+    only needs to answer "can this target's expansion reach uv", so continuation
+    handling, conditionals, and pattern rules are out of scope."""
+    variables: dict[str, str] = {}
+    rules: dict[str, tuple[list[str], list[str]]] = {}
+    mf = next((root / n for n in ("Makefile", "makefile", "GNUmakefile")
+               if (root / n).is_file()), None)
+    if mf is None:
+        return variables, rules
+    current: list[str] = []
+    for raw in mf.read_text(encoding="utf-8", errors="replace").splitlines():
+        if raw.startswith("\t"):
+            for t in current:
+                rules[t][1].append(raw[1:])
+            continue
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        m = re.match(r"^(?:export\s+)?([A-Za-z0-9_.-]+)\s*([:?+]?=)\s*(.*)$", line)
+        if m:
+            name, op, value = m.groups()
+            variables[name] = (f"{variables.get(name, '')} {value}".strip()
+                               if op == "+=" else value)
+            current = []
+            continue
+        m = re.match(r"^([^:\s][^:]*?):{1,2}(?!=)(.*)$", line)
+        if m:
+            current = [t for t in m.group(1).split() if not t.startswith(".")]
+            prereqs = [p for p in m.group(2).split() if not p.startswith(".")]
+            for t in current:
+                entry = rules.setdefault(t, ([], []))
+                entry[0].extend(prereqs)
+            continue
+        current = []
+    return variables, rules
+
+
+def probe_reaches_uv(prompt: str, root: Path) -> str | None:
+    """Why executing the probe task can reach uv, or None when inspection finds
+    no path to it.
+
+    Checking only for the literal word `uv` in the prompt is not enough: a probe
+    that says `make test-py` never spells out uv, but the root Makefile expands
+    that target into several `$(UV) run` commands, and in a worktree with empty
+    nested-repo gitlinks those fail at workspace discovery while the agent
+    process can still exit 0 with a diff, so run_one() would grade checkout
+    topology as agent behavior. So beyond the prompt text itself, every wrapper
+    the prompt names is inspected: make targets are expanded through the root
+    Makefile (recipes, prerequisites, nested `$(MAKE)` calls, variables such as
+    `$(UV)`), and invoked scripts are read, both recursively. Purely non-uv
+    probes (pnpm, docs, frontend) still return None and keep their skip. The
+    walk is best effort (e.g. `$(MAKE) -C <dir>` targets in OTHER makefiles are
+    not chased), so the skip note still warns about agent-initiated uv."""
+    variables, rules = _parse_makefile(root)
+    seen_targets: set[str] = set()
+    seen_scripts: set[Path] = set()
+
+    def expand(text: str) -> str:
+        for _ in range(8):
+            new = re.sub(r"\$[({]([A-Za-z0-9_.-]+)[)}]",
+                         lambda m: variables.get(m.group(1), m.group(0)), text)
+            if new == text:
+                return new
+            text = new
+        return text
+
+    def target_reaches(target: str) -> str | None:
+        if target in seen_targets:
+            return None
+        seen_targets.add(target)
+        prereqs, recipe = rules.get(target, ([], []))
+        for line in recipe:
+            reason = text_reaches(expand(line), f"the `{target}` make recipe")
+            if reason:
+                return reason
+        for p in prereqs:
+            reason = target_reaches(p)
+            if reason:
+                return reason
+        return None
+
+    def script_reaches(rel: str) -> str | None:
+        try:
+            f = (root / rel).resolve()
+        except OSError:
+            return None
+        if f in seen_scripts or root not in f.parents or not f.is_file():
+            return None
+        seen_scripts.add(f)
+        try:
+            body = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        return text_reaches(body, "it")
+
+    def text_reaches(text: str, origin: str) -> str | None:
+        if RE_UV_WORD.search(text):
+            return f"{origin} invokes uv directly"
+        for m in RE_MAKE_INVOKE.finditer(text):
+            for tok in m.group(1).split():
+                if tok.startswith("-") or "=" in tok:
+                    continue
+                # A sentence's trailing period glues onto the target name
+                # ("validate with make verify."), so shed trailing dots.
+                tok = tok.rstrip(".")
+                if tok not in rules:
+                    # Prose like "make sure the build passes" must not be read
+                    # as a make invocation, so stop at the first token that is
+                    # not a known target. This also stops before targets of a
+                    # `$(MAKE) -C <dir>` call, which belong to another makefile.
+                    break
+                reason = target_reaches(tok)
+                if reason:
+                    return f"{origin} runs `make {tok}`: {reason}"
+        for m in RE_SCRIPT_INVOKE.finditer(text):
+            rel = (m.group(1) or m.group(2)).lstrip("./")
+            reason = script_reaches(rel)
+            if reason:
+                return f"{origin} runs `{rel}`: {reason}"
+        return None
+
+    return text_reaches(prompt, "the probe task")
+
+
 # ---------------------------------------------------------------- the layer
 
 def layer_targets(root: Path, scope: str) -> list[dict]:
@@ -407,11 +546,14 @@ def main() -> int:
     # normal uv commands exit with a setup error before the probe runs, in
     # BOTH arms, and an expensive result would measure checkout topology
     # rather than agent behavior. Preflight a representative worktree and stop
-    # as a broken experiment instead. Gate the stop on the probe task actually
-    # invoking uv: a frontend/docs/other probe validated with pnpm or make
-    # cannot hit the uv workspace error, and aborting it unconditionally would
-    # disable EVERY root ablation on a repo with submodule workspace members.
-    if re.search(r"\buv\b", prompt):
+    # as a broken experiment instead. Gate the stop on execution being able to
+    # reach uv: the prompt itself, or a wrapper it names (a make target whose
+    # expansion runs `$(UV)`, a script that calls uv). A frontend/docs/other
+    # probe with no path to uv keeps the skip, because aborting it
+    # unconditionally would disable EVERY root ablation on a repo with
+    # submodule workspace members.
+    uv_reason = probe_reaches_uv(prompt, root)
+    if uv_reason:
         try:
             missing = missing_workspace_members(root, sha)
         except Exception as exc:
@@ -420,9 +562,10 @@ def main() -> int:
                   "the experiment would be uninterpretable.", file=sys.stderr)
             return 2
         if missing:
-            print("\nBROKEN EXPERIMENT PREVENTED: the probe task invokes uv, and a "
-                  "fresh worktree of this repo is missing these uv workspace members "
-                  "(nested repos recorded as empty gitlinks):", file=sys.stderr)
+            print(f"\nBROKEN EXPERIMENT PREVENTED: executing the probe task can "
+                  f"reach uv ({uv_reason}), and a fresh worktree of this repo is "
+                  "missing these uv workspace members (nested repos recorded as "
+                  "empty gitlinks):", file=sys.stderr)
             for m in missing:
                 print(f"          - {m}", file=sys.stderr)
             print("        Every `uv run` inside such a worktree fails with a setup "
@@ -433,9 +576,11 @@ def main() -> int:
                   "only members this repo owns.", file=sys.stderr)
             return 2
     else:
-        print("\nnote    uv workspace preflight skipped: the probe task never mentions "
-              "uv. If the agent still runs `uv ...` on its own, empty nested-repo "
-              "gitlinks in the worktrees will fail it at setup, in both arms.")
+        print("\nnote    uv workspace preflight skipped: neither the probe task nor "
+              "any wrapper it names (make targets, invoked scripts) was seen to "
+              "invoke uv. If the agent still runs `uv ...` on its own, empty "
+              "nested-repo gitlinks in the worktrees will fail it at setup, in "
+              "both arms.")
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     # Results default to a location OUTSIDE the repo: this script promises the
