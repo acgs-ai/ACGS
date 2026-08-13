@@ -2,7 +2,7 @@
 
 <!-- GENERATED FILE — regenerate with `python3 scripts/integration_state.py` -->
 
-Base: `origin/master` @ `641adb00e` · generated 2026-08-13 · branches: 301 total — **161 STRANDED** (59 differ in ≤2 files), 21 LANDED (squash ghosts, safe to delete), 116 NO-OP (safe to delete).
+Base: `origin/master` @ `641adb00` · generated 2026-08-13 · branches: 298 total — **162 STRANDED** (59 differ in ≤2 files), 18 LANDED (squash ghosts, safe to delete), 115 NO-OP (safe to delete), 3 ERROR (classification failed).
 
 A branch is STRANDED when at least one file it touched still differs
 from master (content comparison — ancestry is unreliable under squash
@@ -12,174 +12,174 @@ merges). LANDED means every touched blob is byte-identical on master.
 
 | Branch | Files differing | Tip date | Open PR |
 |---|---|---|---|
-| `docs/agent-governance-market-roadmap-20260524` | 1 | 2026-05-26 | unknown |
-| `final-goal/g1-4` | 1 | 2026-06-09 | unknown |
-| `final-goal/g2-5` | 1 | 2026-06-09 | unknown |
-| `final-goal/g1-6` | 1 | 2026-06-09 | unknown |
-| `feat/console-cloudrun-production-gate` | 1 | 2026-06-15 | unknown |
-| `chore/claude-settings-safe-automation` | 1 | 2026-06-18 | unknown |
-| `fix/ci-root-tests-gate` | 1 | 2026-06-18 | unknown |
-| `docs/roadmap-enforcement-substrate` | 1 | 2026-06-21 | unknown |
-| `fix/research-engine-numpy-mypy` | 1 | 2026-06-22 | unknown |
-| `chore/bump-acgs-swarm-submodule` | 1 | 2026-06-23 | unknown |
-| `track-f-gate-wired` | 1 | 2026-06-26 | unknown |
-| `ci/github-hosted-invariant-fallback` | 1 | 2026-06-28 | unknown |
-| `fix/proofpack-manifest-version-drift` | 1 | 2026-07-03 | unknown |
-| `feat/managed-evidence-pilot-offer` | 1 | 2026-07-04 | unknown |
-| `feat/partner-auditor-outreach-drafts` | 1 | 2026-07-04 | unknown |
-| `fix/release-publish-github-hosted-runner` | 1 | 2026-07-04 | unknown |
-| `reconstruct/doc00-s5-populate-or-descope-constitutional-hash-gate` | 1 | 2026-07-06 | unknown |
-| `reconstruct/doc00-s5-fail-fast-test-all-grouping` | 1 | 2026-07-06 | unknown |
-| `feat/gove-zone-phase-evidence-schema` | 1 | 2026-07-07 | unknown |
-| `fix/mcp-adapter-strict-profile-ledger` | 1 | 2026-07-08 | unknown |
-| `fix/mcp-gateway-session-id-reuse` | 1 | 2026-07-08 | unknown |
-| `feat/mcp-gateway-session-hardening` | 1 | 2026-07-09 | unknown |
-| `chore/hygiene-gitignore-20260709` | 1 | 2026-07-09 | unknown |
-| `feat/kernel-unification-adr` | 1 | 2026-07-10 | unknown |
-| `chore/bump-acgs-lite-pointer` | 1 | 2026-07-11 | unknown |
-| `final-goal/g3-2` | 1 | 2026-07-11 | unknown |
-| `chore/design-sync-acgi-ai` | 1 | 2026-07-12 | unknown |
-| `feat-docs-picken-crosswalk` | 1 | 2026-07-14 | unknown |
-| `claude/dynamic-workflow-issues-prs-es2uky` | 1 | 2026-07-17 | unknown |
-| `feat/marketing-hub-forward` | 1 | 2026-07-26 | unknown |
-| `feat/scoped-trust-http-path` | 1 | 2026-07-26 | unknown |
-| `fix/pg-gate-max-connections` | 1 | 2026-07-27 | unknown |
-| `work/wt1-issue392-trust-http` | 1 | 2026-07-31 | unknown |
-| `feat/acgs-trajectory-phase2` | 1 | 2026-08-08 | unknown |
-| `feat/gove-zone-simulate` | 2 | 2026-06-10 | unknown |
-| `docs/blog-replay-context-claim` | 2 | 2026-06-11 | unknown |
-| `docs/mattermost-governance-comparison` | 2 | 2026-06-15 | unknown |
-| `docs/roadmap-comparison-refresh-20260618` | 2 | 2026-06-18 | unknown |
-| `feat/gove-zone-proofpack-roundtrip` | 2 | 2026-06-18 | unknown |
-| `feat/gove-zone-policy-hash-verify` | 2 | 2026-06-18 | unknown |
-| `feat/gove-zone-b13-authz` | 2 | 2026-06-23 | unknown |
-| `dislovelhl-stunning-bassoon` | 2 | 2026-06-26 | unknown |
-| `fix-fuse-denylist` | 2 | 2026-06-26 | unknown |
-| `feat/ci-security-scanners` | 2 | 2026-06-28 | unknown |
-| `agent/wave2-prove` | 2 | 2026-06-28 | unknown |
-| `agent/wave3-a2a` | 2 | 2026-06-28 | unknown |
-| `feat/vulnclaw-demo-salvage` | 2 | 2026-07-03 | unknown |
-| `feat/gove-zone-pypi-release-prep` | 2 | 2026-07-03 | unknown |
-| `feat/governed-loop-v2` | 2 | 2026-07-06 | unknown |
-| `feat/gove-zone-authority-at-gate` | 2 | 2026-07-08 | unknown |
-| `docs/investor-brief` | 2 | 2026-07-08 | unknown |
-| `feat/marketing-drafting-print` | 2 | 2026-07-10 | unknown |
-| `fix/marketing-deploy-workers-assets` | 2 | 2026-07-10 | unknown |
-| `fix/ci-wrangler-devdep` | 2 | 2026-07-11 | unknown |
-| `fix-acgi-ai-dangling-tokens` | 2 | 2026-07-13 | unknown |
-| `docs/gove-zone-status-headers` | 2 | 2026-07-24 | unknown |
-| `fix/dark-required-scans` | 2 | 2026-07-30 | unknown |
-| `work/wt3-test-gaps-a2a-gateway` | 2 | 2026-08-06 | unknown |
-| `fix/gove-zone-execution-governance` | 2 | 2026-08-11 | unknown |
-| `final-goal/g2-4` | 3 | 2026-06-09 | unknown |
-| `feat/gove-zone-rejection-allowed-alternatives` | 3 | 2026-06-10 | unknown |
-| `fix/hook-gate-mode-delegation` | 3 | 2026-06-10 | unknown |
-| `feat/gove-zone-mcp-binding` | 3 | 2026-06-10 | unknown |
-| `chore/readiness-evidence-followup` | 3 | 2026-06-19 | unknown |
-| `feat/gove-zone-b13-executor-authz` | 3 | 2026-06-25 | unknown |
-| `feat/gove-zone-b3-ttl-prune` | 3 | 2026-06-26 | unknown |
-| `feat/marketing-sitemap-robots` | 3 | 2026-06-27 | unknown |
-| `docs/agent-stack-maturity-flip` | 3 | 2026-07-03 | unknown |
-| `reconstruct/doc00-s5-fix-stale-pointers` | 3 | 2026-07-06 | unknown |
-| `fix/acgi-ai-biome-import-order` | 3 | 2026-07-06 | unknown |
-| `feat/compliance-mapping-engine` | 3 | 2026-07-07 | unknown |
-| `feat/universal-agent-gateway` | 3 | 2026-07-08 | unknown |
-| `docs/productization-review-fixes` | 3 | 2026-07-08 | unknown |
-| `feat/regulated-industry-demos` | 3 | 2026-07-08 | unknown |
-| `feat/marketing-gold-details` | 3 | 2026-07-10 | unknown |
-| `final-goal/g2-1` | 3 | 2026-07-11 | unknown |
-| `port/evidence-containment-p391-orthogonal` | 3 | 2026-07-27 | unknown |
-| `test/coverage-hardening` | 3 | 2026-08-11 | unknown |
-| `codex/stage-3-landing-thesis` | 4 | 2026-06-04 | unknown |
-| `feat/gove-zone-structured-rejection` | 4 | 2026-06-10 | unknown |
-| `feat/gove-zone-production-strict` | 4 | 2026-06-18 | unknown |
-| `fix/ci-ephemeral-gitconfig-submodule-token` | 4 | 2026-07-05 | unknown |
-| `feat/gove-zone-adversary-suite` | 4 | 2026-07-07 | unknown |
-| `improve/gove_zone_membrane_overhead` | 4 | 2026-07-07 | unknown |
-| `beta/p0-program-record-005` | 4 | 2026-07-13 | unknown |
-| `feat/bus-analysis-test-runner` | 5 | 2026-05-26 | unknown |
-| `feat/gove-zone-enforce-by-default` | 5 | 2026-06-10 | unknown |
-| `feat/gove-zone-tamper-evident-consumption-ledger` | 5 | 2026-06-13 | unknown |
-| `feat/gove-zone-ledger-audit-reconciliation` | 5 | 2026-06-13 | unknown |
-| `feat/acgs-perplexity-ask` | 5 | 2026-06-14 | unknown |
-| `feat/gove-zone-ledger-stack-onto-master` | 5 | 2026-06-15 | unknown |
-| `feat/buildable-okr-slice` | 5 | 2026-06-21 | unknown |
-| `perf/gove-zone-benchmarks` | 5 | 2026-07-08 | unknown |
-| `feat/hygiene-salvage-20260709` | 5 | 2026-07-11 | unknown |
-| `beta/p0-current-state-006` | 5 | 2026-07-13 | unknown |
-| `feat/gove-zone-ledger-observability` | 6 | 2026-06-13 | unknown |
-| `feat/gove-zone-ledger-hwm-checkpoint` | 6 | 2026-06-13 | unknown |
-| `chore/acgi-purge-vercel-remnants` | 6 | 2026-06-19 | unknown |
-| `agent/stackmap-spec` | 6 | 2026-06-28 | unknown |
-| `feat/gove-zone-receipt-consumption` | 7 | 2026-06-10 | unknown |
-| `feat/acgi-ai-b16-browser-ci` | 7 | 2026-06-26 | unknown |
-| `beta/p0-membrane-rebuilt` | 7 | 2026-07-11 | unknown |
-| `feat/acgi-ai-cloudflare-pages-deploy` | 8 | 2026-06-15 | unknown |
-| `dislovelhl-ideal-goggles` | 8 | 2026-06-24 | unknown |
-| `feat/gove-zone-b2-key-revocation` | 8 | 2026-06-25 | unknown |
-| `feat/mcp-gateway-pilot` | 8 | 2026-07-03 | unknown |
-| `reconstruct/doc00-s5-hermes-fold-in` | 8 | 2026-07-06 | unknown |
-| `docs/productization-pack` | 8 | 2026-07-07 | unknown |
-| `feat/gove-zone-release-prep` | 8 | 2026-07-11 | unknown |
-| `feat/swot-execution-artifacts` | 9 | 2026-07-03 | unknown |
-| `copilot/resolve-conflict-and-merge` | 9 | 2026-07-03 | unknown |
-| `beta/p0-product-contract-007` | 9 | 2026-07-13 | unknown |
-| `release/gove-zone-0.1.0` | 9 | 2026-07-18 | unknown |
-| `feat/gove-zone-framework-integration` | 10 | 2026-07-06 | unknown |
-| `phase-2-trace-crypto` | 11 | 2026-05-27 | unknown |
-| `feat/marketing-hub-claim-substantiation` | 11 | 2026-06-05 | unknown |
-| `feat/marketing-governance-hub` | 11 | 2026-06-06 | unknown |
-| `docs/campaign-launch-drafts` | 11 | 2026-06-11 | unknown |
-| `beta/p0-architecture-008` | 11 | 2026-07-13 | unknown |
-| `beta/p0-evidence-t3` | 13 | 2026-07-10 | unknown |
-| `beta/p0-evidence-corpus-001d` | 15 | 2026-07-11 | unknown |
-| `feat/compliance-evidence-pack` | 16 | 2026-07-08 | unknown |
-| `beta/p0-evidence-000` | 16 | 2026-07-10 | unknown |
-| `beta/p0-evidence-corpus-002d` | 21 | 2026-07-11 | unknown |
-| `beta/p0-membrane-001` | 21 | 2026-07-11 | unknown |
-| `beta/p1-migrations-scope-101` | 21 | 2026-07-13 | unknown |
-| `beta/p1-g101-postgres-advisory-lock` | 22 | 2026-07-13 | unknown |
-| `beta/p0-claims-002` | 26 | 2026-07-11 | unknown |
-| `beta/p0-evidence-corpus-003d` | 27 | 2026-07-11 | unknown |
-| `beta/p0-evidence-pack-eof` | 29 | 2026-07-14 | unknown |
-| `beta/p1-saas-lock-coherence` | 32 | 2026-07-14 | unknown |
-| `beta/p0-clean-sibling-cp-wheel` | 32 | 2026-07-14 | unknown |
-| `beta/p1-g101-program-record` | 32 | 2026-07-15 | unknown |
-| `beta/p1-g101-postgres-ci` | 33 | 2026-07-14 | unknown |
-| `beta/p1-g101-multiprocess-migration-coordination` | 33 | 2026-07-15 | unknown |
-| `beta/p1-g101-migration-operator-cli` | 35 | 2026-07-15 | unknown |
-| `beta/p1-g101-migration-recovery` | 36 | 2026-07-15 | unknown |
-| `beta/p2-idempotency-002-retry` | 36 | 2026-07-30 | unknown |
-| `beta/p1-g101-recovery-bytea-evidence` | 37 | 2026-07-15 | unknown |
-| `beta/p1-g101-startup-integration` | 41 | 2026-07-15 | unknown |
-| `beta/p2-evidence-isolation-002b` | 41 | 2026-07-30 | unknown |
-| `beta/p1-g101-rolling-upgrade-evidence` | 43 | 2026-07-15 | unknown |
-| `beta/p2-vertical-gate-003` | 47 | 2026-07-30 | unknown |
-| `beta/p3-policy-001` | 52 | 2026-07-30 | unknown |
-| `beta/p3-mutations-002` | 62 | 2026-07-30 | unknown |
-| `chore/gove-zone-demo-f401` | 68 | 2026-07-06 | unknown |
-| `beta/p3-approval-003-reconciled` | 68 | 2026-07-30 | unknown |
-| `beta/p3-approval-003b-authoritative-retry` | 68 | 2026-07-30 | unknown |
-| `beta/p3-approval-003c-authoritative-retry` | 68 | 2026-07-30 | unknown |
-| `docs/neutral-positioning-reconciled` | 69 | 2026-06-07 | unknown |
-| `beta/p3c-failure-harness-repair-004` | 70 | 2026-07-30 | unknown |
-| `beta/p3-sealed-export-007` | 72 | 2026-07-30 | unknown |
-| `beta/p3-authority-consumption-guard-006` | 72 | 2026-07-30 | unknown |
-| `beta/p3-host-uid-namespace-retry-006` | 72 | 2026-07-30 | unknown |
-| `beta/p0-gates-003` | 78 | 2026-07-11 | unknown |
-| `feat/governed-vulnclaw-pentest` | 83 | 2026-07-13 | unknown |
-| `fix/enterprise-mgr-security-and-runtime` | 125 | 2026-05-12 | unknown |
-| `feat/monorepo-unification` | 125 | 2026-05-12 | unknown |
-| `beta/p4-policy-wiring-cp-002b` | 126 | 2026-08-03 | unknown |
-| `beta/p4-policy-wiring-gz-002a` | 126 | 2026-08-06 | unknown |
-| `backup/gove-zone-policy-identity-pre-rebuild` | 161 | 2026-07-27 | unknown |
+| `docs/agent-governance-market-roadmap-20260524` | 1 | 2026-05-26 | — |
+| `final-goal/g1-4` | 1 | 2026-06-09 | — |
+| `final-goal/g2-5` | 1 | 2026-06-09 | — |
+| `final-goal/g1-6` | 1 | 2026-06-09 | — |
+| `feat/console-cloudrun-production-gate` | 1 | 2026-06-15 | — |
+| `chore/claude-settings-safe-automation` | 1 | 2026-06-18 | — |
+| `fix/ci-root-tests-gate` | 1 | 2026-06-18 | — |
+| `docs/roadmap-enforcement-substrate` | 1 | 2026-06-21 | — |
+| `fix/research-engine-numpy-mypy` | 1 | 2026-06-22 | — |
+| `chore/bump-acgs-swarm-submodule` | 1 | 2026-06-23 | — |
+| `track-f-gate-wired` | 1 | 2026-06-26 | — |
+| `ci/github-hosted-invariant-fallback` | 1 | 2026-06-28 | — |
+| `fix/proofpack-manifest-version-drift` | 1 | 2026-07-03 | — |
+| `feat/managed-evidence-pilot-offer` | 1 | 2026-07-04 | — |
+| `feat/partner-auditor-outreach-drafts` | 1 | 2026-07-04 | — |
+| `fix/release-publish-github-hosted-runner` | 1 | 2026-07-04 | — |
+| `reconstruct/doc00-s5-populate-or-descope-constitutional-hash-gate` | 1 | 2026-07-06 | — |
+| `reconstruct/doc00-s5-fail-fast-test-all-grouping` | 1 | 2026-07-06 | — |
+| `feat/gove-zone-phase-evidence-schema` | 1 | 2026-07-07 | — |
+| `fix/mcp-adapter-strict-profile-ledger` | 1 | 2026-07-08 | — |
+| `fix/mcp-gateway-session-id-reuse` | 1 | 2026-07-08 | — |
+| `feat/mcp-gateway-session-hardening` | 1 | 2026-07-09 | — |
+| `chore/hygiene-gitignore-20260709` | 1 | 2026-07-09 | — |
+| `feat/kernel-unification-adr` | 1 | 2026-07-10 | — |
+| `chore/bump-acgs-lite-pointer` | 1 | 2026-07-11 | — |
+| `final-goal/g3-2` | 1 | 2026-07-11 | — |
+| `chore/design-sync-acgi-ai` | 1 | 2026-07-12 | — |
+| `feat-docs-picken-crosswalk` | 1 | 2026-07-14 | — |
+| `claude/dynamic-workflow-issues-prs-es2uky` | 1 | 2026-07-17 | — |
+| `feat/marketing-hub-forward` | 1 | 2026-07-26 | — |
+| `feat/scoped-trust-http-path` | 1 | 2026-07-26 | — |
+| `fix/pg-gate-max-connections` | 1 | 2026-07-27 | — |
+| `work/wt1-issue392-trust-http` | 1 | 2026-07-31 | — |
+| `feat/acgs-trajectory-phase2` | 1 | 2026-08-08 | — |
+| `feat/gove-zone-simulate` | 2 | 2026-06-10 | — |
+| `docs/blog-replay-context-claim` | 2 | 2026-06-11 | — |
+| `docs/mattermost-governance-comparison` | 2 | 2026-06-15 | — |
+| `docs/roadmap-comparison-refresh-20260618` | 2 | 2026-06-18 | — |
+| `feat/gove-zone-proofpack-roundtrip` | 2 | 2026-06-18 | — |
+| `feat/gove-zone-policy-hash-verify` | 2 | 2026-06-18 | — |
+| `feat/gove-zone-b13-authz` | 2 | 2026-06-23 | — |
+| `dislovelhl-stunning-bassoon` | 2 | 2026-06-26 | — |
+| `fix-fuse-denylist` | 2 | 2026-06-26 | — |
+| `feat/ci-security-scanners` | 2 | 2026-06-28 | — |
+| `agent/wave2-prove` | 2 | 2026-06-28 | — |
+| `agent/wave3-a2a` | 2 | 2026-06-28 | — |
+| `feat/vulnclaw-demo-salvage` | 2 | 2026-07-03 | — |
+| `feat/gove-zone-pypi-release-prep` | 2 | 2026-07-03 | — |
+| `feat/governed-loop-v2` | 2 | 2026-07-06 | — |
+| `feat/gove-zone-authority-at-gate` | 2 | 2026-07-08 | — |
+| `docs/investor-brief` | 2 | 2026-07-08 | — |
+| `feat/marketing-drafting-print` | 2 | 2026-07-10 | — |
+| `fix/marketing-deploy-workers-assets` | 2 | 2026-07-10 | — |
+| `fix/ci-wrangler-devdep` | 2 | 2026-07-11 | — |
+| `fix-acgi-ai-dangling-tokens` | 2 | 2026-07-13 | — |
+| `docs/gove-zone-status-headers` | 2 | 2026-07-24 | — |
+| `fix/dark-required-scans` | 2 | 2026-07-30 | — |
+| `work/wt3-test-gaps-a2a-gateway` | 2 | 2026-08-06 | — |
+| `fix/gove-zone-execution-governance` | 2 | 2026-08-11 | — |
+| `final-goal/g2-4` | 3 | 2026-06-09 | — |
+| `feat/gove-zone-rejection-allowed-alternatives` | 3 | 2026-06-10 | — |
+| `fix/hook-gate-mode-delegation` | 3 | 2026-06-10 | — |
+| `feat/gove-zone-mcp-binding` | 3 | 2026-06-10 | — |
+| `chore/readiness-evidence-followup` | 3 | 2026-06-19 | — |
+| `feat/gove-zone-b13-executor-authz` | 3 | 2026-06-25 | — |
+| `feat/gove-zone-b3-ttl-prune` | 3 | 2026-06-26 | — |
+| `feat/marketing-sitemap-robots` | 3 | 2026-06-27 | — |
+| `docs/agent-stack-maturity-flip` | 3 | 2026-07-03 | — |
+| `reconstruct/doc00-s5-fix-stale-pointers` | 3 | 2026-07-06 | — |
+| `fix/acgi-ai-biome-import-order` | 3 | 2026-07-06 | — |
+| `feat/compliance-mapping-engine` | 3 | 2026-07-07 | — |
+| `feat/universal-agent-gateway` | 3 | 2026-07-08 | — |
+| `docs/productization-review-fixes` | 3 | 2026-07-08 | — |
+| `feat/regulated-industry-demos` | 3 | 2026-07-08 | — |
+| `feat/marketing-gold-details` | 3 | 2026-07-10 | — |
+| `final-goal/g2-1` | 3 | 2026-07-11 | — |
+| `port/evidence-containment-p391-orthogonal` | 3 | 2026-07-27 | — |
+| `test/coverage-hardening` | 3 | 2026-08-11 | — |
+| `chore/integration-state-ledger` | 3 | 2026-08-12 | #447 |
+| `codex/stage-3-landing-thesis` | 4 | 2026-06-04 | — |
+| `feat/gove-zone-structured-rejection` | 4 | 2026-06-10 | — |
+| `feat/gove-zone-production-strict` | 4 | 2026-06-18 | — |
+| `fix/ci-ephemeral-gitconfig-submodule-token` | 4 | 2026-07-05 | — |
+| `feat/gove-zone-adversary-suite` | 4 | 2026-07-07 | — |
+| `improve/gove_zone_membrane_overhead` | 4 | 2026-07-07 | — |
+| `beta/p0-program-record-005` | 4 | 2026-07-13 | — |
+| `feat/bus-analysis-test-runner` | 5 | 2026-05-26 | — |
+| `feat/gove-zone-enforce-by-default` | 5 | 2026-06-10 | — |
+| `feat/gove-zone-tamper-evident-consumption-ledger` | 5 | 2026-06-13 | — |
+| `feat/gove-zone-ledger-audit-reconciliation` | 5 | 2026-06-13 | — |
+| `feat/acgs-perplexity-ask` | 5 | 2026-06-14 | — |
+| `feat/gove-zone-ledger-stack-onto-master` | 5 | 2026-06-15 | — |
+| `feat/buildable-okr-slice` | 5 | 2026-06-21 | — |
+| `perf/gove-zone-benchmarks` | 5 | 2026-07-08 | — |
+| `feat/hygiene-salvage-20260709` | 5 | 2026-07-11 | — |
+| `beta/p0-current-state-006` | 5 | 2026-07-13 | — |
+| `feat/gove-zone-ledger-observability` | 6 | 2026-06-13 | — |
+| `feat/gove-zone-ledger-hwm-checkpoint` | 6 | 2026-06-13 | — |
+| `chore/acgi-purge-vercel-remnants` | 6 | 2026-06-19 | — |
+| `agent/stackmap-spec` | 6 | 2026-06-28 | — |
+| `feat/gove-zone-receipt-consumption` | 7 | 2026-06-10 | — |
+| `feat/acgi-ai-b16-browser-ci` | 7 | 2026-06-26 | — |
+| `beta/p0-membrane-rebuilt` | 7 | 2026-07-11 | — |
+| `feat/acgi-ai-cloudflare-pages-deploy` | 8 | 2026-06-15 | — |
+| `dislovelhl-ideal-goggles` | 8 | 2026-06-24 | — |
+| `feat/gove-zone-b2-key-revocation` | 8 | 2026-06-25 | — |
+| `feat/mcp-gateway-pilot` | 8 | 2026-07-03 | — |
+| `reconstruct/doc00-s5-hermes-fold-in` | 8 | 2026-07-06 | — |
+| `docs/productization-pack` | 8 | 2026-07-07 | — |
+| `feat/gove-zone-release-prep` | 8 | 2026-07-11 | — |
+| `feat/swot-execution-artifacts` | 9 | 2026-07-03 | — |
+| `copilot/resolve-conflict-and-merge` | 9 | 2026-07-03 | — |
+| `beta/p0-product-contract-007` | 9 | 2026-07-13 | — |
+| `release/gove-zone-0.1.0` | 9 | 2026-07-18 | — |
+| `feat/gove-zone-framework-integration` | 10 | 2026-07-06 | — |
+| `phase-2-trace-crypto` | 11 | 2026-05-27 | — |
+| `feat/marketing-hub-claim-substantiation` | 11 | 2026-06-05 | — |
+| `feat/marketing-governance-hub` | 11 | 2026-06-06 | — |
+| `docs/campaign-launch-drafts` | 11 | 2026-06-11 | — |
+| `beta/p0-architecture-008` | 11 | 2026-07-13 | — |
+| `beta/p0-evidence-t3` | 13 | 2026-07-10 | — |
+| `beta/p0-evidence-corpus-001d` | 15 | 2026-07-11 | — |
+| `feat/compliance-evidence-pack` | 16 | 2026-07-08 | — |
+| `beta/p0-evidence-000` | 16 | 2026-07-10 | — |
+| `beta/p0-evidence-corpus-002d` | 21 | 2026-07-11 | — |
+| `beta/p0-membrane-001` | 21 | 2026-07-11 | — |
+| `beta/p1-migrations-scope-101` | 21 | 2026-07-13 | — |
+| `beta/p1-g101-postgres-advisory-lock` | 22 | 2026-07-13 | — |
+| `beta/p0-claims-002` | 26 | 2026-07-11 | — |
+| `beta/p0-evidence-corpus-003d` | 27 | 2026-07-11 | — |
+| `beta/p0-evidence-pack-eof` | 29 | 2026-07-14 | — |
+| `beta/p1-saas-lock-coherence` | 32 | 2026-07-14 | — |
+| `beta/p0-clean-sibling-cp-wheel` | 32 | 2026-07-14 | — |
+| `beta/p1-g101-program-record` | 32 | 2026-07-15 | — |
+| `beta/p1-g101-postgres-ci` | 33 | 2026-07-14 | — |
+| `beta/p1-g101-multiprocess-migration-coordination` | 33 | 2026-07-15 | — |
+| `beta/p1-g101-migration-operator-cli` | 35 | 2026-07-15 | — |
+| `beta/p1-g101-migration-recovery` | 36 | 2026-07-15 | — |
+| `beta/p2-idempotency-002-retry` | 36 | 2026-07-30 | — |
+| `chore/commit-improvement-pipeline` | 36 | 2026-08-12 | #446 |
+| `beta/p1-g101-recovery-bytea-evidence` | 37 | 2026-07-15 | — |
+| `beta/p1-g101-startup-integration` | 41 | 2026-07-15 | — |
+| `beta/p2-evidence-isolation-002b` | 41 | 2026-07-30 | — |
+| `beta/p1-g101-rolling-upgrade-evidence` | 43 | 2026-07-15 | — |
+| `beta/p2-vertical-gate-003` | 47 | 2026-07-30 | — |
+| `beta/p3-policy-001` | 52 | 2026-07-30 | — |
+| `beta/p3-mutations-002` | 62 | 2026-07-30 | — |
+| `chore/gove-zone-demo-f401` | 68 | 2026-07-06 | — |
+| `beta/p3-approval-003-reconciled` | 68 | 2026-07-30 | — |
+| `beta/p3-approval-003b-authoritative-retry` | 68 | 2026-07-30 | — |
+| `beta/p3-approval-003c-authoritative-retry` | 68 | 2026-07-30 | — |
+| `docs/neutral-positioning-reconciled` | 69 | 2026-06-07 | — |
+| `beta/p3c-failure-harness-repair-004` | 70 | 2026-07-30 | — |
+| `beta/p3-sealed-export-007` | 72 | 2026-07-30 | — |
+| `beta/p3-authority-consumption-guard-006` | 72 | 2026-07-30 | — |
+| `beta/p3-host-uid-namespace-retry-006` | 72 | 2026-07-30 | — |
+| `beta/p0-gates-003` | 78 | 2026-07-11 | — |
+| `feat/governed-vulnclaw-pentest` | 83 | 2026-07-13 | — |
+| `fix/enterprise-mgr-security-and-runtime` | 125 | 2026-05-12 | — |
+| `feat/monorepo-unification` | 125 | 2026-05-12 | — |
+| `beta/p4-policy-wiring-gz-002a` | 126 | 2026-08-06 | — |
+| `backup/gove-zone-policy-identity-pre-rebuild` | 161 | 2026-07-27 | — |
 
 ## Reapable branches (content already on master, or no content)
 
 | Branch | Status | Tip date |
 |---|---|---|
 | `001-enhanced-agent-bus-analysis` | NO-OP | 2026-05-16 |
-| `origin` | NO-OP | 2026-08-11 |
 | `add-claude-github-actions-1778703716073` | NO-OP | 2026-05-16 |
 | `agent/readme-release-docs` | NO-OP | 2026-07-18 |
 | `backup/acgi-ai-wip-2026-05-06` | NO-OP | 2026-05-07 |
@@ -230,7 +230,6 @@ merges). LANDED means every touched blob is byte-identical on master.
 | `docs-version-pin-fix` | NO-OP | 2026-07-21 |
 | `docs/acgi-ai-console-realization-spec-2026-05-13` | NO-OP | 2026-05-16 |
 | `docs/adr-gap-phase-b3` | NO-OP | 2026-05-16 |
-| `docs/agent-skill-trust-adoption` | LANDED | 2026-08-04 |
 | `docs/architecture-gitnexus-import` | NO-OP | 2026-05-16 |
 | `docs/check6-workflow-permissions-amendment` | NO-OP | 2026-05-16 |
 | `docs/community-health` | NO-OP | 2026-07-23 |
@@ -313,5 +312,11 @@ merges). LANDED means every touched blob is byte-identical on master.
 | `release-readiness-hardening-chatgpt-review` | NO-OP | 2026-05-27 |
 | `storybook-scaffold-rebuild` | NO-OP | 2026-05-27 |
 | `verify/gates-at-45f8593d` | NO-OP | 2026-07-31 |
-| `work/wt4-nist-ai-rmf-crosswalk` | LANDED | 2026-08-06 |
-| `work/wt5-gove-zone-doc-arch` | LANDED | 2026-08-06 |
+
+## Errors (classification failed: investigate manually)
+
+| Branch | Error |
+|---|---|
+| `feat/eval-r2-topic` | fatal: origin/master...origin/feat/eval-r2-topic: no merge base |
+| `improve/eval-regression-coverage-hardening` | fatal: origin/master...origin/improve/eval-regression-coverage-hardening: no merge base |
+| `main` | fatal: origin/master...origin/main: no merge base |

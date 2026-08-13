@@ -43,7 +43,7 @@ def list_remote_branches() -> list[str]:
     branches = []
     for ref in out.splitlines():
         ref = ref.strip()
-        if not ref or ref.endswith("HEAD") or ref == BASE:
+        if not ref or ref == "origin/HEAD" or ref == BASE:
             continue
         branches.append(ref)
     return branches
@@ -54,7 +54,14 @@ def branch_tip_date(branch: str) -> str:
 
 
 def classify(branch: str) -> dict:
-    touched = [f for f in git("diff", "--name-only", f"{BASE}...{branch}").splitlines() if f]
+    # --no-renames: a rename must surface both sides (old path deleted, new path
+    # added) so a deletion that never landed on BASE cannot hide behind rename
+    # detection collapsing the pair into the new path only.
+    touched = [
+        f
+        for f in git("diff", "--name-only", "--no-renames", f"{BASE}...{branch}").splitlines()
+        if f
+    ]
     entry = {
         "branch": branch.removeprefix("origin/"),
         "tip_date": branch_tip_date(branch),
@@ -64,7 +71,11 @@ def classify(branch: str) -> dict:
         entry.update(status="NO-OP", files_differing=0)
         return entry
     differing = [
-        f for f in git("diff", "--name-only", BASE, branch, "--", *touched).splitlines() if f
+        f
+        for f in git(
+            "diff", "--name-only", "--no-renames", BASE, branch, "--", *touched
+        ).splitlines()
+        if f
     ]
     if not differing:
         entry.update(status="LANDED", files_differing=0)
@@ -77,8 +88,15 @@ def classify(branch: str) -> dict:
     return entry
 
 
-def try_open_prs() -> dict[str, int]:
-    """Map head branch name -> PR number for open PRs, if `gh` works."""
+def try_open_prs() -> tuple[dict[str, int], bool]:
+    """Map head branch name -> PR number for open same-repo PRs.
+
+    Returns ``(mapping, available)``. ``available`` is False only when the
+    ``gh`` query itself failed; an empty mapping with ``available=True`` means
+    the query succeeded and there are genuinely no open PRs. Cross-repository
+    (fork) PRs are excluded because their head branch names are not unique to
+    origin refs.
+    """
     try:
         out = subprocess.run(
             [
@@ -90,16 +108,23 @@ def try_open_prs() -> dict[str, int]:
                 "--limit",
                 "500",
                 "--json",
-                "number,headRefName",
+                "number,headRefName,isCrossRepository",
             ],
             capture_output=True,
             text=True,
             timeout=30,
             check=True,
         ).stdout
-        return {row["headRefName"]: row["number"] for row in json.loads(out)}
+        return (
+            {
+                row["headRefName"]: row["number"]
+                for row in json.loads(out)
+                if not row.get("isCrossRepository")
+            },
+            True,
+        )
     except Exception:
-        return {}
+        return {}, False
 
 
 def render_markdown(
@@ -121,7 +146,8 @@ def render_markdown(
         f"**{counts.get('STRANDED', 0)} STRANDED** "
         f"({small_tail} differ in ≤2 files), "
         f"{counts.get('LANDED', 0)} LANDED (squash ghosts, safe to delete), "
-        f"{counts.get('NO-OP', 0)} NO-OP (safe to delete).",
+        f"{counts.get('NO-OP', 0)} NO-OP (safe to delete), "
+        f"{counts.get('ERROR', 0)} ERROR (classification failed).",
         "",
         "A branch is STRANDED when at least one file it touched still differs",
         "from master (content comparison — ancestry is unreliable under squash",
@@ -148,6 +174,18 @@ def render_markdown(
     for e in entries:
         if e["status"] in ("LANDED", "NO-OP"):
             lines.append(f"| `{e['branch']}` | {e['status']} | {e['tip_date'][:10]} |")
+    errors = [e for e in entries if e["status"] == "ERROR"]
+    if errors:
+        lines += [
+            "",
+            "## Errors (classification failed: investigate manually)",
+            "",
+            "| Branch | Error |",
+            "|---|---|",
+        ]
+        for e in errors:
+            err = e.get("error", "").replace("\n", " ").replace("|", "\\|")
+            lines.append(f"| `{e['branch']}` | {err} |")
     lines.append("")
     return "\n".join(lines)
 
@@ -189,8 +227,7 @@ def main() -> int:
         if i % 50 == 0:
             print(f"  {i}/{len(branches)}", file=sys.stderr)
 
-    prs = try_open_prs()
-    pr_data_available = bool(prs)
+    prs, pr_data_available = try_open_prs()
 
     counts = Counter(e["status"] for e in entries)
     payload = {

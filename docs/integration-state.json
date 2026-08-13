@@ -1,14 +1,14 @@
 {
   "base": "origin/master",
-  "base_sha": "641adb00e",
-  "generated_at": "2026-08-13T01:22:41+00:00",
+  "base_sha": "641adb00",
+  "generated_at": "2026-08-13T02:00:37+00:00",
   "summary": {
-    "NO-OP": 116,
-    "STRANDED": 161,
-    "LANDED": 21,
+    "NO-OP": 115,
+    "STRANDED": 162,
+    "LANDED": 18,
     "ERROR": 3
   },
-  "pr_data_available": false,
+  "pr_data_available": true,
   "branches": [
     {
       "branch": "001-enhanced-agent-bus-analysis",
@@ -237,7 +237,7 @@
     },
     {
       "branch": "beta/p0-g102e0-audit-appender",
-      "tip_date": "2026-07-26T05:38:13Z",
+      "tip_date": "2026-07-26T05:38:13+00:00",
       "files_touched": 0,
       "status": "NO-OP",
       "files_differing": 0
@@ -348,7 +348,7 @@
     },
     {
       "branch": "beta/p1-evidence-corpus-001d",
-      "tip_date": "2026-07-25T11:22:21Z",
+      "tip_date": "2026-07-25T11:22:21+00:00",
       "files_touched": 0,
       "status": "NO-OP",
       "files_differing": 0
@@ -572,21 +572,21 @@
     },
     {
       "branch": "beta/p1-g102d-v1-api-contract",
-      "tip_date": "2026-07-26T05:07:38Z",
+      "tip_date": "2026-07-26T05:07:38+00:00",
       "files_touched": 0,
       "status": "NO-OP",
       "files_differing": 0
     },
     {
       "branch": "beta/p1-ledger-003",
-      "tip_date": "2026-07-25T13:23:00Z",
+      "tip_date": "2026-07-25T13:23:00+00:00",
       "files_touched": 0,
       "status": "NO-OP",
       "files_differing": 0
     },
     {
       "branch": "beta/p1-migration-001",
-      "tip_date": "2026-07-25T11:47:24Z",
+      "tip_date": "2026-07-25T11:47:24+00:00",
       "files_touched": 0,
       "status": "NO-OP",
       "files_differing": 0
@@ -851,20 +851,6 @@
       ]
     },
     {
-      "branch": "beta/p4-policy-wiring-cp-002b",
-      "tip_date": "2026-08-03T02:46:59-04:00",
-      "files_touched": 127,
-      "status": "STRANDED",
-      "files_differing": 126,
-      "differing_sample": [
-        ".agents/skills/govern-zone/SKILL.md",
-        ".claude/skills/govern-zone/SKILL.md",
-        ".github/workflows/codex-code-review.yml",
-        ".github/workflows/python-acgs-control-plane.yml",
-        ".github/workflows/saas-beta-p0-evidence.yml"
-      ]
-    },
-    {
       "branch": "beta/p4-policy-wiring-gz-002a",
       "tip_date": "2026-08-06T16:07:22-04:00",
       "files_touched": 127,
@@ -880,7 +866,7 @@
     },
     {
       "branch": "blacksmith-migration-ee83e18",
-      "tip_date": "2026-07-25T06:12:32Z",
+      "tip_date": "2026-07-25T06:12:32+00:00",
       "files_touched": 0,
       "status": "NO-OP",
       "files_differing": 0
@@ -927,6 +913,20 @@
       "files_differing": 1,
       "differing_sample": [
         ".claude/settings.json"
+      ]
+    },
+    {
+      "branch": "chore/commit-improvement-pipeline",
+      "tip_date": "2026-08-12T21:20:46-04:00",
+      "files_touched": 36,
+      "status": "STRANDED",
+      "files_differing": 36,
+      "differing_sample": [
+        ".claude/commands/claim-verify.md",
+        ".claude/commands/verify.md",
+        ".claude/rules/claim-safety.md",
+        ".claude/rules/codex-execution-workflow.md",
+        ".claude/rules/headless-delegation.md"
       ]
     },
     {
@@ -982,6 +982,18 @@
       "files_differing": 1,
       "differing_sample": [
         ".gitignore"
+      ]
+    },
+    {
+      "branch": "chore/integration-state-ledger",
+      "tip_date": "2026-08-12T21:23:33-04:00",
+      "files_touched": 3,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        "docs/INTEGRATION-STATE.md",
+        "docs/integration-state.json",
+        "scripts/integration_state.py"
       ]
     },
     {
@@ -1073,7 +1085,7 @@
     },
     {
       "branch": "copilot/resolve-conflict-and-merge",
-      "tip_date": "2026-07-03T20:05:00Z",
+      "tip_date": "2026-07-03T20:05:00+00:00",
       "files_touched": 13,
       "status": "STRANDED",
       "files_differing": 9,
@@ -1101,7 +1113,7 @@
     },
     {
       "branch": "dislovelhl-patch-1",
-      "tip_date": "2026-08-11T12:51:19Z",
+      "tip_date": "2026-08-11T12:51:19+00:00",
       "files_touched": 50,
       "status": "LANDED",
       "files_differing": 0
@@ -1147,13 +1159,6 @@
       "differing_sample": [
         "docs/research/2026-05-24-agent-governance-market-roadmap.md"
       ]
-    },
-    {
-      "branch": "docs/agent-skill-trust-adoption",
-      "tip_date": "2026-08-04T21:03:13Z",
-      "files_touched": 2,
-      "status": "LANDED",
-      "files_differing": 0
     },
     {
       "branch": "docs/agent-stack-maturity-flip",
@@ -1393,7 +1398,7 @@
     },
     {
       "branch": "ecc-tools/govern-zone-1779994771092",
-      "tip_date": "2026-05-28T18:59:49Z",
+      "tip_date": "2026-05-28T18:59:49+00:00",
       "files_touched": 0,
       "status": "NO-OP",
       "files_differing": 0
@@ -1473,7 +1478,7 @@
     },
     {
       "branch": "feat/acgs-trajectory-phase2",
-      "tip_date": "2026-08-08T22:33:32Z",
+      "tip_date": "2026-08-08T22:33:32+00:00",
       "files_touched": 66,
       "status": "STRANDED",
       "files_differing": 1,
@@ -2488,7 +2493,7 @@
     },
     {
       "branch": "fix/ci-tests-docs-and-iii-lab-static",
-      "tip_date": "2026-07-25T06:39:30Z",
+      "tip_date": "2026-07-25T06:39:30+00:00",
       "files_touched": 0,
       "status": "NO-OP",
       "files_differing": 0
@@ -2552,7 +2557,7 @@
     },
     {
       "branch": "fix/drop-caller-worker-otel-advisories",
-      "tip_date": "2026-07-30T23:31:04Z",
+      "tip_date": "2026-07-30T23:31:04+00:00",
       "files_touched": 0,
       "status": "NO-OP",
       "files_differing": 0
@@ -2594,7 +2599,7 @@
     },
     {
       "branch": "fix/gove-zone-execution-governance",
-      "tip_date": "2026-08-11T14:21:17Z",
+      "tip_date": "2026-08-11T14:21:17+00:00",
       "files_touched": 16,
       "status": "STRANDED",
       "files_differing": 2,
@@ -2631,7 +2636,7 @@
     },
     {
       "branch": "fix/keep-github-hosted-security-lanes",
-      "tip_date": "2026-07-25T06:24:12Z",
+      "tip_date": "2026-07-25T06:24:12+00:00",
       "files_touched": 0,
       "status": "NO-OP",
       "files_differing": 0
@@ -2807,13 +2812,6 @@
       "files_differing": 0
     },
     {
-      "branch": "origin",
-      "tip_date": "2026-08-11T12:02:21-04:00",
-      "files_touched": 0,
-      "status": "NO-OP",
-      "files_differing": 0
-    },
-    {
       "branch": "perf/gove-zone-benchmarks",
       "tip_date": "2026-07-08T03:49:47-07:00",
       "files_touched": 14,
@@ -2878,7 +2876,7 @@
     {
       "branch": "reconstruct/doc00-s5-hermes-fold-in",
       "tip_date": "2026-07-06T18:38:01-04:00",
-      "files_touched": 29,
+      "files_touched": 37,
       "status": "STRANDED",
       "files_differing": 8,
       "differing_sample": [
@@ -2951,14 +2949,14 @@
     },
     {
       "branch": "verify/gates-at-45f8593d",
-      "tip_date": "2026-07-31T05:03:04Z",
+      "tip_date": "2026-07-31T05:03:04+00:00",
       "files_touched": 0,
       "status": "NO-OP",
       "files_differing": 0
     },
     {
       "branch": "work/wt1-issue392-trust-http",
-      "tip_date": "2026-07-31T16:59:42Z",
+      "tip_date": "2026-07-31T16:59:42+00:00",
       "files_touched": 3,
       "status": "STRANDED",
       "files_differing": 1,
@@ -2976,20 +2974,6 @@
         ".github/workflows/saas-beta-required.yml",
         "tests/saas_beta/test_ci_gate_contract.py"
       ]
-    },
-    {
-      "branch": "work/wt4-nist-ai-rmf-crosswalk",
-      "tip_date": "2026-08-06T11:23:35-04:00",
-      "files_touched": 1,
-      "status": "LANDED",
-      "files_differing": 0
-    },
-    {
-      "branch": "work/wt5-gove-zone-doc-arch",
-      "tip_date": "2026-08-06T11:35:34-04:00",
-      "files_touched": 7,
-      "status": "LANDED",
-      "files_differing": 0
     }
   ]
 }
