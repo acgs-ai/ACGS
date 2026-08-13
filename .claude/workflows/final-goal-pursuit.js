@@ -407,8 +407,8 @@ Procedure:
 1. Read the package-local CLAUDE.md / AGENTS.md first and obey them.
 2. Resolve the repository's real base explicitly (NEVER report the branch the worktree happened to start on: isolation worktrees can begin on a generated transient branch or a detached HEAD, neither of which is a ref a PR can target). Resolve TWO values: base_ref, the resolvable commit-ish to branch from, and base_branch, the short PR-facing name. A checkout may expose the base ONLY as a remote-tracking ref, and a short name that exists only under refs/remotes/ is NOT resolvable, so never strip origin/ from the start ref. Resolve in this order:
    a. base_ref="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" (e.g. origin/master). If non-empty: base_branch="\${base_ref#origin/}".
-   b. Else the first name of main, master for which "git show-ref --verify --quiet refs/heads/<name>" succeeds: base_ref=<name>, base_branch=<name>.
-   c. Else the first name of main, master for which "git show-ref --verify --quiet refs/remotes/origin/<name>" succeeds: base_ref=origin/<name>, base_branch=<name>.
+   b. Else the first name of master, main for which "git show-ref --verify --quiet refs/heads/<name>" succeeds: base_ref=<name>, base_branch=<name>. (master FIRST: this repository's declared PR base is master, so a stale or unrelated local main must never win when both exist.)
+   c. Else the first name of master, main for which "git show-ref --verify --quiet refs/remotes/origin/<name>" succeeds: base_ref=origin/<name>, base_branch=<name>.
    d. If none resolve, STOP: set completed=false and explain in blockers. Do not guess a ref.
 3. Create the feature branch FROM that ref: git switch -c ${shq(`final-goal/${slug}`)} "$base_ref" (if the branch already exists, append a -2 suffix).
 4. Make the smallest safe change that closes the gap, WITH tests (TDD where practical).
@@ -473,6 +473,21 @@ If you determine the criterion is ALREADY satisfied and zero changes are require
     const reviewBase = impl.baseRef
     assertShellSafe(reviewBase, 'impl.baseRef', RE_REF)
     assertShellSafe(impl.baseBranch, 'impl.baseBranch', RE_REF)
+    // A character-valid baseBranch can still be INCONSISTENT with baseRef: an
+    // implementer reporting baseRef="origin/main" alongside baseBranch="master"
+    // would pass the reviewer's preflight (which validates only baseRef) while
+    // the final handoff tells the human to open the PR against the unchecked
+    // master. The PR-facing name is fully determined by the start ref (strip a
+    // single origin/ prefix, nothing else, exactly as the implementer prompts
+    // instruct), so derive it here and block on mismatch instead of trusting
+    // the reported field. Consistency also makes the reviewer's step-1a
+    // rev-parse of baseRef prove the PR target exists: a resolvable local
+    // <name> or remote-tracking origin/<name> is precisely the branch the
+    // handoff will name.
+    const expectedBaseBranch = reviewBase.startsWith('origin/') ? reviewBase.slice('origin/'.length) : reviewBase
+    if (impl.baseBranch !== expectedBaseBranch) {
+      return { impl, review: { verdict: 'block', issues: [`implementer reported baseBranch=${JSON.stringify(impl.baseBranch)} inconsistent with baseRef=${JSON.stringify(reviewBase)} (the PR-facing base derived from that ref is ${JSON.stringify(expectedBaseBranch)}): the review preflight validates only baseRef, so the handoff would target a base the review never checked`] } }
+    }
     // A syntactically valid baseRef can still be the WRONG ref: if the
     // implementer reports its own feature branch (or HEAD, or the feature
     // branch's remote-tracking ref) as the base, the instructed diff is empty
