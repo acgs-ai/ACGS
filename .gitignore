@@ -108,6 +108,10 @@ credentials/
 !/.claude/skills/**
 !/.claude/agents/
 !/.claude/agents/**
+!/.claude/rules/
+!/.claude/rules/**
+!/.claude/commands/
+!/.claude/commands/**
 !/.claude/workflows/
 !/.claude/workflows/**
 !/.claude/prompts/
