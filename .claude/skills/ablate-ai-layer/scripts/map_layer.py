@@ -24,8 +24,10 @@ ALWAYS, ONDEMAND, ENFORCE = "always-loaded", "on-demand", "enforcement"
 # (glob, agent, default classification, note)
 PATTERNS: list[tuple[str, str, str, str]] = [
     # --- Claude Code
-    ("CLAUDE.md",                        "Claude Code", ALWAYS,   "root project instructions"),
-    ("CLAUDE.local.md",                  "Claude Code", ALWAYS,   "personal, gitignored"),
+    # Recursive: nested CLAUDE.md/AGENTS.md files load for work under their
+    # directory, so a root-only glob would leave them active in the stripped arm.
+    ("**/CLAUDE.md",                     "Claude Code", ALWAYS,   "root project instructions"),
+    ("**/CLAUDE.local.md",               "Claude Code", ALWAYS,   "personal, gitignored"),
     (".claude/CLAUDE.md",                "Claude Code", ALWAYS,   "alt project instructions"),
     (".claude/rules/**/*.md",            "Claude Code", ALWAYS,   "path-scoped if it has paths: frontmatter"),
     (".claude/skills/*/SKILL.md",        "Claude Code", ONDEMAND, "loads when invoked or matched"),
@@ -34,7 +36,7 @@ PATTERNS: list[tuple[str, str, str, str]] = [
     (".claude/settings.json",            "Claude Code", ENFORCE,  "hooks and permissions"),
     (".claude/settings.local.json",      "Claude Code", ENFORCE,  "hooks and permissions"),
     # --- open standard / Codex / Amp / Gemini CLI / Zed
-    ("AGENTS.md",                        "AGENTS.md",   ALWAYS,   "open standard, read by most agents"),
+    ("**/AGENTS.md",                     "AGENTS.md",   ALWAYS,   "open standard, read by most agents"),
     (".agents/skills/*/SKILL.md",        "Codex",       ONDEMAND, "filesystem-discovered skills"),
     (".agents/rules/**/*.md",            "AGENTS.md",   ALWAYS,   "proposed rules dir"),
     # --- Cursor
@@ -77,9 +79,15 @@ def frontmatter(path: Path) -> dict:
     return out
 
 
-def classify(path: Path, default: str) -> tuple[str, str]:
-    """Refine classification using the file's own frontmatter."""
+def classify(path: Path, default: str, root: Path | None = None) -> tuple[str, str]:
+    """Refine classification using the file's own frontmatter and scope."""
     name = path.name
+    # A nested instruction file loads whenever work touches its subtree — it is
+    # still always-loaded FOR THAT SCOPE, and stripping must remove it too, but
+    # the report should say which scope it governs.
+    if name in ("CLAUDE.md", "CLAUDE.local.md", "AGENTS.md") and root and path.parent != root:
+        scope = path.parent.relative_to(root).as_posix()
+        return default, f"scoped: loads for work under {scope}/"
     # Key PRESENCE, not truthiness: a YAML list renders as an empty value here
     # ("paths:\n  - src/**") and would otherwise read as absent.
     if name.endswith(".mdc"):                       # Cursor
@@ -109,7 +117,7 @@ def iter_matches(root: Path):
             if rp in seen:
                 continue
             seen.add(rp)
-            kind, why = classify(p, default)
+            kind, why = classify(p, default, root)
             yield {
                 "path": rp.as_posix(),
                 "agent": agent,

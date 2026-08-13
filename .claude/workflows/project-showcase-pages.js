@@ -52,8 +52,9 @@ const SPEC = { type: 'object', required: ['archetype', 'sections'], properties: 
   contractRisks: { type: 'array', items: { type: 'string' } },
 } }
 
-const BUILD = { type: 'object', required: ['branch', 'routeWired', 'navWired'], properties: {
+const BUILD = { type: 'object', required: ['branch', 'worktree', 'routeWired', 'navWired'], properties: {
   branch:          { type: 'string' },
+  worktree:        { type: 'string', description: 'Absolute path of the isolated worktree the branch was built in (git rev-parse --show-toplevel)' },
   files:           { type: 'array', items: { type: 'string' } },
   routeWired:      { type: 'boolean' },
   navWired:        { type: 'boolean' },
@@ -114,19 +115,31 @@ const results = await pipeline(
     `2. Wire route ${p.route} into the custom surface router AND add a marketing-nav entry through the existing internalNav factory in Marketing.tsx. Keep all existing navigate('/...') literals intact.\n` +
     `3. Self-check: grep your CSS diff for box-shadow / rgba( / '#'; run \`pnpm --dir acgi-ai lint\` (biome) and the relevant acgi-ai/scripts/check-*.mjs gates (at least check-trust-surface.mjs). Run \`pnpm --dir acgi-ai build\` to confirm it compiles.\n` +
     `4. Commit ONLY the files you created/edited (explicit paths, never git add -A) on branch showcase/${p.slug}. Do not push, do not merge.\n` +
-    `Return the branch name, files changed, whether route+nav are wired, the grep/gate evidence, and which gates you ran.\n` +
+    `Return the branch name, the absolute worktree path (git rev-parse --show-toplevel), files changed, whether route+nav are wired, the grep/gate evidence, and which gates you ran.\n` +
     `Design spec: ${JSON.stringify(spec)}\n${GUARDRAILS}`,
     { label: `build:${p.slug}`, phase: 'Build', model: p.model, isolation: 'worktree', agentType: 'designer', schema: BUILD },
   ),
 
-  // Stage 4 — Independent verification of the produced branch (read-only).
-  (build, p) => agent(
-    `Verify the showcase page work on branch ${build?.branch || `showcase/${p.slug}`} for "${p.slug}". Check out that branch in this worktree (git checkout ${build?.branch || `showcase/${p.slug}`}).\n` +
-    `Confirm: (a) route ${p.route} is reachable through the surface router AND linked from marketing nav (trace entry -> router -> ${p.component}; an unreachable page = orphanRoute true); (b) NO box-shadow and NO hardcoded hex/rgba outside index.css in the diff (CSP/DESIGN.md); (c) \`pnpm --dir acgi-ai lint\` and \`pnpm --dir acgi-ai build\` pass; (d) check-trust-surface.mjs and other relevant check-*.mjs gates still pass. A green unit/lint pass does NOT prove wiring — actually trace the route.\n` +
-    `Report pass/fail, cspSafe, orphanRoute, the literal gate results, concrete issues, and a merge recommendation.\n` +
-    `Build report: ${JSON.stringify(build)}\n${GUARDRAILS}`,
-    { label: `verify:${p.slug}`, phase: 'Verify', model: 'sonnet', agentType: 'verifier', schema: VERDICT },
-  ),
+  // Stage 4 — Independent verification INSIDE the build's isolated worktree
+  // (read-only). Never `git checkout` in the default checkout: with multiple
+  // pipelines advancing concurrently, verifiers would race each other switching
+  // branches in one shared tree — and change the user's checked-out branch.
+  (build, p) => {
+    if (!build?.worktree || !/^[A-Za-z0-9._/-]+$/.test(build.worktree)) {
+      return {
+        pass: false, cspSafe: false, orphanRoute: true,
+        issues: [`build stage returned no usable worktree path (${JSON.stringify(build?.worktree ?? null)}) — cannot verify in isolation`],
+        recommendation: 'do not merge; re-run the build stage so verification gets its isolated worktree',
+      }
+    }
+    return agent(
+      `Verify the showcase page work on branch ${build.branch || `showcase/${p.slug}`} for "${p.slug}". Work ONLY inside the build's isolated worktree: cd ${build.worktree} first — do NOT git checkout or switch branches in any other checkout (parallel pipelines share the main worktree).\n` +
+      `Confirm: (a) route ${p.route} is reachable through the surface router AND linked from marketing nav (trace entry -> router -> ${p.component}; an unreachable page = orphanRoute true); (b) NO box-shadow and NO hardcoded hex/rgba outside index.css in the diff (CSP/DESIGN.md); (c) \`pnpm --dir acgi-ai lint\` and \`pnpm --dir acgi-ai build\` pass (run from inside the worktree); (d) check-trust-surface.mjs and other relevant check-*.mjs gates still pass. A green unit/lint pass does NOT prove wiring — actually trace the route.\n` +
+      `Report pass/fail, cspSafe, orphanRoute, the literal gate results, concrete issues, and a merge recommendation.\n` +
+      `Build report: ${JSON.stringify(build)}\n${GUARDRAILS}`,
+      { label: `verify:${p.slug}`, phase: 'Verify', model: 'sonnet', agentType: 'verifier', schema: VERDICT },
+    )
+  },
 )
 
 // ---------------------------------------------------------------------------

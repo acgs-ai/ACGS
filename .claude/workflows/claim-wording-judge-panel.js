@@ -269,7 +269,7 @@ const synthesisInput = ranked.map((j) => ({
   scores: j.score,
 }))
 
-const synthesis =
+const synthesisRaw =
   cleanRanked.length > 0
     ? await agent(
         `You are choosing and refining the strongest SHIPPABLE governance-hub claim from several scored, screened candidates.
@@ -284,8 +284,30 @@ NON-NEGOTIABLE: the result must use none of these words (${FORBIDDEN.join(', ')}
       )
     : null
 
+// The synthesized copy is NEWLY GENERATED text — grafting and rewriting can
+// reintroduce a forbidden term or an ops-gated present-tense promise that every
+// input candidate individually avoided. So it must pass the same safety screen
+// as the candidates; a non-clean synthesis yields NO recommendation (fail-closed).
+let synthesis = null
+let synthesisScreen = null
+if (synthesisRaw) {
+  synthesisScreen = await agent(screenPrompt(synthesisRaw), {
+    label: 'screen:synthesis',
+    phase: 'Synthesize',
+    schema: SCREEN,
+  })
+  if (synthesisScreen?.clean) {
+    synthesis = synthesisRaw
+  } else {
+    log(
+      'Synthesized recommendation FAILED the claim-safety re-screen — returning no recommendation (fail-closed). ' +
+        `Violations: ${JSON.stringify(synthesisScreen?.violations ?? 'screen produced no verdict')}`,
+    )
+  }
+}
+
 if (!synthesis) {
-  log('Every candidate failed the claim-safety screen — no shippable recommendation (fail-closed).')
+  log('No screen-clean recommendation produced (fail-closed).')
 }
 
 log(
@@ -294,8 +316,10 @@ log(
 )
 
 return {
-  // The synthesized winner — or null if nothing passed the safety screen.
+  // The synthesized winner — or null if nothing passed the safety screen
+  // (including the re-screen of the synthesized copy itself).
   recommendation: synthesis,
+  synthesisScreen,
   // Hard reality: this is never auto-shippable from this workflow.
   publicDeployAllowed: false,
   legalSignoffRequired: true,

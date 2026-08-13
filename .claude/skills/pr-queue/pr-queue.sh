@@ -62,6 +62,9 @@ for p in sorted(prs, key=lambda p: p["number"]):
         verdict_bits.append("CI-RED")
     elif "pending" in cis:
         verdict_bits.append("CI-PENDING")
+    elif cis == "no checks":
+        # No CI evidence at all is NOT green — never call such a PR ready.
+        verdict_bits.append("NO-CHECKS")
     if p["mergeable"] == "CONFLICTING":
         verdict_bits.append("CONFLICTS")
     if (p.get("reviewDecision") or "") == "CHANGES_REQUESTED":

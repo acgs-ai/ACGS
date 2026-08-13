@@ -197,13 +197,41 @@ Procedure:
 Be skeptical: a unit test that imports a handler directly does NOT prove wiring; local success is not production proof. Set id to "${c.id}".`,
       { label: `audit:${c.id}`, phase: 'Audit', schema: AUDIT_SCHEMA },
     )))
-  audits.push(...results.filter(Boolean))
-  log(`Audit wave done: ${audits.length}/${CRITERIA.length} criteria scored`)
+  // Fail closed on missing lanes: a crashed audit agent (null result) must stay
+  // visible as an explicit "unknown" for its criterion — silently dropping it
+  // would shrink the scoreboard and could make "no implementable gaps remain"
+  // a statement about criteria that were never evaluated.
+  wave.forEach((c, j) => {
+    const r = results[j]
+    audits.push(r && r.id ? r : {
+      id: c.id,
+      status: 'unknown',
+      evidence: '',
+      gapSummary: 'audit lane crashed or returned no structured result — criterion NOT evaluated',
+      agentImplementable: false,
+      nextAction: 're-run this audit lane',
+      scope: 'small',
+    })
+  })
+  log(`Audit wave done: ${audits.length}/${CRITERIA.length} criteria accounted for`)
 }
 
 const scoreboard = audits.map(a => ({ id: a.id, status: a.status, scope: a.scope, gap: a.gapSummary }))
 const met = audits.filter(a => a.status === 'met').length
 log(`Scoreboard: ${met}/${CRITERIA.length} met`)
+
+// Every criterion must be accounted for before prioritization: ranking against
+// an incomplete scoreboard can mislabel never-evaluated gaps as human-gated.
+const unaudited = audits.filter(a => a.status === 'unknown')
+if (unaudited.length > 0) {
+  log(`STOPPING (fail-closed): ${unaudited.length} criteria produced no audit verdict: ${unaudited.map(a => a.id).join(', ')}`)
+  return {
+    scoreboard,
+    selected: [],
+    unaudited: unaudited.map(a => a.id),
+    note: `Audit incomplete — ${unaudited.length}/${CRITERIA.length} criteria returned no verdict (crashed/empty audit lanes). Prioritization was NOT run: an incomplete scoreboard cannot prove "no implementable gaps remain". Re-run the workflow.`,
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Phase 2 — Prioritize (barrier is correct: ranking needs all 16 results)

@@ -55,6 +55,10 @@ const RE_PATH = /^[A-Za-z0-9._/-]+$/ // filesystem path
 const RE_REF = /^[A-Za-z0-9._/@~^{}-]+$/ // git ref / branch name
 const RE_SLUG = /^[A-Za-z0-9._-]+$/ // slug / id component
 
+// True containment, not a prefix test: `${PKG}-other` must NOT count as inside
+// PKG, or the implementer is pointed at the wrong repository's worktree.
+const isWithin = (dir, base) => dir === base || dir.startsWith(base + '/')
+
 // A short free-form cache-busting marker (e.g. a date or "run 3"). Interpolated
 // into research prompts only — never into a shell command — but a newline
 // would still inject new instructions into the prompt, so guard fail-closed
@@ -362,6 +366,18 @@ const selected = (plan?.items ?? []).slice(0, MAX_ITEMS)
 for (const it of selected) {
   assertShellSafe(it.id, 'id', RE_SLUG)
   assertShellSafe(it.packageDir, 'packageDir', RE_PATH)
+  // Boundary gate (fail closed): a plan may only target the nested
+  // ACGS-agency-agents repo or the parent repo's experiments/ tree. Anything
+  // else — another package, an arbitrary absolute path, or a lookalike prefix —
+  // would instruct the implementer to build a worktree of the wrong repository.
+  if (!isWithin(it.packageDir, PKG) && !isWithin(it.packageDir, EXPERIMENTS)) {
+    throw new Error(
+      `agency-agents-productization-pursuit: refusing to run — packageDir ` +
+        `${JSON.stringify(it.packageDir)} for item ${JSON.stringify(it.id)} is outside both ` +
+        `the nested package (${PKG}) and the experiments tree (${EXPERIMENTS}). ` +
+        `Re-plan with a target inside one of those trees.`,
+    )
+  }
 }
 log(`Selected ${selected.length} work item(s): ${selected.map(s => s.id).join(', ')}`)
 
@@ -390,7 +406,7 @@ const outcomes = await pipeline(
       log(`Budget low — skipping implementation of ${item.id}`)
       return null
     }
-    const inNestedPkg = item.packageDir.startsWith(PKG)
+    const inNestedPkg = isWithin(item.packageDir, PKG)
     return agent(
       `You are the implementation lane for ONE work item toward productizing ACGS-agency-agents. Work item: ${JSON.stringify(item.title)}
 

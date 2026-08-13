@@ -78,11 +78,14 @@ const BUILD_RESULT = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['path', 'present', 'bytes'],
+        required: ['path', 'present', 'bytes', 'plainText'],
         properties: {
           path: { type: 'string' },
           present: { type: 'boolean' },
           bytes: { type: 'integer' },
+          // Machine-readable content-sanity verdict: true ONLY if the file is
+          // plain-text framework content, NOT HTML (an SPA fallback page).
+          plainText: { type: 'boolean' },
           // A one-line content sanity note (e.g. "framework header found, no HTML").
           sanity: { type: 'string' },
         },
@@ -157,7 +160,8 @@ PROCEDURE — follow exactly, capturing each exit code with  echo "EXIT:$?":
 4. IMMEDIATELY (before anything else can touch dist/) inspect the emitted surface:
    - ls -l dist/llms.txt dist/governance-framework.txt   (record bytes; present=false if absent)
    - For each: head it and confirm it is PLAIN-TEXT framework content, NOT HTML
-     (no leading "<!doctype html>"); note one sanity line per file.
+     (no leading "<!doctype html>"); set plainText=true/false accordingly (an HTML
+     SPA-fallback body is plainText=false) and note one sanity line per file.
    - grep -c 'id="agent-governance"' dist/index.html   → siblingBlockPresent = (count >= 1).
      This block must be a SIBLING of #root (createRoot wipes #root children on mount).
 5. failureSummary: if buildExit != 0 OR any artifact missing/empty OR an artifact is HTML
@@ -254,12 +258,22 @@ const build = await agent(buildPrompt, {
 })
 
 const artifacts = build?.artifacts ?? []
+// Proof requires the TWO EXPECTED artifacts by name (not "any two nonempty
+// files"), each machine-verified as plain text (a zero-exit build can still
+// emit an HTML SPA fallback), and an EMPTY failureSummary — the build agent's
+// contract records content-sanity failures there, and ignoring it would let an
+// explicitly-failed deploy-artifact check sail through to "substantiated".
+const EXPECTED_ARTIFACTS = ['llms.txt', 'governance-framework.txt']
+const artifactFor = (name) => artifacts.find((a) => (a.path ?? '').split('/').pop() === name)
 const artifactsProven =
   !!build &&
   build.buildExit === 0 &&
   build.siblingBlockPresent === true &&
-  artifacts.length >= 2 &&
-  artifacts.every((a) => a.present && a.bytes > 0)
+  (build.failureSummary ?? '').trim() === '' &&
+  EXPECTED_ARTIFACTS.every((name) => {
+    const a = artifactFor(name)
+    return !!a && a.present && a.bytes > 0 && a.plainText === true
+  })
 
 phase('Gate')
 // Only spend the (slow) full gate if the deploy build itself is sound.

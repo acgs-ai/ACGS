@@ -170,10 +170,20 @@ def scan(root: Path, extra: list[str]):
         is_chronological = len(page_bullets) >= 5 and n_dated / len(page_bullets) >= 0.7
 
         under_open = under_log = False
+        log_level = 0
         for lineno, line in iter_lines(text):
             if line.startswith("#"):
+                level = len(line) - len(line.lstrip("#"))
+                # A deeper heading inside a `## Log` ("### June") is still the
+                # log's history; only a heading at the same or higher level
+                # closes the section. Without this, the first subheading would
+                # flip its bullets back into "current facts".
+                if under_log and level > log_level:
+                    under_open = False
+                    continue
                 under_open = bool(OPEN_HEADING.match(line))
                 under_log = bool(LOG_HEADING.match(line))
+                log_level = level if under_log else 0
                 continue
             if not BULLET.match(line):
                 continue

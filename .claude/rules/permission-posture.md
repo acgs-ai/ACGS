@@ -7,11 +7,14 @@
 
 ## Default: `acceptEdits`, not `bypassPermissions`
 
-`.claude/settings.local.json` sets `"defaultMode": "acceptEdits"`. File edits proceed
-without a prompt (fast local iteration), but Bash and other side-effectful tools still
-pass through the permission layer and the deny list. `bypassPermissions` disables that
-layer wholesale — inappropriate as a standing default for a receipt-gated governance repo
-where claim-safety and fail-closed behavior are the product.
+The recommended posture is `"defaultMode": "acceptEdits"`, set machine-locally in
+`.claude/settings.local.json`. That file is personal and gitignored — a fresh clone does
+NOT have it, so never assume this mode is active: check whether the file exists (and what
+it sets) on the machine you are on, and create it if you want this posture. When set, file
+edits proceed without a prompt (fast local iteration), but Bash and other side-effectful
+tools still pass through the permission layer and the deny list. `bypassPermissions`
+disables that layer wholesale — inappropriate as a standing default for a receipt-gated
+governance repo where claim-safety and fail-closed behavior are the product.
 
 **Never set `bypassPermissions` as the persisted `defaultMode`.** Enable it only for a
 single session, on the command line, with a stated reason:

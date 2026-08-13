@@ -103,6 +103,33 @@ def build_dependencies(root: Path, targets: list[dict]) -> list[str]:
     return hits
 
 
+def stage_agent_changes(wt: Path, removed: list[str]) -> None:
+    """Stage ONLY what the agent changed. The stripped arm deleted instruction
+    files before the agent ran; those artificial deletions must never enter the
+    captured diff — they would count a do-nothing run as "produced changes" and
+    pollute the artifacts being graded. So: restore any stripped file the agent
+    left missing (a file the agent recreated is an agent change and is kept),
+    then stage the remaining paths explicitly. Never `git add -A` (forbidden in
+    this repo, and it would sweep the ablation's own removals into the data)."""
+    for rel in removed:
+        if not (wt / rel).exists():
+            git(["checkout", "--quiet", "--", rel], wt, check=False)
+    entries = [e for e in git(["status", "--porcelain", "-z"], wt,
+                              check=False).split("\0") if e]
+    paths: list[str] = []
+    i = 0
+    while i < len(entries):
+        code, path = entries[i][:2], entries[i][3:]
+        paths.append(path)
+        if code and code[0] in "RC":
+            i += 1                      # rename/copy: the next record is the source path
+            if i < len(entries):
+                paths.append(entries[i])
+        i += 1
+    if paths:
+        git(["add", "--", *paths], wt, check=False)
+
+
 # ---------------------------------------------------------------- one run
 
 def build_command(model: str | None, runner: str | None) -> tuple[list[str] | str, bool]:
@@ -170,7 +197,7 @@ def run_one(root: Path, sha: str, arm: str, index: int, prompt: str,
             rec["result_text"] = (proc.stdout or "")[:4000]
             rec["agent_error"] = proc.returncode != 0
 
-        git(["add", "-A"], wt, check=False)
+        stage_agent_changes(wt, rec["removed"])
         rec["diff"] = git(["diff", "--cached"], wt, check=False)
         rec["files_changed"] = [
             l for l in git(["diff", "--cached", "--name-only"], wt, check=False).splitlines() if l]
@@ -262,12 +289,13 @@ def main() -> int:
         return 0
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    out = Path(args.out) if args.out else root / ".ablation" / stamp
+    # Results default to a location OUTSIDE the repo: this script promises the
+    # user's working tree is never touched, so it must not drop artifacts into
+    # the tree or edit the tracked .gitignore. Pass --out to choose a spot
+    # (if you point it inside the repo, ignoring it is your setup, not ours).
+    out = (Path(args.out) if args.out
+           else Path(tempfile.gettempdir()) / "ablate-ai-layer" / f"{root.name}-{stamp}")
     out.mkdir(parents=True, exist_ok=True)
-    gi = root / ".gitignore"
-    if not gi.exists() or ".ablation" not in gi.read_text(encoding="utf-8", errors="replace"):
-        with gi.open("a", encoding="utf-8") as fh:
-            fh.write("\n# ablate-ai-layer experiment artifacts\n.ablation/\n")
 
     jobs = [(arm, i) for arm in (CONTROL, STRIPPED) for i in range(1, args.runs + 1)]
     print(f"\nrunning {total} sessions, writing to {out}\n")

@@ -73,8 +73,14 @@ esac
 
 # --- 4. console DNS -----------------------------------------------------------
 if timeout 5 getent hosts "$CONSOLE_HOST" >/dev/null 2>&1; then
-  C=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://$CONSOLE_HOST/" || echo "000")
-  ok "$CONSOLE_HOST resolves; / -> HTTP $C"
+  C=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://$CONSOLE_HOST/") || C="000"
+  # A resolving host is not a working console: transport failures (timeout/TLS,
+  # curl exit != 0 -> "000") and server errors are drift failures, not "ok".
+  case "$C" in
+    2[0-9][0-9]|3[0-9][0-9]|401|403) ok "$CONSOLE_HOST resolves; / -> HTTP $C" ;;
+    000) warn "$CONSOLE_HOST resolves but the HTTPS request failed (timeout/TLS/connect) — console unreachable" ;;
+    *)   warn "$CONSOLE_HOST resolves but / -> HTTP $C — console unhealthy" ;;
+  esac
 else
   warn "$CONSOLE_HOST has no DNS record (known gap — console deploy is separate from marketing)"
 fi

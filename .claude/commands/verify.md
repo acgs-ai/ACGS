@@ -21,7 +21,7 @@ Target: **`$ARGUMENTS`**
 | empty, `all`, `verify`, `make`, root-wide | `make verify` |
 | `tests/docs`, `docs`, `docs-smoke`, docs-only edits | `uv run python -m pytest tests/docs --import-mode=importlib -q` |
 | `gove-zone`, `packages/gove-zone`, gove_zone source/tests | `uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q` |
-| `acgi-ai`, `console`, `marketing`, frontend | `pnpm run lint && pnpm run typecheck && pnpm run test` — run **inside `acgi-ai/`** |
+| `acgi-ai`, `console`, `marketing`, frontend | `pnpm run test:all` — run **inside `acgi-ai/`** (the package's aggregate gate; it starts with `lint` and ends with the vitest unit suite — there is no `typecheck` script) |
 | `acgs-lite`, `packages/acgs-lite` | package-local gate **inside the nested repo** (its `Makefile`/`pyproject`; e.g. `uv run --package acgs-lite python -m pytest packages/acgs-lite/tests -q`) |
 | `Acgs-Swarm`, `acgs-swarm`, `packages/Acgs-Swarm` | package-local pytest **inside the nested repo** (package-local tests only) |
 | `clinicalguard`, `packages/clinicalguard` | package-local gate inside the nested repo (path-filtered; may be unavailable) |
