@@ -90,7 +90,7 @@ merges). LANDED means every touched blob is byte-identical on master.
 | `final-goal/g2-1` | 3 | 2026-07-11 | — |
 | `port/evidence-containment-p391-orthogonal` | 3 | 2026-07-27 | — |
 | `test/coverage-hardening` | 3 | 2026-08-11 | — |
-| `chore/integration-state-ledger` | 3 | 2026-08-12 | #447 |
+| `chore/integration-state-ledger` | 3 | 2026-08-13 | #447 |
 | `codex/stage-3-landing-thesis` | 4 | 2026-06-04 | — |
 | `feat/gove-zone-structured-rejection` | 4 | 2026-06-10 | — |
 | `feat/gove-zone-production-strict` | 4 | 2026-06-18 | — |
@@ -151,7 +151,7 @@ merges). LANDED means every touched blob is byte-identical on master.
 | `beta/p1-g101-migration-operator-cli` | 35 | 2026-07-15 | — |
 | `beta/p1-g101-migration-recovery` | 36 | 2026-07-15 | — |
 | `beta/p2-idempotency-002-retry` | 36 | 2026-07-30 | — |
-| `chore/commit-improvement-pipeline` | 36 | 2026-08-12 | #446 |
+| `chore/commit-improvement-pipeline` | 36 | 2026-08-13 | #446 |
 | `beta/p1-g101-recovery-bytea-evidence` | 37 | 2026-07-15 | — |
 | `beta/p1-g101-startup-integration` | 41 | 2026-07-15 | — |
 | `beta/p2-evidence-isolation-002b` | 41 | 2026-07-30 | — |
@@ -317,6 +317,6 @@ merges). LANDED means every touched blob is byte-identical on master.
 
 | Branch | Error |
 |---|---|
-| `feat/eval-r2-topic` | fatal: origin/master...origin/feat/eval-r2-topic: no merge base |
-| `improve/eval-regression-coverage-hardening` | fatal: origin/master...origin/improve/eval-regression-coverage-hardening: no merge base |
-| `main` | fatal: origin/master...origin/main: no merge base |
+| `feat/eval-r2-topic` | fatal: 641adb00eded69b38d1646d7fef8a0f81e5bc52f...959326795bf14adaa96d90c992144d3284acab64: no merge base |
+| `improve/eval-regression-coverage-hardening` | fatal: 641adb00eded69b38d1646d7fef8a0f81e5bc52f...af9823378a8776664fe3d91328c64d52bd7e89d1: no merge base |
+| `main` | fatal: 641adb00eded69b38d1646d7fef8a0f81e5bc52f...29a2a782c8852903e9e178cb076fda52aaa1e20b: no merge base |

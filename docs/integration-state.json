@@ -1,7 +1,7 @@
 {
   "base": "origin/master",
   "base_sha": "641adb00",
-  "generated_at": "2026-08-13T02:00:37+00:00",
+  "generated_at": "2026-08-13T02:11:02+00:00",
   "summary": {
     "NO-OP": 115,
     "STRANDED": 162,
@@ -917,7 +917,7 @@
     },
     {
       "branch": "chore/commit-improvement-pipeline",
-      "tip_date": "2026-08-12T21:20:46-04:00",
+      "tip_date": "2026-08-13T02:08:38+00:00",
       "files_touched": 36,
       "status": "STRANDED",
       "files_differing": 36,
@@ -927,7 +927,8 @@
         ".claude/rules/claim-safety.md",
         ".claude/rules/codex-execution-workflow.md",
         ".claude/rules/headless-delegation.md"
-      ]
+      ],
+      "open_pr": 446
     },
     {
       "branch": "chore/design-sync-acgi-ai",
@@ -986,7 +987,7 @@
     },
     {
       "branch": "chore/integration-state-ledger",
-      "tip_date": "2026-08-12T21:23:33-04:00",
+      "tip_date": "2026-08-13T02:01:04+00:00",
       "files_touched": 3,
       "status": "STRANDED",
       "files_differing": 3,
@@ -994,7 +995,8 @@
         "docs/INTEGRATION-STATE.md",
         "docs/integration-state.json",
         "scripts/integration_state.py"
-      ]
+      ],
+      "open_pr": 447
     },
     {
       "branch": "chore/monorepo-hardening",
@@ -1599,7 +1601,7 @@
     {
       "branch": "feat/eval-r2-topic",
       "status": "ERROR",
-      "error": "fatal: origin/master...origin/feat/eval-r2-topic: no merge base",
+      "error": "fatal: 641adb00eded69b38d1646d7fef8a0f81e5bc52f...959326795bf14adaa96d90c992144d3284acab64: no merge base",
       "tip_date": "",
       "files_touched": 0,
       "files_differing": 0
@@ -2757,7 +2759,7 @@
     {
       "branch": "improve/eval-regression-coverage-hardening",
       "status": "ERROR",
-      "error": "fatal: origin/master...origin/improve/eval-regression-coverage-hardening: no merge base",
+      "error": "fatal: 641adb00eded69b38d1646d7fef8a0f81e5bc52f...af9823378a8776664fe3d91328c64d52bd7e89d1: no merge base",
       "tip_date": "",
       "files_touched": 0,
       "files_differing": 0
@@ -2799,7 +2801,7 @@
     {
       "branch": "main",
       "status": "ERROR",
-      "error": "fatal: origin/master...origin/main: no merge base",
+      "error": "fatal: 641adb00eded69b38d1646d7fef8a0f81e5bc52f...29a2a782c8852903e9e178cb076fda52aaa1e20b: no merge base",
       "tip_date": "",
       "files_touched": 0,
       "files_differing": 0

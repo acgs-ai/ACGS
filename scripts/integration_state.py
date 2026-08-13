@@ -13,9 +13,11 @@ branches as unmerged forever. Method (per-branch):
      is byte-identical on BASE -> LANDED (typically a squash ghost). Otherwise
      STRANDED with `len(differing)` files still differing.
 
-The ledger is regenerable: run this script after `git fetch origin` and commit
-the refreshed outputs. PR linkage is best-effort via `gh` and degrades to
-"unknown" when the API is unavailable.
+The ledger is regenerable: run this script after `git fetch --prune origin`
+(pruning drops remote-tracking refs for branches already deleted upstream, so
+they are not inventoried as actionable) and commit the refreshed outputs. PR
+linkage is best-effort via `gh` and degrades to "unknown" when the API is
+unavailable.
 """
 
 from __future__ import annotations
@@ -38,45 +40,60 @@ def git(*args: str) -> str:
     return result.stdout
 
 
-def list_remote_branches() -> list[str]:
-    out = git("for-each-ref", "--format=%(refname:short)", "refs/remotes/origin")
+def list_remote_branches() -> list[tuple[str, str]]:
+    """Return ``(short ref name, tip SHA)`` pairs for every remote branch.
+
+    Tip SHAs are captured in a single atomic ref enumeration so a concurrent
+    `git fetch` (IDE, another process) cannot move a ref between the moment a
+    branch is inventoried and the moment it is classified.
+    """
+    out = git("for-each-ref", "--format=%(refname:short) %(objectname)", "refs/remotes/origin")
     branches = []
-    for ref in out.splitlines():
-        ref = ref.strip()
-        if not ref or ref == "origin/HEAD" or ref == BASE:
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
             continue
-        branches.append(ref)
+        ref, sha = line.rsplit(" ", 1)
+        if ref == "origin/HEAD" or ref == BASE:
+            continue
+        branches.append((ref, sha))
     return branches
 
 
-def branch_tip_date(branch: str) -> str:
-    return git("log", "-1", "--format=%cI", branch).strip()
+def branch_tip_date(sha: str) -> str:
+    return git("log", "-1", "--format=%cI", sha).strip()
 
 
-def classify(branch: str) -> dict:
+def diff_names(*args: str) -> list[str]:
+    """Run `git diff --name-only -z` and return the changed paths.
+
+    NUL-delimited output bypasses `core.quotePath` display quoting, so paths
+    with non-ASCII or special characters come back verbatim and can be reused
+    as pathspecs (quoted display strings would silently match nothing).
+    """
+    out = git("diff", "--name-only", "-z", "--no-renames", *args)
+    return [f for f in out.split("\0") if f]
+
+
+def classify(branch: str, sha: str, base_sha: str) -> dict:
+    # Classification uses only the immutable object IDs (base_sha, sha) frozen
+    # at scan start — never the mutable ref names — so a fetch racing this scan
+    # cannot mix classifications from different revisions or yield a false
+    # LANDED from a branch moving between its two diffs.
+    #
     # --no-renames: a rename must surface both sides (old path deleted, new path
     # added) so a deletion that never landed on BASE cannot hide behind rename
     # detection collapsing the pair into the new path only.
-    touched = [
-        f
-        for f in git("diff", "--name-only", "--no-renames", f"{BASE}...{branch}").splitlines()
-        if f
-    ]
+    touched = diff_names(f"{base_sha}...{sha}")
     entry = {
         "branch": branch.removeprefix("origin/"),
-        "tip_date": branch_tip_date(branch),
+        "tip_date": branch_tip_date(sha),
         "files_touched": len(touched),
     }
     if not touched:
         entry.update(status="NO-OP", files_differing=0)
         return entry
-    differing = [
-        f
-        for f in git(
-            "diff", "--name-only", "--no-renames", BASE, branch, "--", *touched
-        ).splitlines()
-        if f
-    ]
+    differing = diff_names(base_sha, sha, "--", *touched)
     if not differing:
         entry.update(status="LANDED", files_differing=0)
     else:
@@ -127,6 +144,26 @@ def try_open_prs() -> tuple[dict[str, int], bool]:
         return {}, False
 
 
+def md_code(text: str) -> str:
+    """Render text as an inline code span safe inside a Markdown table row.
+
+    Git accepts branch names containing `|` and backticks; unescaped, a pipe
+    splits the table cell and a backtick terminates the code span. Pipes are
+    escaped per GFM table rules, and names containing backticks fall back to a
+    `<code>` element with HTML escaping.
+    """
+    text = text.replace("|", "\\|")
+    if "`" in text:
+        escaped = (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("`", "&#96;")
+        )
+        return f"<code>{escaped}</code>"
+    return f"`{text}`"
+
+
 def render_markdown(
     entries: list[dict], base_sha: str, prs: dict[str, int], pr_data_available: bool
 ) -> str:
@@ -162,7 +199,8 @@ def render_markdown(
         pr = prs.get(e["branch"])
         pr_cell = f"#{pr}" if pr else ("—" if pr_data_available else "unknown")
         lines.append(
-            f"| `{e['branch']}` | {e['files_differing']} | {e['tip_date'][:10]} | {pr_cell} |"
+            f"| {md_code(e['branch'])} | {e['files_differing']} "
+            f"| {e['tip_date'][:10]} | {pr_cell} |"
         )
     lines += [
         "",
@@ -173,7 +211,7 @@ def render_markdown(
     ]
     for e in entries:
         if e["status"] in ("LANDED", "NO-OP"):
-            lines.append(f"| `{e['branch']}` | {e['status']} | {e['tip_date'][:10]} |")
+            lines.append(f"| {md_code(e['branch'])} | {e['status']} | {e['tip_date'][:10]} |")
     errors = [e for e in entries if e["status"] == "ERROR"]
     if errors:
         lines += [
@@ -185,7 +223,7 @@ def render_markdown(
         ]
         for e in errors:
             err = e.get("error", "").replace("\n", " ").replace("|", "\\|")
-            lines.append(f"| `{e['branch']}` | {err} |")
+            lines.append(f"| {md_code(e['branch'])} | {err} |")
     lines.append("")
     return "\n".join(lines)
 
@@ -203,16 +241,19 @@ def main() -> int:
         print(f"ledger present: {ok}")
         return 0 if ok else 1
 
-    base_sha = git("rev-parse", "--short", BASE).strip()
+    # Freeze the base and every branch tip to immutable object IDs up front;
+    # all classification below uses only these SHAs (see classify()).
+    base_full_sha = git("rev-parse", BASE).strip()
+    base_sha = git("rev-parse", "--short", base_full_sha).strip()
     branches = list_remote_branches()
     print(
         f"classifying {len(branches)} remote branches against {BASE} @ {base_sha}", file=sys.stderr
     )
 
     entries = []
-    for i, branch in enumerate(branches, 1):
+    for i, (branch, sha) in enumerate(branches, 1):
         try:
-            entries.append(classify(branch))
+            entries.append(classify(branch, sha, base_full_sha))
         except subprocess.CalledProcessError as exc:
             entries.append(
                 {
@@ -228,6 +269,12 @@ def main() -> int:
             print(f"  {i}/{len(branches)}", file=sys.stderr)
 
     prs, pr_data_available = try_open_prs()
+    # Preserve PR linkage in the machine-readable ledger too: with
+    # pr_data_available=True, a missing "open_pr" key means no open PR.
+    for e in entries:
+        pr = prs.get(e["branch"])
+        if pr is not None:
+            e["open_pr"] = pr
 
     counts = Counter(e["status"] for e in entries)
     payload = {
