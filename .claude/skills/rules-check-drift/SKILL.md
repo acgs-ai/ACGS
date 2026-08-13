@@ -20,9 +20,12 @@ rules file against what just changed and proposes the **smallest** edit that kee
   the name `git symbolic-ref --short refs/remotes/origin/HEAD` prints only after verifying that target itself
   resolves (`git show-ref --verify --quiet "refs/remotes/$(git symbolic-ref --short refs/remotes/origin/HEAD)"`;
   after a default-branch rename or a partial fetch, `origin/HEAD` can dangle and name a ref that no longer
-  exists, so the diff would fail). When that ref is unset or its target does not resolve, pick whichever of
-  `master` or `main` exists (`git show-ref --verify --quiet refs/heads/master || git show-ref --verify --quiet refs/remotes/origin/master`,
-  then the same for `main`). Never hardcode a branch name that the checkout does not have.
+  exists, so the diff would fail). When that ref is unset or its target does not resolve, probe `master` then
+  `main`, and diff against the exact ref form that resolved: if `git show-ref --verify --quiet refs/heads/master`
+  succeeds use `master...HEAD`, otherwise if `git show-ref --verify --quiet refs/remotes/origin/master` succeeds
+  use `origin/master...HEAD` (then the same pair for `main`). In a remote-only checkout the short name does not
+  resolve, so dropping the `origin/` prefix would make the diff fail. Never hardcode a branch name that the
+  checkout does not have.
 - **Scope: the project's rules file(s)** — `CLAUDE.md` and/or `AGENTS.md`, the root file + any package-level
   ones. (If `CLAUDE.md` is just a `@AGENTS.md` import, check `AGENTS.md`.) Ignore README, `docs/`, and `.claude/`
   agent/command/skill files. This skill exists to keep the *rules* honest, nothing else.
