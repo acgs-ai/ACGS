@@ -35,6 +35,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 BASE = "origin/master"
+# The base's branch name on the remote (refs/heads/<_BASE_BRANCH>), used when
+# the reap instructions must reference the authoritative upstream ref rather
+# than the local tracking ref.
+_BASE_BRANCH = BASE.removeprefix("origin/")
 MD_OUT = Path("docs/INTEGRATION-STATE.md")
 JSON_OUT = Path("docs/integration-state.json")
 
@@ -419,7 +423,11 @@ def md_code(text: str) -> str:
 
 
 def render_markdown(
-    entries: list[dict], base_sha: str, prs: dict[str, int], pr_data_available: bool
+    entries: list[dict],
+    base_sha: str,
+    base_full_sha: str,
+    prs: dict[str, int],
+    pr_data_available: bool,
 ) -> str:
     counts = Counter(e["status"] for e in entries)
     stranded = [e for e in entries if e["status"] == "STRANDED"]
@@ -464,29 +472,50 @@ def render_markdown(
         "",
         "Do **not** delete a branch that still has an open PR (deleting the",
         "remote branch closes it and discards its review context). The Open",
-        "PR column is a snapshot from generation time, and a PR can be opened",
-        "afterwards without moving any ref, so immediately before deleting",
-        "verify **all three**:",
+        "PR column is a snapshot from generation time, a PR can be opened",
+        "afterwards without moving any ref, and local tracking refs go stale",
+        "the moment another checkout pushes (they only move on a successful",
+        "fetch), so a check-then-delete against local refs can pass and still",
+        "destroy fresh commits. Immediately before deleting, verify **all",
+        "three** against the live remote:",
         "",
-        "1. the live branch ref still points at the classified tip SHA;",
-        "2. `origin/master` still points at the base SHA above — these",
-        "   verdicts are only valid against that exact base, and if master",
-        "   has moved (e.g. a revert removed content that made a branch",
-        "   LANDED) a listed branch may now be the last ref holding its",
-        "   content;",
-        "3. a live PR query reports no open PR for the branch. Pin the",
+        "1. an authoritative `git ls-remote` lookup (never the local",
+        f"   tracking ref) shows the remote `{_BASE_BRANCH}` still at the",
+        "   classified base, compared as the **full** object ID (a later",
+        "   commit can share an abbreviated prefix):",
+        "",
+        f"   `{base_full_sha}`",
+        "",
+        "   These verdicts are only valid against that exact base, and if",
+        "   master has moved (e.g. a revert removed content that made a",
+        "   branch LANDED) a listed branch may now be the last ref holding",
+        "   its content;",
+        "2. a live PR query reports no open PR for the branch. Pin the",
         "   query to the repository backing `origin` (an ambient `GH_REPO`",
         "   override would silently query another repository) and pass the",
         "   branch as one quoted argument (ref names may legally contain",
-        "   `;` or `$()`, which an unquoted substitution would execute):",
+        "   `;` or `$()`, which an unquoted substitution would execute);",
+        "3. the deletion itself carries an expected-tip lease:",
+        "   `--force-with-lease=<refname>:<expect>` requires the remote ref",
+        "   to still equal the classified tip at push time, so a push racing",
+        "   these checks is rejected by the server instead of silently",
+        "   discarded. Never use a bare `git push origin --delete`, which",
+        "   deletes unconditionally:",
         "",
         "   ```sh",
         "   IFS= read -r branch   # paste the branch name, press Enter",
+        "   IFS= read -r tip      # paste the branch's full tip SHA",
+        "                         # (tip_sha in integration-state.json)",
+        f"   git ls-remote origin refs/heads/{_BASE_BRANCH}",
+        f"   # ^ must print exactly {base_full_sha}",
         '   gh pr list --repo "$(git remote get-url origin)" \\',
         '     --state open --head "$branch"',
+        '   git push --force-with-lease="refs/heads/$branch:$tip" \\',
+        '     origin ":refs/heads/$branch"',
         "   ```",
         "",
-        "If any check fails, regenerate and reclassify first.",
+        "If any check fails, or the lease push is rejected, regenerate and",
+        "reclassify first.",
         "",
         "| Branch | Status | Tip SHA | Tip date | Open PR |",
         "|---|---|---|---|---|",
@@ -672,7 +701,7 @@ def main() -> int:
     # raise UnicodeEncodeError, so escape them visibly instead of aborting.
     JSON_OUT.write_text(json.dumps(payload, indent=2) + "\n")
     MD_OUT.write_text(
-        render_markdown(entries, base_sha, prs, pr_data_available),
+        render_markdown(entries, base_sha, base_full_sha, prs, pr_data_available),
         errors="backslashreplace",
     )
     print(f"wrote {MD_OUT} and {JSON_OUT}: {dict(counts)}")

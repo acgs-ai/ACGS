@@ -180,29 +180,50 @@ merges). LANDED means every touched blob is byte-identical on master.
 
 Do **not** delete a branch that still has an open PR (deleting the
 remote branch closes it and discards its review context). The Open
-PR column is a snapshot from generation time, and a PR can be opened
-afterwards without moving any ref, so immediately before deleting
-verify **all three**:
+PR column is a snapshot from generation time, a PR can be opened
+afterwards without moving any ref, and local tracking refs go stale
+the moment another checkout pushes (they only move on a successful
+fetch), so a check-then-delete against local refs can pass and still
+destroy fresh commits. Immediately before deleting, verify **all
+three** against the live remote:
 
-1. the live branch ref still points at the classified tip SHA;
-2. `origin/master` still points at the base SHA above — these
-   verdicts are only valid against that exact base, and if master
-   has moved (e.g. a revert removed content that made a branch
-   LANDED) a listed branch may now be the last ref holding its
-   content;
-3. a live PR query reports no open PR for the branch. Pin the
+1. an authoritative `git ls-remote` lookup (never the local
+   tracking ref) shows the remote `master` still at the
+   classified base, compared as the **full** object ID (a later
+   commit can share an abbreviated prefix):
+
+   `bee922df3d6f4dd22fd4bdbea3cf25e72e038d36`
+
+   These verdicts are only valid against that exact base, and if
+   master has moved (e.g. a revert removed content that made a
+   branch LANDED) a listed branch may now be the last ref holding
+   its content;
+2. a live PR query reports no open PR for the branch. Pin the
    query to the repository backing `origin` (an ambient `GH_REPO`
    override would silently query another repository) and pass the
    branch as one quoted argument (ref names may legally contain
-   `;` or `$()`, which an unquoted substitution would execute):
+   `;` or `$()`, which an unquoted substitution would execute);
+3. the deletion itself carries an expected-tip lease:
+   `--force-with-lease=<refname>:<expect>` requires the remote ref
+   to still equal the classified tip at push time, so a push racing
+   these checks is rejected by the server instead of silently
+   discarded. Never use a bare `git push origin --delete`, which
+   deletes unconditionally:
 
    ```sh
    IFS= read -r branch   # paste the branch name, press Enter
+   IFS= read -r tip      # paste the branch's full tip SHA
+                         # (tip_sha in integration-state.json)
+   git ls-remote origin refs/heads/master
+   # ^ must print exactly bee922df3d6f4dd22fd4bdbea3cf25e72e038d36
    gh pr list --repo "$(git remote get-url origin)" \
      --state open --head "$branch"
+   git push --force-with-lease="refs/heads/$branch:$tip" \
+     origin ":refs/heads/$branch"
    ```
 
-If any check fails, regenerate and reclassify first.
+If any check fails, or the lease push is rejected, regenerate and
+reclassify first.
 
 | Branch | Status | Tip SHA | Tip date | Open PR |
 |---|---|---|---|---|
