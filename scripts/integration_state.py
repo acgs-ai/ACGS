@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from collections import Counter
@@ -37,6 +38,11 @@ JSON_OUT = Path("docs/integration-state.json")
 
 def git(*args: str) -> str:
     result = subprocess.run(["git", *args], capture_output=True, text=True, check=True)
+    return result.stdout
+
+
+def git_bytes(*args: str) -> bytes:
+    result = subprocess.run(["git", *args], capture_output=True, check=True)
     return result.stdout
 
 
@@ -70,9 +76,26 @@ def diff_names(*args: str) -> list[str]:
     NUL-delimited output bypasses `core.quotePath` display quoting, so paths
     with non-ASCII or special characters come back verbatim and can be reused
     as pathspecs (quoted display strings would silently match nothing).
+
+    Output is captured as bytes and decoded with ``os.fsdecode`` (UTF-8 +
+    surrogateescape): a historical filename whose bytes are not valid UTF-8
+    cannot raise ``UnicodeDecodeError`` and abort the whole scan, and the
+    decoding round-trips losslessly back to the original bytes when the path
+    is passed as a subprocess argument (argv encodes via ``os.fsencode``).
     """
-    out = git("diff", "--name-only", "-z", "--no-renames", *args)
-    return [f for f in out.split("\0") if f]
+    out = git_bytes("diff", "--name-only", "-z", "--no-renames", *args)
+    return [os.fsdecode(f) for f in out.split(b"\0") if f]
+
+
+def literal_pathspec(path: str) -> str:
+    """Wrap a filename in `:(literal)` magic so Git treats it verbatim.
+
+    A raw filename used as a pathspec is subject to magic and globbing: a
+    leading ``:`` is parsed as pathspec magic and ``*``/``?``/``[`` glob. A
+    branch adding a file named ``:foo`` would otherwise produce an empty
+    restricted diff and be falsely marked LANDED.
+    """
+    return f":(literal){path}"
 
 
 def classify(branch: str, sha: str, base_sha: str) -> dict:
@@ -93,7 +116,7 @@ def classify(branch: str, sha: str, base_sha: str) -> dict:
     if not touched:
         entry.update(status="NO-OP", files_differing=0)
         return entry
-    differing = diff_names(base_sha, sha, "--", *touched)
+    differing = diff_names(base_sha, sha, "--", *(literal_pathspec(f) for f in touched))
     if not differing:
         entry.update(status="LANDED", files_differing=0)
     else:
@@ -255,11 +278,15 @@ def main() -> int:
         try:
             entries.append(classify(branch, sha, base_full_sha))
         except subprocess.CalledProcessError as exc:
+            # stderr is bytes when the failing call came through git_bytes().
+            stderr = exc.stderr or ""
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode(errors="replace")
             entries.append(
                 {
                     "branch": branch.removeprefix("origin/"),
                     "status": "ERROR",
-                    "error": (exc.stderr or "").strip()[:200],
+                    "error": stderr.strip()[:200],
                     "tip_date": "",
                     "files_touched": 0,
                     "files_differing": 0,
