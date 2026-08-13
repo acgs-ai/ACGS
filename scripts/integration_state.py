@@ -5,8 +5,10 @@ Classifies every remote branch by *content*, not ancestry, because master mixes
 squash merges with true merges — `git branch --no-merged` reports squash-merged
 branches as unmerged forever. Method (per-branch):
 
-  1. touched = `git diff --name-only BASE...branch`   (merge-base diff: what the
-     branch changed relative to where it forked)
+  1. touched = union over all merge bases (`git merge-base --all`) of
+     `git diff --name-only <base> branch` (what the branch changed relative to
+     where it forked; unioning covers criss-cross histories where a triple-dot
+     diff would silently pick one base)
   2. If empty -> NO-OP (branch adds nothing).
   3. differing = `git diff --name-only BASE branch -- <touched>` (tip-vs-tip,
      restricted to the touched files). If empty, every blob the branch touched
@@ -47,23 +49,50 @@ def git_bytes(*args: str) -> bytes:
 
 
 def list_remote_branches() -> list[tuple[str, str]]:
-    """Return ``(short ref name, tip SHA)`` pairs for every remote branch.
+    """Return ``(origin-prefixed name, tip SHA)`` pairs for every remote branch.
 
     Tip SHAs are captured in a single atomic ref enumeration so a concurrent
     `git fetch` (IDE, another process) cannot move a ref between the moment a
     branch is inventoried and the moment it is classified.
+
+    Names are derived by stripping the fixed ``refs/remotes/`` prefix from the
+    full ``%(refname)`` rather than using ``%(refname:short)``: the short form
+    is an *ambiguity-dependent* abbreviation, so a local branch literally named
+    ``origin/foo`` makes Git render the remote ref as ``remotes/origin/foo``,
+    which would break the HEAD/BASE exclusions and PR linkage.
     """
-    out = git("for-each-ref", "--format=%(refname:short) %(objectname)", "refs/remotes/origin")
+    out = git("for-each-ref", "--format=%(refname) %(objectname)", "refs/remotes/origin")
     branches = []
     for line in out.splitlines():
         line = line.strip()
         if not line:
             continue
         ref, sha = line.rsplit(" ", 1)
+        ref = ref.removeprefix("refs/remotes/")
         if ref == "origin/HEAD" or ref == BASE:
             continue
         branches.append((ref, sha))
     return branches
+
+
+def fetch_refspec_covers_all_heads() -> bool:
+    """Return True when `git fetch origin` updates *all* remote heads.
+
+    A `git clone --single-branch` (or otherwise narrowed) checkout has a
+    refspec like ``+refs/heads/master:refs/remotes/origin/master``; the
+    documented `git fetch --prune origin` step then only refreshes that one
+    branch, and enumerating ``refs/remotes/origin`` would silently produce a
+    near-empty ledger that overwrites the checked-in inventory.
+    """
+    try:
+        specs = git("config", "--get-all", "remote.origin.fetch").splitlines()
+    except subprocess.CalledProcessError:
+        return False
+    for spec in specs:
+        src = spec.strip().removeprefix("+").split(":", 1)[0]
+        if src in ("refs/heads/*", "refs/*"):
+            return True
+    return False
 
 
 def branch_tip_date(sha: str) -> str:
@@ -107,7 +136,20 @@ def classify(branch: str, sha: str, base_sha: str) -> dict:
     # --no-renames: a rename must surface both sides (old path deleted, new path
     # added) so a deletion that never landed on BASE cannot hide behind rename
     # detection collapsing the pair into the new path only.
-    touched = diff_names(f"{base_sha}...{sha}")
+    #
+    # Merge bases are enumerated explicitly instead of using a triple-dot diff:
+    # in a criss-cross history with multiple best merge bases, `BASE...sha`
+    # silently picks one of them, and a path whose branch state happens to
+    # match that chosen base would be dropped from `touched` — misclassifying
+    # the branch as NO-OP/LANDED even though the master tip differs. Unioning
+    # the per-base diffs keeps every such path in the tip-vs-tip comparison.
+    # `merge-base --all` exits non-zero when no common ancestor exists, which
+    # the caller records as ERROR.
+    merge_bases = git("merge-base", "--all", base_sha, sha).split()
+    touched_set: set[str] = set()
+    for mb in merge_bases:
+        touched_set.update(diff_names(mb, sha))
+    touched = sorted(touched_set)
     entry = {
         "branch": branch.removeprefix("origin/"),
         "tip_date": branch_tip_date(sha),
@@ -264,6 +306,18 @@ def main() -> int:
         print(f"ledger present: {ok}")
         return 0 if ok else 1
 
+    if not fetch_refspec_covers_all_heads():
+        print(
+            "error: remote.origin.fetch does not cover refs/heads/* (single-branch\n"
+            "or narrowed clone) — `git fetch --prune origin` would only refresh the\n"
+            "configured branch and the ledger would silently omit remote branches.\n"
+            "Fix with:\n"
+            "  git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'\n"
+            "  git fetch --prune origin",
+            file=sys.stderr,
+        )
+        return 1
+
     # Freeze the base and every branch tip to immutable object IDs up front;
     # all classification below uses only these SHAs (see classify()).
     base_full_sha = git("rev-parse", BASE).strip()
@@ -282,11 +336,18 @@ def main() -> int:
             stderr = exc.stderr or ""
             if isinstance(stderr, bytes):
                 stderr = stderr.decode(errors="replace")
+            # `git merge-base --all` fails with *empty* stderr when the branch
+            # shares no ancestor with BASE; synthesize a message so the Errors
+            # section never renders a blank cell.
+            message = stderr.strip() or (
+                f"git {' '.join(map(str, exc.cmd[1:3]))} exited {exc.returncode}"
+                " (no merge base with BASE?)"
+            )
             entries.append(
                 {
                     "branch": branch.removeprefix("origin/"),
                     "status": "ERROR",
-                    "error": stderr.strip()[:200],
+                    "error": message[:200],
                     "tip_date": "",
                     "files_touched": 0,
                     "files_differing": 0,

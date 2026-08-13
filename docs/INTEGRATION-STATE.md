@@ -2,7 +2,7 @@
 
 <!-- GENERATED FILE — regenerate with `python3 scripts/integration_state.py` -->
 
-Base: `origin/master` @ `641adb00` · generated 2026-08-13 · branches: 298 total — **162 STRANDED** (59 differ in ≤2 files), 18 LANDED (squash ghosts, safe to delete), 115 NO-OP (safe to delete), 3 ERROR (classification failed).
+Base: `origin/master` @ `bee922df` · generated 2026-08-13 · branches: 299 total — **162 STRANDED** (59 differ in ≤2 files), 19 LANDED (squash ghosts, safe to delete), 115 NO-OP (safe to delete), 3 ERROR (classification failed).
 
 A branch is STRANDED when at least one file it touched still differs
 from master (content comparison — ancestry is unreliable under squash
@@ -127,6 +127,7 @@ merges). LANDED means every touched blob is byte-identical on master.
 | `beta/p0-product-contract-007` | 9 | 2026-07-13 | — |
 | `release/gove-zone-0.1.0` | 9 | 2026-07-18 | — |
 | `feat/gove-zone-framework-integration` | 10 | 2026-07-06 | — |
+| `fix/pipeline-codex-review-round-3` | 10 | 2026-08-13 | #448 |
 | `phase-2-trace-crypto` | 11 | 2026-05-27 | — |
 | `feat/marketing-hub-claim-substantiation` | 11 | 2026-06-05 | — |
 | `feat/marketing-governance-hub` | 11 | 2026-06-06 | — |
@@ -151,7 +152,6 @@ merges). LANDED means every touched blob is byte-identical on master.
 | `beta/p1-g101-migration-operator-cli` | 35 | 2026-07-15 | — |
 | `beta/p1-g101-migration-recovery` | 36 | 2026-07-15 | — |
 | `beta/p2-idempotency-002-retry` | 36 | 2026-07-30 | — |
-| `chore/commit-improvement-pipeline` | 36 | 2026-08-13 | #446 |
 | `beta/p1-g101-recovery-bytea-evidence` | 37 | 2026-07-15 | — |
 | `beta/p1-g101-startup-integration` | 41 | 2026-07-15 | — |
 | `beta/p2-evidence-isolation-002b` | 41 | 2026-07-30 | — |
@@ -163,17 +163,17 @@ merges). LANDED means every touched blob is byte-identical on master.
 | `beta/p3-approval-003-reconciled` | 68 | 2026-07-30 | — |
 | `beta/p3-approval-003b-authoritative-retry` | 68 | 2026-07-30 | — |
 | `beta/p3-approval-003c-authoritative-retry` | 68 | 2026-07-30 | — |
-| `docs/neutral-positioning-reconciled` | 69 | 2026-06-07 | — |
 | `beta/p3c-failure-harness-repair-004` | 70 | 2026-07-30 | — |
 | `beta/p3-sealed-export-007` | 72 | 2026-07-30 | — |
 | `beta/p3-authority-consumption-guard-006` | 72 | 2026-07-30 | — |
 | `beta/p3-host-uid-namespace-retry-006` | 72 | 2026-07-30 | — |
+| `docs/neutral-positioning-reconciled` | 77 | 2026-06-07 | — |
 | `beta/p0-gates-003` | 78 | 2026-07-11 | — |
 | `feat/governed-vulnclaw-pentest` | 83 | 2026-07-13 | — |
 | `fix/enterprise-mgr-security-and-runtime` | 125 | 2026-05-12 | — |
 | `feat/monorepo-unification` | 125 | 2026-05-12 | — |
 | `beta/p4-policy-wiring-gz-002a` | 126 | 2026-08-06 | — |
-| `backup/gove-zone-policy-identity-pre-rebuild` | 161 | 2026-07-27 | — |
+| `backup/gove-zone-policy-identity-pre-rebuild` | 155 | 2026-07-27 | — |
 
 ## Reapable branches (content already on master, or no content)
 
@@ -217,6 +217,7 @@ merges). LANDED means every touched blob is byte-identical on master.
 | `beta/p2-tenant-bootstrap-000` | NO-OP | 2026-07-25 |
 | `beta/p3-program-reconciliation-003a` | NO-OP | 2026-07-30 |
 | `blacksmith-migration-ee83e18` | NO-OP | 2026-07-25 |
+| `chore/commit-improvement-pipeline` | LANDED | 2026-08-13 |
 | `chore/eval-regression-coverage-seed-harness` | NO-OP | 2026-05-05 |
 | `chore/gitignore-scratch-dirs-2026-05-13` | NO-OP | 2026-05-13 |
 | `chore/gitignore-tooling-dirs-2026-05-13` | NO-OP | 2026-05-16 |
@@ -317,6 +318,6 @@ merges). LANDED means every touched blob is byte-identical on master.
 
 | Branch | Error |
 |---|---|
-| `feat/eval-r2-topic` | fatal: 641adb00eded69b38d1646d7fef8a0f81e5bc52f...959326795bf14adaa96d90c992144d3284acab64: no merge base |
-| `improve/eval-regression-coverage-hardening` | fatal: 641adb00eded69b38d1646d7fef8a0f81e5bc52f...af9823378a8776664fe3d91328c64d52bd7e89d1: no merge base |
-| `main` | fatal: 641adb00eded69b38d1646d7fef8a0f81e5bc52f...29a2a782c8852903e9e178cb076fda52aaa1e20b: no merge base |
+| `feat/eval-r2-topic` | git merge-base --all exited 1 (no merge base with BASE?) |
+| `improve/eval-regression-coverage-hardening` | git merge-base --all exited 1 (no merge base with BASE?) |
+| `main` | git merge-base --all exited 1 (no merge base with BASE?) |

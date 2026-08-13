@@ -1,11 +1,11 @@
 {
   "base": "origin/master",
-  "base_sha": "641adb00",
-  "generated_at": "2026-08-13T02:11:02+00:00",
+  "base_sha": "bee922df",
+  "generated_at": "2026-08-13T02:39:43+00:00",
   "summary": {
     "NO-OP": 115,
     "STRANDED": 162,
-    "LANDED": 18,
+    "LANDED": 19,
     "ERROR": 3
   },
   "pr_data_available": true,
@@ -79,7 +79,7 @@
       "tip_date": "2026-07-27T06:31:21-04:00",
       "files_touched": 177,
       "status": "STRANDED",
-      "files_differing": 161,
+      "files_differing": 155,
       "differing_sample": [
         ".agents/skills/govern-zone/SKILL.md",
         ".claude/agents/governance-reviewer.md",
@@ -919,16 +919,8 @@
       "branch": "chore/commit-improvement-pipeline",
       "tip_date": "2026-08-13T02:08:38+00:00",
       "files_touched": 36,
-      "status": "STRANDED",
-      "files_differing": 36,
-      "differing_sample": [
-        ".claude/commands/claim-verify.md",
-        ".claude/commands/verify.md",
-        ".claude/rules/claim-safety.md",
-        ".claude/rules/codex-execution-workflow.md",
-        ".claude/rules/headless-delegation.md"
-      ],
-      "open_pr": 446
+      "status": "LANDED",
+      "files_differing": 0
     },
     {
       "branch": "chore/design-sync-acgi-ai",
@@ -987,7 +979,7 @@
     },
     {
       "branch": "chore/integration-state-ledger",
-      "tip_date": "2026-08-13T02:01:04+00:00",
+      "tip_date": "2026-08-13T02:22:54+00:00",
       "files_touched": 3,
       "status": "STRANDED",
       "files_differing": 3,
@@ -1312,9 +1304,9 @@
     {
       "branch": "docs/neutral-positioning-reconciled",
       "tip_date": "2026-06-07T17:08:53-04:00",
-      "files_touched": 140,
+      "files_touched": 160,
       "status": "STRANDED",
-      "files_differing": 69,
+      "files_differing": 77,
       "differing_sample": [
         ".github/workflows/python-acgs-lite.yml",
         ".github/workflows/python-acgs-swarm.yml",
@@ -1601,7 +1593,7 @@
     {
       "branch": "feat/eval-r2-topic",
       "status": "ERROR",
-      "error": "fatal: 641adb00eded69b38d1646d7fef8a0f81e5bc52f...959326795bf14adaa96d90c992144d3284acab64: no merge base",
+      "error": "git merge-base --all exited 1 (no merge base with BASE?)",
       "tip_date": "",
       "files_touched": 0,
       "files_differing": 0
@@ -2699,6 +2691,21 @@
       ]
     },
     {
+      "branch": "fix/pipeline-codex-review-round-3",
+      "tip_date": "2026-08-13T02:33:09+00:00",
+      "files_touched": 10,
+      "status": "STRANDED",
+      "files_differing": 10,
+      "differing_sample": [
+        ".claude/rules/repo-boundaries.md",
+        ".claude/rules/verification-gates.md",
+        ".claude/skills/ablate-ai-layer/scripts/run_ablation.py",
+        ".claude/skills/deploy-drift-check/deploy-drift-check.sh",
+        ".claude/skills/pr-queue/pr-queue.sh"
+      ],
+      "open_pr": 448
+    },
+    {
       "branch": "fix/postgres-gate-head-0007-assertions",
       "tip_date": "2026-07-26T20:23:33-04:00",
       "files_touched": 0,
@@ -2759,7 +2766,7 @@
     {
       "branch": "improve/eval-regression-coverage-hardening",
       "status": "ERROR",
-      "error": "fatal: 641adb00eded69b38d1646d7fef8a0f81e5bc52f...af9823378a8776664fe3d91328c64d52bd7e89d1: no merge base",
+      "error": "git merge-base --all exited 1 (no merge base with BASE?)",
       "tip_date": "",
       "files_touched": 0,
       "files_differing": 0
@@ -2801,7 +2808,7 @@
     {
       "branch": "main",
       "status": "ERROR",
-      "error": "fatal: 641adb00eded69b38d1646d7fef8a0f81e5bc52f...29a2a782c8852903e9e178cb076fda52aaa1e20b: no merge base",
+      "error": "git merge-base --all exited 1 (no merge base with BASE?)",
       "tip_date": "",
       "files_touched": 0,
       "files_differing": 0
