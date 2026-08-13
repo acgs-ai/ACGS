@@ -256,7 +256,18 @@ six** checks:
    active review base even when the branch has no PR of its own,
    and deleting it would retarget or invalidate the child PR's
    comparison and review context, so both checks must come back
-   empty. The branch is passed as one quoted argument (ref names
+   empty. Both queries are point-in-time snapshots, and opening a
+   PR moves no Git ref, so the push's branch-tip lease (defined
+   solely by the ref's old value) cannot detect a PR opened
+   between these checks and the push; the push protocol offers no
+   server-side gate on PR state. These checks therefore *narrow*
+   the window, they cannot close it: a PR opened inside it is
+   closed by the deletion, not preserved. The archival tag pushed
+   in the same transaction keeps the tip reachable, so such a PR
+   is recoverable (restore the branch at the recorded tip from
+   `reaped/<branch>`, then reopen it), but its open state and
+   review context are not preserved automatically. The branch is
+   passed as one quoted argument (ref names
    may legally contain `;` or `$()`, which an unquoted
    substitution would execute);
 6. the deletion pushes with `--atomic`, an expected-value lease on

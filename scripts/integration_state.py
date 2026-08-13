@@ -463,8 +463,9 @@ def classify(branch: str, sha: str, base_sha: str) -> dict:
     # match that chosen base would be dropped from `touched` — misclassifying
     # the branch as NO-OP/LANDED even though the master tip differs. Unioning
     # the per-base diffs keeps every such path in the tip-vs-tip comparison.
-    # `merge-base --all` exits non-zero when no common ancestor exists, which
-    # the caller records as ERROR.
+    # `merge-base --all` exits 1 with empty stderr when no common ancestor
+    # exists, which the caller records as ERROR; the caller treats every other
+    # failure as a repository/object-access fault and aborts the run.
     merge_bases = git("merge-base", "--all", base_sha, sha).split()
     touched_set: set[str] = set()
     for mb in merge_bases:
@@ -783,7 +784,18 @@ def render_markdown(
         "   active review base even when the branch has no PR of its own,",
         "   and deleting it would retarget or invalidate the child PR's",
         "   comparison and review context, so both checks must come back",
-        "   empty. The branch is passed as one quoted argument (ref names",
+        "   empty. Both queries are point-in-time snapshots, and opening a",
+        "   PR moves no Git ref, so the push's branch-tip lease (defined",
+        "   solely by the ref's old value) cannot detect a PR opened",
+        "   between these checks and the push; the push protocol offers no",
+        "   server-side gate on PR state. These checks therefore *narrow*",
+        "   the window, they cannot close it: a PR opened inside it is",
+        "   closed by the deletion, not preserved. The archival tag pushed",
+        "   in the same transaction keeps the tip reachable, so such a PR",
+        "   is recoverable (restore the branch at the recorded tip from",
+        "   `reaped/<branch>`, then reopen it), but its open state and",
+        "   review context are not preserved automatically. The branch is",
+        "   passed as one quoted argument (ref names",
         "   may legally contain `;` or `$()`, which an unquoted",
         "   substitution would execute);",
         "6. the deletion pushes with `--atomic`, an expected-value lease on",
@@ -1206,14 +1218,39 @@ def main() -> int:
             stderr = exc.stderr or ""
             if isinstance(stderr, bytes):
                 stderr = stderr.decode(errors="replace")
-            # `git merge-base --all` fails with *empty* stderr when the branch
-            # shares no ancestor with BASE; synthesize a message so the Errors
-            # section never renders a blank cell. Slicing off len(_GIT_PREFIX)
-            # skips the fixed argv prefix the helpers prepend.
-            message = stderr.strip() or (
-                f"git {' '.join(map(str, exc.cmd[len(_GIT_PREFIX) : len(_GIT_PREFIX) + 2]))}"
-                f" exited {exc.returncode} (no merge base with BASE?)"
-            )
+            # Slicing off len(_GIT_PREFIX) skips the fixed argv prefix the
+            # helpers prepend.
+            cmd_summary = " ".join(map(str, exc.cmd[len(_GIT_PREFIX) : len(_GIT_PREFIX) + 2]))
+            # The only *expected* per-branch failure is `git merge-base --all`
+            # exiting 1 with *empty* stderr: the branch shares no ancestor
+            # with BASE (an orphan lineage), a property of the history worth
+            # a branch-level ERROR entry. Every other failure (a missing or
+            # corrupt object, or a promisor/partial clone whose lazy fetch
+            # lost network or credentials mid-scan: the shallow gate above
+            # cannot catch those, since the clone is not shallow and the
+            # objects are simply not local yet) is a repository/transport
+            # fault, not a verdict about the branch. Degrading it to one
+            # ERROR row and continuing would overwrite both checked-in
+            # ledgers with a partial, error-heavy scan under exit 0, so
+            # abort before anything is written.
+            if not (
+                exc.cmd[len(_GIT_PREFIX) : len(_GIT_PREFIX) + 1] == ["merge-base"]
+                and exc.returncode == 1
+                and not stderr.strip()
+            ):
+                print(
+                    f"error: `git {cmd_summary}` failed while classifying {branch}"
+                    f" (exit {exc.returncode}):\n{stderr.strip()}\n"
+                    "This is an object-access or repository failure, not a"
+                    " classification verdict, so nothing was written. Verify the\n"
+                    "repository's objects are complete and reachable (e.g. `git fsck`,\n"
+                    "refetch with network access) and regenerate.",
+                    file=sys.stderr,
+                )
+                return 1
+            # Synthesize a message so the Errors section never renders a
+            # blank cell for the empty-stderr merge-base failure.
+            message = f"git {cmd_summary} exited {exc.returncode} (no merge base with BASE?)"
             entries.append(
                 {
                     "branch": branch.removeprefix("origin/"),
