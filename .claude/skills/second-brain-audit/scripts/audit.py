@@ -240,18 +240,36 @@ def scan(root: Path, extra: list[str]):
 PER_MONTH = {"mo": 1.0, "yr": 1.0 / 12.0}
 
 
+def rate_family(period: str | None) -> str:
+    """Comparison bucket for a parsed money period. mo and yr convert into
+    each other so they share one family; hourly never converts (hours/month
+    is unknowable here) so it is its own family; one-time sums are their own
+    kind of fact entirely."""
+    if period is None:
+        return "onetime"
+    return "convertible" if period in PER_MONTH else period
+
+
 def equivalent_rates(values) -> bool:
-    """True when every value is the SAME rate spelled at another frequency
-    ('$100/mo' and '$1,200/yr'): flagging those trains you to ignore the audit.
-    Hourly rates never convert (hours/month is unknowable here), and one-time
-    sums (period None) already share a key upstream when equal, so any of those
-    present means the values are genuinely different answers."""
-    monthly = []
+    """True when every value in one period family is the SAME rate spelled at
+    another frequency ('$100/mo' and '$1,200/yr'): flagging those trains you
+    to ignore the audit. Callers pass one family at a time: mo/yr convert to
+    a per-month figure, hourly amounts compare literally, and one-time sums
+    (period None) already share a key upstream when equal, so two distinct
+    one-time keys are genuinely different answers. Mixed periods that cannot
+    be converted into each other are never equivalent."""
+    monthly, hourly = [], []
     for amount, period in values:
-        if period not in PER_MONTH:
+        if period in PER_MONTH:
+            monthly.append(amount * PER_MONTH[period])
+        elif period == "hr":
+            hourly.append(amount)
+        else:
             return False
-        monthly.append(amount * PER_MONTH[period])
-    return max(monthly) - min(monthly) < 0.01
+    if monthly and hourly:
+        return False
+    family = monthly or hourly
+    return max(family) - min(family) < 0.01
 
 
 def contradictions(subjects: dict, min_files: int = 2) -> list[dict]:
@@ -273,27 +291,32 @@ def contradictions(subjects: dict, min_files: int = 2) -> list[dict]:
             continue
 
         # Compare like with like: recurring rates and one-time amounts are
-        # different facts, not two versions of the same one. Within recurring
-        # rates the period stays part of the value: "$100/mo" vs "$100/yr" is
-        # a real, materially different answer and IS flagged, while
-        # "$100/mo" vs "$1,200/yr" is one rate spelled at two frequencies
-        # and is not.
-        for recurring in (True, False):       # recurring rates, then one-time sums
-            vals: dict[str, list] = {}
-            parsed: dict[str, tuple[float, str | None]] = {}
-            for h in uniq:
-                for v in h["money"]:
-                    mv = money_value(v)
-                    if mv is None or (mv[1] is not None) != recurring:
-                        continue
-                    key = fmt_money(*mv)
-                    parsed[key] = mv
-                    vals.setdefault(key, []).append(h)
+        # different facts, not two versions of the same one, and hourly rates
+        # cannot be converted to monthly ones, so each period family is its
+        # own comparison. Within a family the period stays part of the value:
+        # "$100/mo" vs "$100/yr" is a real, materially different answer and IS
+        # flagged, while "$100/mo" vs "$1,200/yr" is one rate spelled at two
+        # frequencies and is not; an equal "$50/hr" repeated in both files
+        # never drags an agreeing monthly/annual pair into the report.
+        buckets: dict[str, tuple[dict, dict]] = {}
+        for h in uniq:
+            for v in h["money"]:
+                mv = money_value(v)
+                if mv is None:
+                    continue
+                vals, parsed = buckets.setdefault(rate_family(mv[1]), ({}, {}))
+                key = fmt_money(*mv)
+                parsed[key] = mv
+                vals.setdefault(key, []).append(h)
+        for fam in ("convertible", "hr", "onetime"):
+            if fam not in buckets:
+                continue
+            vals, parsed = buckets[fam]
             files = {h["file"] for g in vals.values() for h in g}
             if (len(vals) >= 2 and len(files) >= min_files
                     and not equivalent_rates(parsed.values())):
                 out.append({"subject": subj,
-                            "kind": "recurring" if recurring else "onetime",
+                            "kind": "onetime" if fam == "onetime" else "recurring",
                             "values": sorted(vals),
                             "hits": [h for g in vals.values() for h in g]})
                 break
