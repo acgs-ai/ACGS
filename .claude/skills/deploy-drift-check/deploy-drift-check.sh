@@ -77,7 +77,12 @@ fi
 # same string ("... || echo 000") can yield "404 text/html000" and let a
 # transport failure match the healthy-404 case. Any nonzero curl status means
 # the probe did not complete and the invariant was NOT verified.
-PROBE=$(curl -s -o /dev/null -w '%{http_code} %{content_type}' --max-time 15 "$SITE/assets/__drift_probe_missing__.js")
+# Redirects are followed (-L): an edge that 301/302/307/308s a missing asset
+# to the SPA entry point is the same swallowed-404 failure mode, just one hop
+# removed, so the FINAL response is what gets classified (-w reports the last
+# transfer). A redirect loop exceeds --max-redirs and surfaces as a nonzero
+# curl status, i.e. the transport-failure warn below.
+PROBE=$(curl -sL --max-redirs 5 -o /dev/null -w '%{http_code} %{content_type}' --max-time 15 "$SITE/assets/__drift_probe_missing__.js")
 PROBE_RC=$?
 if [ "$PROBE_RC" -ne 0 ]; then
   warn "missing-asset probe failed in transport (curl exit $PROBE_RC, partial response: ${PROBE:-<none>}): SPA-fallback invariant NOT verified"
@@ -89,6 +94,10 @@ else
     # the failure mode this probe exists to catch, whatever the exact code.
     2[0-9][0-9]*)    warn "missing asset request succeeded ($PROBE): a definitely-missing asset must never return 2xx, so the edge is swallowing static 404s" ;;
     404*)            ok "missing asset correctly 404s ($PROBE)" ;;
+    # -L already chased the chain, so a REMAINING 3xx means the redirect
+    # could not be followed (e.g. no Location header): the final answer was
+    # never inspected and the invariant is unverified, not passed.
+    3[0-9][0-9]*)    warn "missing asset still a redirect after following redirects ($PROBE): final response never inspected, SPA-fallback invariant NOT verified" ;;
     # curl exited 0, so the response completed, and every successful (2xx)
     # answer was already warned about above. An edge that intentionally
     # answers a missing asset with another definitive error status (e.g. 410

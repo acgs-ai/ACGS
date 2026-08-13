@@ -145,6 +145,15 @@ RE_UV_INVOKE = re.compile(
     r"|\buv[ \t]+(?:run|sync|lock|add|remove|pip|venv|tool|export|build|"
     r"publish|python|init|tree|cache|version|self)\b",
     re.MULTILINE)
+# Reaching uv is not the hazard; reaching WORKSPACE DISCOVERY is. An
+# invocation carrying `--no-project` (tools/kg's Makefile wraps every uv call
+# in it precisely to survive non-recursive checkouts) never validates the
+# root workspace, so it cannot trip on missing members and must not trigger
+# the preflight. The flag is looked for only inside that invocation's own
+# argument segment, which ends at the next shell connector or line end, so a
+# later `uv sync` on the same line is still judged on its own.
+RE_UV_NO_PROJECT = re.compile(r"(?:^|[ \t])--no-project(?=[ \t]|$)")
+RE_UV_ARGS_END = re.compile(r"[\n;&|`)]")
 
 
 def _drop_comments(text: str) -> str:
@@ -217,8 +226,11 @@ def probe_reaches_uv(prompt: str, root: Path) -> str | None:
     makefile that owns them (recipes, prerequisites, nested `$(MAKE)` calls,
     variables such as `$(UV)`), a `make -C <dir>` / `--directory` hop redirects
     inspection into THAT directory's makefile, and invoked scripts are read,
-    all recursively. Purely non-uv probes (pnpm, docs, frontend) still return
-    None and keep their skip. The walk is best effort (a `-C` directory outside
+    all recursively. An invocation that opts out of project/workspace
+    discovery with `--no-project` does not count: it can never fail on
+    missing workspace members, so a probe whose only path to uv is such an
+    invocation (e.g. `make -C tools/kg verify`) keeps the skip. Purely
+    non-uv probes (pnpm, docs, frontend) still return None and keep it too. The walk is best effort (a `-C` directory outside
     the repo, or one holding no readable makefile, such as an uninitialized
     submodule gitlink, cannot be inspected), so the skip note still warns about
     agent-initiated uv."""
@@ -285,7 +297,10 @@ def probe_reaches_uv(prompt: str, root: Path) -> str | None:
 
     def text_reaches(text: str, origin: str, base: Path) -> str | None:
         text = _drop_comments(text)
-        if RE_UV_INVOKE.search(text):
+        for m in RE_UV_INVOKE.finditer(text):
+            args_seg = RE_UV_ARGS_END.split(text[m.end():], 1)[0]
+            if RE_UV_NO_PROJECT.search(args_seg):
+                continue
             return f"{origin} invokes uv directly"
         for m in RE_MAKE_INVOKE.finditer(text):
             mkdir = base
@@ -682,9 +697,10 @@ def main() -> int:
     else:
         print("\nnote    uv workspace preflight skipped: neither the probe task nor "
               "any wrapper it names (make targets, invoked scripts) was seen to "
-              "invoke uv. If the agent still runs `uv ...` on its own, empty "
-              "nested-repo gitlinks in the worktrees will fail it at setup, in "
-              "both arms.")
+              "invoke uv with workspace discovery (invocations opting out via "
+              "--no-project do not need the workspace). If the agent still runs "
+              "`uv ...` on its own, empty nested-repo gitlinks in the worktrees "
+              "will fail it at setup, in both arms.")
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     # Results default to a location OUTSIDE the repo: this script promises the
