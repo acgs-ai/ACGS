@@ -10,10 +10,11 @@ branches as unmerged forever. Method (per-branch):
      where it forked; unioning covers criss-cross histories where a triple-dot
      diff would silently pick one base)
   2. If empty -> NO-OP (branch adds nothing).
-  3. differing = `git diff --name-only BASE branch -- <touched>` (tip-vs-tip,
-     restricted to the touched files). If empty, every blob the branch touched
-     is byte-identical on BASE -> LANDED (typically a squash ghost). Otherwise
-     STRANDED with `len(differing)` files still differing.
+  3. differing = the unrestricted tip-vs-tip diff `git diff --name-only BASE
+     branch` intersected with `touched` (paths are never fed back to Git as
+     pathspecs). If empty, every blob the branch touched is byte-identical on
+     BASE -> LANDED (typically a squash ghost). Otherwise STRANDED with
+     `len(differing)` files still differing.
 
 The ledger is regenerable: run this script after `git fetch --prune origin`
 (pruning drops remote-tracking refs for branches already deleted upstream, so
@@ -60,15 +61,22 @@ def list_remote_branches() -> list[tuple[str, str]]:
     is an *ambiguity-dependent* abbreviation, so a local branch literally named
     ``origin/foo`` makes Git render the remote ref as ``remotes/origin/foo``,
     which would break the HEAD/BASE exclusions and PR linkage.
+
+    Output is captured as bytes with a NUL field delimiter and decoded with
+    ``os.fsdecode`` (like :func:`diff_names`): Git accepts ref names whose
+    bytes are not valid UTF-8, and a strict text decode would raise
+    ``UnicodeDecodeError`` and abort the whole scan before per-branch error
+    handling runs. Newline is a safe record delimiter because ref names cannot
+    contain ASCII control characters.
     """
-    out = git("for-each-ref", "--format=%(refname) %(objectname)", "refs/remotes/origin")
+    out = git_bytes("for-each-ref", "--format=%(refname)%00%(objectname)", "refs/remotes/origin")
     branches = []
-    for line in out.splitlines():
-        line = line.strip()
+    for line in out.split(b"\n"):
         if not line:
             continue
-        ref, sha = line.rsplit(" ", 1)
-        ref = ref.removeprefix("refs/remotes/")
+        ref_bytes, _, sha_bytes = line.partition(b"\0")
+        ref = os.fsdecode(ref_bytes).removeprefix("refs/remotes/")
+        sha = sha_bytes.decode("ascii")
         if ref == "origin/HEAD" or ref == BASE:
             continue
         branches.append((ref, sha))
@@ -83,16 +91,31 @@ def fetch_refspec_covers_all_heads() -> bool:
     documented `git fetch --prune origin` step then only refreshes that one
     branch, and enumerating ``refs/remotes/origin`` would silently produce a
     near-empty ledger that overwrites the checked-in inventory.
+
+    Negative refspecs (``^refs/heads/archive/*``) subtract from every positive
+    mapping, so a config can contain the full ``refs/heads/*`` entry and still
+    omit part of the head namespace. Any exclusion that can intersect
+    ``refs/heads/*`` therefore disqualifies the clone.
     """
     try:
         specs = git("config", "--get-all", "remote.origin.fetch").splitlines()
     except subprocess.CalledProcessError:
         return False
+    covered = False
     for spec in specs:
-        src = spec.strip().removeprefix("+").split(":", 1)[0]
+        spec = spec.strip()
+        if spec.startswith("^"):
+            # A refspec pattern holds at most one "*"; the exclusion can
+            # intersect refs/heads/* iff its literal prefix lies inside the
+            # heads namespace or is itself a prefix of "refs/heads/".
+            prefix = spec[1:].split("*", 1)[0]
+            if prefix.startswith("refs/heads/") or "refs/heads/".startswith(prefix):
+                return False
+            continue
+        src = spec.removeprefix("+").split(":", 1)[0]
         if src in ("refs/heads/*", "refs/*"):
-            return True
-    return False
+            covered = True
+    return covered
 
 
 def branch_tip_date(sha: str) -> str:
@@ -114,17 +137,6 @@ def diff_names(*args: str) -> list[str]:
     """
     out = git_bytes("diff", "--name-only", "-z", "--no-renames", *args)
     return [os.fsdecode(f) for f in out.split(b"\0") if f]
-
-
-def literal_pathspec(path: str) -> str:
-    """Wrap a filename in `:(literal)` magic so Git treats it verbatim.
-
-    A raw filename used as a pathspec is subject to magic and globbing: a
-    leading ``:`` is parsed as pathspec magic and ``*``/``?``/``[`` glob. A
-    branch adding a file named ``:foo`` would otherwise produce an empty
-    restricted diff and be falsely marked LANDED.
-    """
-    return f":(literal){path}"
 
 
 def classify(branch: str, sha: str, base_sha: str) -> dict:
@@ -152,13 +164,24 @@ def classify(branch: str, sha: str, base_sha: str) -> dict:
     touched = sorted(touched_set)
     entry = {
         "branch": branch.removeprefix("origin/"),
+        # The classified tip object ID: a reaper must compare it against the
+        # live ref before deleting, so a push racing ledger generation cannot
+        # make a stale "safe to delete" verdict destroy new commits.
+        "tip_sha": sha,
         "tip_date": branch_tip_date(sha),
         "files_touched": len(touched),
     }
     if not touched:
         entry.update(status="NO-OP", files_differing=0)
         return entry
-    differing = diff_names(base_sha, sha, "--", *(literal_pathspec(f) for f in touched))
+    # The tip-vs-tip diff is computed unrestricted and intersected with the
+    # touched set in Python instead of passing the touched paths back to Git
+    # as pathspecs. Pathspec parsing is environment-dependent (with
+    # GIT_LITERAL_PATHSPECS=1 a ":(literal)" prefix is treated as part of the
+    # filename, emptying the diff and falsely marking every branch LANDED),
+    # and expanding thousands of paths into argv can exceed the OS
+    # command-line limit (E2BIG) and abort the entire scan.
+    differing = [f for f in diff_names(base_sha, sha) if f in touched_set]
     if not differing:
         entry.update(status="LANDED", files_differing=0)
     else:
@@ -171,13 +194,17 @@ def classify(branch: str, sha: str, base_sha: str) -> dict:
 
 
 def try_open_prs() -> tuple[dict[str, int], bool]:
-    """Map head branch name -> PR number for open same-repo PRs.
+    """Map head branch name -> PR number for open same-repo PRs targeting master.
 
     Returns ``(mapping, available)``. ``available`` is False only when the
     ``gh`` query itself failed; an empty mapping with ``available=True`` means
     the query succeeded and there are genuinely no open PRs. Cross-repository
     (fork) PRs are excluded because their head branch names are not unique to
-    origin refs.
+    origin refs. The query is filtered to PRs based on master: this ledger
+    tracks integration into master, so a PR targeting a release or staging
+    branch is not an integration route and must not be attached to a branch
+    here. GitHub allows at most one open PR per (head, base) pair, so the
+    filter also makes the mapping collision-free.
     """
     try:
         out = subprocess.run(
@@ -187,6 +214,8 @@ def try_open_prs() -> tuple[dict[str, int], bool]:
                 "list",
                 "--state",
                 "open",
+                "--base",
+                BASE.removeprefix("origin/"),
                 "--limit",
                 "500",
                 "--json",
@@ -238,6 +267,10 @@ def render_markdown(
     small_tail = sum(1 for e in stranded if e["files_differing"] <= 2)
     generated = datetime.now(UTC).strftime("%Y-%m-%d")
 
+    def pr_cell(branch: str) -> str:
+        pr = prs.get(branch)
+        return f"#{pr}" if pr else ("—" if pr_data_available else "unknown")
+
     lines = [
         "# Integration State Ledger",
         "",
@@ -261,22 +294,27 @@ def render_markdown(
         "|---|---|---|---|",
     ]
     for e in stranded:
-        pr = prs.get(e["branch"])
-        pr_cell = f"#{pr}" if pr else ("—" if pr_data_available else "unknown")
         lines.append(
             f"| {md_code(e['branch'])} | {e['files_differing']} "
-            f"| {e['tip_date'][:10]} | {pr_cell} |"
+            f"| {e['tip_date'][:10]} | {pr_cell(e['branch'])} |"
         )
     lines += [
         "",
         "## Reapable branches (content already on master, or no content)",
         "",
-        "| Branch | Status | Tip date |",
-        "|---|---|---|",
+        "Do **not** delete a branch that still has an open PR (deleting the",
+        "remote branch closes it and discards its review context), and verify",
+        "the live ref still points at the classified tip SHA before deleting.",
+        "",
+        "| Branch | Status | Tip SHA | Tip date | Open PR |",
+        "|---|---|---|---|---|",
     ]
     for e in entries:
         if e["status"] in ("LANDED", "NO-OP"):
-            lines.append(f"| {md_code(e['branch'])} | {e['status']} | {e['tip_date'][:10]} |")
+            lines.append(
+                f"| {md_code(e['branch'])} | {e['status']} | `{e['tip_sha'][:12]}` "
+                f"| {e['tip_date'][:10]} | {pr_cell(e['branch'])} |"
+            )
     errors = [e for e in entries if e["status"] == "ERROR"]
     if errors:
         lines += [
@@ -348,6 +386,7 @@ def main() -> int:
                     "branch": branch.removeprefix("origin/"),
                     "status": "ERROR",
                     "error": message[:200],
+                    "tip_sha": sha,
                     "tip_date": "",
                     "files_touched": 0,
                     "files_differing": 0,
@@ -374,8 +413,15 @@ def main() -> int:
         "branches": sorted(entries, key=lambda e: e["branch"]),
     }
     JSON_OUT.parent.mkdir(parents=True, exist_ok=True)
+    # A ref or file name whose bytes are not valid UTF-8 reaches here as a
+    # surrogate-escaped str (os.fsdecode). json.dumps escapes those as \udcXX
+    # (round-trips through Python's json.loads); the Markdown write would
+    # raise UnicodeEncodeError, so escape them visibly instead of aborting.
     JSON_OUT.write_text(json.dumps(payload, indent=2) + "\n")
-    MD_OUT.write_text(render_markdown(entries, base_sha, prs, pr_data_available))
+    MD_OUT.write_text(
+        render_markdown(entries, base_sha, prs, pr_data_available),
+        errors="backslashreplace",
+    )
     print(f"wrote {MD_OUT} and {JSON_OUT}: {dict(counts)}")
     return 0
 
