@@ -146,14 +146,43 @@ RE_UV_INVOKE = re.compile(
     r"publish|python|init|tree|cache|version|self)\b",
     re.MULTILINE)
 # Reaching uv is not the hazard; reaching WORKSPACE DISCOVERY is. An
-# invocation carrying `--no-project` (tools/kg's Makefile wraps every uv call
-# in it precisely to survive non-recursive checkouts) never validates the
-# root workspace, so it cannot trip on missing members and must not trigger
-# the preflight. The flag is looked for only inside that invocation's own
-# argument segment, which ends at the next shell connector or line end, so a
-# later `uv sync` on the same line is still judged on its own.
-RE_UV_NO_PROJECT = re.compile(r"(?:^|[ \t])--no-project(?=[ \t]|$)")
+# invocation carrying `--no-project` among uv's OWN options (tools/kg's
+# Makefile wraps every uv call in it precisely to survive non-recursive
+# checkouts) never validates the root workspace, so it cannot trip on
+# missing members and must not trigger the preflight. The invocation's
+# argument segment ends at the next shell connector or line end, so a later
+# `uv sync` on the same line is still judged on its own.
 RE_UV_ARGS_END = re.compile(r"[\n;&|`)]")
+
+
+def _uv_own_no_project(tokens: list[str]) -> bool:
+    """True when `--no-project` appears among uv's OWN arguments.
+
+    uv stops interpreting options at the executed command (`uv run [OPTIONS]
+    COMMAND [ARGS]...`, likewise `uv tool run`): everything after that first
+    positional belongs to the CHILD program, so `uv run python tool.py
+    --no-project` still performs workspace discovery and must keep the
+    preflight. `tokens` starts at uv's first argument. The scan is best
+    effort in the safe direction: a space-separated option value (e.g.
+    `--python 3.12`) is indistinguishable from the command and ends the
+    scan early, so a real `--no-project` hiding after it merely triggers
+    the preflight, which fails closed."""
+    path: list[str] = []
+    for tok in tokens:
+        if tok == "--":
+            return False
+        if tok.startswith("-"):
+            if tok == "--no-project":
+                return True
+            continue
+        if not path:
+            path.append(tok)  # uv's subcommand (run, sync, tool, ...)
+            continue
+        if path == ["tool"] and tok == "run":
+            path.append(tok)  # `uv tool run` nests one more uv verb
+            continue
+        return False  # the executed child command: later tokens are its own
+    return False
 
 
 def _drop_comments(text: str) -> str:
@@ -227,9 +256,11 @@ def probe_reaches_uv(prompt: str, root: Path) -> str | None:
     variables such as `$(UV)`), a `make -C <dir>` / `--directory` hop redirects
     inspection into THAT directory's makefile, and invoked scripts are read,
     all recursively. An invocation that opts out of project/workspace
-    discovery with `--no-project` does not count: it can never fail on
-    missing workspace members, so a probe whose only path to uv is such an
-    invocation (e.g. `make -C tools/kg verify`) keeps the skip. Purely
+    discovery with `--no-project` among uv's OWN options (a `--no-project`
+    after the executed command belongs to the child program) does not count:
+    it can never fail on missing workspace members, so a probe whose only
+    path to uv is such an invocation (e.g. `make -C tools/kg verify`) keeps
+    the skip. Purely
     non-uv probes (pnpm, docs, frontend) still return None and keep it too. The walk is best effort (a `-C` directory outside
     the repo, or one holding no readable makefile, such as an uninitialized
     submodule gitlink, cannot be inspected), so the skip note still warns about
@@ -298,8 +329,17 @@ def probe_reaches_uv(prompt: str, root: Path) -> str | None:
     def text_reaches(text: str, origin: str, base: Path) -> str | None:
         text = _drop_comments(text)
         for m in RE_UV_INVOKE.finditer(text):
-            args_seg = RE_UV_ARGS_END.split(text[m.end():], 1)[0]
-            if RE_UV_NO_PROJECT.search(args_seg):
+            # Tokenize from the match START so uv's subcommand is always part
+            # of the segment (the two RE_UV_INVOKE alternatives end at
+            # different points), shedding connector/recipe-prefix glue and
+            # wrapper tokens up to the `uv` word itself. When `uv` cannot be
+            # isolated, the empty token list counts as reaching discovery,
+            # which fails closed.
+            seg = RE_UV_ARGS_END.split(text[m.start():], 1)[0]
+            toks = seg.lstrip(";&|`($@+- \t").split()
+            while toks and toks.pop(0) != "uv":
+                pass
+            if _uv_own_no_project(toks):
                 continue
             return f"{origin} invokes uv directly"
         for m in RE_MAKE_INVOKE.finditer(text):

@@ -43,9 +43,21 @@ import tomllib
 
 with open("pyproject.toml", "rb") as f:
     data = tomllib.load(f)
-members = data.get("tool", {}).get("uv", {}).get("workspace", {}).get("members", [])
-for pattern in members:
+workspace = data.get("tool", {}).get("uv", {}).get("workspace", {})
+# uv drops any member match covered by [tool.uv.workspace].exclude before
+# requiring a pyproject.toml, so members = ["packages/*"] plus
+# exclude = ["packages/b"] is a VALID workspace even when packages/b has no
+# manifest. Expand the exclusions the same way the member globs are expanded
+# and never report an excluded path missing.
+excluded = set()
+for pattern in workspace.get("exclude", []):
+    pattern = pattern.rstrip("/")
+    excluded.add(os.path.normpath(pattern))
+    excluded.update(os.path.normpath(p) for p in glob.glob(pattern))
+for pattern in workspace.get("members", []):
     for path in sorted(glob.glob(pattern)) or [pattern]:
+        if os.path.normpath(path) in excluded:
+            continue
         if not os.path.isfile(os.path.join(path, "pyproject.toml")):
             print(path)
 PY
