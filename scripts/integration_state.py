@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -333,7 +334,46 @@ def classify(branch: str, sha: str, base_sha: str) -> dict:
     return entry
 
 
-def try_open_prs() -> tuple[dict[str, int], bool]:
+def repo_selector_from_origin_url(url: str) -> str | None:
+    """Derive gh's credential-free ``HOST/OWNER/REPO`` selector from a remote URL.
+
+    ``gh --repo`` also accepts a full URL, but forwarding the output of
+    ``git remote get-url origin`` verbatim would place any credentials
+    embedded in an HTTPS remote (``https://user:token@host/...``) into the
+    ``gh`` process argv, where every local user can read them from the
+    process table even when the Git configuration file itself is private.
+    Only the host and the two-segment path are kept, so no userinfo can
+    survive into the selector.
+
+    The result is additionally restricted to hostname/repository characters:
+    the selector is rendered into the ledger's copy-paste reap instructions
+    inside a double-quoted shell word, where an unvalidated value smuggled
+    through a hostile origin URL (e.g. a ``$(...)`` path segment) would
+    otherwise execute in the operator's shell.
+
+    Returns ``None`` when the URL does not name a host plus exactly
+    ``owner/repo`` (e.g. a local filesystem path), so callers degrade to
+    ``pr_data_available=False`` instead of querying a guessed repository.
+    """
+    m = re.match(
+        # scheme://[userinfo@]host[:port]/path
+        r"^[A-Za-z][A-Za-z0-9+.-]*://(?:[^/@]*@)?(?P<host>[^/:@]+)(?::\d+)?/(?P<path>.+)$",
+        url,
+    ) or re.match(
+        # scp-like syntax: [user@]host:path
+        r"^(?:[^/@]+@)?(?P<host>[^/:@]+):(?P<path>[^/:].*)$",
+        url,
+    )
+    if m is None:
+        return None
+    path = m.group("path").rstrip("/").removesuffix(".git")
+    selector = f"{m.group('host')}/{path}"
+    if re.fullmatch(r"[A-Za-z0-9.-]+(?:/[A-Za-z0-9._-]+){2}", selector) is None:
+        return None
+    return selector
+
+
+def try_open_prs(repo_selector: str | None) -> tuple[dict[str, int], bool]:
     """Map head branch name -> PR number for open same-repo PRs targeting master.
 
     Returns ``(mapping, available)``. ``available`` is False only when the
@@ -352,15 +392,19 @@ def try_open_prs() -> tuple[dict[str, int], bool]:
     ``GH_REPO`` override, or a multi-remote checkout resolving to another
     remote — would otherwise "successfully" return an unrelated repository's
     PRs, hiding real origin PRs behind ``—`` and attaching foreign PR numbers
-    to matching head names.
+    to matching head names. The pin is the credential-free ``HOST/OWNER/REPO``
+    selector derived by :func:`repo_selector_from_origin_url` rather than the
+    raw origin URL, which may embed credentials that must not appear in argv;
+    a ``None`` selector (unparseable origin) degrades to unavailable.
 
     ``--limit`` truncates silently on success, and an omitted PR would render
     a reapable branch as deletable, so the limit is doubled until the response
     is provably complete (fewer rows than requested); if completeness cannot
     be established the mapping degrades to unavailable rather than wrong.
     """
+    if repo_selector is None:
+        return {}, False
     try:
-        origin_url = git("remote", "get-url", "origin").strip()
         limit = 1000
         while True:
             out = subprocess.run(
@@ -369,7 +413,7 @@ def try_open_prs() -> tuple[dict[str, int], bool]:
                     "pr",
                     "list",
                     "--repo",
-                    origin_url,
+                    repo_selector,
                     "--state",
                     "open",
                     "--base",
@@ -426,9 +470,14 @@ def render_markdown(
     entries: list[dict],
     base_sha: str,
     base_full_sha: str,
+    repo_selector: str | None,
     prs: dict[str, int],
     pr_data_available: bool,
 ) -> str:
+    # The reap instructions embed the selector inside a double-quoted shell
+    # word; repo_selector_from_origin_url() already restricted it to
+    # hostname/repository characters, so it cannot break out of the quotes.
+    selector_arg = repo_selector if repo_selector is not None else "<HOST>/<OWNER>/<REPO>"
     counts = Counter(e["status"] for e in entries)
     stranded = [e for e in entries if e["status"] == "STRANDED"]
     stranded.sort(key=lambda e: (e["files_differing"], e["tip_date"]))
@@ -490,32 +539,48 @@ def render_markdown(
         "   master has moved (e.g. a revert removed content that made a",
         "   branch LANDED) a listed branch may now be the last ref holding",
         "   its content;",
-        "2. a live PR query reports no open PR for the branch. Pin the",
-        "   query to the repository backing `origin` (an ambient `GH_REPO`",
-        "   override would silently query another repository) and pass the",
-        "   branch as one quoted argument (ref names may legally contain",
-        "   `;` or `$()`, which an unquoted substitution would execute);",
-        "3. the deletion itself carries an expected-tip lease:",
-        "   `--force-with-lease=<refname>:<expect>` requires the remote ref",
-        "   to still equal the classified tip at push time, so a push racing",
-        "   these checks is rejected by the server instead of silently",
-        "   discarded. Never use a bare `git push origin --delete`, which",
-        "   deletes unconditionally:",
+        "2. a live PR query reports no open PR for the branch. The query is",
+        "   pinned to the credential-free `HOST/OWNER/REPO` selector of the",
+        "   repository backing `origin` (an ambient `GH_REPO` override would",
+        "   silently query another repository, and forwarding the raw origin",
+        "   URL would expose credentials embedded in an HTTPS remote to the",
+        "   process table via argv). The branch is passed as one quoted",
+        "   argument (ref names may legally contain `;` or `$()`, which an",
+        "   unquoted substitution would execute);",
+        "3. the deletion pushes with `--atomic` and an expected-value lease",
+        "   on **both** refs (`--force-with-lease=<refname>:<expect>`",
+        "   requires the named ref to still equal `<expect>` at push time).",
+        "   The tip lease alone protects only the branch ref, so a base",
+        "   moved between the `ls-remote` check and the push (a revert or",
+        "   force-push removing content behind a LANDED verdict) would still",
+        f"   delete; leasing the base via a no-op `$base:refs/heads/{_BASE_BRANCH}`",
+        "   refspec in the same atomic transaction makes the server reject",
+        "   the whole push instead. Never use a bare",
+        "   `git push origin --delete`, which deletes unconditionally.",
         "",
-        "   ```sh",
-        "   IFS= read -r branch   # paste the branch name, press Enter",
-        "   IFS= read -r tip      # paste the branch's full tip SHA",
-        "                         # (tip_sha in integration-state.json)",
-        f"   git ls-remote origin refs/heads/{_BASE_BRANCH}",
-        f"   # ^ must print exactly {base_full_sha}",
-        '   gh pr list --repo "$(git remote get-url origin)" \\',
-        '     --state open --head "$branch"',
-        '   git push --force-with-lease="refs/heads/$branch:$tip" \\',
-        '     origin ":refs/heads/$branch"',
-        "   ```",
+        "The commands form one `&&` chain because a found PR is successful",
+        "output, not a failing exit status: the PR list is captured and",
+        "required to be empty, the live base SHA is compared explicitly,",
+        "and any failed lookup or check stops the chain before the push",
+        "runs:",
         "",
-        "If any check fails, or the lease push is rejected, regenerate and",
-        "reclassify first.",
+        "```sh",
+        "IFS= read -r branch   # paste the branch name, press Enter",
+        "IFS= read -r tip      # paste the branch's full tip SHA",
+        "                      # (tip_sha in integration-state.json)",
+        f"base={base_full_sha} &&",
+        f'[ "$(git ls-remote origin refs/heads/{_BASE_BRANCH} | cut -f1)" = "$base" ] &&',
+        f'prs=$(gh pr list --repo "{selector_arg}" --state open \\',
+        "  --head \"$branch\" --json number --jq '.[].number') &&",
+        '[ -z "$prs" ] &&',
+        "git push --atomic \\",
+        f'  --force-with-lease="refs/heads/{_BASE_BRANCH}:$base" \\',
+        '  --force-with-lease="refs/heads/$branch:$tip" \\',
+        f'  origin "$base:refs/heads/{_BASE_BRANCH}" ":refs/heads/$branch"',
+        "```",
+        "",
+        "If the chain stops early, or the lease push is rejected,",
+        "regenerate and reclassify first.",
         "",
         "| Branch | Status | Tip SHA | Tip date | Open PR |",
         "|---|---|---|---|---|",
@@ -669,7 +734,12 @@ def main() -> int:
         if i % 50 == 0:
             print(f"  {i}/{len(branches)}", file=sys.stderr)
 
-    prs, pr_data_available = try_open_prs()
+    try:
+        origin_url = git("remote", "get-url", "origin").strip()
+    except subprocess.CalledProcessError:
+        origin_url = ""
+    repo_selector = repo_selector_from_origin_url(origin_url)
+    prs, pr_data_available = try_open_prs(repo_selector)
     # Preserve PR linkage in the machine-readable ledger too: with
     # pr_data_available=True, a missing "open_pr" key means no open PR.
     for e in entries:
@@ -701,7 +771,7 @@ def main() -> int:
     # raise UnicodeEncodeError, so escape them visibly instead of aborting.
     JSON_OUT.write_text(json.dumps(payload, indent=2) + "\n")
     MD_OUT.write_text(
-        render_markdown(entries, base_sha, base_full_sha, prs, pr_data_available),
+        render_markdown(entries, base_sha, base_full_sha, repo_selector, prs, pr_data_available),
         errors="backslashreplace",
     )
     print(f"wrote {MD_OUT} and {JSON_OUT}: {dict(counts)}")
