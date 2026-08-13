@@ -39,13 +39,24 @@ MD_OUT = Path("docs/INTEGRATION-STATE.md")
 JSON_OUT = Path("docs/integration-state.json")
 
 
+# Both helpers pass --no-replace-objects: replacement refs (refs/replace/*)
+# rewrite object lookups by default, so a local overlay would make merge-base
+# and diff classify the *replacement* commits instead of the immutable objects
+# the remote refs actually point at — e.g. a feature tip locally replaced by an
+# empty child of master yields two empty diffs and a false NO-OP even though
+# the real tip holds a unique file. Classification must see only the objects
+# stored in the remote refs, never local rewrites.
+
+
 def git(*args: str) -> str:
-    result = subprocess.run(["git", *args], capture_output=True, text=True, check=True)
+    result = subprocess.run(
+        ["git", "--no-replace-objects", *args], capture_output=True, text=True, check=True
+    )
     return result.stdout
 
 
 def git_bytes(*args: str) -> bytes:
-    result = subprocess.run(["git", *args], capture_output=True, check=True)
+    result = subprocess.run(["git", "--no-replace-objects", *args], capture_output=True, check=True)
     return result.stdout
 
 
@@ -106,6 +117,15 @@ def fetch_refspec_covers_all_heads() -> bool:
     accepted; any other destination (or a broader ``refs/*`` source, which
     would land heads at ``refs/remotes/origin/heads/*`` and corrupt branch
     names) does not count as coverage.
+
+    Additional mappings whose destination lands inside
+    ``refs/remotes/origin/*`` (e.g. ``+refs/pull/*/head:refs/remotes/origin/pr/*``)
+    also disqualify the clone: they populate the scanned namespace with refs
+    that are not remote heads, so ``origin/pr/123`` would be inventoried as a
+    real branch and — if classified reapable — the ledger would recommend
+    deleting a nonexistent or unrelated ``refs/heads/pr/123``. A refspec with
+    no destination only writes ``FETCH_HEAD`` and cannot pollute the
+    namespace.
     """
     try:
         specs = git("config", "--get-all", "remote.origin.fetch").splitlines()
@@ -124,6 +144,20 @@ def fetch_refspec_covers_all_heads() -> bool:
             continue
         if spec.removeprefix("+") == "refs/heads/*:refs/remotes/origin/*":
             covered = True
+            continue
+        # Any other mapping into refs/remotes/origin/* fills the scanned
+        # namespace with non-head refs (see docstring). A refspec pattern
+        # holds at most one "*"; the destination can intersect the namespace
+        # iff its literal prefix lies inside it or is itself a prefix of
+        # "refs/remotes/origin/".
+        _, _, dst = spec.removeprefix("+").partition(":")
+        if not dst:
+            continue
+        dst_prefix = dst.split("*", 1)[0]
+        if dst_prefix.startswith("refs/remotes/origin/") or "refs/remotes/origin/".startswith(
+            dst_prefix
+        ):
+            return False
     return covered
 
 
@@ -143,8 +177,14 @@ def diff_names(*args: str) -> list[str]:
     cannot raise ``UnicodeDecodeError`` and abort the whole scan, and the
     decoding round-trips losslessly back to the original bytes when the path
     is passed as a subprocess argument (argv encodes via ``os.fsencode``).
+
+    ``--ignore-submodules=none`` forces gitlink (mode 160000) changes into the
+    output: ``diff.ignoreSubmodules=all`` in the checkout's config would
+    otherwise silently drop them, so a branch whose only change is a unique
+    submodule-pointer update would come back empty and be advertised as a
+    deletable NO-OP in this submodule-heavy monorepo.
     """
-    out = git_bytes("diff", "--name-only", "-z", "--no-renames", *args)
+    out = git_bytes("diff", "--name-only", "-z", "--no-renames", "--ignore-submodules=none", *args)
     return [os.fsdecode(f) for f in out.split(b"\0") if f]
 
 
@@ -380,10 +420,12 @@ def main() -> int:
     if not fetch_refspec_covers_all_heads():
         print(
             "error: remote.origin.fetch does not map refs/heads/* to\n"
-            "refs/remotes/origin/* (single-branch, narrowed, or remapped clone) —\n"
-            "`git fetch --prune origin` would not refresh the namespace this script\n"
-            "enumerates and the ledger would silently omit remote branches.\n"
+            "refs/remotes/origin/* (single-branch, narrowed, or remapped clone), or\n"
+            "maps extra refs (e.g. refs/pull/*) into refs/remotes/origin/* —\n"
+            "`git fetch --prune origin` would not refresh exactly the namespace this\n"
+            "script enumerates and the ledger would omit or invent remote branches.\n"
             "Fix with:\n"
+            "  git config --unset-all remote.origin.fetch\n"
             "  git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'\n"
             "  git fetch --prune origin",
             file=sys.stderr,
@@ -410,9 +452,10 @@ def main() -> int:
                 stderr = stderr.decode(errors="replace")
             # `git merge-base --all` fails with *empty* stderr when the branch
             # shares no ancestor with BASE; synthesize a message so the Errors
-            # section never renders a blank cell.
+            # section never renders a blank cell. cmd[2:4] skips the fixed
+            # "git --no-replace-objects" prefix the helpers prepend.
             message = stderr.strip() or (
-                f"git {' '.join(map(str, exc.cmd[1:3]))} exited {exc.returncode}"
+                f"git {' '.join(map(str, exc.cmd[2:4]))} exited {exc.returncode}"
                 " (no merge base with BASE?)"
             )
             entries.append(
