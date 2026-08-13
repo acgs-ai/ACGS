@@ -169,7 +169,7 @@ const IMPL_SCHEMA = {
     branch: { type: 'string', description: 'git ref name only (e.g. final-goal/g1-2); empty string when noChangesNeeded — never prose' },
     baseBranch: { type: 'string', description: 'git ref the feature branch was created from (e.g. master, or main in a nested repo); empty string when noChangesNeeded' },
     worktree: { type: 'string', description: 'Absolute path of the worktree the changes live in' },
-    filesChanged: { type: 'array', items: { type: 'string' } },
+    filesChanged: { type: 'array', items: { type: 'string' }, description: 'Changed file paths RELATIVE to the worktree root, matching git diff --name-only output' },
     summary: { type: 'string' },
     blockers: { type: 'string' },
   },
@@ -381,7 +381,7 @@ Procedure:
 4. Make the smallest safe change that closes the gap, WITH tests (TDD where practical).
 5. Run the validation command locally from inside the worktree: ${JSON.stringify(item.validationCommand)}
 6. Stage ONLY the files you changed (explicit paths, never -A), commit on the feature branch with a conventional message. Do NOT push. NEVER touch the parent repo or its submodule pointer.
-Report the absolute worktree path, branch name, the base branch you resolved in step 1 (as baseBranch, e.g. main), and the files you changed. If you hit a hard blocker, set completed=false and explain in blockers.
+Report the absolute worktree path, branch name, the base branch you resolved in step 1 (as baseBranch, e.g. main), and the files you changed as paths RELATIVE to the worktree root (matching git diff --name-only output). If you hit a hard blocker, set completed=false and explain in blockers.
 If you determine the criterion is ALREADY satisfied and zero changes are required: set completed=true, noChangesNeeded=true, branch="" (empty — NEVER prose in the branch field), baseBranch="", filesChanged=[], and put the evidence in summary.`,
         { label: `impl:${item.criterionId}`, phase: 'Implement', schema: IMPL_SCHEMA },
       )
@@ -400,11 +400,12 @@ Package directory (relative to the worktree what ${item.packageDir} is to the ma
 
 Procedure:
 1. Read the package-local CLAUDE.md / AGENTS.md first and obey them.
-2. Create a feature branch named "final-goal/${slug}".
-3. Make the smallest safe change that closes the gap, WITH tests (TDD where practical).
-4. Run the validation command locally: ${JSON.stringify(item.validationCommand)}
-5. Stage ONLY the files you changed (explicit paths, never -A), commit on the feature branch with a conventional message. Do NOT push.
-Report the absolute worktree path, branch name, the ref your feature branch was created from (the branch the worktree was on before step 2, as baseBranch), and the files you changed. If you hit a hard blocker, set completed=false and explain in blockers.
+2. Resolve the repository's real base branch explicitly (NEVER report the branch the worktree happened to start on: isolation worktrees can begin on a generated transient branch or a detached HEAD, neither of which is a ref a PR can target): base="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"; if that is empty, use main if "git show-ref --verify --quiet refs/heads/main" succeeds, else master.
+3. Create the feature branch FROM that base: git switch -c ${shq(`final-goal/${slug}`)} "$base" (if the branch already exists, append a -2 suffix).
+4. Make the smallest safe change that closes the gap, WITH tests (TDD where practical).
+5. Run the validation command locally: ${JSON.stringify(item.validationCommand)}
+6. Stage ONLY the files you changed (explicit paths, never -A), commit on the feature branch with a conventional message. Do NOT push.
+Report the absolute worktree path, branch name, the base branch you resolved in step 2 (as baseBranch, e.g. master), and the files you changed as paths RELATIVE to the worktree root (matching git diff --name-only output). If you hit a hard blocker, set completed=false and explain in blockers.
 If you determine the criterion is ALREADY satisfied and zero changes are required: set completed=true, noChangesNeeded=true, branch="" (empty — NEVER prose in the branch field), baseBranch="", filesChanged=[], and put the evidence in summary.`,
       { label: `impl:${item.criterionId}`, phase: 'Implement', isolation: 'worktree', schema: IMPL_SCHEMA },
     )
@@ -427,6 +428,28 @@ If you determine the criterion is ALREADY satisfied and zero changes are require
     // to escape newlines/control chars (prompt-injection defense).
     assertShellSafe(impl.worktree, 'impl.worktree', RE_PATH)
     assertShellSafe(impl.branch, 'impl.branch', RE_REF)
+    // Normalize reported filesChanged BEFORE the reviewer's diff preflight sees
+    // them: the schema asks for worktree-relative paths but permits absolute
+    // ones, and "git diff --name-only" emits repository-relative paths, so an
+    // absolute entry like "<worktree>/src/foo.py" would fail the mandatory
+    // inclusion check (and the verifier's drift check against "git status
+    // --short") even when the diff covers every change. Strip the worktree
+    // prefix from entries under the worktree; an absolute path NOT under the
+    // worktree cannot appear in the reviewed diff at all, so block fail-closed
+    // rather than hand the reviewer a list it can never satisfy. Mutating
+    // impl.filesChanged keeps Stage 3 and the final report consistent.
+    const wtPrefix = impl.worktree.endsWith('/') ? impl.worktree : `${impl.worktree}/`
+    const normalizedFiles = []
+    for (const f of impl.filesChanged ?? []) {
+      const s = String(f)
+      if (s.startsWith(wtPrefix)) normalizedFiles.push(s.slice(wtPrefix.length))
+      else if (s.startsWith('/')) {
+        return { impl, review: { verdict: 'block', issues: [`implementer reported changed file ${JSON.stringify(s)} outside its worktree ${JSON.stringify(impl.worktree)}: the file cannot be part of the reviewed diff, so the change cannot receive an effective review`] } }
+      } else {
+        normalizedFiles.push(s.replace(/^(\.\/)+/, ''))
+      }
+    }
+    impl.filesChanged = normalizedFiles
     // The base the implementer branched from (nested repos usually expose main,
     // not master), so the reviewer diffs against a ref that actually exists.
     // No fallback: guessing "master" makes the diff exit 128 in nested
