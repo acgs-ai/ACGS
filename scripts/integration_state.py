@@ -249,6 +249,35 @@ def fetch_refspec_covers_all_heads() -> bool:
     return covered
 
 
+def divergent_push_urls() -> list[str]:
+    """Return every push URL of ``origin`` that differs from its fetch URL.
+
+    ``git push origin`` targets ``remote.origin.pushurl`` when configured
+    (every configured value, so several push URLs push to several
+    repositories), while this script's ref inventory, base resolution, and
+    PR snapshot are all served by the fetch URL, and the rendered reap
+    chain's ``git ls-remote origin`` and pinned ``gh`` query inspect the
+    fetch URL too. With a divergent push URL the chain's final ``git push``
+    would delete refs in a repository whose branches, base, and PRs were
+    never inspected; a matching tip lease there proves nothing, because the
+    lease only pins that repository's ref, not the provenance of the
+    verdict. Only a configuration whose every push target equals the fetch
+    URL is accepted.
+
+    With no pushurl configured, ``get-url --push --all`` falls back to the
+    fetch URL(s), so a default single-URL remote returns an empty list. A
+    second ``remote.origin.url`` entry is reported as divergent as well:
+    ``git fetch`` reads only the first URL, but ``git push`` targets all of
+    them.
+    """
+    try:
+        fetch_url = git("remote", "get-url", "origin").strip()
+        push_urls = git("remote", "get-url", "--push", "--all", "origin").splitlines()
+    except subprocess.CalledProcessError:
+        return ["<unresolvable remote.origin URL>"]
+    return [url for url in (u.strip() for u in push_urls) if url and url != fetch_url]
+
+
 def branch_tip_date(sha: str) -> str:
     # --no-show-signature: log.showSignature=true is equivalent to adding
     # --show-signature, which prepends signature status to stdout even with
@@ -526,9 +555,16 @@ def render_markdown(
         "the moment another checkout pushes (they only move on a successful",
         "fetch), so a check-then-delete against local refs can pass and still",
         "destroy fresh commits. Immediately before deleting, verify **all",
-        "three** against the live remote:",
+        "four** against the live remote:",
         "",
-        "1. an authoritative `git ls-remote` lookup (never the local",
+        "1. `git push origin` targets exactly the repository the other",
+        "   checks inspect: `git remote get-url --push --all origin` must",
+        "   print exactly the fetch URL. A configured `remote.origin.pushurl`",
+        "   (possibly several) makes the push modify repositories other than",
+        "   the one answering the `ls-remote` and PR queries, so a matching",
+        "   lease there proves nothing about the repository actually being",
+        "   modified;",
+        "2. an authoritative `git ls-remote` lookup (never the local",
         f"   tracking ref) shows the remote `{_BASE_BRANCH}` still at the",
         "   classified base, compared as the **full** object ID (a later",
         "   commit can share an abbreviated prefix):",
@@ -539,7 +575,7 @@ def render_markdown(
         "   master has moved (e.g. a revert removed content that made a",
         "   branch LANDED) a listed branch may now be the last ref holding",
         "   its content;",
-        "2. a live PR query reports no open PR for the branch. The query is",
+        "3. a live PR query reports no open PR for the branch. The query is",
         "   pinned to the credential-free `HOST/OWNER/REPO` selector of the",
         "   repository backing `origin` (an ambient `GH_REPO` override would",
         "   silently query another repository, and forwarding the raw origin",
@@ -547,39 +583,47 @@ def render_markdown(
         "   process table via argv). The branch is passed as one quoted",
         "   argument (ref names may legally contain `;` or `$()`, which an",
         "   unquoted substitution would execute);",
-        "3. the deletion pushes with `--atomic` and an expected-value lease",
-        "   on **both** refs (`--force-with-lease=<refname>:<expect>`",
-        "   requires the named ref to still equal `<expect>` at push time).",
-        "   The tip lease alone protects only the branch ref, so a base",
-        "   moved between the `ls-remote` check and the push (a revert or",
-        "   force-push removing content behind a LANDED verdict) would still",
-        f"   delete; leasing the base via a no-op `$base:refs/heads/{_BASE_BRANCH}`",
-        "   refspec in the same atomic transaction makes the server reject",
-        "   the whole push instead. Never use a bare",
-        "   `git push origin --delete`, which deletes unconditionally.",
+        "4. the deletion pushes with `--atomic`, an expected-value lease on",
+        "   the branch ref (`--force-with-lease=<refname>:<expect>` makes",
+        "   the server reject the deletion unless the ref still equals",
+        "   `<expect>`), and an archival tag `refs/tags/reaped/<branch>`",
+        "   pointing at the classified tip, created in the same transaction.",
+        "   A lease can only guard a ref the transaction actually updates:",
+        "   Git drops an already-up-to-date refspec from the push before",
+        "   leases are evaluated, so a no-op base refspec cannot detect a",
+        f"   `{_BASE_BRANCH}` reverted or force-pushed after the `ls-remote`",
+        "   check. The atomic tag makes that residual race non-destructive",
+        "   instead: whatever happens to the base, the deleted branch's",
+        "   content stays reachable under the tag. Delete the tag",
+        '   (`git push origin ":refs/tags/reaped/$branch"`) only after',
+        f"   confirming the live `{_BASE_BRANCH}` still holds the content.",
+        "   Never use a bare `git push origin --delete`, which deletes",
+        "   unconditionally.",
         "",
         "The commands form one `&&` chain because a found PR is successful",
         "output, not a failing exit status: the PR list is captured and",
-        "required to be empty, the live base SHA is compared explicitly,",
-        "and any failed lookup or check stops the chain before the push",
-        "runs:",
+        "required to be empty, the push targets and the live base SHA are",
+        "compared explicitly, and any failed lookup or check stops the",
+        "chain before the push runs:",
         "",
         "```sh",
         "IFS= read -r branch   # paste the branch name, press Enter",
         "IFS= read -r tip      # paste the branch's full tip SHA",
         "                      # (tip_sha in integration-state.json)",
         f"base={base_full_sha} &&",
+        '[ "$(git remote get-url --push --all origin)" \\',
+        '  = "$(git remote get-url origin)" ] &&',
         f'[ "$(git ls-remote origin refs/heads/{_BASE_BRANCH} | cut -f1)" = "$base" ] &&',
         f'prs=$(gh pr list --repo "{selector_arg}" --state open \\',
         "  --head \"$branch\" --json number --jq '.[].number') &&",
         '[ -z "$prs" ] &&',
         "git push --atomic \\",
-        f'  --force-with-lease="refs/heads/{_BASE_BRANCH}:$base" \\',
         '  --force-with-lease="refs/heads/$branch:$tip" \\',
-        f'  origin "$base:refs/heads/{_BASE_BRANCH}" ":refs/heads/$branch"',
+        '  origin "$tip:refs/tags/reaped/$branch" ":refs/heads/$branch"',
         "```",
         "",
-        "If the chain stops early, or the lease push is rejected,",
+        "If the chain stops early, or the push is rejected (a moved tip,",
+        "or a pre-existing `reaped/<branch>` tag at a different commit),",
         "regenerate and reclassify first.",
         "",
         "| Branch | Status | Tip SHA | Tip date | Open PR |",
@@ -632,6 +676,23 @@ def main() -> int:
             "  git config --unset-all remote.origin.fetch\n"
             "  git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'\n"
             "  git fetch --prune origin",
+            file=sys.stderr,
+        )
+        return 1
+
+    divergent = divergent_push_urls()
+    if divergent:
+        listing = "\n".join(f"  {url}" for url in divergent)
+        print(
+            "error: push URL(s) of origin differ from its fetch URL:\n"
+            f"{listing}\n"
+            "`git push origin` targets every push URL, while this ledger's ref\n"
+            "inventory, base, and PR snapshot (and the rendered reap chain's\n"
+            "`ls-remote`/`gh` checks) inspect only the fetch URL, so the reap\n"
+            "instructions could delete refs in a repository that was never\n"
+            "inspected. Fix with:\n"
+            "  git config --unset-all remote.origin.pushurl\n"
+            "(and keep a single remote.origin.url), then regenerate.",
             file=sys.stderr,
         )
         return 1

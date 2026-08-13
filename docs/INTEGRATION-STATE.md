@@ -185,9 +185,16 @@ afterwards without moving any ref, and local tracking refs go stale
 the moment another checkout pushes (they only move on a successful
 fetch), so a check-then-delete against local refs can pass and still
 destroy fresh commits. Immediately before deleting, verify **all
-three** against the live remote:
+four** against the live remote:
 
-1. an authoritative `git ls-remote` lookup (never the local
+1. `git push origin` targets exactly the repository the other
+   checks inspect: `git remote get-url --push --all origin` must
+   print exactly the fetch URL. A configured `remote.origin.pushurl`
+   (possibly several) makes the push modify repositories other than
+   the one answering the `ls-remote` and PR queries, so a matching
+   lease there proves nothing about the repository actually being
+   modified;
+2. an authoritative `git ls-remote` lookup (never the local
    tracking ref) shows the remote `master` still at the
    classified base, compared as the **full** object ID (a later
    commit can share an abbreviated prefix):
@@ -198,7 +205,7 @@ three** against the live remote:
    master has moved (e.g. a revert removed content that made a
    branch LANDED) a listed branch may now be the last ref holding
    its content;
-2. a live PR query reports no open PR for the branch. The query is
+3. a live PR query reports no open PR for the branch. The query is
    pinned to the credential-free `HOST/OWNER/REPO` selector of the
    repository backing `origin` (an ambient `GH_REPO` override would
    silently query another repository, and forwarding the raw origin
@@ -206,39 +213,47 @@ three** against the live remote:
    process table via argv). The branch is passed as one quoted
    argument (ref names may legally contain `;` or `$()`, which an
    unquoted substitution would execute);
-3. the deletion pushes with `--atomic` and an expected-value lease
-   on **both** refs (`--force-with-lease=<refname>:<expect>`
-   requires the named ref to still equal `<expect>` at push time).
-   The tip lease alone protects only the branch ref, so a base
-   moved between the `ls-remote` check and the push (a revert or
-   force-push removing content behind a LANDED verdict) would still
-   delete; leasing the base via a no-op `$base:refs/heads/master`
-   refspec in the same atomic transaction makes the server reject
-   the whole push instead. Never use a bare
-   `git push origin --delete`, which deletes unconditionally.
+4. the deletion pushes with `--atomic`, an expected-value lease on
+   the branch ref (`--force-with-lease=<refname>:<expect>` makes
+   the server reject the deletion unless the ref still equals
+   `<expect>`), and an archival tag `refs/tags/reaped/<branch>`
+   pointing at the classified tip, created in the same transaction.
+   A lease can only guard a ref the transaction actually updates:
+   Git drops an already-up-to-date refspec from the push before
+   leases are evaluated, so a no-op base refspec cannot detect a
+   `master` reverted or force-pushed after the `ls-remote`
+   check. The atomic tag makes that residual race non-destructive
+   instead: whatever happens to the base, the deleted branch's
+   content stays reachable under the tag. Delete the tag
+   (`git push origin ":refs/tags/reaped/$branch"`) only after
+   confirming the live `master` still holds the content.
+   Never use a bare `git push origin --delete`, which deletes
+   unconditionally.
 
 The commands form one `&&` chain because a found PR is successful
 output, not a failing exit status: the PR list is captured and
-required to be empty, the live base SHA is compared explicitly,
-and any failed lookup or check stops the chain before the push
-runs:
+required to be empty, the push targets and the live base SHA are
+compared explicitly, and any failed lookup or check stops the
+chain before the push runs:
 
 ```sh
 IFS= read -r branch   # paste the branch name, press Enter
 IFS= read -r tip      # paste the branch's full tip SHA
                       # (tip_sha in integration-state.json)
 base=bee922df3d6f4dd22fd4bdbea3cf25e72e038d36 &&
+[ "$(git remote get-url --push --all origin)" \
+  = "$(git remote get-url origin)" ] &&
 [ "$(git ls-remote origin refs/heads/master | cut -f1)" = "$base" ] &&
 prs=$(gh pr list --repo "github.com/acgs-ai/ACGS" --state open \
   --head "$branch" --json number --jq '.[].number') &&
 [ -z "$prs" ] &&
 git push --atomic \
-  --force-with-lease="refs/heads/master:$base" \
   --force-with-lease="refs/heads/$branch:$tip" \
-  origin "$base:refs/heads/master" ":refs/heads/$branch"
+  origin "$tip:refs/tags/reaped/$branch" ":refs/heads/$branch"
 ```
 
-If the chain stops early, or the lease push is rejected,
+If the chain stops early, or the push is rejected (a moved tip,
+or a pre-existing `reaped/<branch>` tag at a different commit),
 regenerate and reclassify first.
 
 | Branch | Status | Tip SHA | Tip date | Open PR |
