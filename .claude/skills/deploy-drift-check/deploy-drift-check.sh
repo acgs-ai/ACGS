@@ -30,6 +30,12 @@ if [ -z "$LIVE_HTML" ]; then
   warn "$SITE/ unreachable or empty body (empty-body edge 404 is the Workers-shadow signature)"
 else
   LIVE_FP=$(printf '%s' "$LIVE_HTML" | grep -oE '/assets/[A-Za-z0-9._-]+\.(js|css)' | sort -u)
+  if [ -z "$LIVE_FP" ]; then
+    # A reachable page with no asset references is a maintenance/error page, not
+    # an identified build. Comparing or recording an empty fingerprint would let
+    # the check pass without ever verifying WHAT is deployed: that is drift.
+    warn "$SITE/ reachable but the page references no /assets/*.js|css: cannot fingerprint the deployed build (maintenance/error page?). Not comparing or recording an empty fingerprint."
+  else
   ok "$SITE/ reachable; live assets:"
   printf '%s\n' "$LIVE_FP" | sed 's/^/        /'
 
@@ -61,14 +67,19 @@ else
     printf '%s\n' "$LIVE_FP" > "$BASELINE"
     ok "baseline recorded → $BASELINE"
   fi
+  fi
 fi
 
 # --- 3. SPA-fallback misconfig: a missing asset must NOT come back as 200 html -
 PROBE=$(curl -s -o /dev/null -w '%{http_code} %{content_type}' --max-time 15 "$SITE/assets/__drift_probe_missing__.js" || echo "000")
+# Any response we cannot evaluate (curl transport failure -> "000", or an
+# unexpected status) means the SPA-fallback invariant was NOT verified; that
+# must fail the check, not pass as an informational note.
 case "$PROBE" in
   200\ text/html*) warn "missing asset served as 200 text/html — SPA fallback swallowing static 404s (breaks agent-discovery scanners)" ;;
   404*)            ok "missing asset correctly 404s ($PROBE)" ;;
-  *)               note "note  missing-asset probe returned: $PROBE" ;;
+  000*)            warn "missing-asset probe failed in transport (timeout/TLS/connect: $PROBE): SPA-fallback invariant NOT verified" ;;
+  *)               warn "missing-asset probe returned unexpected response ($PROBE): SPA-fallback invariant NOT verified" ;;
 esac
 
 # --- 4. console DNS -----------------------------------------------------------

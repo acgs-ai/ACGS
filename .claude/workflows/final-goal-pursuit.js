@@ -56,6 +56,37 @@ const RE_PATH = /^[A-Za-z0-9._/-]+$/ // filesystem path
 const RE_REF = /^[A-Za-z0-9._/@~^{}-]+$/ // git ref / branch name
 const RE_SLUG = /^[A-Za-z0-9._-]+$/ // slug / id component
 
+// Nested git repositories registered in .gitmodules. In a worktree of the
+// PARENT repo these paths are empty 160000 gitlinks, so work targeting them
+// must be dispatched through a worktree of the nested repo itself.
+const NESTED_REPOS = [
+  'packages/acgs-lite',
+  'packages/Acgs-Swarm',
+  'packages/clinicalguard',
+  'packages/ACGS-agency-agents',
+  'packages/acgs-control-plane',
+]
+
+// Boundary containment for planner-produced packageDir values. RE_PATH only
+// validates CHARACTERS: it still admits an arbitrary absolute path outside
+// ${REPO} ("/tmp/evil") or a `..` escape, either of which would launch an
+// implementation lane outside the git boundary this workflow governs. Fail
+// closed on both, then report which nested repo (if any) owns the path so the
+// dispatch site can create the worktree at the right repository.
+function resolveBoundary(dir, label) {
+  const s = String(dir)
+  if (s.split('/').includes('..')) {
+    throw new Error(`final-goal-pursuit: refusing to run: \`${label}\` = ${JSON.stringify(s)} contains a ".." segment (path escape).`)
+  }
+  const abs = s.startsWith('/') ? s.replace(/\/+$/, '') : `${REPO}/${s.replace(/\/+$/, '')}`
+  if (abs !== REPO && !abs.startsWith(`${REPO}/`)) {
+    throw new Error(`final-goal-pursuit: refusing to run: \`${label}\` = ${JSON.stringify(s)} resolves outside the repository boundary ${REPO}. Work outside the selected subproject cannot be reviewed or committed at the correct boundary.`)
+  }
+  const rel = abs === REPO ? '' : abs.slice(REPO.length + 1)
+  const nested = NESTED_REPOS.find(n => rel === n || rel.startsWith(`${n}/`)) ?? null
+  return { abs, nestedRepoDir: nested ? `${REPO}/${nested}` : null }
+}
+
 // EXCLUDE elements are arg-derived and appear in prompt/display text (newline =
 // prompt injection). They are criterion ids like "G1.1" — validate fail-closed.
 // (Display-only, never shell-interpolated, so no shq needed here.)
@@ -281,6 +312,13 @@ const selected = (plan?.items ?? []).slice(0, MAX_ITEMS)
 for (const it of selected) {
   assertShellSafe(it.criterionId, 'criterionId', RE_SLUG)
   assertShellSafe(it.packageDir, 'packageDir', RE_PATH)
+  // Character validation is not containment: also require packageDir to live
+  // inside ${REPO}, and record whether a nested repo owns it so Stage 1 can
+  // create the worktree at that repository instead of the parent (where the
+  // nested path is an empty gitlink and nothing can be committed).
+  const boundary = resolveBoundary(it.packageDir, `items[${it.criterionId}].packageDir`)
+  it.packageDir = boundary.abs
+  it.nestedRepoDir = boundary.nestedRepoDir
 }
 log(`Selected ${selected.length} work item(s): ${selected.map(s => s.criterionId).join(', ')}`)
 
@@ -301,6 +339,33 @@ const outcomes = await pipeline(
       log(`Budget low — skipping implementation of ${item.criterionId}`)
       return null
     }
+    const slug = item.criterionId.toLowerCase().replace('.', '-')
+    // Nested-repo targets CANNOT use a parent worktree: the nested path is an
+    // empty 160000 gitlink there, so the task is unperformable and nothing can
+    // be committed at the correct boundary. Dispatch those through a worktree
+    // of the nested repository itself (mirrors acgs-lite-pep-closure-pursuit).
+    if (item.nestedRepoDir) {
+      return agent(
+        `You are the implementation lane for ONE work item toward the ACGS final goal. The work lives in ${item.packageDir}, which is inside a NESTED git repository (${item.nestedRepoDir} has its own .git, registered as a submodule of ${REPO}). A worktree of the parent repo records it as an empty gitlink, so you MUST create and work in a worktree of the nested repo itself.
+
+${REPO_RULES}
+
+Work item (criterion ${item.criterionId}): ${JSON.stringify(item.title)}
+
+Plan:
+${JSON.stringify(item.plan)}
+
+Procedure:
+1. Create an isolated worktree of the NESTED repo (not the parent): git -C ${shq(item.nestedRepoDir)} worktree add "$(mktemp -d)/wt" -b ${shq(`final-goal/${slug}`)} (if the branch already exists, append a -2 suffix).
+2. cd into that worktree. Read the package-local CLAUDE.md / AGENTS.md first and obey them.
+3. Make the smallest safe change that closes the gap, WITH tests (TDD where practical).
+4. Run the validation command locally from inside the worktree: ${JSON.stringify(item.validationCommand)}
+5. Stage ONLY the files you changed (explicit paths, never -A), commit on the feature branch with a conventional message. Do NOT push. NEVER touch the parent repo or its submodule pointer.
+Report the absolute worktree path, branch name, and the files you changed. If you hit a hard blocker, set completed=false and explain in blockers.
+If you determine the criterion is ALREADY satisfied and zero changes are required: set completed=true, noChangesNeeded=true, branch="" (empty — NEVER prose in the branch field), filesChanged=[], and put the evidence in summary.`,
+        { label: `impl:${item.criterionId}`, phase: 'Implement', schema: IMPL_SCHEMA },
+      )
+    }
     return agent(
       `You are the implementation lane for ONE work item toward the ACGS final goal. You are running in an isolated git worktree of ${REPO} — discover your worktree root with "git rev-parse --show-toplevel" and work there.
 
@@ -315,7 +380,7 @@ Package directory (relative to the worktree what ${item.packageDir} is to the ma
 
 Procedure:
 1. Read the package-local CLAUDE.md / AGENTS.md first and obey them.
-2. Create a feature branch named "final-goal/${item.criterionId.toLowerCase().replace('.', '-')}".
+2. Create a feature branch named "final-goal/${slug}".
 3. Make the smallest safe change that closes the gap, WITH tests (TDD where practical).
 4. Run the validation command locally: ${JSON.stringify(item.validationCommand)}
 5. Stage ONLY the files you changed (explicit paths, never -A), commit on the feature branch with a conventional message. Do NOT push.

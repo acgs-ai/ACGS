@@ -64,6 +64,20 @@ def is_dirty(root: Path) -> bool:
     return bool(git(["status", "--porcelain"], root).strip())
 
 
+def owning_git_root(root: Path, rel: str) -> Path:
+    """Nearest ancestor of the target (up to root) that is its own git repo.
+
+    A `.git` entry below root marks a nested repository / submodule boundary:
+    files under it belong to THAT repo, and root's tree records only a 160000
+    gitlink for the directory."""
+    d = (root / rel).parent
+    while d != root and root in d.parents:
+        if (d / ".git").exists():
+            return d
+        d = d.parent
+    return root
+
+
 # ---------------------------------------------------------------- the layer
 
 def layer_targets(root: Path, scope: str) -> list[dict]:
@@ -258,6 +272,40 @@ def main() -> int:
     if not targets:
         print(f"No {args.scope}-scope AI layer artifacts under {root}.")
         print("Nothing to ablate, so there is nothing to test.")
+        return 1
+
+    # Every worktree below is created FROM `root`, so every stripped/restored
+    # target must be owned by that repository. An artifact inside a nested
+    # repo/submodule is recorded in root's tree as a 160000 gitlink: a fresh
+    # worktree of root contains only an empty directory there, in BOTH arms,
+    # so the file can neither be stripped nor present, and a probe task scoped
+    # to that package cannot run at all (a broken experiment, not a finding).
+    # The real git boundary is detected per target; nested-owned artifacts are
+    # excluded here, and probes that target a nested repo must be re-run with
+    # that repo as <repo> so the worktrees are created from the nested
+    # repository itself (repo_root already resolves it via rev-parse).
+    nested: dict[Path, list[str]] = {}
+    own_targets = []
+    for t in targets:
+        owner = owning_git_root(root, t["path"])
+        if owner == root:
+            own_targets.append(t)
+        else:
+            nested.setdefault(owner, []).append(t["path"])
+    if nested:
+        print("\nNESTED GIT BOUNDARY: these artifacts belong to nested repositories and")
+        print("are EXCLUDED (a worktree of this repo cannot contain them in either arm):")
+        for owner in sorted(nested):
+            for path in nested[owner]:
+                print(f"          - {path}  (owned by {owner.relative_to(root).as_posix()})")
+        print("        If the probe task works inside one of those packages, re-run with")
+        print(f"        that path as <repo> (e.g. `python run_ablation.py "
+              f"{sorted(nested)[0].relative_to(root).as_posix()} ...`) so worktrees are")
+        print("        created from the nested repository itself.")
+    targets = own_targets
+    if not targets:
+        print(f"\nAll {args.scope}-scope artifacts under {root} belong to nested "
+              "repositories. Re-run against the nested repo directly.")
         return 1
 
     sha = head_sha(root)

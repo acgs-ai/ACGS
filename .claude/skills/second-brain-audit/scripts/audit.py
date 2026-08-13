@@ -40,14 +40,21 @@ if hasattr(sys.stdout, "buffer"):
 
 MONEY = re.compile(r"\$\s?\d(?:[\d,]*\d)?(?:\.\d+)?\s*k?(?:\s*/\s*(?:mo|month|yr|year|hr|hour))?",
                    re.I)
-RECURRING = re.compile(r"/\s*(?:mo|month|yr|year|hr|hour)", re.I)
+RECURRING = re.compile(r"/\s*(mo|month|yr|year|hr|hour)", re.I)
+# Canonical period keys. $100/mo and $100/yr are DIFFERENT facts, not two
+# spellings of one: collapsing periods to a boolean would compare them as equal
+# and hide a real materially-different-rate contradiction.
+PERIODS = {"mo": "mo", "month": "mo", "yr": "yr", "year": "yr", "hr": "hr", "hour": "hr"}
 
 
-def money_value(raw: str) -> tuple[float, bool] | None:
-    """Canonical (amount, is_recurring). '$22k' and '$22,000' are one value.
+def money_value(raw: str) -> tuple[float, str | None] | None:
+    """Canonical (amount, period). '$22k' and '$22,000' are one value; the
+    period is 'mo'/'yr'/'hr' for recurring rates and None for one-time sums.
 
-    Without this the audit reports a contradiction between two spellings of the
-    same number, which is the fastest way to teach someone to ignore it.
+    Without amount canonicalization the audit reports a contradiction between
+    two spellings of the same number, which is the fastest way to teach someone
+    to ignore it. Without the period, '$100/mo' and '$100/yr' silently compare
+    as equal, which hides a real contradiction.
     """
     m = re.match(r"\$\s?([\d,]*\d)(\.\d+)?\s*(k?)", raw, re.I)
     if not m:
@@ -55,12 +62,13 @@ def money_value(raw: str) -> tuple[float, bool] | None:
     amount = float(m.group(1).replace(",", "") + (m.group(2) or ""))
     if m.group(3).lower() == "k":
         amount *= 1000
-    return amount, bool(RECURRING.search(raw))
+    rec = RECURRING.search(raw)
+    return amount, (PERIODS[rec.group(1).lower()] if rec else None)
 
 
-def fmt_money(amount: float, recurring: bool) -> str:
+def fmt_money(amount: float, period: str | None) -> str:
     s = f"${amount:,.0f}" if amount == int(amount) else f"${amount:,.2f}"
-    return s + ("/mo" if recurring else "")
+    return s + (f"/{period}" if period else "")
 STATUS = re.compile(
     r"\b(active|paused|cancell?ed|churned|shipped|launched|live|signed|closed|"
     r"won|lost|on hold|in progress|completed?|delivered|paid|pending|blocked)\b", re.I)
@@ -229,6 +237,23 @@ def scan(root: Path, extra: list[str]):
             finished_open, schema_pages, words, vocab, money_seen, journal_files)
 
 
+PER_MONTH = {"mo": 1.0, "yr": 1.0 / 12.0}
+
+
+def equivalent_rates(values) -> bool:
+    """True when every value is the SAME rate spelled at another frequency
+    ('$100/mo' and '$1,200/yr'): flagging those trains you to ignore the audit.
+    Hourly rates never convert (hours/month is unknowable here), and one-time
+    sums (period None) already share a key upstream when equal, so any of those
+    present means the values are genuinely different answers."""
+    monthly = []
+    for amount, period in values:
+        if period not in PER_MONTH:
+            return False
+        monthly.append(amount * PER_MONTH[period])
+    return max(monthly) - min(monthly) < 0.01
+
+
 def contradictions(subjects: dict, min_files: int = 2) -> list[dict]:
     """min_files is normally 2: a disagreement inside one page is usually history.
 
@@ -248,19 +273,27 @@ def contradictions(subjects: dict, min_files: int = 2) -> list[dict]:
             continue
 
         # Compare like with like: recurring rates and one-time amounts are
-        # different facts, not two versions of the same one.
-        for bucket in (True, False):          # recurring rates, then one-time sums
+        # different facts, not two versions of the same one. Within recurring
+        # rates the period stays part of the value: "$100/mo" vs "$100/yr" is
+        # a real, materially different answer and IS flagged, while
+        # "$100/mo" vs "$1,200/yr" is one rate spelled at two frequencies
+        # and is not.
+        for recurring in (True, False):       # recurring rates, then one-time sums
             vals: dict[str, list] = {}
+            parsed: dict[str, tuple[float, str | None]] = {}
             for h in uniq:
                 for v in h["money"]:
                     mv = money_value(v)
-                    if mv is None or mv[1] != bucket:
+                    if mv is None or (mv[1] is not None) != recurring:
                         continue
-                    vals.setdefault(fmt_money(*mv), []).append(h)
+                    key = fmt_money(*mv)
+                    parsed[key] = mv
+                    vals.setdefault(key, []).append(h)
             files = {h["file"] for g in vals.values() for h in g}
-            if len(vals) >= 2 and len(files) >= min_files:
+            if (len(vals) >= 2 and len(files) >= min_files
+                    and not equivalent_rates(parsed.values())):
                 out.append({"subject": subj,
-                            "kind": "recurring" if bucket else "onetime",
+                            "kind": "recurring" if recurring else "onetime",
                             "values": sorted(vals),
                             "hits": [h for g in vals.values() for h in g]})
                 break
