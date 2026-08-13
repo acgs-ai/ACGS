@@ -14,7 +14,7 @@ set -uo pipefail
 SITE="https://acgs.ai"
 CONSOLE_HOST="console.acgs.ai"
 DIST="${ACGS_DIST:-/home/martin/Documents/ACGS/acgi-ai/dist/index.html}"
-BASELINE_DIR="/home/martin/Documents/ACGS/.omc/state"
+BASELINE_DIR="${ACGS_BASELINE_DIR:-/home/martin/Documents/ACGS/.omc/state}"
 BASELINE="$BASELINE_DIR/deploy-drift-baseline.txt"
 RECORD=0
 [ "${1:-}" = "--baseline" ] && RECORD=1

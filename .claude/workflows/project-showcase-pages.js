@@ -30,6 +30,26 @@ const input = typeof args === 'string'
   : args
 const PROJECTS = Array.isArray(input?.projects) ? input.projects : DEFAULT_PROJECTS
 
+// Fail closed on any value that gets interpolated into sub-agent prompts
+// containing shell syntax (branch names, checkout commands). args.projects is
+// caller-supplied, so validate every field the prompts embed — same guard the
+// sibling workflows implement.
+function assertShellSafe(value, label, allowed) {
+  const s = String(value)
+  if (!allowed.test(s)) {
+    throw new Error(
+      `project-showcase-pages: refusing to run — \`${label}\` = ${JSON.stringify(s)} ` +
+        `contains characters unsafe to embed in a sub-agent command/prompt (allowed: ${allowed}).`
+    )
+  }
+}
+for (const p of PROJECTS) {
+  assertShellSafe(p.slug, 'project.slug', /^[a-z0-9-]+$/)
+  assertShellSafe(p.path, 'project.path', /^[A-Za-z0-9._/-]+$/)
+  assertShellSafe(p.route, 'project.route', /^\/[A-Za-z0-9-]*$/)
+  assertShellSafe(p.component, 'project.component', /^[A-Za-z0-9]+$/)
+}
+
 // ---------------------------------------------------------------------------
 // Schemas — small and required-tight so a later JS line can read fields safely.
 // ---------------------------------------------------------------------------

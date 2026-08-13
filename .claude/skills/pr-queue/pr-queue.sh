@@ -8,7 +8,7 @@
 # Never writes, merges, or comments. Safe to run any time.
 set -euo pipefail
 
-REPO="dislovelhl/ACGS"
+REPO="acgs-ai/ACGS"
 BASE="master"
 while [ $# -gt 0 ]; do
   case "$1" in
