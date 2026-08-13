@@ -507,6 +507,16 @@ If you determine the criterion is ALREADY satisfied and zero changes are require
     // ambiguity (an unqualified name preferring a same-named tag over the
     // branch). HEAD~1, SHAs, and tags fail the step-1a verify and block.
     const qualifiedBase = reviewBase.startsWith('origin/') ? `refs/remotes/${reviewBase}` : `refs/heads/${reviewBase}`
+    // The scope boundary handed to the reviewer must use the coordinates the
+    // reviewer actually inspects. item.packageDir is an ABSOLUTE path into the
+    // shared checkout, but the reviewed worktree is a different directory (for
+    // nested-repo items, a worktree of the nested repository), so that path
+    // never appears in the diff: the reviewer would reject valid in-scope
+    // changes or miss out-of-scope ones. Hand it the same worktree-relative
+    // path the implementer received (relative to the nested repo root for
+    // nested items, to the parent repo root otherwise).
+    const scopeRoot = item.nestedRepoDir ?? REPO
+    const scopeRel = item.packageDir === scopeRoot ? '.' : item.packageDir.slice(scopeRoot.length + 1)
     return agent(
       `You are the review lane — you did NOT write this change. Review it adversarially against the repo's rules.
 
@@ -525,7 +535,7 @@ Procedure:
    b. git merge-base --is-ancestor ${shq(qualifiedBase)} HEAD exits 0 (the base must be an ancestor of the feature branch).
    c. git diff --name-only ${shq(qualifiedBase)}...HEAD is non-empty and includes EVERY file in the "Files changed" list above (a diff that misses reported files means the base is wrong and hunks would silently escape review).
 2. git diff ${shq(qualifiedBase)}...HEAD: review every hunk.
-3. Check: fail-closed behavior preserved? sealed/hash-marked files untouched? handler actually WIRED into the dispatch path (grep the symbol outside its own file; zero hits = not wired = block)? tests exercise the registration path, not just the function? scope stayed inside ${item.packageDir}? no new runtime deps in gove-zone?
+3. Check: fail-closed behavior preserved? sealed/hash-marked files untouched? handler actually WIRED into the dispatch path (grep the symbol outside its own file; zero hits = not wired = block)? tests exercise the registration path, not just the function? scope stayed inside ${JSON.stringify(scopeRel)} relative to the worktree root (every reviewed path must sit under it)? no new runtime deps in gove-zone?
 4. Verdict: approve / request-changes (fixable nits) / block (correctness, security, or boundary violation).`,
       { label: `review:${item.criterionId}`, phase: 'Review', schema: REVIEW_SCHEMA },
     ).then(review => ({ impl, review }))

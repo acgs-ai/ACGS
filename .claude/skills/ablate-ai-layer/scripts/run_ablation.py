@@ -178,17 +178,37 @@ def probe_reaches_uv(prompt: str, root: Path) -> str | None:
     nested-repo gitlinks those fail at workspace discovery while the agent
     process can still exit 0 with a diff, so run_one() would grade checkout
     topology as agent behavior. So beyond the prompt text itself, every wrapper
-    the prompt names is inspected: make targets are expanded through the root
-    Makefile (recipes, prerequisites, nested `$(MAKE)` calls, variables such as
-    `$(UV)`), and invoked scripts are read, both recursively. Purely non-uv
-    probes (pnpm, docs, frontend) still return None and keep their skip. The
-    walk is best effort (e.g. `$(MAKE) -C <dir>` targets in OTHER makefiles are
-    not chased), so the skip note still warns about agent-initiated uv."""
-    variables, rules = _parse_makefile(root)
-    seen_targets: set[str] = set()
+    the prompt names is inspected: make targets are expanded through the
+    makefile that owns them (recipes, prerequisites, nested `$(MAKE)` calls,
+    variables such as `$(UV)`), a `make -C <dir>` / `--directory` hop redirects
+    inspection into THAT directory's makefile, and invoked scripts are read,
+    all recursively. Purely non-uv probes (pnpm, docs, frontend) still return
+    None and keep their skip. The walk is best effort (a `-C` directory outside
+    the repo, or one holding no readable makefile, such as an uninitialized
+    submodule gitlink, cannot be inspected), so the skip note still warns about
+    agent-initiated uv."""
+    root = root.resolve()
+    makefiles: dict[Path, tuple[dict[str, str],
+                                dict[str, tuple[list[str], list[str]]]]] = {}
+    seen_targets: set[tuple[Path, str]] = set()
     seen_scripts: set[Path] = set()
 
-    def expand(text: str) -> str:
+    def makefile_at(mkdir: Path) -> tuple[dict[str, str],
+                                          dict[str, tuple[list[str], list[str]]]]:
+        if mkdir not in makefiles:
+            makefiles[mkdir] = _parse_makefile(mkdir)
+        return makefiles[mkdir]
+
+    def contained_dir(base: Path, rel: str) -> Path | None:
+        try:
+            d = (base / rel).resolve()
+        except OSError:
+            return None
+        if d != root and root not in d.parents:
+            return None
+        return d if d.is_dir() else None
+
+    def expand(text: str, variables: dict[str, str]) -> str:
         for _ in range(8):
             new = re.sub(r"\$[({]([A-Za-z0-9_.-]+)[)}]",
                          lambda m: variables.get(m.group(1), m.group(0)), text)
@@ -197,24 +217,26 @@ def probe_reaches_uv(prompt: str, root: Path) -> str | None:
             text = new
         return text
 
-    def target_reaches(target: str) -> str | None:
-        if target in seen_targets:
+    def target_reaches(mkdir: Path, target: str) -> str | None:
+        if (mkdir, target) in seen_targets:
             return None
-        seen_targets.add(target)
+        seen_targets.add((mkdir, target))
+        variables, rules = makefile_at(mkdir)
         prereqs, recipe = rules.get(target, ([], []))
         for line in recipe:
-            reason = text_reaches(expand(line), f"the `{target}` make recipe")
+            reason = text_reaches(expand(line, variables),
+                                  f"the `{target}` make recipe", mkdir)
             if reason:
                 return reason
         for p in prereqs:
-            reason = target_reaches(p)
+            reason = target_reaches(mkdir, p)
             if reason:
                 return reason
         return None
 
-    def script_reaches(rel: str) -> str | None:
+    def script_reaches(rel: str, base: Path) -> str | None:
         try:
-            f = (root / rel).resolve()
+            f = (base / rel).resolve()
         except OSError:
             return None
         if f in seen_scripts or root not in f.parents or not f.is_file():
@@ -224,35 +246,81 @@ def probe_reaches_uv(prompt: str, root: Path) -> str | None:
             body = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return None
-        return text_reaches(body, "it")
+        return text_reaches(body, "it", base)
 
-    def text_reaches(text: str, origin: str) -> str | None:
+    def text_reaches(text: str, origin: str, base: Path) -> str | None:
         if RE_UV_WORD.search(text):
             return f"{origin} invokes uv directly"
         for m in RE_MAKE_INVOKE.finditer(text):
-            for tok in m.group(1).split():
+            mkdir = base
+            entered: str | None = None
+            named_target = False
+            tokens = m.group(1).split()
+            i = 0
+            while i < len(tokens):
+                tok = tokens[i]
+                # `make -C <dir>` (or --directory) runs ANOTHER directory's
+                # makefile: a package-local gate like `make -C packages/foo
+                # verify` reaches uv through packages/foo/Makefile, never
+                # through the root one. Resolve the hop and keep inspecting
+                # there instead of treating <dir> as an unknown root target.
+                hop: str | None = None
+                if tok in ("-C", "--directory") and i + 1 < len(tokens):
+                    hop = tokens[i + 1].rstrip(".")
+                    i += 2
+                elif tok.startswith("--directory="):
+                    hop = tok.split("=", 1)[1].rstrip(".")
+                    i += 1
+                if hop is not None:
+                    nxt = contained_dir(mkdir, hop)
+                    if nxt is None:
+                        # Outside the repo or not a directory here: nothing
+                        # readable to inspect, so this invocation stays best
+                        # effort (the skip note warns about agent-run uv).
+                        break
+                    mkdir = nxt
+                    entered = hop
+                    continue
                 if tok.startswith("-") or "=" in tok:
+                    i += 1
                     continue
                 # A sentence's trailing period glues onto the target name
                 # ("validate with make verify."), so shed trailing dots.
                 tok = tok.rstrip(".")
+                _, rules = makefile_at(mkdir)
                 if tok not in rules:
                     # Prose like "make sure the build passes" must not be read
                     # as a make invocation, so stop at the first token that is
-                    # not a known target. This also stops before targets of a
-                    # `$(MAKE) -C <dir>` call, which belong to another makefile.
+                    # not a known target of the makefile under inspection.
                     break
-                reason = target_reaches(tok)
+                named_target = True
+                reason = target_reaches(mkdir, tok)
                 if reason:
-                    return f"{origin} runs `make {tok}`: {reason}"
+                    where = f"make -C {entered} {tok}" if entered else f"make {tok}"
+                    return f"{origin} runs `{where}`: {reason}"
+                i += 1
+            # A `-C` hop that resolved to a real directory is unambiguously a
+            # make invocation, never prose. When no known target of that
+            # makefile was chased (bare `make -C <dir>` runs its FIRST rule;
+            # a token unknown to the best-effort parser is trailing prose or
+            # a target hidden behind an include), still inspect the default
+            # target rather than silently deciding the probe cannot reach uv.
+            if entered and not named_target:
+                _, rules = makefile_at(mkdir)
+                default = next(iter(rules), None)
+                if default:
+                    reason = target_reaches(mkdir, default)
+                    if reason:
+                        return (f"{origin} runs `make -C {entered}` "
+                                f"(default target `{default}`): {reason}")
         for m in RE_SCRIPT_INVOKE.finditer(text):
             rel = (m.group(1) or m.group(2)).lstrip("./")
-            reason = script_reaches(rel)
+            reason = script_reaches(rel, base)
             if reason:
                 return f"{origin} runs `{rel}`: {reason}"
         return None
 
-    return text_reaches(prompt, "the probe task")
+    return text_reaches(prompt, "the probe task", root)
 
 
 # ---------------------------------------------------------------- the layer
