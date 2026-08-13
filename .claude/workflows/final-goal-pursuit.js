@@ -162,12 +162,13 @@ const PLAN_SCHEMA = {
 
 const IMPL_SCHEMA = {
   type: 'object',
-  required: ['completed', 'branch', 'baseBranch', 'worktree', 'filesChanged', 'summary'],
+  required: ['completed', 'branch', 'baseRef', 'baseBranch', 'worktree', 'filesChanged', 'summary'],
   properties: {
     completed: { type: 'boolean' },
     noChangesNeeded: { type: 'boolean', description: 'true when the criterion is already satisfied and ZERO changes were made — then branch must be "" and filesChanged []' },
     branch: { type: 'string', description: 'git ref name only (e.g. final-goal/g1-2); empty string when noChangesNeeded — never prose' },
-    baseBranch: { type: 'string', description: 'git ref the feature branch was created from (e.g. master, or main in a nested repo); empty string when noChangesNeeded' },
+    baseRef: { type: 'string', description: 'the resolvable commit-ish the feature branch was actually created from, exactly as passed to git (e.g. origin/main when only the remote-tracking ref exists, or main when a local branch does); empty string when noChangesNeeded' },
+    baseBranch: { type: 'string', description: 'short PR-facing base name with any origin/ prefix stripped (e.g. main); empty string when noChangesNeeded' },
     worktree: { type: 'string', description: 'Absolute path of the worktree the changes live in' },
     filesChanged: { type: 'array', items: { type: 'string' }, description: 'Changed file paths RELATIVE to the worktree root, matching git diff --name-only output' },
     summary: { type: 'string' },
@@ -375,14 +376,18 @@ Plan (any absolute paths in it refer to the shared checkout; translate them to t
 ${JSON.stringify(item.plan)}
 
 Procedure:
-1. Determine the nested repo's base branch explicitly (NEVER base on the shared checkout's current HEAD, which may sit on an unrelated in-flight branch): base="$(git -C ${shq(item.nestedRepoDir)} symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"; if that is empty, use main if "git -C ${shq(item.nestedRepoDir)} show-ref --verify --quiet refs/heads/main" succeeds, else master.
-2. Create an isolated worktree of the NESTED repo (not the parent), branching from that base: git -C ${shq(item.nestedRepoDir)} worktree add "$(mktemp -d)/wt" -b ${shq(`final-goal/${slug}`)} "$base" (if the branch already exists, append a -2 suffix).
+1. Determine the nested repo's base explicitly (NEVER base on the shared checkout's current HEAD, which may sit on an unrelated in-flight branch). Resolve TWO values: base_ref, the resolvable commit-ish the worktree starts from, and base_branch, the short PR-facing name. A detached submodule checkout often has ONLY remote-tracking refs, and a short name that exists only under refs/remotes/ is NOT resolvable by "git worktree add", so never strip origin/ from the start ref. Resolve in this order:
+   a. base_ref="$(git -C ${shq(item.nestedRepoDir)} symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" (e.g. origin/main). If non-empty: base_branch="\${base_ref#origin/}".
+   b. Else the first name of main, master for which "git -C ${shq(item.nestedRepoDir)} show-ref --verify --quiet refs/heads/<name>" succeeds: base_ref=<name>, base_branch=<name>.
+   c. Else the first name of main, master for which "git -C ${shq(item.nestedRepoDir)} show-ref --verify --quiet refs/remotes/origin/<name>" succeeds: base_ref=origin/<name>, base_branch=<name>.
+   d. If none resolve, STOP: set completed=false and explain in blockers. Do not guess a ref.
+2. Create an isolated worktree of the NESTED repo (not the parent), starting from that ref: git -C ${shq(item.nestedRepoDir)} worktree add "$(mktemp -d)/wt" -b ${shq(`final-goal/${slug}`)} "$base_ref" (if the branch already exists, append a -2 suffix).
 3. cd into that worktree and do ALL reading, editing, running, and staging from inside it, addressing files by paths relative to its root (the work lives at ${JSON.stringify(nestedRel)}). The shared checkout at ${item.nestedRepoDir} is the source for "git worktree add" ONLY: never edit, run validation in, or stage files there. Read the package-local CLAUDE.md / AGENTS.md first and obey them.
 4. Make the smallest safe change that closes the gap, WITH tests (TDD where practical).
 5. Run the validation command locally from inside the worktree: ${JSON.stringify(item.validationCommand)}
 6. Stage ONLY the files you changed (explicit paths, never -A), commit on the feature branch with a conventional message. Do NOT push. NEVER touch the parent repo or its submodule pointer.
-Report the absolute worktree path, branch name, the base branch you resolved in step 1 (as baseBranch, e.g. main), and the files you changed as paths RELATIVE to the worktree root (matching git diff --name-only output). If you hit a hard blocker, set completed=false and explain in blockers.
-If you determine the criterion is ALREADY satisfied and zero changes are required: set completed=true, noChangesNeeded=true, branch="" (empty — NEVER prose in the branch field), baseBranch="", filesChanged=[], and put the evidence in summary.`,
+Report the absolute worktree path, branch name, the base you resolved in step 1 (baseRef = the exact start ref you passed to git, e.g. origin/main; baseBranch = the short PR-facing name, e.g. main), and the files you changed as paths RELATIVE to the worktree root (matching git diff --name-only output). If you hit a hard blocker, set completed=false and explain in blockers.
+If you determine the criterion is ALREADY satisfied and zero changes are required: set completed=true, noChangesNeeded=true, branch="" (empty — NEVER prose in the branch field), baseRef="", baseBranch="", filesChanged=[], and put the evidence in summary.`,
         { label: `impl:${item.criterionId}`, phase: 'Implement', schema: IMPL_SCHEMA },
       )
     }
@@ -400,13 +405,17 @@ Package directory (relative to the worktree what ${item.packageDir} is to the ma
 
 Procedure:
 1. Read the package-local CLAUDE.md / AGENTS.md first and obey them.
-2. Resolve the repository's real base branch explicitly (NEVER report the branch the worktree happened to start on: isolation worktrees can begin on a generated transient branch or a detached HEAD, neither of which is a ref a PR can target): base="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"; if that is empty, use main if "git show-ref --verify --quiet refs/heads/main" succeeds, else master.
-3. Create the feature branch FROM that base: git switch -c ${shq(`final-goal/${slug}`)} "$base" (if the branch already exists, append a -2 suffix).
+2. Resolve the repository's real base explicitly (NEVER report the branch the worktree happened to start on: isolation worktrees can begin on a generated transient branch or a detached HEAD, neither of which is a ref a PR can target). Resolve TWO values: base_ref, the resolvable commit-ish to branch from, and base_branch, the short PR-facing name. A checkout may expose the base ONLY as a remote-tracking ref, and a short name that exists only under refs/remotes/ is NOT resolvable, so never strip origin/ from the start ref. Resolve in this order:
+   a. base_ref="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" (e.g. origin/master). If non-empty: base_branch="\${base_ref#origin/}".
+   b. Else the first name of main, master for which "git show-ref --verify --quiet refs/heads/<name>" succeeds: base_ref=<name>, base_branch=<name>.
+   c. Else the first name of main, master for which "git show-ref --verify --quiet refs/remotes/origin/<name>" succeeds: base_ref=origin/<name>, base_branch=<name>.
+   d. If none resolve, STOP: set completed=false and explain in blockers. Do not guess a ref.
+3. Create the feature branch FROM that ref: git switch -c ${shq(`final-goal/${slug}`)} "$base_ref" (if the branch already exists, append a -2 suffix).
 4. Make the smallest safe change that closes the gap, WITH tests (TDD where practical).
 5. Run the validation command locally: ${JSON.stringify(item.validationCommand)}
 6. Stage ONLY the files you changed (explicit paths, never -A), commit on the feature branch with a conventional message. Do NOT push.
-Report the absolute worktree path, branch name, the base branch you resolved in step 2 (as baseBranch, e.g. master), and the files you changed as paths RELATIVE to the worktree root (matching git diff --name-only output). If you hit a hard blocker, set completed=false and explain in blockers.
-If you determine the criterion is ALREADY satisfied and zero changes are required: set completed=true, noChangesNeeded=true, branch="" (empty — NEVER prose in the branch field), baseBranch="", filesChanged=[], and put the evidence in summary.`,
+Report the absolute worktree path, branch name, the base you resolved in step 2 (baseRef = the exact start ref you passed to git, e.g. origin/master; baseBranch = the short PR-facing name, e.g. master), and the files you changed as paths RELATIVE to the worktree root (matching git diff --name-only output). If you hit a hard blocker, set completed=false and explain in blockers.
+If you determine the criterion is ALREADY satisfied and zero changes are required: set completed=true, noChangesNeeded=true, branch="" (empty — NEVER prose in the branch field), baseRef="", baseBranch="", filesChanged=[], and put the evidence in summary.`,
       { label: `impl:${item.criterionId}`, phase: 'Implement', isolation: 'worktree', schema: IMPL_SCHEMA },
     )
   },
@@ -450,26 +459,30 @@ If you determine the criterion is ALREADY satisfied and zero changes are require
       }
     }
     impl.filesChanged = normalizedFiles
-    // The base the implementer branched from (nested repos usually expose main,
-    // not master), so the reviewer diffs against a ref that actually exists.
-    // No fallback: guessing "master" makes the diff exit 128 in nested
-    // checkouts that only have main, and the change would sail through with
-    // no effective review. A non-no-op result without a baseBranch is blocked
+    // The base the implementer branched from. The reviewer must diff against
+    // impl.baseRef, the exact commit-ish the branch was created from: the
+    // short baseBranch name can be UNRESOLVABLE in the worktree (a nested or
+    // detached checkout often exposes only refs/remotes/origin/main, where
+    // "main" does not resolve but "origin/main" does). No fallback: guessing
+    // a ref makes the diff exit 128 and the change would sail through with no
+    // effective review. A non-no-op result missing either field is blocked
     // fail-closed instead.
-    if (!impl.baseBranch) {
-      return { impl, review: { verdict: 'block', issues: ['implementer reported no baseBranch: the reviewer cannot diff against the ref the feature branch was created from, so the change cannot receive an effective review'] } }
+    if (!impl.baseRef || !impl.baseBranch) {
+      return { impl, review: { verdict: 'block', issues: ['implementer reported no baseRef/baseBranch: the reviewer cannot diff against the ref the feature branch was created from, so the change cannot receive an effective review'] } }
     }
-    const reviewBase = impl.baseBranch
-    assertShellSafe(reviewBase, 'impl.baseBranch', RE_REF)
-    // A syntactically valid baseBranch can still be the WRONG ref: if the
-    // implementer reports its own feature branch (or HEAD) as the base, the
-    // instructed diff is empty and the change would be approved with zero
-    // hunks reviewed. Refuse the obvious self-references deterministically
-    // here; the remaining properties (base resolves, is an ancestor, and the
-    // diff actually covers the reported files) can only be proven inside the
-    // worktree, so the reviewer preflights them below and blocks on failure.
-    if (reviewBase === impl.branch || reviewBase.toUpperCase() === 'HEAD' || reviewBase === '@') {
-      return { impl, review: { verdict: 'block', issues: [`implementer reported baseBranch=${JSON.stringify(reviewBase)}, which is the feature branch itself (or HEAD): diffing it against HEAD is empty, so the change cannot receive an effective review`] } }
+    const reviewBase = impl.baseRef
+    assertShellSafe(reviewBase, 'impl.baseRef', RE_REF)
+    assertShellSafe(impl.baseBranch, 'impl.baseBranch', RE_REF)
+    // A syntactically valid baseRef can still be the WRONG ref: if the
+    // implementer reports its own feature branch (or HEAD, or the feature
+    // branch's remote-tracking ref) as the base, the instructed diff is empty
+    // and the change would be approved with zero hunks reviewed. Refuse the
+    // obvious self-references deterministically here; the remaining
+    // properties (base resolves, is an ancestor, and the diff actually
+    // covers the reported files) can only be proven inside the worktree, so
+    // the reviewer preflights them below and blocks on failure.
+    if (reviewBase === impl.branch || reviewBase === `origin/${impl.branch}` || reviewBase.toUpperCase() === 'HEAD' || reviewBase === '@') {
+      return { impl, review: { verdict: 'block', issues: [`implementer reported baseRef=${JSON.stringify(reviewBase)}, which is the feature branch itself (or HEAD): diffing it against HEAD is empty, so the change cannot receive an effective review`] } }
     }
     return agent(
       `You are the review lane — you did NOT write this change. Review it adversarially against the repo's rules.
@@ -479,12 +492,12 @@ ${REPO_RULES}
 Change under review: criterion ${item.criterionId} — ${JSON.stringify(item.title)}
 Worktree: ${impl.worktree}
 Branch: ${impl.branch}
-Base branch: ${reviewBase}
+Base ref: ${reviewBase} (the exact commit-ish the feature branch was created from; PR-facing base name: ${impl.baseBranch})
 Files changed: ${JSON.stringify(impl.filesChanged)}
 Implementer's summary: ${JSON.stringify(impl.summary)}
 
 Procedure:
-1. cd ${shq(impl.worktree)}, then PREFLIGHT the diff basis before reviewing anything. The base branch above was reported by the implementation lane and may be wrong; verdict=block (do not review further) if ANY of these fails:
+1. cd ${shq(impl.worktree)}, then PREFLIGHT the diff basis before reviewing anything. The base ref above was reported by the implementation lane and may be wrong; verdict=block (do not review further) if ANY of these fails:
    a. git rev-parse --verify ${shq(`${reviewBase}^{commit}`)} succeeds, and its commit differs from "git rev-parse HEAD" (a base equal to the tip diffs empty: nothing would be reviewed).
    b. git merge-base --is-ancestor ${shq(reviewBase)} HEAD exits 0 (the base must be an ancestor of the feature branch).
    c. git diff --name-only ${shq(reviewBase)}...HEAD is non-empty and includes EVERY file in the "Files changed" list above (a diff that misses reported files means the base is wrong and hunks would silently escape review).
@@ -533,10 +546,13 @@ return {
     criterion: o.item,
     noop: o.noop === true || undefined,
     branch: o.impl?.branch,
-    // The ref the feature branch was created from, as reported by the
-    // implementer and preflighted by the reviewer. The PR handoff MUST target
-    // this ref: nested repos expose main (not master), so assuming the parent
-    // repo's default branch would open PRs against a base that does not exist.
+    // baseRef is the exact commit-ish the feature branch was created from
+    // (possibly a remote-tracking ref like origin/main), as reported by the
+    // implementer and preflighted by the reviewer. baseBranch is its short
+    // PR-facing name. The PR handoff MUST target baseBranch: nested repos
+    // expose main (not master), so assuming the parent repo's default branch
+    // would open PRs against a base that does not exist.
+    baseRef: o.impl?.baseRef,
     baseBranch: o.impl?.baseBranch,
     worktree: o.impl?.worktree,
     files: o.impl?.filesChanged,
