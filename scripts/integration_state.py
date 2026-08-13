@@ -94,19 +94,55 @@ def list_remote_branches() -> list[tuple[str, str]]:
     ``UnicodeDecodeError`` and abort the whole scan before per-branch error
     handling runs. Newline is a safe record delimiter because ref names cannot
     contain ASCII control characters.
+
+    Only *symbolic* refs are excluded (via ``%(symref)``), not the literal
+    name ``origin/HEAD``: ``refs/heads/HEAD`` is a valid upstream branch name
+    (Git's ref-name rules do not reserve ``HEAD`` below ``refs/heads``), so
+    when ``refs/remotes/origin/HEAD`` is a direct ref it is a real fetched
+    branch and must be inventoried. The symbolic ref maintained by
+    ``git clone``/``git remote set-head`` merely aliases the remote's default
+    branch, which is enumerated under its own name.
     """
-    out = git_bytes("for-each-ref", "--format=%(refname)%00%(objectname)", "refs/remotes/origin")
+    out = git_bytes(
+        "for-each-ref",
+        "--format=%(refname)%00%(objectname)%00%(symref)",
+        "refs/remotes/origin",
+    )
     branches = []
     for line in out.split(b"\n"):
         if not line:
             continue
-        ref_bytes, _, sha_bytes = line.partition(b"\0")
+        ref_bytes, sha_bytes, symref_bytes = line.split(b"\0", 2)
         ref = os.fsdecode(ref_bytes).removeprefix("refs/remotes/")
         sha = sha_bytes.decode("ascii")
-        if ref == "origin/HEAD" or ref == BASE:
+        if symref_bytes or ref == BASE:
             continue
         branches.append((ref, sha))
     return branches
+
+
+def upstream_head_branch_hidden(branches: list[tuple[str, str]]) -> bool:
+    """Return True when the remote has a branch literally named ``HEAD`` that
+    the local inventory cannot see.
+
+    ``refs/heads/HEAD`` is accepted by Git as an upstream branch, but its
+    canonical fetch destination ``refs/remotes/origin/HEAD`` collides with the
+    symbolic ref that tracks the remote's default branch. When the symbolic
+    ref wins the collision, ``git fetch`` never materializes the real branch
+    locally, so enumerating ``refs/remotes/origin`` silently omits it and the
+    ledger's completeness claim would be false. The authoritative upstream
+    heads are therefore queried directly; the caller must reject the run when
+    the branch exists upstream but was not inventoried. ``ls-remote`` patterns
+    are tail matches, so the output is filtered to the exact ref name.
+    """
+    inventoried = any(ref == "origin/HEAD" for ref, _ in branches)
+    if inventoried:
+        return False
+    out = git_bytes("ls-remote", "--heads", "origin", "refs/heads/HEAD")
+    for line in out.split(b"\n"):
+        if line.partition(b"\t")[2] == b"refs/heads/HEAD":
+            return True
+    return False
 
 
 def fetch_refspec_covers_all_heads() -> bool:
@@ -177,7 +213,11 @@ def fetch_refspec_covers_all_heads() -> bool:
 
 
 def branch_tip_date(sha: str) -> str:
-    return git("log", "-1", "--format=%cI", sha).strip()
+    # --no-show-signature: log.showSignature=true is equivalent to adding
+    # --show-signature, which prepends signature status to stdout even with
+    # --format=%cI — corrupting the JSON timestamp, the Markdown tip-date
+    # column, and stranded-branch sorting.
+    return git("log", "-1", "--no-show-signature", "--format=%cI", sha).strip()
 
 
 def diff_names(*args: str) -> list[str]:
@@ -391,13 +431,21 @@ def render_markdown(
         "## Reapable branches (content already on master, or no content)",
         "",
         "Do **not** delete a branch that still has an open PR (deleting the",
-        "remote branch closes it and discards its review context). Before",
-        "deleting, verify **both** that the live ref still points at the",
-        "classified tip SHA **and** that `origin/master` still points at the",
-        "base SHA above: these verdicts are only valid against that exact",
-        "base, and if master has moved (e.g. a revert removed content that",
-        "made a branch LANDED) a listed branch may now be the last ref",
-        "holding its content; regenerate and reclassify first.",
+        "remote branch closes it and discards its review context). The Open",
+        "PR column is a snapshot from generation time, and a PR can be opened",
+        "afterwards without moving any ref, so immediately before deleting",
+        "verify **all three**:",
+        "",
+        "1. the live branch ref still points at the classified tip SHA;",
+        "2. `origin/master` still points at the base SHA above — these",
+        "   verdicts are only valid against that exact base, and if master",
+        "   has moved (e.g. a revert removed content that made a branch",
+        "   LANDED) a listed branch may now be the last ref holding its",
+        "   content;",
+        "3. a live PR query (e.g. `gh pr list --state open --head <branch>`)",
+        "   reports no open PR for the branch.",
+        "",
+        "If any check fails, regenerate and reclassify first.",
         "",
         "| Branch | Status | Tip SHA | Tip date | Open PR |",
         "|---|---|---|---|---|",
@@ -452,11 +500,44 @@ def main() -> int:
         )
         return 1
 
+    # A shallow clone (even --no-single-branch, which passes the refspec gate
+    # above) has every remote tip but not their shared ancestors, so
+    # `merge-base --all` finds no merge base and connected branches are all
+    # written as ERROR — silently overwriting a valid ledger with an
+    # error-heavy one. Refuse to classify until history is complete.
+    if git("rev-parse", "--is-shallow-repository").strip() == "true":
+        print(
+            "error: this repository is shallow — merge-base classification needs\n"
+            "complete history or every connected branch degrades to ERROR.\n"
+            "Fix with:\n"
+            "  git fetch --unshallow origin\n"
+            "  git fetch --prune origin",
+            file=sys.stderr,
+        )
+        return 1
+
     # Freeze the base and every branch tip to immutable object IDs up front;
     # all classification below uses only these SHAs (see classify()).
-    base_full_sha = git("rev-parse", BASE).strip()
+    #
+    # The base is resolved through its full remote ref name: the shorthand
+    # "origin/master" is ambiguity-dependent — a local branch literally named
+    # refs/heads/origin/master takes precedence in Git's ref-resolution order,
+    # so every verdict would be computed against the wrong commit while the
+    # ledger labels it as the remote base.
+    base_full_sha = git("rev-parse", "--verify", f"refs/remotes/{BASE}^{{commit}}").strip()
     base_sha = git("rev-parse", "--short", base_full_sha).strip()
     branches = list_remote_branches()
+    if upstream_head_branch_hidden(branches):
+        print(
+            "error: the remote has a branch literally named HEAD (refs/heads/HEAD)\n"
+            "whose fetch destination collides with the symbolic refs/remotes/origin/HEAD,\n"
+            "so it cannot be inventoried and the ledger would silently omit it.\n"
+            "Rename or delete the upstream branch, e.g.:\n"
+            "  git push origin refs/heads/HEAD:refs/heads/renamed-head\n"
+            "  git push origin :refs/heads/HEAD",
+            file=sys.stderr,
+        )
+        return 1
     print(
         f"classifying {len(branches)} remote branches against {BASE} @ {base_sha}", file=sys.stderr
     )
@@ -506,9 +587,11 @@ def main() -> int:
         "base_sha": base_sha,
         # Full object ID of the base every verdict was computed against: a
         # reaper must require the live BASE ref to still equal it (and each
-        # branch's live ref to equal tip_sha) before deleting: a base moved
-        # by e.g. a revert can turn a LANDED branch back into the sole holder
-        # of its content while the branch tip itself is unchanged.
+        # branch's live ref to equal tip_sha, and a live PR query to report
+        # no open PR — a PR opened after generation moves neither ref)
+        # before deleting: a base moved by e.g. a revert can turn a LANDED
+        # branch back into the sole holder of its content while the branch
+        # tip itself is unchanged.
         "base_full_sha": base_full_sha,
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "summary": dict(counts),

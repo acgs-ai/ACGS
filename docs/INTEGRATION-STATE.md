@@ -179,13 +179,21 @@ merges). LANDED means every touched blob is byte-identical on master.
 ## Reapable branches (content already on master, or no content)
 
 Do **not** delete a branch that still has an open PR (deleting the
-remote branch closes it and discards its review context). Before
-deleting, verify **both** that the live ref still points at the
-classified tip SHA **and** that `origin/master` still points at the
-base SHA above: these verdicts are only valid against that exact
-base, and if master has moved (e.g. a revert removed content that
-made a branch LANDED) a listed branch may now be the last ref
-holding its content; regenerate and reclassify first.
+remote branch closes it and discards its review context). The Open
+PR column is a snapshot from generation time, and a PR can be opened
+afterwards without moving any ref, so immediately before deleting
+verify **all three**:
+
+1. the live branch ref still points at the classified tip SHA;
+2. `origin/master` still points at the base SHA above — these
+   verdicts are only valid against that exact base, and if master
+   has moved (e.g. a revert removed content that made a branch
+   LANDED) a listed branch may now be the last ref holding its
+   content;
+3. a live PR query (e.g. `gh pr list --state open --head <branch>`)
+   reports no open PR for the branch.
+
+If any check fails, regenerate and reclassify first.
 
 | Branch | Status | Tip SHA | Tip date | Open PR |
 |---|---|---|---|---|
