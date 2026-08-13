@@ -9,6 +9,7 @@
     "LANDED": 18,
     "ERROR": 3
   },
+  "repo_selector": "github.com/acgs-ai/ACGS",
   "pr_data_available": true,
   "branches": [
     {

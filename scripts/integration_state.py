@@ -374,11 +374,21 @@ def repo_selector_from_origin_url(url: str) -> str | None:
     Only the host and the two-segment path are kept, so no userinfo can
     survive into the selector.
 
-    The result is additionally restricted to hostname/repository characters:
-    the selector is rendered into the ledger's copy-paste reap instructions
-    inside a double-quoted shell word, where an unvalidated value smuggled
-    through a hostile origin URL (e.g. a ``$(...)`` path segment) would
-    otherwise execute in the operator's shell.
+    A non-default port in a URL-form remote (``https://host:8443/owner/repo``,
+    typical for self-hosted GitHub Enterprise) is preserved: ``gh``'s
+    ``[HOST/]OWNER/REPO`` selector accepts and honors a port supplied in
+    ``HOST``, while discarding it would query the default-port service on the
+    same hostname — potentially a *different* GitHub instance — so the PR
+    checks could report "no open PRs" for a repository other than the one Git
+    fetches from and deletes on. scp-like remotes carry no port (ssh with an
+    explicit port must use the ``ssh://host:port/`` URL form, matched above).
+
+    The result is additionally restricted to hostname/repository characters
+    plus an optional decimal ``:port`` after the host: the selector is
+    rendered into the ledger's copy-paste reap instructions inside a
+    double-quoted shell word, where an unvalidated value smuggled through a
+    hostile origin URL (e.g. a ``$(...)`` path segment) would otherwise
+    execute in the operator's shell.
 
     Returns ``None`` when the URL does not name a host plus exactly
     ``owner/repo`` (e.g. a local filesystem path), so callers degrade to
@@ -386,7 +396,7 @@ def repo_selector_from_origin_url(url: str) -> str | None:
     """
     m = re.match(
         # scheme://[userinfo@]host[:port]/path
-        r"^[A-Za-z][A-Za-z0-9+.-]*://(?:[^/@]*@)?(?P<host>[^/:@]+)(?::\d+)?/(?P<path>.+)$",
+        r"^[A-Za-z][A-Za-z0-9+.-]*://(?:[^/@]*@)?(?P<host>[^/:@]+)(?P<port>:\d+)?/(?P<path>.+)$",
         url,
     ) or re.match(
         # scp-like syntax: [user@]host:path
@@ -396,8 +406,9 @@ def repo_selector_from_origin_url(url: str) -> str | None:
     if m is None:
         return None
     path = m.group("path").rstrip("/").removesuffix(".git")
-    selector = f"{m.group('host')}/{path}"
-    if re.fullmatch(r"[A-Za-z0-9.-]+(?:/[A-Za-z0-9._-]+){2}", selector) is None:
+    port = m.groupdict().get("port") or ""
+    selector = f"{m.group('host')}{port}/{path}"
+    if re.fullmatch(r"[A-Za-z0-9.-]+(?::\d+)?(?:/[A-Za-z0-9._-]+){2}", selector) is None:
         return None
     return selector
 
@@ -555,7 +566,7 @@ def render_markdown(
         "the moment another checkout pushes (they only move on a successful",
         "fetch), so a check-then-delete against local refs can pass and still",
         "destroy fresh commits. Immediately before deleting, verify **all",
-        "four** against the live remote:",
+        "five** against the live remote:",
         "",
         "1. `git push origin` targets exactly the repository the other",
         "   checks inspect: `git remote get-url --push --all origin` must",
@@ -564,7 +575,17 @@ def render_markdown(
         "   the one answering the `ls-remote` and PR queries, so a matching",
         "   lease there proves nothing about the repository actually being",
         "   modified;",
-        "2. an authoritative `git ls-remote` lookup (never the local",
+        "2. the live `origin` still names the repository this ledger",
+        "   inventoried. The SHA checks below compare content, not identity:",
+        "   a `remote.origin.url` rewritten after generation — commonly to a",
+        "   fork holding identical branch and base SHAs — passes every SHA",
+        "   comparison while the PR selector baked in at generation time",
+        "   still queries the *old* repository, so a branch with an active",
+        "   PR in the new origin would be deleted and its review context",
+        "   discarded. The selector is re-derived from the live fetch URL",
+        "   (`scripts/integration_state.py --print-selector`) and must equal",
+        "   the recorded one;",
+        "3. an authoritative `git ls-remote` lookup (never the local",
         f"   tracking ref) shows the remote `{_BASE_BRANCH}` still at the",
         "   classified base, compared as the **full** object ID (a later",
         "   commit can share an abbreviated prefix):",
@@ -575,7 +596,7 @@ def render_markdown(
         "   master has moved (e.g. a revert removed content that made a",
         "   branch LANDED) a listed branch may now be the last ref holding",
         "   its content;",
-        "3. a live PR query reports no open PR for the branch. The query is",
+        "4. a live PR query reports no open PR for the branch. The query is",
         "   pinned to the credential-free `HOST/OWNER/REPO` selector of the",
         "   repository backing `origin` (an ambient `GH_REPO` override would",
         "   silently query another repository, and forwarding the raw origin",
@@ -583,11 +604,16 @@ def render_markdown(
         "   process table via argv). The branch is passed as one quoted",
         "   argument (ref names may legally contain `;` or `$()`, which an",
         "   unquoted substitution would execute);",
-        "4. the deletion pushes with `--atomic`, an expected-value lease on",
+        "5. the deletion pushes with `--atomic`, an expected-value lease on",
         "   the branch ref (`--force-with-lease=<refname>:<expect>` makes",
         "   the server reject the deletion unless the ref still equals",
-        "   `<expect>`), and an archival tag `refs/tags/reaped/<branch>`",
-        "   pointing at the classified tip, created in the same transaction.",
+        "   `<expect>`), an archival tag `refs/tags/reaped/<branch>`",
+        "   pointing at the classified tip, created in the same transaction,",
+        "   and `--no-follow-tags`: `push.followTags=true` would otherwise",
+        "   implicitly add every missing annotated tag reachable from the",
+        "   pushed tip, publishing unrelated local tags (e.g. a private",
+        "   release tag) to origin as a side effect of the reap, so the",
+        "   transaction is pinned to exactly the two refspecs listed.",
         "   A lease can only guard a ref the transaction actually updates:",
         "   Git drops an already-up-to-date refspec from the push before",
         "   leases are evaluated, so a no-op base refspec cannot detect a",
@@ -613,11 +639,13 @@ def render_markdown(
         f"base={base_full_sha} &&",
         '[ "$(git remote get-url --push --all origin)" \\',
         '  = "$(git remote get-url origin)" ] &&',
+        '[ "$(python3 scripts/integration_state.py --print-selector)" \\',
+        f'  = "{selector_arg}" ] &&',
         f'[ "$(git ls-remote origin refs/heads/{_BASE_BRANCH} | cut -f1)" = "$base" ] &&',
         f'prs=$(gh pr list --repo "{selector_arg}" --state open \\',
         "  --head \"$branch\" --json number --jq '.[].number') &&",
         '[ -z "$prs" ] &&',
-        "git push --atomic \\",
+        "git push --atomic --no-follow-tags \\",
         '  --force-with-lease="refs/heads/$branch:$tip" \\',
         '  origin "$tip:refs/tags/reaped/$branch" ":refs/heads/$branch"',
         "```",
@@ -658,11 +686,35 @@ def main() -> int:
         action="store_true",
         help="exit 1 if outputs are missing (freshness left to review cadence)",
     )
+    parser.add_argument(
+        "--print-selector",
+        action="store_true",
+        help="print gh's HOST/OWNER/REPO selector derived from the live"
+        " remote.origin.url and exit (the rendered reap chain compares it"
+        " against the selector recorded at generation time, so an origin"
+        " repointed at another repository — e.g. a fork with identical"
+        " SHAs — stops the chain instead of deleting uninspected branches)",
+    )
     args = parser.parse_args()
     if args.check:
         ok = MD_OUT.exists() and JSON_OUT.exists()
         print(f"ledger present: {ok}")
         return 0 if ok else 1
+    if args.print_selector:
+        try:
+            url = git("remote", "get-url", "origin").strip()
+        except subprocess.CalledProcessError:
+            print("error: cannot resolve remote.origin.url", file=sys.stderr)
+            return 1
+        selector = repo_selector_from_origin_url(url)
+        if selector is None:
+            print(
+                "error: remote.origin.url does not parse to HOST/OWNER/REPO",
+                file=sys.stderr,
+            )
+            return 1
+        print(selector)
+        return 0
 
     if not fetch_refspec_covers_all_heads():
         print(
@@ -822,6 +874,14 @@ def main() -> int:
         "base_full_sha": base_full_sha,
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "summary": dict(counts),
+        # The credential-free HOST[:PORT]/OWNER/REPO identity of the
+        # repository whose refs were inventoried and whose PRs were
+        # snapshotted (None when the origin URL was unparseable). A reaper
+        # must require the selector re-derived from the live origin
+        # (--print-selector) to still equal it: an origin repointed after
+        # generation — e.g. at a fork with identical SHAs — passes every
+        # SHA check while the PR queries inspect the wrong repository.
+        "repo_selector": repo_selector,
         "pr_data_available": pr_data_available,
         "branches": sorted(entries, key=lambda e: e["branch"]),
     }

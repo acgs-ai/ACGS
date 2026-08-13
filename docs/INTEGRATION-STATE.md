@@ -185,7 +185,7 @@ afterwards without moving any ref, and local tracking refs go stale
 the moment another checkout pushes (they only move on a successful
 fetch), so a check-then-delete against local refs can pass and still
 destroy fresh commits. Immediately before deleting, verify **all
-four** against the live remote:
+five** against the live remote:
 
 1. `git push origin` targets exactly the repository the other
    checks inspect: `git remote get-url --push --all origin` must
@@ -194,7 +194,17 @@ four** against the live remote:
    the one answering the `ls-remote` and PR queries, so a matching
    lease there proves nothing about the repository actually being
    modified;
-2. an authoritative `git ls-remote` lookup (never the local
+2. the live `origin` still names the repository this ledger
+   inventoried. The SHA checks below compare content, not identity:
+   a `remote.origin.url` rewritten after generation — commonly to a
+   fork holding identical branch and base SHAs — passes every SHA
+   comparison while the PR selector baked in at generation time
+   still queries the *old* repository, so a branch with an active
+   PR in the new origin would be deleted and its review context
+   discarded. The selector is re-derived from the live fetch URL
+   (`scripts/integration_state.py --print-selector`) and must equal
+   the recorded one;
+3. an authoritative `git ls-remote` lookup (never the local
    tracking ref) shows the remote `master` still at the
    classified base, compared as the **full** object ID (a later
    commit can share an abbreviated prefix):
@@ -205,7 +215,7 @@ four** against the live remote:
    master has moved (e.g. a revert removed content that made a
    branch LANDED) a listed branch may now be the last ref holding
    its content;
-3. a live PR query reports no open PR for the branch. The query is
+4. a live PR query reports no open PR for the branch. The query is
    pinned to the credential-free `HOST/OWNER/REPO` selector of the
    repository backing `origin` (an ambient `GH_REPO` override would
    silently query another repository, and forwarding the raw origin
@@ -213,11 +223,16 @@ four** against the live remote:
    process table via argv). The branch is passed as one quoted
    argument (ref names may legally contain `;` or `$()`, which an
    unquoted substitution would execute);
-4. the deletion pushes with `--atomic`, an expected-value lease on
+5. the deletion pushes with `--atomic`, an expected-value lease on
    the branch ref (`--force-with-lease=<refname>:<expect>` makes
    the server reject the deletion unless the ref still equals
-   `<expect>`), and an archival tag `refs/tags/reaped/<branch>`
-   pointing at the classified tip, created in the same transaction.
+   `<expect>`), an archival tag `refs/tags/reaped/<branch>`
+   pointing at the classified tip, created in the same transaction,
+   and `--no-follow-tags`: `push.followTags=true` would otherwise
+   implicitly add every missing annotated tag reachable from the
+   pushed tip, publishing unrelated local tags (e.g. a private
+   release tag) to origin as a side effect of the reap, so the
+   transaction is pinned to exactly the two refspecs listed.
    A lease can only guard a ref the transaction actually updates:
    Git drops an already-up-to-date refspec from the push before
    leases are evaluated, so a no-op base refspec cannot detect a
@@ -243,11 +258,13 @@ IFS= read -r tip      # paste the branch's full tip SHA
 base=bee922df3d6f4dd22fd4bdbea3cf25e72e038d36 &&
 [ "$(git remote get-url --push --all origin)" \
   = "$(git remote get-url origin)" ] &&
+[ "$(python3 scripts/integration_state.py --print-selector)" \
+  = "github.com/acgs-ai/ACGS" ] &&
 [ "$(git ls-remote origin refs/heads/master | cut -f1)" = "$base" ] &&
 prs=$(gh pr list --repo "github.com/acgs-ai/ACGS" --state open \
   --head "$branch" --json number --jq '.[].number') &&
 [ -z "$prs" ] &&
-git push --atomic \
+git push --atomic --no-follow-tags \
   --force-with-lease="refs/heads/$branch:$tip" \
   origin "$tip:refs/tags/reaped/$branch" ":refs/heads/$branch"
 ```
