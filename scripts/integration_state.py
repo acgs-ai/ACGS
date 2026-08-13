@@ -335,6 +335,55 @@ def divergent_push_urls() -> list[str]:
     return [url for url in (u.strip() for u in push_urls) if url and url != fetch_url]
 
 
+def reap_push_config_overrides() -> list[str]:
+    """Return origin push configuration that would subvert or break the reap push.
+
+    ``remote.origin.receivepack`` replaces the receive-pack program ``git
+    push`` runs on the remote side (see ``git push --receive-pack``), and
+    the replacement can hand the push a different repository entirely:
+    every URL comparison, ``ls-remote``, selector, and PR check keeps
+    inspecting the configured origin URL while the override delivers the
+    ref updates somewhere else, so the rendered chain's prechecks would
+    prove nothing about the repository actually modified. The rendered
+    pushes pin the default program with the command-line option
+    ``--receive-pack=git-receive-pack``, which takes precedence over the
+    config (a ``-c`` value would not: the key is multi-valued and ``git
+    push`` uses the *first* configured value, so the checkout's override
+    would still win), and generation additionally refuses to render reap
+    instructions from a checkout carrying the override (nothing
+    legitimate configures it here).
+
+    ``remote.origin.mirror=true`` makes every ``git push origin`` behave
+    as ``git push --mirror``, which cannot be combined with explicit
+    refspecs: the rendered chain would pass every precheck and then die
+    with ``fatal: --mirror can't be combined with refspecs``, so operators
+    could never actually reap a listed branch (and a refspec-less push
+    from such a checkout would force-sync *all* refs). The rendered
+    pushes clear it with ``-c remote.origin.mirror=false`` and generation
+    rejects the configuration outright.
+
+    An unparseable ``remote.origin.mirror`` value is reported as an
+    override too: ``git push`` would die on it anyway, so failing closed
+    at generation time gives the operator one clear fix.
+    """
+    overrides = []
+    try:
+        receivepack = git("config", "--get", "remote.origin.receivepack").strip()
+    except subprocess.CalledProcessError:
+        receivepack = ""
+    if receivepack:
+        overrides.append(f"remote.origin.receivepack={receivepack}")
+    try:
+        mirror = git("config", "--get", "--type=bool", "remote.origin.mirror").strip()
+    except subprocess.CalledProcessError as exc:
+        # Exit code 1 means the key is unset; anything else (e.g. an
+        # unparseable boolean value) is itself a broken override.
+        mirror = "false" if exc.returncode == 1 else "true"
+    if mirror == "true":
+        overrides.append("remote.origin.mirror=true")
+    return overrides
+
+
 def branch_tip_date(sha: str) -> str:
     # --no-show-signature: log.showSignature=true is equivalent to adding
     # --show-signature, which prepends signature status to stdout even with
@@ -653,9 +702,14 @@ def render_markdown(
         "   master has moved (e.g. a revert removed content that made a",
         "   branch LANDED) a listed branch may now be the last ref holding",
         "   its content;",
-        "4. a live PR query reports no open PR for the branch. The query is",
-        "   pinned to the credential-free `HOST/OWNER/REPO` selector of the",
-        "   repository backing `origin` (an ambient `GH_REPO` override would",
+        "4. live PR queries report no open PR using the branch as *head*",
+        "   and none using it as *base*. A stacked PR that targets the",
+        "   branch keeps it an active review base even when the branch",
+        "   has no PR of its own, and deleting it would retarget or",
+        "   invalidate the child PR's comparison and review context, so",
+        "   both queries must come back empty. They are pinned to the",
+        "   credential-free `HOST/OWNER/REPO` selector of the repository",
+        "   backing `origin` (an ambient `GH_REPO` override would",
         "   silently query another repository, and forwarding the raw origin",
         "   URL would expose credentials embedded in an HTTPS remote to the",
         "   process table via argv). The branch is passed as one quoted",
@@ -674,12 +728,26 @@ def render_markdown(
         "   in the checkout's config would otherwise first push changed",
         "   nested submodules to their own remotes, side effects outside",
         "   the atomic transaction that persist even when the branch-tip",
-        "   lease then rejects the reap), and `-c push.pushOption=`",
+        "   lease then rejects the reap), `-c push.pushOption=`",
         "   (configured `push.pushOption` values are transmitted to the",
         "   server even when none appear on the command line, and",
         "   server-specific options can trigger pre-receive behavior",
         "   beyond the two advertised ref updates; the empty value clears",
-        "   the configured list), so the transaction is pinned to exactly",
+        "   the configured list),",
+        "   `--receive-pack=git-receive-pack` (a configured",
+        "   `remote.origin.receivepack` replaces the receive-pack program",
+        "   the push runs on the remote side and can hand the ref updates",
+        "   to a different repository entirely, while every URL,",
+        "   `ls-remote`, selector, and PR check keeps inspecting the",
+        "   configured origin URL; the command-line option pins the",
+        "   default program and takes precedence over the config, which",
+        "   a `-c` value would not: the key is multi-valued and the push",
+        "   uses the *first* configured value), and",
+        "   `-c remote.origin.mirror=false` (`remote.origin.mirror=true`",
+        "   silently turns the push into a full-mirror update, which",
+        "   cannot be combined with explicit refspecs, so the command",
+        "   would die with `--mirror can't be combined with refspecs`),",
+        "   so the transaction is pinned to exactly",
         "   the two refspecs listed. The tag's source is a per-operation",
         "   temporary ref `refs/reap/src-<tip>`, bound to the recorded",
         "   tip and verified before the push: a refspec source undergoes",
@@ -708,8 +776,10 @@ def render_markdown(
         "   archived tip:",
         "",
         "   ```sh",
-        '   git push origin --force-with-lease="refs/tags/reaped/$branch:$tip" \\',
-        '     ":refs/tags/reaped/$branch"',
+        "   git -c remote.origin.mirror=false push \\",
+        "     --receive-pack=git-receive-pack \\",
+        '     --force-with-lease="refs/tags/reaped/$branch:$tip" \\',
+        '     origin ":refs/tags/reaped/$branch"',
         "   ```",
         "",
         "   An unleased deletion would unconditionally discard a tag",
@@ -719,10 +789,10 @@ def render_markdown(
         "   unconditionally.",
         "",
         "The commands form one `&&` chain because a found PR is successful",
-        "output, not a failing exit status: the PR list is captured and",
-        "required to be empty, the push targets and the live base SHA are",
-        "compared explicitly, and any failed lookup or check stops the",
-        "chain before the push runs:",
+        "output, not a failing exit status: both PR lists (head and base)",
+        "are captured and required to be empty, the push targets and the",
+        "live base SHA are compared explicitly, and any failed lookup or",
+        "check stops the chain before the push runs:",
         "",
         "```sh",
         "IFS= read -r branch   # paste the branch name, press Enter",
@@ -737,9 +807,13 @@ def render_markdown(
         f'prs=$(gh pr list --repo "{selector_arg}" --state open \\',
         "  --head \"$branch\" --json number --jq '.[].number') &&",
         '[ -z "$prs" ] &&',
+        f'base_prs=$(gh pr list --repo "{selector_arg}" --state open \\',
+        "  --base \"$branch\" --json number --jq '.[].number') &&",
+        '[ -z "$base_prs" ] &&',
         'git update-ref --no-deref "refs/reap/src-$tip" "$tip" &&',
         '[ "$(git rev-parse --verify "refs/reap/src-$tip")" = "$tip" ] &&',
-        "git -c push.pushOption= push --atomic --no-follow-tags \\",
+        "git -c push.pushOption= -c remote.origin.mirror=false push --atomic \\",
+        "  --no-follow-tags --receive-pack=git-receive-pack \\",
         "  --recurse-submodules=no \\",
         '  --force-with-lease="refs/heads/$branch:$tip" \\',
         '  origin "refs/reap/src-$tip:refs/tags/reaped/$branch" ":refs/heads/$branch" &&',
@@ -841,6 +915,25 @@ def main() -> int:
             "inspected. Fix with:\n"
             "  git config --unset-all remote.origin.pushurl\n"
             "(and keep a single remote.origin.url), then regenerate.",
+            file=sys.stderr,
+        )
+        return 1
+
+    push_overrides = reap_push_config_overrides()
+    if push_overrides:
+        listing = "\n".join(f"  {o}" for o in push_overrides)
+        print(
+            "error: origin push configuration would subvert or break the reap push:\n"
+            f"{listing}\n"
+            "remote.origin.receivepack replaces the receive-pack program `git push`\n"
+            "runs on the remote side and can deliver the ref updates to a repository\n"
+            "other than the one this ledger's ls-remote/selector/PR checks inspect;\n"
+            "remote.origin.mirror=true turns every push into a full-mirror update,\n"
+            "which cannot be combined with the reap chain's explicit refspecs. Fix\n"
+            "with (whichever applies):\n"
+            "  git config --unset-all remote.origin.receivepack\n"
+            "  git config --unset-all remote.origin.mirror\n"
+            "then regenerate.",
             file=sys.stderr,
         )
         return 1

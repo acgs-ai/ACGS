@@ -215,9 +215,14 @@ five** against the live remote:
    master has moved (e.g. a revert removed content that made a
    branch LANDED) a listed branch may now be the last ref holding
    its content;
-4. a live PR query reports no open PR for the branch. The query is
-   pinned to the credential-free `HOST/OWNER/REPO` selector of the
-   repository backing `origin` (an ambient `GH_REPO` override would
+4. live PR queries report no open PR using the branch as *head*
+   and none using it as *base*. A stacked PR that targets the
+   branch keeps it an active review base even when the branch
+   has no PR of its own, and deleting it would retarget or
+   invalidate the child PR's comparison and review context, so
+   both queries must come back empty. They are pinned to the
+   credential-free `HOST/OWNER/REPO` selector of the repository
+   backing `origin` (an ambient `GH_REPO` override would
    silently query another repository, and forwarding the raw origin
    URL would expose credentials embedded in an HTTPS remote to the
    process table via argv). The branch is passed as one quoted
@@ -236,12 +241,26 @@ five** against the live remote:
    in the checkout's config would otherwise first push changed
    nested submodules to their own remotes, side effects outside
    the atomic transaction that persist even when the branch-tip
-   lease then rejects the reap), and `-c push.pushOption=`
+   lease then rejects the reap), `-c push.pushOption=`
    (configured `push.pushOption` values are transmitted to the
    server even when none appear on the command line, and
    server-specific options can trigger pre-receive behavior
    beyond the two advertised ref updates; the empty value clears
-   the configured list), so the transaction is pinned to exactly
+   the configured list),
+   `--receive-pack=git-receive-pack` (a configured
+   `remote.origin.receivepack` replaces the receive-pack program
+   the push runs on the remote side and can hand the ref updates
+   to a different repository entirely, while every URL,
+   `ls-remote`, selector, and PR check keeps inspecting the
+   configured origin URL; the command-line option pins the
+   default program and takes precedence over the config, which
+   a `-c` value would not: the key is multi-valued and the push
+   uses the *first* configured value), and
+   `-c remote.origin.mirror=false` (`remote.origin.mirror=true`
+   silently turns the push into a full-mirror update, which
+   cannot be combined with explicit refspecs, so the command
+   would die with `--mirror can't be combined with refspecs`),
+   so the transaction is pinned to exactly
    the two refspecs listed. The tag's source is a per-operation
    temporary ref `refs/reap/src-<tip>`, bound to the recorded
    tip and verified before the push: a refspec source undergoes
@@ -270,8 +289,10 @@ five** against the live remote:
    archived tip:
 
    ```sh
-   git push origin --force-with-lease="refs/tags/reaped/$branch:$tip" \
-     ":refs/tags/reaped/$branch"
+   git -c remote.origin.mirror=false push \
+     --receive-pack=git-receive-pack \
+     --force-with-lease="refs/tags/reaped/$branch:$tip" \
+     origin ":refs/tags/reaped/$branch"
    ```
 
    An unleased deletion would unconditionally discard a tag
@@ -281,10 +302,10 @@ five** against the live remote:
    unconditionally.
 
 The commands form one `&&` chain because a found PR is successful
-output, not a failing exit status: the PR list is captured and
-required to be empty, the push targets and the live base SHA are
-compared explicitly, and any failed lookup or check stops the
-chain before the push runs:
+output, not a failing exit status: both PR lists (head and base)
+are captured and required to be empty, the push targets and the
+live base SHA are compared explicitly, and any failed lookup or
+check stops the chain before the push runs:
 
 ```sh
 IFS= read -r branch   # paste the branch name, press Enter
@@ -299,9 +320,13 @@ base=bee922df3d6f4dd22fd4bdbea3cf25e72e038d36 &&
 prs=$(gh pr list --repo "github.com/acgs-ai/ACGS" --state open \
   --head "$branch" --json number --jq '.[].number') &&
 [ -z "$prs" ] &&
+base_prs=$(gh pr list --repo "github.com/acgs-ai/ACGS" --state open \
+  --base "$branch" --json number --jq '.[].number') &&
+[ -z "$base_prs" ] &&
 git update-ref --no-deref "refs/reap/src-$tip" "$tip" &&
 [ "$(git rev-parse --verify "refs/reap/src-$tip")" = "$tip" ] &&
-git -c push.pushOption= push --atomic --no-follow-tags \
+git -c push.pushOption= -c remote.origin.mirror=false push --atomic \
+  --no-follow-tags --receive-pack=git-receive-pack \
   --recurse-submodules=no \
   --force-with-lease="refs/heads/$branch:$tip" \
   origin "refs/reap/src-$tip:refs/tags/reaped/$branch" ":refs/heads/$branch" &&
