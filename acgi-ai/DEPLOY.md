@@ -266,11 +266,25 @@ console.acgs.ai {
 
 **Notes on the console surface:**
 
-- **No third-party analytics ever.** The console is the audit trail; it
-  cannot also be a Google Analytics property.
+- **No third-party analytics SDK in the browser, ever — and no session
+  replay of the console, ever.** The console is the audit trail; no
+  third-party script observes it from inside. The only analytics export
+  is first-party-collected, server-relayed events under the allowlist
+  schema in `docs/POSTHOG_CONSOLE_TELEMETRY_DESIGN.md` (§12 decision,
+  2026-08-14). Anything beyond that schema is banned exactly as before.
 - **No third-party error tracking SDK loaded in-browser.** Sentry / Datadog
   RUM, etc., would put session URLs in their warehouse. If product
   decides it needs error telemetry, route it server-side via the bus.
+- **Telemetry relay:** `/api/telemetry` has its own Caddy handle block ahead
+  of the general `/api/*` proxy (64 KB body cap, same fail-closed
+  `BUS_UPSTREAM` default) so telemetry can be disabled at the edge without
+  touching governed routes. The relay endpoint and PostHog forwarder are a
+  bus responsibility; nothing analytics-related executes in the console
+  browser beyond the first-party emitter in
+  `src/surfaces/console/telemetry.ts`. Note: Caddy-layer rate limiting is
+  NOT available on the pinned `caddy:2.10.2-alpine` image (needs a custom
+  build + `test:container-pins` update); the shipping abuse controls are the
+  body cap, the edge kill-switch, and the bus-side drop-oldest queue.
 - **No CDN edge cache for `/index.html` or any `/console/*` HTML
   response.** Static `/assets/*` (Vite's hashed bundle) is the only thing
   that may sit in caches.
@@ -1090,6 +1104,7 @@ hash-anchored, operator-readable.
 | 2026-05-25 | Hosted Storybook proof intake is machine-verifiable before claim | `pnpm run test:hosted-storybook-proof-template` guards `hosted-storybook-proof.example.json`, keeping Storybook Pages run URL, DNS evidence, hosted manifest evidence, `storybook-manifest-live`, absent `live-storybook-*` blockers, and `copyIntoProductionEvidence.hostedStorybook` requirements explicit while preserving the not hosted Storybook proof boundary. |
 | 2026-05-25 | Hosted Storybook proof gaps have a local checklist | `pnpm run test:hosted-storybook-proof-gap-report` guards `build:hosted-storybook-proof-gap-report`, which writes `hosted-storybook-proof-gap-report.json` from the proof template, live verifier output, and handoff so unresolved Pages, DNS, live verifier, hosted manifest, hosted browser, copy-field, and pending-ref gaps are visible without claiming hosted Storybook proof. |
 | 2026-05-25 | Fixture fallback is network-only outside production | `withFixtureFallback` is disabled in production, rethrows `ApiError`/4xx/5xx and non-network errors, and only uses fixture data for explicit network-unavailable `TypeError` cases in non-production mock mode; `pnpm run test:security` and `pnpm run test:mvp` guard the boundary. |
+| 2026-08-14 | Console analytics ban amended: server-relayed allowlist events permitted | Martin. First-party-collected, server-relayed product events with an allowlist schema MAY be forwarded to a third-party analytics warehouse (PostHog project 551990). Unchanged and reaffirmed: no third-party analytics/RUM/error-tracking SDK in the console browser, no session replay of the console, no DOM/IP/free-text capture, enforced console CSP. The export surface is exactly the event names + bounded properties in `docs/POSTHOG_CONSOLE_TELEMETRY_DESIGN.md` §4, nothing else. |
 
 ---
 

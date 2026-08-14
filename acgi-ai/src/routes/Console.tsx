@@ -15,6 +15,7 @@ import {
 import { toAppError } from '../lib/errors'
 import { navigate } from '../lib/navigate'
 import { clearSession } from '../lib/session'
+import { routeTemplateFor, track } from '../surfaces/console/telemetry'
 import { Account } from './console/Account'
 import { Actions } from './console/Actions'
 import { Agents } from './console/Agents'
@@ -231,8 +232,16 @@ export function Console({ path }: { path: string }) {
   }
 
   const signOut = () => {
+    track('console_signed_out')
     clearSession()
     go('/login')
+  }
+
+  // Telemetry sees only the resolved route TEMPLATE (design §4 resolution
+  // table) — never a raw path, never a receipt id.
+  const goSection = (to: string) => {
+    track('console_section_navigated', { route_template: routeTemplateFor(to) })
+    go(to)
   }
 
   useEffect(() => {
@@ -292,7 +301,7 @@ export function Console({ path }: { path: string }) {
                         href={item.path}
                         onClick={(e) => {
                           e.preventDefault()
-                          go(item.path)
+                          goSection(item.path)
                         }}
                       >
                         <span>{item.label}</span>

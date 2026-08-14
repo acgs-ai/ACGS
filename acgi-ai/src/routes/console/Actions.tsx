@@ -4,6 +4,7 @@ import type { DecisionOutcome, GovernedAction, Posture } from '../../api/types'
 import type { Decision } from '../../components/governance/DecisionBadge'
 import { DecisionBadge } from '../../components/governance/DecisionBadge'
 import { navigate } from '../../lib/navigate'
+import { track } from '../../surfaces/console/telemetry'
 import {
   ConsoleError,
   ConsoleLoading,
@@ -84,6 +85,9 @@ export function Actions() {
 
   const testActiveAction = () => {
     if (!active) return
+    // Event only — no action id, agent, outcome, or payload flag crosses the
+    // boundary (design §4: outcome property removed in review round 2).
+    track('action_policy_test_run')
     testAction.mutate({
       actionId: active.id,
       payload: payload.trim() || active.before,

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { usePolicies } from '../../api/hooks'
 import type { PolicyRule } from '../../api/types'
+import { track } from '../../surfaces/console/telemetry'
 import { ConsoleError, ConsoleLoading, EmptyState, SearchToolbar, useTextFilter } from './shared'
 
 const policyFields = (r: PolicyRule) => [r.id, r.name, r.citation, r.posture, r.prose]
@@ -41,12 +42,17 @@ export function Policies() {
       ) : (
         <div className="policy-list">
           <div className="policy-rules">
-            {filtered.map((r) => (
+            {filtered.map((r, ruleIndex) => (
               <button
                 key={r.id}
                 type="button"
                 className={`policy-rule ${r.id === active.id ? 'active' : ''}`}
-                onClick={() => setActiveId(r.id)}
+                onClick={() => {
+                  // Positional index only — the rule id/name never leaves
+                  // the console (design §4 payload hygiene).
+                  track('policy_rule_selected', { rule_position: ruleIndex })
+                  setActiveId(r.id)
+                }}
               >
                 <div>
                   <span className="rid">{r.id}</span>
