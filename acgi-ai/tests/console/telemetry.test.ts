@@ -48,7 +48,7 @@ describe('route-template resolution (design §4)', () => {
 
   test('every route in the console route tree is covered by the table', () => {
     const appSource = readFileSync(resolve(__dirname, '../../src/surfaces/console/App.tsx'), 'utf8')
-    const routePaths = [...appSource.matchAll(/path:\s*'([^']+)'/g)].map((m) => m[1])
+    const routePaths = [...appSource.matchAll(/path:\s*['"]([^'"]+)['"]/g)].map((m) => m[1])
     expect(routePaths.length).toBeGreaterThanOrEqual(5)
     for (const routePath of routePaths) {
       expect(
@@ -61,7 +61,7 @@ describe('route-template resolution (design §4)', () => {
 
   test('sidebar section paths all resolve without falling to the generic template', () => {
     const consoleSource = readFileSync(resolve(__dirname, '../../src/routes/Console.tsx'), 'utf8')
-    const navPaths = [...consoleSource.matchAll(/path:\s*'(\/console[^']*)'/g)].map((m) => m[1])
+    const navPaths = [...consoleSource.matchAll(/path:\s*['"](\/console[^'"]*)['"]/g)].map((m) => m[1])
     expect(navPaths.length).toBeGreaterThanOrEqual(10)
     for (const navPath of navPaths) {
       expect(routeTemplateFor(navPath)).not.toBe('/console/$section')
