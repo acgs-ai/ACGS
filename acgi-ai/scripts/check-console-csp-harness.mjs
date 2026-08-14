@@ -56,7 +56,7 @@ function scanSourceForCspHazards() {
   for (const file of allSourceFiles) {
     const source = readFileSync(file, 'utf8')
     check(
-      !/(?:from\s*|import\s*\(\s*|require\s*\(\s*)['"](?:@posthog\/|posthog)/m.test(source),
+      !/(?:\bfrom|\bimport\s*\(|\bimport|\brequire\s*\()\s*['"](?:@posthog\/|posthog)/m.test(source),
       `${rel(file)} must not import a PostHog SDK — the console analytics path is the first-party emitter only (docs/POSTHOG_CONSOLE_TELEMETRY_DESIGN.md).`,
     )
   }

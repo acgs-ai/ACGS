@@ -49,9 +49,9 @@ export function Compile() {
     })
   }
   const promote = () => {
-    track('constitution_promoted')
     promoteCompile.mutate(actionRequest, {
       onSuccess: (apiReceipt) => {
+        track('constitution_promoted')
         setReceipt(apiReceipt)
       },
       onError: () => {
