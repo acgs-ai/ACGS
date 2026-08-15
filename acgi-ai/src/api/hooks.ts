@@ -599,3 +599,91 @@ export function useBusDefects() {
     ...busHealth,
   })
 }
+
+// Process Evidence View — read-only analytical projections. Windows are
+// immutable snapshots, so the list polls slowly and per-window queries are
+// snapshot-cached like the single-trace inspector.
+
+export function useProcessList() {
+  const busHealth = useBusHealth('slow')
+  return useQuery({
+    queryKey: ['process-windows'],
+    queryFn: import.meta.env.DEV
+      ? () =>
+          withFixtureFallback(
+            () => api.process.list(),
+            () => import('../mocks/data/process-windows').then((m) => m.PROCESS_LIST),
+          )
+      : () => api.process.list(),
+    ...busHealth,
+  })
+}
+
+export function useProcessDetail(processId: string | null) {
+  return useQuery({
+    queryKey: ['process-window', processId],
+    enabled: processId !== null,
+    queryFn: () => {
+      const id = processId as string
+      const live = () => api.process.detail(id)
+      const fallback = () =>
+        import('../mocks/data/process-windows').then((m) => {
+          const found = m.getProcessDetailFixture(id)
+          if (found) return found
+          throw new ApiError(
+            404,
+            `/api/process-intelligence/v1/processes/${id}`,
+            'Process not found',
+          )
+        })
+      return import.meta.env.DEV ? withFixtureFallback(live, fallback) : live()
+    },
+    ...SNAPSHOT,
+  })
+}
+
+export function useProcessVariants(processId: string | null) {
+  return useQuery({
+    queryKey: ['process-variants', processId],
+    enabled: processId !== null,
+    queryFn: () => {
+      const id = processId as string
+      const live = () => api.process.variants(id)
+      const fallback = () =>
+        import('../mocks/data/process-windows').then((m) => {
+          const found = m.getProcessVariantsFixture(id)
+          if (found) return found
+          throw new ApiError(
+            404,
+            `/api/process-intelligence/v1/processes/${id}/variants`,
+            'Process not found',
+          )
+        })
+      return import.meta.env.DEV ? withFixtureFallback(live, fallback) : live()
+    },
+    ...SNAPSHOT,
+  })
+}
+
+export function useProcessCompliance(processId: string | null) {
+  return useQuery({
+    queryKey: ['process-compliance', processId],
+    enabled: processId !== null,
+    queryFn: () => {
+      const id = processId as string
+      const live = () => api.process.compliance(id)
+      const fallback = () =>
+        import('../mocks/data/process-windows').then((m) => {
+          const found = m.getProcessComplianceFixture(id)
+          if (found) return found
+          throw new ApiError(
+            404,
+            `/api/process-intelligence/v1/processes/${id}/compliance`,
+            'Process not found',
+          )
+        })
+      return import.meta.env.DEV ? withFixtureFallback(live, fallback) : live()
+    },
+    ...SNAPSHOT,
+  })
+}

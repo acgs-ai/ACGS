@@ -2,6 +2,7 @@ import { ArrowRight } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { navigate } from '../lib/navigate'
 import { hasProductionSession, hasSession } from '../lib/session'
+import { track } from '../surfaces/console/telemetry'
 import { CONSTITUTION_HASH } from './console/shared'
 
 type Provider = {
@@ -150,6 +151,7 @@ export function Login({ nextPath }: { nextPath?: string }) {
     setSsoError(null)
     setMagicQueued(false)
     setPending(null)
+    track('login_provider_selected', { provider_id: p.id })
     const matter = describeConsoleMatter(nextConsolePath(nextPath))
     setLoginInterstitial({
       provider: p,
@@ -268,6 +270,7 @@ export function Login({ nextPath }: { nextPath?: string }) {
             onSubmit={(e) => {
               e.preventDefault()
               setMagicQueued(true)
+              track('magic_link_requested')
             }}
           >
             <input

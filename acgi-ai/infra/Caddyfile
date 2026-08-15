@@ -100,6 +100,23 @@
     #    the fallback points at a closed localhost port so production fails
     #    closed with a proxy error rather than rendering fixture data. The schema
     #    version header is forwarded and echoed for contract-handshake evidence.
+    # ── Telemetry relay — dedicated block AHEAD of the general /api/* proxy
+    #    so operators can cap or disable telemetry at the edge without touching
+    #    governed routes (docs/POSTHOG_CONSOLE_TELEMETRY_DESIGN.md §3). Same
+    #    fail-closed upstream default as /api/*; body capped: telemetry batches
+    #    are ≤20 small events, anything larger is not telemetry.
+    handle /api/telemetry {
+      request_body {
+        max_size 64KB
+      }
+      reverse_proxy {$BUS_UPSTREAM:127.0.0.1:65535} {
+        header_up X-ACGS-Schema-Version "{$ACGS_SCHEMA_VERSION:v1}"
+        header_down X-ACGS-Schema-Version "{$ACGS_SCHEMA_VERSION:v1}"
+        lb_try_duration 2s
+        lb_try_interval 250ms
+      }
+    }
+
     handle /api/* {
       reverse_proxy {$BUS_UPSTREAM:127.0.0.1:65535} {
         header_up X-ACGS-Schema-Version "{$ACGS_SCHEMA_VERSION:v1}"
