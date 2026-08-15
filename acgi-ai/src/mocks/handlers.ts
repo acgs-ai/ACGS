@@ -28,6 +28,12 @@ import { INCIDENTS } from './data/incidents'
 import { MACI_LANES } from './data/maci'
 import { OVERVIEW_SUMMARY } from './data/overview'
 import { POLICIES } from './data/policies'
+import {
+  getProcessComplianceFixture,
+  getProcessDetailFixture,
+  getProcessVariantsFixture,
+  PROCESS_LIST,
+} from './data/process-windows'
 import { SETTING_SECTIONS } from './data/settings'
 import { TENANTS } from './data/tenants'
 
@@ -92,5 +98,29 @@ export const handlers = [
       return HttpResponse.json({ detail: 'receipt proof not found' }, { status: 404 })
     }
     return HttpResponse.json(proof)
+  }),
+  // Process Evidence View — mirrors the backend's cross-tenant posture:
+  // unknown and foreign identifiers are the same indistinguishable 404.
+  http.get('/api/process-intelligence/v1/processes', () => HttpResponse.json(PROCESS_LIST)),
+  http.get('/api/process-intelligence/v1/processes/:processId', ({ params }) => {
+    const detail = getProcessDetailFixture(String(params.processId))
+    if (!detail) {
+      return HttpResponse.json({ detail: 'Process not found' }, { status: 404 })
+    }
+    return HttpResponse.json(detail)
+  }),
+  http.get('/api/process-intelligence/v1/processes/:processId/variants', ({ params }) => {
+    const variants = getProcessVariantsFixture(String(params.processId))
+    if (!variants) {
+      return HttpResponse.json({ detail: 'Process not found' }, { status: 404 })
+    }
+    return HttpResponse.json(variants)
+  }),
+  http.get('/api/process-intelligence/v1/processes/:processId/compliance', ({ params }) => {
+    const report = getProcessComplianceFixture(String(params.processId))
+    if (!report) {
+      return HttpResponse.json({ detail: 'Process not found' }, { status: 404 })
+    }
+    return HttpResponse.json(report)
   }),
 ]
