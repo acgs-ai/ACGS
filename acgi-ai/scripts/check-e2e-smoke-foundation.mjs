@@ -76,6 +76,7 @@ export const CONSOLE_SIDEBAR_ROUTES = [
   '/console/compile',
   '/console/audit',
   '/console/bus',
+  '/console/process',
   '/console/settings',
   '/console/tenants',
   '/console/account',
@@ -151,7 +152,12 @@ for (const needle of [
 ]) {
   mustContain(plan, needle, 'PLAN.md')
 }
-for (const needle of ['Test surface foundation', 'test:e2e', 'manifest gate', 'browser proof remains external']) {
+for (const needle of [
+  'Test surface foundation',
+  'test:e2e',
+  'manifest gate',
+  'browser proof remains external',
+]) {
   mustContain(architecture, needle, 'ARCHITECTURE.md')
 }
 for (const needle of ['Test surface script foundation', 'pnpm -F acgi-ai run test:e2e']) {

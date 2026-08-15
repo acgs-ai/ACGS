@@ -29,7 +29,7 @@ Both surfaces now use TanStack Router route trees behind the `@surface/App` alia
 
 `src/api/client.ts` is the browser API boundary. It uses same-origin relative paths and `credentials: same-origin` so the browser does not learn a third-party API origin.
 
-- Console domain -> Caddy `/api/v1/*` and `/api/bus/*`
+- Console domain -> Caddy `/api/v1/*`, `/api/bus/*`, and `/api/process-intelligence/v1/*`
 - Caddy -> `BUS_UPSTREAM` with `X-ACGS-Schema-Version`
 - React hooks -> `src/api/hooks.ts`
 - Bus schema source of truth -> `contracts/bus.openapi.json`, mirrored at `src/api/openapi.json` for local API docs
