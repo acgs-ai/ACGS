@@ -207,6 +207,34 @@ class TestPoolReviewHardening:
         with pytest.raises(SelectionError):
             pool.select_t1(variant_id="vt_" + "aa" * 16, shared=0, unique=0)
 
+    def test_unique_allocations_excluded_from_all_later_selection(self, pool):
+        # A canary allocated as unique (here via shared=0) must never be
+        # selected again by any other variant, as shared OR as unique.
+        pool.generate(tier="T1", count=8, placements=2, created_at=T)
+        a = pool.select_t1(variant_id="vt_" + "aa" * 16, shared=0, unique=3)
+        b = pool.select_t1(variant_id="vt_" + "bb" * 16, shared=2, unique=2)
+        assert not set(a["unique"]) & set(b["shared"])
+        assert not set(a["unique"]) & set(b["unique"])
+
+    def test_shared_allocations_never_become_unique(self, pool):
+        # A canary shared by one variant must never later become another
+        # variant's unique canary.
+        pool.generate(tier="T1", count=8, placements=2, created_at=T)
+        a = pool.select_t1(variant_id="vt_" + "aa" * 16, shared=3, unique=0)
+        b = pool.select_t1(variant_id="vt_" + "bb" * 16, shared=0, unique=3)
+        assert not set(a["shared"]) & set(b["unique"])
+
+    def test_probe_write_failure_leaves_no_orphan_token(self, store):
+        # If probe persistence fails (here: uninitialized probe store),
+        # generate() must not leave an active canary in the token store that
+        # selection could pick up despite having no probe.
+        probe = InMemoryStore("test-only-not-production")  # never initialized
+        pool = CanaryPool(store, probe_store=probe)
+        pool.init_pool(pool_id="p", created_at=T, operator="t")
+        with pytest.raises(StoreIntegrityError):
+            pool.generate(tier="T0", count=2, placements=2, created_at=T)
+        assert store.list_records("canary-") == []
+
     def test_probe_records_live_only_in_probe_store(self, store):
         # §6.5 custody split: with a separate probe store configured, probe
         # records must never touch the token store.

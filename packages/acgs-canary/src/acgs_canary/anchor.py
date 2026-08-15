@@ -223,6 +223,15 @@ def _parse_ts(value: str, field: str) -> datetime:
     return dt.astimezone(UTC)
 
 
+def parse_anchor_time(value: str) -> datetime:
+    """Parse an asserted anchor time; refuses malformed or naive timestamps.
+
+    Used by the ledger's verified labeling path: confirmed evidence without
+    a parseable, timezone-aware anchor time can never be labeled anchored.
+    """
+    return _parse_ts(value, "anchored_at")
+
+
 def anchor_predates(
     evidence: AnchorEvidence,
     bundle: dict[str, Any],

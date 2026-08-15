@@ -41,7 +41,36 @@ jobs:
       matrix:
         python-version: ['3.11', '3.12']
     steps:
+      # Two-step checkout: see constitutional-hash.yml for rationale.
       - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      # uv discovers the whole workspace from the root pyproject.toml, so
+      # every workspace member that is a gitlink submodule must have its
+      # pyproject.toml present or `uv run` aborts before Ruff/pytest runs.
+      - name: Init workspace-member submodules
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        run: |
+          # Ephemeral global gitconfig: this job runs on the self-hosted
+          # runner as the operator's user, so a plain `git config --global`
+          # would write SUBMODULE_TOKEN into the real ~/.gitconfig and
+          # persist after the job. Redirect global config to a job-scoped
+          # temp file instead; it dies with the job.
+          export GIT_CONFIG_GLOBAL="${RUNNER_TEMP}/submodule-gitconfig"
+          if [ -n "${SUBMODULE_TOKEN}" ]; then
+            git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
+          fi
+          # Only the uv workspace members (pyproject.toml [tool.uv.workspace]);
+          # non-member submodules like ACGS-agency-agents stay uninitialized.
+          for sub in packages/acgs-lite packages/Acgs-Swarm packages/clinicalguard packages/acgs-control-plane; do
+            git submodule sync -- "$sub"
+            if ! git submodule update --init --recursive -- "$sub"; then
+              echo "::error::failed to initialize workspace member $sub; private submodules require SUBMODULE_TOKEN with Contents: Read" >&2
+              exit 1
+            fi
+          done
 
       - uses: astral-sh/setup-uv@v3
         with:

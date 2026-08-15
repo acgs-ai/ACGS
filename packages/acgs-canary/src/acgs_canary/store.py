@@ -136,6 +136,34 @@ def _atomic_write(path: Path, data: bytes) -> None:
         raise
 
 
+def _atomic_create(path: Path, data: bytes) -> None:
+    """Atomic create-if-absent: the fully written temp file becomes visible
+    only via os.link(), which fails if the path already exists. Unlike an
+    exists() check followed by os.replace(), two concurrent creators can
+    never silently replace each other's committed record."""
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp-")
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            raise StoreConflictError(f"record exists: {path.name}") from None
+        dfd = os.open(str(path.parent), os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    finally:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+
+
 def _sealed_record(payload: dict[str, Any]) -> bytes:
     body = canonical_bytes(payload)
     digest = hashlib.sha256(body).hexdigest()
@@ -199,12 +227,15 @@ class RestrictedFileStore(CanaryStoreBackend):
         return self._dir
 
     def initialize(self, *, operator: str) -> None:
-        if self._marker.exists():
-            raise StoreConflictError("store already initialized; refusing to re-initialize")
-        _atomic_write(
-            self._marker,
-            _sealed_record({"schema": _STORE_SCHEMA, "operator": operator}),
-        )
+        try:
+            _atomic_create(
+                self._marker,
+                _sealed_record({"schema": _STORE_SCHEMA, "operator": operator}),
+            )
+        except StoreConflictError:
+            raise StoreConflictError(
+                "store already initialized; refusing to re-initialize"
+            ) from None
 
     def assert_initialized(self) -> None:
         if not self._marker.exists():
@@ -226,9 +257,13 @@ class RestrictedFileStore(CanaryStoreBackend):
     def write_record(self, name: str, payload: dict[str, Any], *, overwrite: bool) -> None:
         self.assert_initialized()
         f = self._dir / _check_name(name)
-        if f.exists() and not overwrite:
-            raise StoreConflictError(f"record exists: {name}")
-        _atomic_write(f, _sealed_record(payload))
+        if overwrite:
+            _atomic_write(f, _sealed_record(payload))
+        else:
+            # Atomic create-if-absent: a racing creator must get a conflict,
+            # never silently replace a committed record (e.g. the licensee
+            # reference key, which would make derived refs irreproducible).
+            _atomic_create(f, _sealed_record(payload))
 
     def list_records(self, prefix: str) -> list[str]:
         self.assert_initialized()

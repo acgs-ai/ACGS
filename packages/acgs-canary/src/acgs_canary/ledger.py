@@ -38,7 +38,7 @@ import os
 import re
 import secrets as pysecrets
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,7 +47,7 @@ from typing import Any
 from . import anchor as anchor_mod
 from . import signing as sig
 from .canonical import canonical_bytes
-from .errors import LedgerError, LedgerStateError
+from .errors import AnchorError, LedgerError, LedgerStateError
 from .protocol import protocol_hash
 from .store import CanaryStoreBackend
 
@@ -62,6 +62,42 @@ _KINDS = frozenset({KIND_PREPARED, KIND_ISSUER_SIGNED, KIND_COUNTERSIGNED, KIND_
 _GENESIS_PREV = "0" * 64
 
 _LREF_RE = re.compile(r"^lref_[0-9a-f]{64}$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _is_sha256_hex(value: Any) -> bool:
+    return isinstance(value, str) and _SHA256_RE.match(value) is not None
+
+
+def _require_sha256_hex(value: Any, field: str) -> None:
+    if not _is_sha256_hex(value):
+        raise LedgerStateError(f"{field} must be a 64-char lowercase hex SHA-256 digest")
+
+
+def _t1_bindings_valid(acceptance_ref: Any, delivery: Any) -> bool:
+    """Structural validity of the T1 acceptance/delivery bindings.
+
+    A completed T1 issuance must be able to name the accepted document and
+    the delivery channel; empty or malformed objects bind nothing.
+    """
+    if not isinstance(acceptance_ref, dict) or not isinstance(delivery, dict):
+        return False
+    if set(acceptance_ref) != {"kind", "doc_hash"}:
+        return False
+    kind = acceptance_ref["kind"]
+    if not isinstance(kind, str) or not kind.strip():
+        return False
+    if not _is_sha256_hex(acceptance_ref["doc_hash"]):
+        return False
+    if not ({"channel", "ref"} <= set(delivery) <= {"channel", "ref", "countersign_ref"}):
+        return False
+    for key in ("channel", "ref"):
+        if not isinstance(delivery[key], str) or not delivery[key].strip():
+            return False
+    if "countersign_ref" in delivery and not _is_sha256_hex(delivery["countersign_ref"]):
+        return False
+    return True
+
 
 _COMMON_FIELDS = frozenset(
     {
@@ -263,10 +299,24 @@ class AcceptanceLedger:
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
 
-    def _append(self, kind: str, body: dict[str, Any], *, timestamp: str) -> dict[str, Any]:
+    def _append(
+        self,
+        kind: str,
+        body: dict[str, Any],
+        *,
+        timestamp: str,
+        precondition: Callable[[list[dict[str, Any]]], None] | None = None,
+    ) -> dict[str, Any]:
         with self._exclusive_lock():
             self.verify()
             head = self._head()
+            if precondition is not None:
+                # Semantic preconditions (e.g. no duplicate variant issuance)
+                # must be re-checked INSIDE the verify-and-append transaction:
+                # a check done before taking the lock can be invalidated by a
+                # concurrent appender that wins the lock first.
+                entries, _ = self._read_lines()
+                precondition(entries)
             entry = _make_entry(
                 ledger_id=head["ledger_id"],
                 protocol_sha256=head["protocol_sha256"],
@@ -300,6 +350,12 @@ class AcceptanceLedger:
                 raise LedgerStateError(
                     "T1 preparation requires acceptance_ref and delivery bindings"
                 )
+            if not _t1_bindings_valid(acceptance_ref, delivery):
+                raise LedgerStateError(
+                    "T1 acceptance_ref must bind {kind, doc_hash(sha256 hex)} and "
+                    "delivery must bind {channel, ref[, countersign_ref(sha256 hex)]}; "
+                    "empty or malformed bindings attest nothing"
+                )
         if licensee_ref is not None and not _LREF_RE.match(licensee_ref):
             # The ledger is append-only: a raw identity (name, email) written
             # here could never be de-linked by destroying the HMAC key, so
@@ -309,20 +365,24 @@ class AcceptanceLedger:
                 "licensee_ref must be an opaque lref_ reference "
                 "(HMAC-derived, 64 hex chars); raw identity is refused"
             )
-        if variant_tree_sha256 is not None and not (
-            isinstance(variant_tree_sha256, str)
-            and len(variant_tree_sha256) == 64
-            and all(c in "0123456789abcdef" for c in variant_tree_sha256)
-        ):
-            raise LedgerStateError("variant_tree_sha256 must be 64 lowercase hex chars")
-        entries, _ = self._read_lines()
-        for e in entries:
-            if (
-                e["kind"] == KIND_PREPARED
-                and e["seq"] > 0
-                and e["body"]["variant_id"] == variant_id
-            ):
-                raise LedgerError(f"duplicate issuance of {variant_id}")
+        if variant_tree_sha256 is not None:
+            _require_sha256_hex(variant_tree_sha256, "variant_tree_sha256")
+        # Every digest binding must be cryptographically addressable: an
+        # entry carrying arbitrary strings here could be signed, countersigned
+        # and verified while binding no source, canary set, or allocation.
+        _require_sha256_hex(source_tree_sha256, "source_tree_sha256")
+        _require_sha256_hex(canary_commitment_hex, "canary_commitment_hex")
+        _require_sha256_hex(allocation_manifest_sha256, "allocation_manifest_sha256")
+
+        def _no_duplicate_issuance(entries: list[dict[str, Any]]) -> None:
+            for e in entries:
+                if (
+                    e["kind"] == KIND_PREPARED
+                    and e["seq"] > 0
+                    and e["body"]["variant_id"] == variant_id
+                ):
+                    raise LedgerError(f"duplicate issuance of {variant_id}")
+
         return self._append(
             KIND_PREPARED,
             {
@@ -337,6 +397,7 @@ class AcceptanceLedger:
                 "delivery": delivery,
             },
             timestamp=timestamp,
+            precondition=_no_duplicate_issuance,
         )
 
     def append_issuer_signature(
@@ -485,12 +546,12 @@ class AcceptanceLedger:
         # Completed T1 issuance requires the countersignature AND the
         # delivery bindings in the prepared body: a countersignature over an
         # entry with no delivered tree or acceptance artifact does not
-        # establish the delivery callers rely on.
+        # establish the delivery callers rely on. The bindings are checked
+        # STRUCTURALLY, not just for presence — empty or malformed objects
+        # (e.g. acceptance_ref={}) attest no document, channel, or tree.
         body = prepared["body"]
-        delivery_bound = (
-            body.get("variant_tree_sha256") is not None
-            and body.get("acceptance_ref") is not None
-            and body.get("delivery") is not None
+        delivery_bound = _is_sha256_hex(body.get("variant_tree_sha256")) and _t1_bindings_valid(
+            body.get("acceptance_ref"), body.get("delivery")
         )
         completed_t1 = body["tier"] == "T1" and countersigned is not None and delivery_bound
         return {
@@ -553,6 +614,16 @@ class AcceptanceLedger:
         if evidence.state != anchor_mod.STATE_CONFIRMED:
             return state
         if evidence.bundle_sha256 != recomputed:
+            return state
+        # An anchor is a TIMESTAMP: confirmed evidence carrying no parseable,
+        # timezone-aware anchor time proves nothing about when the bundle
+        # existed and must never surface as anchored (in either label), even
+        # if a permissive verifier would confirm it.
+        if evidence.anchored_at is None:
+            return state
+        try:
+            anchor_mod.parse_anchor_time(evidence.anchored_at)
+        except AnchorError:
             return state
         if not verifier.verify(evidence, bundle):
             return state

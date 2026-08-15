@@ -155,6 +155,23 @@ class CanaryPool:
             token = pysecrets.token_bytes(_TOKEN_BYTES)
             probe_prefix_note = pysecrets.token_bytes(16)
             token_sha = hashlib.sha256(token).hexdigest()
+            # Probe custody split (§6.5): separate store when configured.
+            # The probe record is persisted FIRST: if the probe backend is
+            # uninitialized, full, or unavailable, generate() fails before
+            # any token record exists, so _active_ids() can never select an
+            # active canary that has no probe. (The reverse failure — a
+            # token write failing after the probe write — leaves only an
+            # inert orphan probe record that is never selected.)
+            self._probe_store.write_record(
+                f"{_PROBE_PREFIX}{canary_id}",
+                {
+                    "schema": "acgs_canary_probe/v1",
+                    "canary_id": canary_id,
+                    "probe_seed_hex": probe_prefix_note.hex(),  # SECRET
+                    "created_at": created_at,
+                },
+                overwrite=False,
+            )
             self._store.write_record(
                 f"{_CANARY_PREFIX}{canary_id}",
                 {
@@ -167,17 +184,6 @@ class CanaryPool:
                     "placements": placements,
                     "created_at": created_at,
                     "retired_at": None,
-                },
-                overwrite=False,
-            )
-            # Probe custody split (§6.5): separate store when configured.
-            self._probe_store.write_record(
-                f"{_PROBE_PREFIX}{canary_id}",
-                {
-                    "schema": "acgs_canary_probe/v1",
-                    "canary_id": canary_id,
-                    "probe_seed_hex": probe_prefix_note.hex(),  # SECRET
-                    "created_at": created_at,
                 },
                 overwrite=False,
             )
@@ -279,8 +285,12 @@ class CanaryPool:
 
         Deterministic given the pool state and variant_id; ranking is keyed
         by the secret selection salt so allocation cannot be derived from
-        public inputs. Unique canaries already allocated to another variant
-        are excluded (allocation is recorded per canary).
+        public inputs. The shared/unique partition is exclusive across ALL
+        variants (allocation is recorded per canary): a canary ever
+        allocated as unique is never selected as shared, and a canary ever
+        allocated at all (shared or unique, by any variant) is never
+        selected as unique — otherwise the allocation matrix and coalition
+        inference collapse.
         """
         if not isinstance(shared, int) or shared < 0:
             raise SelectionError(f"shared must be a non-negative integer, got {shared!r}")
@@ -290,15 +300,21 @@ class CanaryPool:
             raise SelectionError("T1 selection requires a positive total count")
         salt = self._selection_salt()
         candidates = self._active_ids(TIER_T1)
-        shared_ranked = sorted(candidates, key=lambda c: self._rank(salt, b"t1-shared", c))
+        prior_unique: set[str] = set()
+        prior_any: set[str] = set()
+        for name in self._store.list_records(_ALLOC_PREFIX):
+            alloc = self._store.read_record(name)
+            if alloc is None:
+                continue
+            prior_any.add(alloc["canary_id"])
+            if alloc["kind"] == "unique":
+                prior_unique.add(alloc["canary_id"])
+        shared_pool = [c for c in candidates if c not in prior_unique]
+        shared_ranked = sorted(shared_pool, key=lambda c: self._rank(salt, b"t1-shared", c))
         shared_ids = shared_ranked[:shared]
         if len(shared_ids) < shared:
             raise SelectionError(f"need {shared} shared T1 canaries, have {len(shared_ids)}")
-        taken: set[str] = set(shared_ids)
-        for name in self._store.list_records(_ALLOC_PREFIX):
-            alloc = self._store.read_record(name)
-            if alloc is not None and alloc["kind"] == "unique":
-                taken.add(alloc["canary_id"])
+        taken = prior_any | set(shared_ids)
         unique_pool = [c for c in candidates if c not in taken]
         unique_ranked = sorted(
             unique_pool,

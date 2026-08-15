@@ -594,6 +594,17 @@ class TestReviewHardening:
         for acceptance_ref, delivery in (
             (None, {"channel": "test", "ref": "local"}),
             ({"kind": "contract", "doc_hash": "22" * 32}, None),
+            # Empty or malformed bindings attest nothing and are refused:
+            ({}, {"channel": "test", "ref": "local"}),
+            ({"kind": "contract", "doc_hash": "22" * 32}, {}),
+            ({"kind": "", "doc_hash": "22" * 32}, {"channel": "test", "ref": "local"}),
+            ({"kind": "contract", "doc_hash": "bad"}, {"channel": "test", "ref": "local"}),
+            ({"kind": "contract"}, {"channel": "test", "ref": "local"}),
+            ({"kind": "contract", "doc_hash": "22" * 32}, {"channel": "test", "ref": " "}),
+            (
+                {"kind": "contract", "doc_hash": "22" * 32},
+                {"channel": "test", "ref": "local", "countersign_ref": "bad"},
+            ),
         ):
             with pytest.raises(LedgerStateError):
                 ledger.append_prepared(
@@ -608,6 +619,77 @@ class TestReviewHardening:
                     delivery=delivery,
                     timestamp=T,
                 )
+
+    def test_malformed_digest_bindings_rejected(self, tmp_path):
+        # Every digest binding must be a canonical SHA-256 digest; an entry
+        # binding "bad" for its source, canary set, or allocation artifact
+        # must never become signable.
+        ledger = _mk(tmp_path)
+        for field in (
+            "source_tree_sha256",
+            "canary_commitment_hex",
+            "allocation_manifest_sha256",
+        ):
+            for bad in ("bad", "ZZ" * 32, "22" * 31, None):
+                kwargs = dict(
+                    variant_id="vt_" + "dd" * 16,
+                    tier="T0",
+                    variant_tree_sha256=H,
+                    source_tree_sha256=H,
+                    canary_commitment_hex=H,
+                    allocation_manifest_sha256=H,
+                    licensee_ref=None,
+                    acceptance_ref=None,
+                    delivery=None,
+                    timestamp=T,
+                )
+                kwargs[field] = bad
+                with pytest.raises(LedgerStateError):
+                    ledger.append_prepared(**kwargs)
+
+    def test_countersigned_with_malformed_bindings_not_completed(self, tmp_path):
+        # Even if a prepared entry with empty bindings somehow existed in the
+        # chain, the fold must not report completion: presence-only checks
+        # are not enough. Exercised by hand-minting the prepared body.
+        from acgs_canary.ledger import _make_entry
+
+        ledger = _mk(tmp_path)
+        p = tmp_path / "ledger.jsonl"
+        genesis = json.loads(p.read_bytes().split(b"\n")[0])
+        forged = _make_entry(
+            ledger_id=genesis["ledger_id"],
+            protocol_sha256=genesis["protocol_sha256"],
+            seq=1,
+            prev=genesis["entry_hash"],
+            kind="variant.prepared",
+            timestamp=T,
+            body={
+                "variant_id": "vt_" + "dd" * 16,
+                "tier": "T1",
+                "variant_tree_sha256": H,
+                "source_tree_sha256": H,
+                "canary_commitment_hex": H,
+                "allocation_manifest_sha256": H,
+                "licensee_ref": "lref_" + "ab" * 32,
+                "acceptance_ref": {},
+                "delivery": {},
+            },
+        )
+        with open(p, "ab") as fh:
+            fh.write(canonical_bytes(forged) + b"\n")
+        issued = ledger.append_issuer_signature(
+            target_entry_hash=forged["entry_hash"],
+            key=sig.ephemeral_test_key("issuer"),
+            timestamp=T,
+        )
+        ledger.append_licensee_countersignature(
+            issuer_entry_hash=issued["entry_hash"],
+            key=sig.ephemeral_test_key("licensee"),
+            timestamp=T,
+        )
+        state = ledger.issuance_state("vt_" + "dd" * 16)
+        assert state["state"] == "countersigned"
+        assert not state["completed_t1_issuance"]
 
     def test_countersigned_without_variant_tree_not_completed(self, tmp_path):
         # A countersignature over a prepared entry with no delivered tree
@@ -672,6 +754,79 @@ class TestReviewHardening:
             vid2, bundle=bundle1, evidence=evidence1, verifier=fx
         )
         assert state["evidence_label"] == "anchor-entry-recorded"
+
+    def test_confirmed_evidence_without_anchor_time_never_labeled_anchored(self, tmp_path):
+        # An anchor is a timestamp: confirmed evidence with anchored_at=None
+        # (and a fixture that likewise records none, so the verifier agrees)
+        # must not surface as anchored in either label.
+        from acgs_canary.anchor import STATE_CONFIRMED, AnchorEvidence, FixtureVerifier, bundle_hash
+
+        ledger = _mk(tmp_path)
+        prepared = _prepare(ledger)
+        bundle = _bundle_for(ledger)
+        for anchored_at in (None, "not-a-timestamp", "2026-08-15T00:00:00"):
+            evidence = AnchorEvidence(
+                kind="rfc3161",
+                state=STATE_CONFIRMED,
+                bundle_sha256=bundle_hash(bundle),
+                evidence_ref=f"fx-{anchored_at}",
+                anchored_at=anchored_at,
+                production=False,
+            )
+            fx = FixtureVerifier(
+                {
+                    f"fx-{anchored_at}": {
+                        "bundle_sha256": bundle_hash(bundle),
+                        "anchored_at": anchored_at,
+                    }
+                }
+            )
+            assert fx.verify(evidence, bundle)  # the verifier alone would confirm
+            ledger.append_anchor(bundle=bundle, evidence=evidence, timestamp=T)
+            state = ledger.anchored_issuance_state(
+                prepared["body"]["variant_id"], bundle=bundle, evidence=evidence, verifier=fx
+            )
+            assert state["evidence_label"] == "anchor-entry-recorded"
+
+    def test_concurrent_duplicate_issuance_rejected(self, tmp_path):
+        # Two appenders preparing the SAME variant concurrently: the
+        # duplicate check runs inside the locked verify-and-append
+        # transaction, so exactly one append may win.
+        import multiprocessing as mp
+
+        ledger = _mk(tmp_path)
+        path = str(tmp_path / "ledger.jsonl")
+
+        def worker(q) -> None:
+            lg = AcceptanceLedger(Path(path))
+            try:
+                lg.append_prepared(
+                    variant_id="vt_" + "aa" * 16,
+                    tier="T0",
+                    variant_tree_sha256=H,
+                    source_tree_sha256=H,
+                    canary_commitment_hex=H,
+                    allocation_manifest_sha256=H,
+                    licensee_ref=None,
+                    acceptance_ref=None,
+                    delivery=None,
+                    timestamp=T,
+                )
+                q.put(1)
+            except LedgerError:
+                q.put(0)
+
+        ctx = mp.get_context("fork")
+        q = ctx.Queue()
+        procs = [ctx.Process(target=worker, args=(q,)) for _ in range(5)]
+        for pr in procs:
+            pr.start()
+        for pr in procs:
+            pr.join()
+        results = [q.get() for _ in range(5)]
+        assert sum(results) == 1  # exactly one append won
+        report = ledger.verify()
+        assert report.entries == 2  # genesis + the single prepared entry
 
     def test_concurrent_appends_serialized_by_lock(self, tmp_path):
         # Two processes appending concurrently must produce a valid chain

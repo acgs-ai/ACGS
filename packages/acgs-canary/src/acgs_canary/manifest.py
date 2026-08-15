@@ -14,6 +14,7 @@ from typing import Any
 from .canonical import canonical_bytes, canonical_sha256_hex
 from .errors import ManifestError
 from .pool import TIER_T0, TIER_T1
+from .protocol import protocol_hash
 from .store import CanaryStoreBackend
 
 SCHEMA = "acgs_canary_variant_manifest/v1"
@@ -107,6 +108,15 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         "protocol_sha256",
     ):
         _require_hex64(manifest[field], field)
+    # The frozen-protocol contract is enforced HERE, not only in the CLI:
+    # a manifest bound to a foreign protocol identity must fail validation
+    # for every library consumer (build/store/load/hash), not just for the
+    # variant-verify command.
+    if manifest["protocol_sha256"] != protocol_hash():
+        raise ManifestError(
+            "manifest protocol identity does not match this package's frozen "
+            "protocol; mixed-protocol artifacts are refused"
+        )
     injected = manifest["injected_tree_sha256"]
     if injected is not None:
         _require_hex64(injected, "injected_tree_sha256")
@@ -120,6 +130,13 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         raise ManifestError(
             "injected tree is finalized but derived artifacts are 'pending'; "
             "derived artifacts must be regenerated over the injected tree"
+        )
+    # The reverse is equally inconsistent: derived artifacts cannot have
+    # been regenerated/reconciled over an injected tree that does not exist.
+    if injected is None and status != "pending":
+        raise ManifestError(
+            f"derived_artifacts_status is {status!r} but no injected tree is "
+            "finalized; non-pending statuses require injected_tree_sha256"
         )
     seq = manifest["ledger_entry_seq"]
     if seq is not None and (not isinstance(seq, int) or seq < 0):

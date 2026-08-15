@@ -74,6 +74,26 @@ class TestManifest:
         m = _manifest(injected_tree_sha256="22" * 32, derived_artifacts_status="regenerated")
         assert m["derived_artifacts_status"] == "regenerated"
 
+    def test_non_pending_status_requires_injected_tree(self):
+        # The reverse inconsistency: derived artifacts cannot claim to be
+        # regenerated/reconciled over an injected tree that does not exist.
+        for status in ("regenerated", "reconciled"):
+            with pytest.raises(ManifestError):
+                _manifest(derived_artifacts_status=status)
+
+    def test_foreign_protocol_manifest_rejected(self, store):
+        # Library validation (not just the CLI) must refuse a manifest bound
+        # to a foreign protocol identity.
+        from acgs_canary.manifest import validate_manifest
+
+        with pytest.raises(ManifestError):
+            _manifest(protocol_sha256="99" * 32)
+        m = _manifest()
+        store_manifest(store, m)
+        tampered = dict(m, protocol_sha256="99" * 32)
+        with pytest.raises(ManifestError):
+            validate_manifest(tampered)
+
     def test_update_paths(self, store):
         m = _manifest()
         store_manifest(store, m)
