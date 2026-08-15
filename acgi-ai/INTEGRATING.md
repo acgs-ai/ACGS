@@ -8,6 +8,7 @@ All browser API calls are same-origin relative requests with `credentials: same-
 
 - typed API prefix: `/api/v1`
 - bus analyzer prefix: `/api/bus`
+- process-intelligence prefix: `/api/process-intelligence/v1` (read-only analytical projections)
 - console Caddy proxy: forwards to `BUS_UPSTREAM`
 - schema handshake header: `X-ACGS-Schema-Version`
 
@@ -41,6 +42,10 @@ Recorded or stubbed bus responses must match the vendored schema before UI fixtu
 | `/api/v1/account` | GET | `api.account.get`, `useAccount` | `AccountView` |
 | `/api/bus/traces` | GET | `api.bus.listTraces`, `useBusTraces` | `BusTraceList` |
 | `/api/bus/traces/{correlation_id}` | GET | `api.bus.getTrace`, `useBusTrace` | `BusSingleTrace | BusExpired` |
+| `/api/process-intelligence/v1/processes` | GET | `api.process.list`, `useProcessList` | `ProcessList` |
+| `/api/process-intelligence/v1/processes/{process_id}` | GET | `api.process.detail`, `useProcessDetail` | `ProcessDetail` |
+| `/api/process-intelligence/v1/processes/{process_id}/variants` | GET | `api.process.variants`, `useProcessVariants` | `ProcessVariantList` |
+| `/api/process-intelligence/v1/processes/{process_id}/compliance` | GET | `api.process.compliance`, `useProcessCompliance` | `ProcessComplianceReport` |
 
 ## Error envelope
 

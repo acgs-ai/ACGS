@@ -211,9 +211,9 @@ export function Console({ path }: { path: string }) {
         { path: '/console/compile', label: 'Compile', count: String(compileCount) },
         { path: '/console/audit', label: 'Audit trail' },
         { path: '/console/bus', label: 'Bus traces' },
-        { path: '/console/process', label: 'Process evidence' },
         { path: '/console/settings', label: 'Settings' },
         { path: '/console/tenants', label: 'Tenants', count: String(tenantCount) },
+        { path: '/console/process', label: 'Process evidence' },
       ],
     },
   ]

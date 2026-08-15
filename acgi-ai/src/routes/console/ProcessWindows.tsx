@@ -49,21 +49,34 @@ const listFields = (p: ProcessSummary) => [
   p.source_chain_status,
 ]
 
-function windowLabel(summary: ProcessSummary): string {
-  return `${summary.started_at} → ${summary.completed_at}`
+function shortTs(iso: string): string {
+  return iso.slice(0, 16).replace('T', ' ')
 }
 
+function windowLabel(summary: ProcessSummary): string {
+  return `${shortTs(summary.started_at)} → ${shortTs(summary.completed_at)} UTC`
+}
+
+// Coverage is measured by the backend over side-effect events only; floor
+// so a 99.6% window never reads as fully evidenced.
 function coverageLabel(coverage: number): string {
-  return `${Math.round(coverage * 100)}% evidence coverage`
+  return `${Math.floor(coverage * 100)}% coverage over side-effect events`
 }
 
 // A nullable score is rendered as uncertainty, never as zero and never
-// dropped: any INVESTIGATE in the window voids the aggregate by contract.
+// dropped — and the stated cause must match the backend's voiding rule:
+// no findings at all, any INVESTIGATE, or no determinate findings.
 function scoreLabel(report: ProcessComplianceReport): string {
   if (report.compliance_score === null) {
-    return `uncertain — ${report.investigate_count} INVESTIGATE finding${
-      report.investigate_count === 1 ? '' : 's'
-    } void the aggregate score`
+    if (report.findings.length === 0) {
+      return 'uncertain — no conformance-relevant events recorded in this window'
+    }
+    if (report.investigate_count > 0) {
+      return `uncertain — ${report.investigate_count} INVESTIGATE finding${
+        report.investigate_count === 1 ? '' : 's'
+      } void${report.investigate_count === 1 ? 's' : ''} the aggregate score`
+    }
+    return 'uncertain — no determinate findings in this window'
   }
   return `${(report.compliance_score * 100).toFixed(1)}% of relevant events conform`
 }
@@ -128,13 +141,19 @@ function VariantSection({
         </h2>
         <span className="c-meta">
           flow over {detail.summary.event_count} events · variants over {detail.summary.case_count}{' '}
-          cases · {detail.incomplete_case_count} incomplete case
+          cases · {variants.items.length} of {variants.total} variant
+          {variants.total === 1 ? '' : 's'} shown · {detail.incomplete_case_count} incomplete case
           {detail.incomplete_case_count === 1 ? '' : 's'} excluded from durations
         </span>
       </div>
+      {variants.items.length === 0 ? (
+        <p className="c-meta">
+          No variants recorded in this window — absence of evidence, not proof of a single flow.
+        </p>
+      ) : null}
       <div className="audit-list">
         {variants.items.map((variant) => (
-          <div className="audit-row" key={variant.signature.join('→')}>
+          <div className="audit-row" key={JSON.stringify(variant.signature)}>
             <span className="ts">
               ×{variant.count} · {Math.round(variant.frequency * 100)}%
             </span>
@@ -168,8 +187,6 @@ function FindingRow({ finding }: { finding: ProcessConformanceFinding }) {
         <span className="src">
           {finding.proof_status}
           {finding.reasons.length > 0 ? ` · ${finding.reasons.join(', ')}` : ''}
-          {' · '}
-          {ANALYTICAL_CAPTION}
         </span>
       </span>
       <span className="hash-col">
@@ -211,7 +228,10 @@ function ComplianceSection({ report }: { report: ProcessComplianceReport }) {
           ))}
         </div>
       ) : (
-        <p className="c-meta">No divergent findings recorded in this window.</p>
+        <p className="c-meta">
+          No conformance-relevant events recorded in this window. Absence of findings is absence of
+          evidence, not proof of conformance — page the audit owner before relying on it.
+        </p>
       )}
     </section>
   )
@@ -268,8 +288,9 @@ function ProcessInspector({ processId, onBack }: { processId: string; onBack: ()
       )}
 
       <p className="u-mt-xl u-mono-cap-wide">
-        ⁂ Analytical projection of the receipt-gated audit chain · every verdict points back to
-        persisted evidence · this view never executes, authorizes, or mints receipts
+        ⁂ Analytical projection of the receipt-gated audit chain · verdicts link to persisted
+        evidence where an evidence reference was recorded · this view never executes, authorizes, or
+        mints receipts
       </p>
     </div>
   )
@@ -293,7 +314,7 @@ export function ProcessWindows() {
     return <ConsoleError onRetry={() => list.refetch()} />
   }
 
-  const total = list.data.items.length
+  const total = list.data.total
   return (
     <div>
       <SearchToolbar
@@ -301,7 +322,7 @@ export function ProcessWindows() {
         onChange={setQuery}
         placeholder="Filter by process, snapshot, chain status…"
         ariaLabel="Filter process windows"
-        meta={`${filtered.length} of ${total} visible · immutable windows · read-only`}
+        meta={`${filtered.length} of ${total} windows visible · immutable windows · read-only`}
       />
 
       {filtered.length === 0 ? (
@@ -316,8 +337,8 @@ export function ProcessWindows() {
       )}
 
       <p className="u-mt-xl u-mono-cap-wide">
-        ⁂ Off-path projection · windows are rebuilt from the audit ledger, never from the live bus ·{' '}
-        {ANALYTICAL_CAPTION}
+        ⁂ Off-path projection · each window is an immutable snapshot of recorded evidence with its
+        chain status shown per row · {ANALYTICAL_CAPTION}
       </p>
     </div>
   )

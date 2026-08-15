@@ -28,6 +28,7 @@ export const CONSOLE_SIDEBAR_ROUTES = [
   '/console/audit',
   '/console/audit/rcpt-608508a9-8b38',
   '/console/bus',
+  '/console/process',
   '/console/settings',
   '/console/tenants',
   '/console/account',
