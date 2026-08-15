@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 
@@ -20,6 +21,10 @@ from agent_bus_analyzer.auth import require_reviewer_role
 from agent_bus_analyzer.models import ReceiptProof, SingleTrace, TraceList, WiringDefectSummary
 from agent_bus_analyzer.query import get_wiring_defects
 from agent_bus_analyzer.store import TraceStore
+
+if TYPE_CHECKING:
+    from agent_bus_analyzer.auth import ValidatorFn
+    from agent_bus_analyzer.process_mining.service import ProcessIntelligenceService
 
 log = logging.getLogger("agent_bus_analyzer.api")
 
@@ -34,7 +39,20 @@ def _get_store(request: Request) -> TraceStore:
     return store
 
 
-def create_app(store: TraceStore | None = None) -> FastAPI:
+def create_app(
+    store: TraceStore | None = None,
+    process_engine: ProcessIntelligenceService | None = None,
+    *,
+    principal_validator: ValidatorFn | None = None,
+    strict_auth_audit: bool = False,
+) -> FastAPI:
+    if principal_validator is not None and not callable(principal_validator):
+        raise TypeError("principal_validator must be callable")
+    if strict_auth_audit and principal_validator is None:
+        raise ValueError("strict authentication requires an explicit principal validator")
+    if strict_auth_audit and (store is None or not callable(getattr(store, "append", None))):
+        raise ValueError("strict authentication requires a configured authentication audit sink")
+
     app = FastAPI(
         title="agent-bus-analyzer",
         version="0.1.0",
@@ -43,6 +61,9 @@ def create_app(store: TraceStore | None = None) -> FastAPI:
         openapi_url="/api/bus/_openapi.json",
     )
     app.state.store = store
+    app.state.process_engine = process_engine
+    app.state.principal_validator = principal_validator
+    app.state.strict_auth_audit = strict_auth_audit
 
     @app.middleware("http")
     async def log_requests(
@@ -114,5 +135,9 @@ def create_app(store: TraceStore | None = None) -> FastAPI:
             media_type="application/json",
             headers={"Cache-Control": f"max-age={window_seconds}"},
         )
+
+    from agent_bus_analyzer.process_mining.api import mount_process_intelligence
+
+    mount_process_intelligence(app)
 
     return app

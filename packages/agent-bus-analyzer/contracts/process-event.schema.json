@@ -1,0 +1,752 @@
+{
+  "$defs": {
+    "ActorKind": {
+      "enum": [
+        "human",
+        "agent",
+        "system",
+        "unknown"
+      ],
+      "title": "ActorKind",
+      "type": "string"
+    },
+    "CaseIdSource": {
+      "enum": [
+        "explicit_case_id",
+        "correlation_id",
+        "conversation_id",
+        "session_id",
+        "trajectory_id",
+        "decision_request_hash",
+        "source_event_id",
+        "content_hash"
+      ],
+      "title": "CaseIdSource",
+      "type": "string"
+    },
+    "CompletenessStatus": {
+      "enum": [
+        "complete",
+        "incomplete",
+        "not_applicable"
+      ],
+      "title": "CompletenessStatus",
+      "type": "string"
+    },
+    "CorrelationConfidence": {
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "title": "CorrelationConfidence",
+      "type": "string"
+    },
+    "EventLifecycle": {
+      "enum": [
+        "scheduled",
+        "started",
+        "in_progress",
+        "completed",
+        "cancelled",
+        "unknown"
+      ],
+      "title": "EventLifecycle",
+      "type": "string"
+    },
+    "EventOutcome": {
+      "enum": [
+        "success",
+        "failure",
+        "approved",
+        "denied",
+        "escalated",
+        "unknown"
+      ],
+      "title": "EventOutcome",
+      "type": "string"
+    },
+    "EventProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "collector_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Collector Version",
+          "type": "string"
+        },
+        "raw_record_hash": {
+          "description": "lower-case SHA-256 hex digest",
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Raw Record Hash",
+          "type": "string"
+        },
+        "source_kind": {
+          "$ref": "#/$defs/SourceKind"
+        },
+        "source_record_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Source Record Id",
+          "type": "string"
+        },
+        "source_schema_version": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Schema Version"
+        },
+        "source_system": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Source System",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_kind",
+        "source_system",
+        "source_record_id",
+        "raw_record_hash"
+      ],
+      "title": "EventProvenance",
+      "type": "object"
+    },
+    "EvidenceCompleteness": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_coverage": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Evidence Coverage",
+          "type": "number"
+        },
+        "missing_governance_references": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/GovernanceReference"
+          },
+          "title": "Missing Governance References",
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/CompletenessStatus"
+        }
+      },
+      "required": [
+        "status",
+        "evidence_coverage"
+      ],
+      "title": "EvidenceCompleteness",
+      "type": "object"
+    },
+    "GovernanceContext": {
+      "additionalProperties": false,
+      "description": "Governance linkage for an observed action; gaps remain explicit.",
+      "properties": {
+        "actor_authority_id": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Actor Authority Id"
+        },
+        "argument_hash": {
+          "anyOf": [
+            {
+              "description": "lower-case SHA-256 hex digest",
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Argument Hash"
+        },
+        "audit_event_hash": {
+          "anyOf": [
+            {
+              "description": "lower-case SHA-256 hex digest",
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Audit Event Hash"
+        },
+        "audit_event_id": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Audit Event Id"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GovernanceDecision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "decision_receipt_hash": {
+          "anyOf": [
+            {
+              "description": "lower-case SHA-256 hex digest",
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decision Receipt Hash"
+        },
+        "decision_receipt_id": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decision Receipt Id"
+        },
+        "evidence_bundle_ids": {
+          "default": [],
+          "items": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Evidence Bundle Ids",
+          "type": "array"
+        },
+        "execution_boundary": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Execution Boundary"
+        },
+        "is_side_effect": {
+          "default": false,
+          "title": "Is Side Effect",
+          "type": "boolean"
+        },
+        "policy_bundle_id": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Policy Bundle Id"
+        },
+        "policy_hash": {
+          "anyOf": [
+            {
+              "description": "lower-case SHA-256 hex digest",
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Policy Hash"
+        },
+        "policy_id": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Policy Id"
+        },
+        "policy_version": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Policy Version"
+        },
+        "replay_verified": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Replay Verified"
+        },
+        "side_effect_classification": {
+          "$ref": "#/$defs/SideEffectClassification",
+          "default": "unknown"
+        },
+        "tool_name": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Name"
+        }
+      },
+      "title": "GovernanceContext",
+      "type": "object"
+    },
+    "GovernanceDecision": {
+      "enum": [
+        "allow",
+        "deny",
+        "transform",
+        "escalate",
+        "investigate"
+      ],
+      "title": "GovernanceDecision",
+      "type": "string"
+    },
+    "GovernanceReference": {
+      "enum": [
+        "actor_authority_id",
+        "tool_name",
+        "argument_hash",
+        "policy_id",
+        "policy_version",
+        "policy_bundle_id",
+        "policy_hash",
+        "execution_boundary",
+        "decision_receipt_id",
+        "decision_receipt_hash",
+        "evidence_bundle_ids",
+        "audit_event_id",
+        "audit_event_hash"
+      ],
+      "title": "GovernanceReference",
+      "type": "string"
+    },
+    "JsonValue": {},
+    "ProcessEventKind": {
+      "description": "Taxonomy spanning people, agents, governance, and failure signals.",
+      "enum": [
+        "human",
+        "agent",
+        "tool_call",
+        "tool_result",
+        "policy_evaluation",
+        "decision_receipt",
+        "evidence_bundle",
+        "audit",
+        "failure",
+        "exception",
+        "approval",
+        "denial"
+      ],
+      "title": "ProcessEventKind",
+      "type": "string"
+    },
+    "SideEffectClassification": {
+      "description": "Trusted classification of whether an observed tool can cause a side effect.\n\n``UNKNOWN`` is intentionally distinct from read-only.  Observation payloads\nare not an authority source and therefore cannot downgrade an unknown tool\nexecution to ``CONFIRMED_READ_ONLY``.",
+      "enum": [
+        "confirmed_side_effect",
+        "confirmed_read_only",
+        "unknown"
+      ],
+      "title": "SideEffectClassification",
+      "type": "string"
+    },
+    "SourceChainStatus": {
+      "enum": [
+        "verified",
+        "unverified",
+        "not_applicable"
+      ],
+      "title": "SourceChainStatus",
+      "type": "string"
+    },
+    "SourceIntegrity": {
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "const": "sha256",
+          "default": "sha256",
+          "title": "Algorithm",
+          "type": "string"
+        },
+        "chain_status": {
+          "$ref": "#/$defs/SourceChainStatus"
+        },
+        "source_event_hash": {
+          "anyOf": [
+            {
+              "description": "lower-case SHA-256 hex digest",
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Event Hash"
+        },
+        "source_previous_hash": {
+          "anyOf": [
+            {
+              "description": "lower-case SHA-256 hex digest",
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Previous Hash"
+        }
+      },
+      "required": [
+        "chain_status"
+      ],
+      "title": "SourceIntegrity",
+      "type": "object"
+    },
+    "SourceKind": {
+      "enum": [
+        "analyzer_event",
+        "gove_zone_audit",
+        "api_event",
+        "trajectory_row"
+      ],
+      "title": "SourceKind",
+      "type": "string"
+    }
+  },
+  "$id": "https://acgs.dev/schemas/process-event/v1.0.json",
+  "additionalProperties": false,
+  "description": "One immutable normalized event with a self-verifying content digest.",
+  "properties": {
+    "activity": {
+      "maxLength": 512,
+      "minLength": 1,
+      "title": "Activity",
+      "type": "string"
+    },
+    "actor_id": {
+      "anyOf": [
+        {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Actor Id"
+    },
+    "actor_kind": {
+      "$ref": "#/$defs/ActorKind",
+      "default": "unknown"
+    },
+    "agent_id": {
+      "anyOf": [
+        {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agent Id"
+    },
+    "api_id": {
+      "anyOf": [
+        {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Api Id"
+    },
+    "attributes": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Attributes",
+      "type": "object"
+    },
+    "case_id": {
+      "maxLength": 512,
+      "minLength": 1,
+      "title": "Case Id",
+      "type": "string"
+    },
+    "case_id_source": {
+      "$ref": "#/$defs/CaseIdSource"
+    },
+    "completeness": {
+      "$ref": "#/$defs/EvidenceCompleteness"
+    },
+    "correlation_confidence": {
+      "$ref": "#/$defs/CorrelationConfidence"
+    },
+    "correlation_references": {
+      "default": [],
+      "items": {
+        "maxLength": 512,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Correlation References",
+      "type": "array"
+    },
+    "event_id": {
+      "maxLength": 512,
+      "minLength": 1,
+      "title": "Event Id",
+      "type": "string"
+    },
+    "governance": {
+      "$ref": "#/$defs/GovernanceContext"
+    },
+    "ingested_at": {
+      "format": "date-time",
+      "title": "Ingested At",
+      "type": "string"
+    },
+    "integrity": {
+      "$ref": "#/$defs/SourceIntegrity"
+    },
+    "kind": {
+      "$ref": "#/$defs/ProcessEventKind"
+    },
+    "lifecycle": {
+      "$ref": "#/$defs/EventLifecycle",
+      "default": "completed"
+    },
+    "normalization_hash": {
+      "description": "lower-case SHA-256 hex digest",
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Normalization Hash",
+      "type": "string"
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "organization_id": {
+      "anyOf": [
+        {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Organization Id"
+    },
+    "outcome": {
+      "$ref": "#/$defs/EventOutcome",
+      "default": "unknown"
+    },
+    "parent_event_id": {
+      "anyOf": [
+        {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Parent Event Id"
+    },
+    "permission_ids": {
+      "default": [],
+      "items": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@*-]{0,255}$",
+        "type": "string"
+      },
+      "title": "Permission Ids",
+      "type": "array"
+    },
+    "process_id": {
+      "anyOf": [
+        {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Process Id"
+    },
+    "process_name": {
+      "anyOf": [
+        {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Process Name"
+    },
+    "provenance": {
+      "$ref": "#/$defs/EventProvenance"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "sequence": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sequence"
+    },
+    "tenant_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$",
+      "title": "Tenant Id",
+      "type": "string"
+    },
+    "tool_id": {
+      "anyOf": [
+        {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tool Id"
+    }
+  },
+  "required": [
+    "event_id",
+    "tenant_id",
+    "case_id",
+    "case_id_source",
+    "correlation_confidence",
+    "kind",
+    "activity",
+    "occurred_at",
+    "provenance",
+    "integrity",
+    "governance",
+    "completeness",
+    "normalization_hash"
+  ],
+  "title": "ACGS ProcessEvent v1.0",
+  "type": "object",
+  "x-generated-by": "agent_bus_analyzer.process_mining.schemas.generate_schema"
+}

@@ -43,6 +43,7 @@ const expectedRoutes = [
   '/console/compile',
   '/console/audit',
   '/console/bus',
+  '/console/process',
   '/console/settings',
   '/console/tenants',
   '/console/account',

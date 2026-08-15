@@ -15,6 +15,7 @@ import {
 import { toAppError } from '../lib/errors'
 import { navigate } from '../lib/navigate'
 import { clearSession } from '../lib/session'
+import { routeTemplateFor, track } from '../surfaces/console/telemetry'
 import { Account } from './console/Account'
 import { Actions } from './console/Actions'
 import { Agents } from './console/Agents'
@@ -27,6 +28,7 @@ import { Incidents } from './console/Incidents'
 import { Maci } from './console/Maci'
 import { Overview } from './console/Overview'
 import { Policies } from './console/Policies'
+import { ProcessWindows } from './console/ProcessWindows'
 import { Settings } from './console/Settings'
 import { ConsoleError, EnvIndicator, type EnvIndicatorMode } from './console/shared'
 import { Tenants } from './console/Tenants'
@@ -73,6 +75,8 @@ function PageBody({ path }: { path: string }) {
       return <Audit />
     case '/console/bus':
       return <BusAnalysis />
+    case '/console/process':
+      return <ProcessWindows />
     case '/console/settings':
       return <Settings />
     case '/console/tenants':
@@ -209,6 +213,7 @@ export function Console({ path }: { path: string }) {
         { path: '/console/bus', label: 'Bus traces' },
         { path: '/console/settings', label: 'Settings' },
         { path: '/console/tenants', label: 'Tenants', count: String(tenantCount) },
+        { path: '/console/process', label: 'Process evidence' },
       ],
     },
   ]
@@ -231,8 +236,16 @@ export function Console({ path }: { path: string }) {
   }
 
   const signOut = () => {
+    track('console_signed_out')
     clearSession()
     go('/login')
+  }
+
+  // Telemetry sees only the resolved route TEMPLATE (design §4 resolution
+  // table) — never a raw path, never a receipt id.
+  const goSection = (to: string) => {
+    track('console_section_navigated', { route_template: routeTemplateFor(to) })
+    go(to)
   }
 
   useEffect(() => {
@@ -292,7 +305,7 @@ export function Console({ path }: { path: string }) {
                         href={item.path}
                         onClick={(e) => {
                           e.preventDefault()
-                          go(item.path)
+                          goSection(item.path)
                         }}
                       >
                         <span>{item.label}</span>
