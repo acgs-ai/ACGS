@@ -49,6 +49,7 @@ export const CONSOLE_SECTIONS = [
   'compile',
   'audit',
   'bus',
+  'process',
   'settings',
   'tenants',
 ] as const

@@ -245,6 +245,30 @@ export const CONSOLE_WIRE_DECISIONS = [
     destructiveConfirmation: 'No destructive actions on bus trace inspection.',
   },
   {
+    path: '/console/process',
+    navSection: 'Govern',
+    navLabel: 'Process evidence',
+    crumb: 'II.VII · Govern / Process evidence',
+    titleLead: 'Process',
+    titleEmphasis: 'evidence',
+    titleTail: 'windows',
+    headerAnatomy:
+      'Shell title plus process window list, variant breakdown, conformance findings, and receipt deep links.',
+    primaryAction: 'Open a process window and follow a finding into its persisted receipt proof.',
+    secondaryActions:
+      'Filter windows, inspect variants with incomplete-case counts, and review nullable conformance scores.',
+    density: 'Dense window rows over variant and finding lists with mono snapshot identifiers.',
+    filterPlacement:
+      'SearchToolbar sits above the window list and filters by process, snapshot, and chain status.',
+    pagination: 'No local pagination; windows are immutable snapshots capped per tenant scope.',
+    rightRailPurpose:
+      'Keep ledger context visible while analytical verdicts stay clearly non-authoritative.',
+    receiptLifetime:
+      'Process view mints no receipts; every finding deep-links to persisted receipt proofs only.',
+    destructiveConfirmation:
+      'No destructive actions; analytical ALLOW is never an execution authorization.',
+  },
+  {
     path: '/console/settings',
     navSection: 'Govern',
     navLabel: 'Settings',

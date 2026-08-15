@@ -28,6 +28,7 @@ import { Incidents } from './console/Incidents'
 import { Maci } from './console/Maci'
 import { Overview } from './console/Overview'
 import { Policies } from './console/Policies'
+import { ProcessWindows } from './console/ProcessWindows'
 import { Settings } from './console/Settings'
 import { ConsoleError, EnvIndicator, type EnvIndicatorMode } from './console/shared'
 import { Tenants } from './console/Tenants'
@@ -74,6 +75,8 @@ function PageBody({ path }: { path: string }) {
       return <Audit />
     case '/console/bus':
       return <BusAnalysis />
+    case '/console/process':
+      return <ProcessWindows />
     case '/console/settings':
       return <Settings />
     case '/console/tenants':
@@ -208,6 +211,7 @@ export function Console({ path }: { path: string }) {
         { path: '/console/compile', label: 'Compile', count: String(compileCount) },
         { path: '/console/audit', label: 'Audit trail' },
         { path: '/console/bus', label: 'Bus traces' },
+        { path: '/console/process', label: 'Process evidence' },
         { path: '/console/settings', label: 'Settings' },
         { path: '/console/tenants', label: 'Tenants', count: String(tenantCount) },
       ],
