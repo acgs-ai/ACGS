@@ -190,3 +190,44 @@ class TestPool:
         store.write_record(f"canary-{ids[0]}", rec, overwrite=True)
         with pytest.raises(PoolError):
             pool.validate()
+
+
+class TestPoolReviewHardening:
+    def test_zero_or_negative_counts_refused(self, pool):
+        pool.generate(tier="T0", count=2, placements=2, created_at=T)
+        pool.generate(tier="T1", count=2, placements=2, created_at=T)
+        with pytest.raises(SelectionError):
+            pool.select_t0(count=0)
+        with pytest.raises(SelectionError):
+            pool.select_t0(count=-1)
+        with pytest.raises(SelectionError):
+            pool.select_t1(variant_id="vt_" + "aa" * 16, shared=-1, unique=2)
+        with pytest.raises(SelectionError):
+            pool.select_t1(variant_id="vt_" + "aa" * 16, shared=2, unique=-1)
+        with pytest.raises(SelectionError):
+            pool.select_t1(variant_id="vt_" + "aa" * 16, shared=0, unique=0)
+
+    def test_probe_records_live_only_in_probe_store(self, store):
+        # §6.5 custody split: with a separate probe store configured, probe
+        # records must never touch the token store.
+        probe = InMemoryStore("test-only-not-production")
+        probe.initialize(operator="tests")
+        pool = CanaryPool(store, probe_store=probe)
+        pool.init_pool(pool_id="split", created_at=T, operator="tests")
+        ids = pool.generate(tier="T0", count=2, placements=2, created_at=T)
+        for cid in ids:
+            assert store.read_record(f"probe-{cid}") is None
+            assert probe.read_record(f"probe-{cid}") is not None
+        assert pool.validate()["total"] == 2
+
+    def test_split_pool_fails_validation_without_probe_store(self, store):
+        # A token-store-only view of a custody-split pool must fail closed:
+        # probes are simply not there.
+        probe = InMemoryStore("test-only-not-production")
+        probe.initialize(operator="tests")
+        split = CanaryPool(store, probe_store=probe)
+        split.init_pool(pool_id="split", created_at=T, operator="tests")
+        split.generate(tier="T0", count=2, placements=2, created_at=T)
+        merged_view = CanaryPool(store)
+        with pytest.raises(PoolError):
+            merged_view.validate()

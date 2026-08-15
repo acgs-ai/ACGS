@@ -32,10 +32,14 @@ corruption and is recoverable only by an explicit, logged truncation.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import os
+import re
 import secrets as pysecrets
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -44,6 +48,7 @@ from . import anchor as anchor_mod
 from . import signing as sig
 from .canonical import canonical_bytes
 from .errors import LedgerError, LedgerStateError
+from .protocol import protocol_hash
 from .store import CanaryStoreBackend
 
 SCHEMA = "acgs_canary_ledger/v1"
@@ -55,6 +60,8 @@ KIND_ANCHOR = "anchor.recorded"
 _KINDS = frozenset({KIND_PREPARED, KIND_ISSUER_SIGNED, KIND_COUNTERSIGNED, KIND_ANCHOR})
 
 _GENESIS_PREV = "0" * 64
+
+_LREF_RE = re.compile(r"^lref_[0-9a-f]{64}$")
 
 _COMMON_FIELDS = frozenset(
     {
@@ -95,6 +102,11 @@ class AcceptanceLedger:
         path = Path(path)
         if path.exists():
             raise LedgerError("ledger already exists; refusing to overwrite")
+        if protocol_sha256 != protocol_hash():
+            raise LedgerError(
+                "ledger protocol identity does not match this package's frozen "
+                "protocol; refusing to create a ledger bound to a foreign protocol"
+            )
         ledger = cls(path)
         genesis_body = {
             "kind_detail": "genesis",
@@ -155,6 +167,12 @@ class AcceptanceLedger:
             raise LedgerError("no complete entries")
         ledger_id = entries[0]["ledger_id"]
         protocol = entries[0]["protocol_sha256"]
+        if protocol != protocol_hash():
+            raise LedgerError(
+                "ledger is bound to an unexpected protocol identity; entries "
+                "repeating a foreign genesis protocol hash do not verify against "
+                "the protocol this package enforces"
+            )
         if entries[0]["seq"] != 0 or entries[0]["prev"] != _GENESIS_PREV:
             raise LedgerError("genesis entry malformed")
         if entries[0]["body"].get("ledger_id_confirm") != ledger_id:
@@ -228,19 +246,37 @@ class AcceptanceLedger:
             raise LedgerError("empty ledger")
         return report_entries[-1]
 
+    @contextmanager
+    def _exclusive_lock(self) -> Iterator[None]:
+        """Cross-process lock serializing verify → head selection → append.
+
+        Without it, two concurrent appenders can both pass ``verify()``,
+        read the same head, and write entries sharing a seq/prev — a
+        permanent sequence violation, not a recoverable torn tail.
+        """
+        lock_path = self._path.with_name(self._path.name + ".lock")
+        fd = os.open(str(lock_path), os.O_WRONLY | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
     def _append(self, kind: str, body: dict[str, Any], *, timestamp: str) -> dict[str, Any]:
-        self.verify()
-        head = self._head()
-        entry = _make_entry(
-            ledger_id=head["ledger_id"],
-            protocol_sha256=head["protocol_sha256"],
-            seq=head["seq"] + 1,
-            prev=head["entry_hash"],
-            kind=kind,
-            timestamp=timestamp,
-            body=body,
-        )
-        _append_line(self._path, entry, create=False)
+        with self._exclusive_lock():
+            self.verify()
+            head = self._head()
+            entry = _make_entry(
+                ledger_id=head["ledger_id"],
+                protocol_sha256=head["protocol_sha256"],
+                seq=head["seq"] + 1,
+                prev=head["entry_hash"],
+                kind=kind,
+                timestamp=timestamp,
+                body=body,
+            )
+            _append_line(self._path, entry, create=False)
         return entry
 
     def append_prepared(
@@ -257,8 +293,28 @@ class AcceptanceLedger:
         delivery: dict[str, str] | None,
         timestamp: str,
     ) -> dict[str, Any]:
-        if tier == "T1" and licensee_ref is None:
-            raise LedgerStateError("T1 preparation requires a licensee reference")
+        if tier == "T1":
+            if licensee_ref is None:
+                raise LedgerStateError("T1 preparation requires a licensee reference")
+            if acceptance_ref is None or delivery is None:
+                raise LedgerStateError(
+                    "T1 preparation requires acceptance_ref and delivery bindings"
+                )
+        if licensee_ref is not None and not _LREF_RE.match(licensee_ref):
+            # The ledger is append-only: a raw identity (name, email) written
+            # here could never be de-linked by destroying the HMAC key, so
+            # only opaque lref_ references produced by licensee.licensee_ref
+            # are accepted (crypto-shredding property, design §5.1).
+            raise LedgerStateError(
+                "licensee_ref must be an opaque lref_ reference "
+                "(HMAC-derived, 64 hex chars); raw identity is refused"
+            )
+        if variant_tree_sha256 is not None and not (
+            isinstance(variant_tree_sha256, str)
+            and len(variant_tree_sha256) == 64
+            and all(c in "0123456789abcdef" for c in variant_tree_sha256)
+        ):
+            raise LedgerStateError("variant_tree_sha256 must be 64 lowercase hex chars")
         entries, _ = self._read_lines()
         for e in entries:
             if (
@@ -426,12 +482,23 @@ class AcceptanceLedger:
             state = "countersigned"
         state_entry = countersigned or issuer_signed or prepared
         anchor_entry_recorded = state_entry["entry_hash"] in covered
-        completed_t1 = prepared["body"]["tier"] == "T1" and countersigned is not None
+        # Completed T1 issuance requires the countersignature AND the
+        # delivery bindings in the prepared body: a countersignature over an
+        # entry with no delivered tree or acceptance artifact does not
+        # establish the delivery callers rely on.
+        body = prepared["body"]
+        delivery_bound = (
+            body.get("variant_tree_sha256") is not None
+            and body.get("acceptance_ref") is not None
+            and body.get("delivery") is not None
+        )
+        completed_t1 = body["tier"] == "T1" and countersigned is not None and delivery_bound
         return {
             "variant_id": variant_id,
             "state": state,
             "completed_t1_issuance": completed_t1,
             "anchor_entry_recorded": anchor_entry_recorded,
+            "state_entry_hash": state_entry["entry_hash"],
             "evidence_label": (
                 "anchor-entry-recorded" if anchor_entry_recorded else "publisher-testimony"
             ),
@@ -468,6 +535,18 @@ class AcceptanceLedger:
         if not recorded:
             return state
         if bundle["ledger_head_hash"] != recorded[-1]["body"]["anchored_head_hash"]:
+            return state
+        # Bind the VERIFIED anchor to the state entry it must cover: an
+        # older confirmed anchor whose head precedes the variant's current
+        # state entry proves nothing about that state — without this check,
+        # an unverifiable later anchor could set anchor_entry_recorded while
+        # the verified bundle predates the state it is claimed to anchor.
+        by_hash = {e["entry_hash"]: e for e in entries}
+        head_entry = by_hash.get(bundle["ledger_head_hash"])
+        state_entry = by_hash.get(state["state_entry_hash"])
+        if head_entry is None or state_entry is None:
+            return state
+        if head_entry["seq"] < state_entry["seq"]:
             return state
         if evidence.kind not in (anchor_mod.KIND_RFC3161, anchor_mod.KIND_OTS):
             return state

@@ -10,9 +10,12 @@ R0 scope notes (normative, from the approved design):
   tier-crossing selection is refused, and the Merkle domains differ
   cryptographically (merkle.DOMAIN_T0 / DOMAIN_T1).
 - Burned or contaminated canaries are never selected for new variants.
-- Probe material is custody-split from token material (design §6.5): probe
-  records live under a distinct record prefix so a store-scoped disclosure
-  of tokens does not also burn the probes.
+- Probe material is custody-split from token material (design §6.5):
+  probe records are written through a SEPARATE store backend when one is
+  configured (``CanaryPool(store, probe_store=...)``), giving them their
+  own location and access grant. The distinct record prefix alone is
+  namespace hygiene, not a custody boundary — operators satisfying §6.5
+  must configure a separate probe store.
 """
 
 from __future__ import annotations
@@ -81,10 +84,22 @@ def canary_leaf_bytes(canary_id: str, token_sha256: str) -> bytes:
 
 
 class CanaryPool:
-    """Pool operations over a store backend. All mutations are explicit."""
+    """Pool operations over a store backend. All mutations are explicit.
 
-    def __init__(self, store: CanaryStoreBackend) -> None:
+    ``probe_store`` is the §6.5 custody boundary for probe material: when
+    provided, probe records are read/written ONLY through it, so a
+    disclosure of the token store does not also surrender the probe set.
+    When omitted, probes share the token store (prefix separation only).
+    """
+
+    def __init__(
+        self,
+        store: CanaryStoreBackend,
+        *,
+        probe_store: CanaryStoreBackend | None = None,
+    ) -> None:
         self._store = store
+        self._probe_store = probe_store if probe_store is not None else store
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -155,8 +170,8 @@ class CanaryPool:
                 },
                 overwrite=False,
             )
-            # Probe custody split (§6.5): distinct record namespace.
-            self._store.write_record(
+            # Probe custody split (§6.5): separate store when configured.
+            self._probe_store.write_record(
                 f"{_PROBE_PREFIX}{canary_id}",
                 {
                     "schema": "acgs_canary_probe/v1",
@@ -219,7 +234,7 @@ class CanaryPool:
             if rec["token_sha256"] in seen_token_hashes:
                 raise PoolError(f"{pub.canary_id}: duplicate token")
             seen_token_hashes.add(rec["token_sha256"])
-            if self._store.read_record(f"{_PROBE_PREFIX}{pub.canary_id}") is None:
+            if self._probe_store.read_record(f"{_PROBE_PREFIX}{pub.canary_id}") is None:
                 raise PoolError(f"{pub.canary_id}: missing probe record")
             counts[rec["status"]] += 1
         return {"total": len(publics), "by_status": counts}
@@ -250,6 +265,8 @@ class CanaryPool:
 
     def select_t0(self, *, count: int) -> list[str]:
         """Deterministic T0 selection (secret-salted ranking)."""
+        if not isinstance(count, int) or count < 1:
+            raise SelectionError(f"count must be a positive integer, got {count!r}")
         salt = self._selection_salt()
         candidates = self._active_ids(TIER_T0)
         if len(candidates) < count:
@@ -265,6 +282,12 @@ class CanaryPool:
         public inputs. Unique canaries already allocated to another variant
         are excluded (allocation is recorded per canary).
         """
+        if not isinstance(shared, int) or shared < 0:
+            raise SelectionError(f"shared must be a non-negative integer, got {shared!r}")
+        if not isinstance(unique, int) or unique < 0:
+            raise SelectionError(f"unique must be a non-negative integer, got {unique!r}")
+        if shared + unique < 1:
+            raise SelectionError("T1 selection requires a positive total count")
         salt = self._selection_salt()
         candidates = self._active_ids(TIER_T1)
         shared_ranked = sorted(candidates, key=lambda c: self._rank(salt, b"t1-shared", c))

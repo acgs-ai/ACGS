@@ -65,7 +65,9 @@ def _store(args: argparse.Namespace) -> RestrictedFileStore:
 
 
 def _pool(args: argparse.Namespace) -> CanaryPool:
-    return CanaryPool(_store(args))
+    probe_path = getattr(args, "probe_store", None)
+    probe_store = RestrictedFileStore(probe_path) if probe_path else None
+    return CanaryPool(_store(args), probe_store=probe_store)
 
 
 # -- command handlers ------------------------------------------------------
@@ -75,6 +77,8 @@ def cmd_pool_init(args: argparse.Namespace) -> dict[str, Any]:
     store = _store(args)
     if args.init_store:
         store.initialize(operator=args.operator)
+        if args.probe_store:
+            RestrictedFileStore(args.probe_store).initialize(operator=args.operator)
     pool = CanaryPool(store)
     pool.init_pool(pool_id=args.pool_id, created_at=_now(), operator=args.operator)
     return {"ok": True, "command": "pool-init", "pool_id": args.pool_id}
@@ -122,6 +126,21 @@ def cmd_variant_prepare(args: argparse.Namespace) -> dict[str, Any]:
     store = _store(args)
     pool = CanaryPool(store)
     variant_id = new_variant_id()
+    # Validate operator-supplied manifest inputs BEFORE any selection is
+    # persisted: select_t1 reserves unique canaries immediately, so a
+    # manifest rejection after selection would strand allocations on a
+    # variant that never exists (pool exhaustion on retries).
+    build_manifest(
+        variant_id=variant_id,
+        tier=args.tier,
+        source_release=args.source_release,
+        source_tree_sha256=args.source_tree_sha256,
+        canary_commitment_hex="00" * 32,
+        placement_commitment_hex="00" * 32,
+        created_at=_now(),
+        protocol_sha256=protocol_hash(),
+        issuer_ref=args.issuer_ref,
+    )
     if args.tier == "T0":
         selection = {"shared": pool.select_t0(count=args.count), "unique": []}
     else:
@@ -273,8 +292,17 @@ def build_parser() -> argparse.ArgumentParser:
             help="restricted store path (default: ACGS_CANARY_STORE env)",
         )
 
+    def add_probe_store_arg(sp: argparse.ArgumentParser) -> None:
+        sp.add_argument(
+            "--probe-store",
+            default=None,
+            help="separate restricted store for probe material "
+            "(design §6.5 custody split; default: token store)",
+        )
+
     sp = sub.add_parser("pool-init", help="initialize store marker and pool")
     add_store_arg(sp)
+    add_probe_store_arg(sp)
     sp.add_argument("--pool-id", required=True)
     sp.add_argument("--operator", required=True)
     sp.add_argument("--init-store", action="store_true")
@@ -282,6 +310,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("pool-generate", help="generate canaries (CSPRNG)")
     add_store_arg(sp)
+    add_probe_store_arg(sp)
     sp.add_argument("--tier", choices=["T0", "T1"], required=True)
     sp.add_argument("--count", type=int, required=True)
     sp.add_argument("--placements", type=int, default=2)
@@ -289,6 +318,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("pool-validate", help="check pool invariants")
     add_store_arg(sp)
+    add_probe_store_arg(sp)
     sp.set_defaults(fn=cmd_pool_validate)
 
     sp = sub.add_parser("pool-burn", help="mark a canary burned/contaminated")
@@ -347,7 +377,18 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
-        return EXIT_USAGE if exc.code not in (0, None) else 0
+        if exc.code in (0, None):
+            return 0
+        # Keep the one-JSON-object stdout contract even for parse failures:
+        # argparse already wrote usage text to stderr.
+        _emit(
+            {
+                "ok": False,
+                "error_class": "UsageError",
+                "error": "invalid command-line usage; see stderr",
+            }
+        )
+        return EXIT_USAGE
     try:
         result = args.fn(args)
     except (StoreLocationError, StoreConflictError) as exc:

@@ -139,7 +139,7 @@ def run_selfcheck() -> dict[str, Any]:
         prepared = ledger.append_prepared(
             variant_id=t1_vid,
             tier="T1",
-            variant_tree_sha256=None,
+            variant_tree_sha256="33" * 32,
             source_tree_sha256="11" * 32,
             canary_commitment_hex=t1_commitment.hex(),
             allocation_manifest_sha256=canonical_sha256_hex(allocation),

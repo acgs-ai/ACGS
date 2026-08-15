@@ -349,3 +349,143 @@ class TestCli:
         transcript = "".join(r.stdout + r.stderr for r in (prep, ver, led, lv))
         for marker in ("token_hex", "selection_salt", "key_hex", "probe_seed"):
             assert marker not in transcript
+
+
+class TestBundleValidation:
+    def _bundle(self):
+        return build_anchor_bundle(
+            ledger_head_hash=H,
+            pool_manifest_sha256=H,
+            protocol_sha256=protocol_hash(),
+            commitment_roots_hex=["22" * 32],
+            created_at=T,
+        )
+
+    def test_missing_field_rejected(self):
+        for field in (
+            "ledger_head_hash",
+            "pool_manifest_sha256",
+            "protocol_sha256",
+            "commitment_roots_hex",
+            "created_at",
+        ):
+            incomplete = self._bundle()
+            del incomplete[field]
+            with pytest.raises(AnchorError):
+                bundle_hash(incomplete)
+
+    def test_unknown_field_rejected(self):
+        bundle = self._bundle()
+        bundle["extra"] = 1
+        with pytest.raises(AnchorError):
+            bundle_hash(bundle)
+
+    def test_malformed_digest_rejected(self):
+        bundle = self._bundle()
+        bundle["ledger_head_hash"] = "zz" * 32
+        with pytest.raises(AnchorError):
+            bundle_hash(bundle)
+
+    def test_unsorted_roots_rejected(self):
+        bundle = self._bundle()
+        bundle["commitment_roots_hex"] = ["33" * 32, "22" * 32]
+        with pytest.raises(AnchorError):
+            bundle_hash(bundle)
+
+    def test_bad_created_at_rejected(self):
+        bundle = self._bundle()
+        bundle["created_at"] = "not-a-timestamp"
+        with pytest.raises(AnchorError):
+            bundle_hash(bundle)
+
+    def test_serialize_validates_too(self):
+        from acgs_canary.anchor import serialize_bundle
+
+        bundle = self._bundle()
+        del bundle["created_at"]
+        with pytest.raises(AnchorError):
+            serialize_bundle(bundle)
+
+
+class TestCliHardening:
+    def test_usage_error_emits_json_envelope(self):
+        res = _run_cli("no-such-command")
+        assert res.returncode == 2
+        lines = res.stdout.strip().split("\n")
+        assert len(lines) == 1  # one-JSON-object stdout contract holds
+        payload = json.loads(lines[0])
+        assert payload["ok"] is False
+        assert payload["error_class"] == "UsageError"
+
+    def test_prepare_validates_manifest_before_allocation(self, store_dir):
+        # A manifest input rejection must not strand unique allocations:
+        # with exactly enough T1 canaries, two failed prepares followed by a
+        # valid one must still succeed.
+        env = {"ACGS_CANARY_STORE": str(store_dir)}
+        _run_cli("pool-init", "--pool-id", "p", "--operator", "t", "--init-store", env=env)
+        _run_cli("pool-generate", "--tier", "T1", "--count", "4", env=env)
+        good = dict(env)
+        args = [
+            "variant-prepare",
+            "--tier",
+            "T1",
+            "--shared",
+            "2",
+            "--unique",
+            "2",
+            "--source-release",
+            "rel",
+            "--issuer-ref",
+            "issuer:test",
+        ]
+        for _ in range(2):
+            bad = _run_cli(*args, "--source-tree-sha256", "not-hex", env=good)
+            assert bad.returncode != 0
+        ok = _run_cli(*args, "--source-tree-sha256", "11" * 32, env=good)
+        assert ok.returncode == 0, ok.stdout + ok.stderr
+
+
+class TestProbeStoreCli:
+    def test_probe_store_split_via_cli(self, tmp_path):
+        import os
+
+        token_dir = tmp_path / "tokens"
+        token_dir.mkdir(mode=0o700)
+        os.chmod(token_dir, 0o700)
+        probe_dir = tmp_path / "probes"
+        probe_dir.mkdir(mode=0o700)
+        os.chmod(probe_dir, 0o700)
+        env = {"ACGS_CANARY_STORE": str(token_dir)}
+        init = _run_cli(
+            "pool-init",
+            "--pool-id",
+            "p",
+            "--operator",
+            "t",
+            "--init-store",
+            "--probe-store",
+            str(probe_dir),
+            env=env,
+        )
+        assert init.returncode == 0, init.stdout + init.stderr
+        gen = _run_cli(
+            "pool-generate",
+            "--tier",
+            "T0",
+            "--count",
+            "2",
+            "--probe-store",
+            str(probe_dir),
+            env=env,
+        )
+        assert gen.returncode == 0, gen.stdout + gen.stderr
+        # Probe records live only in the probe store.
+        token_names = {p.name for p in token_dir.iterdir()}
+        probe_names = {p.name for p in probe_dir.iterdir()}
+        assert not any(n.startswith("probe-") for n in token_names)
+        assert any(n.startswith("probe-") for n in probe_names)
+        # Validation needs the probe store; without it the pool fails closed.
+        ok = _run_cli("pool-validate", "--probe-store", str(probe_dir), env=env)
+        assert ok.returncode == 0
+        missing = _run_cli("pool-validate", env=env)
+        assert missing.returncode != 0

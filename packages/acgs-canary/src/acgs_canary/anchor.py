@@ -63,17 +63,56 @@ def build_anchor_bundle(
         "commitment_roots_hex": sorted(commitment_roots_hex),
         "created_at": created_at,
     }
-    # fail closed on malformed digests
-    for field in ("ledger_head_hash", "pool_manifest_sha256", "protocol_sha256"):
-        _require_hex64(bundle[field], field)
-    for root in bundle["commitment_roots_hex"]:
-        _require_hex64(root, "commitment_root")
+    validate_bundle(bundle)
     return bundle
 
 
-def bundle_hash(bundle: dict[str, Any]) -> str:
-    if bundle.get("schema") != BUNDLE_SCHEMA:
+_BUNDLE_FIELDS = frozenset(
+    {
+        "schema",
+        "ledger_head_hash",
+        "pool_manifest_sha256",
+        "protocol_sha256",
+        "commitment_roots_hex",
+        "created_at",
+    }
+)
+
+
+def validate_bundle(bundle: dict[str, Any]) -> None:
+    """Fail-closed structural validation of a supplied anchor bundle.
+
+    Bundles reach hashing/recording paths from outside
+    :func:`build_anchor_bundle` (e.g. read back from disk), so every field
+    is enforced here: exact field set, digest formats, sorted commitment
+    roots, and a parseable creation time. An incomplete dictionary must
+    never be hashable or recordable.
+    """
+    if not isinstance(bundle, dict) or bundle.get("schema") != BUNDLE_SCHEMA:
         raise AnchorError("not an anchor bundle")
+    keys = set(bundle)
+    if keys != _BUNDLE_FIELDS:
+        raise AnchorError(
+            "anchor bundle field set mismatch "
+            f"(missing {sorted(_BUNDLE_FIELDS - keys)}, unknown {sorted(keys - _BUNDLE_FIELDS)})"
+        )
+    for field in ("ledger_head_hash", "pool_manifest_sha256", "protocol_sha256"):
+        _require_hex64(bundle[field], field)
+    roots = bundle["commitment_roots_hex"]
+    if not isinstance(roots, list):
+        raise AnchorError("commitment_roots_hex must be a list")
+    for root in roots:
+        _require_hex64(root, "commitment_root")
+    if roots != sorted(roots):
+        raise AnchorError("commitment_roots_hex must be sorted (canonical order)")
+    created_at = bundle["created_at"]
+    if not isinstance(created_at, str):
+        raise AnchorError("created_at must be an ISO-8601 string")
+    _parse_ts(created_at, "created_at")
+
+
+def bundle_hash(bundle: dict[str, Any]) -> str:
+    validate_bundle(bundle)
     return canonical_sha256_hex(bundle)
 
 
@@ -222,4 +261,5 @@ def anchor_predates(
 
 
 def serialize_bundle(bundle: dict[str, Any]) -> bytes:
+    validate_bundle(bundle)
     return canonical_bytes(bundle)

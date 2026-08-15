@@ -68,11 +68,25 @@ def organization_key_available() -> bool:
 
 
 def enforce_production_policy(key: BoundKey, *, production: bool) -> None:
-    """Refuse ephemeral keys for production issuance. Fail closed."""
-    if production and key.key_class != KEY_CLASS_ORGANIZATION:
+    """Refuse non-organizational keys for production issuance. Fail closed.
+
+    ``key_class`` is caller-supplied metadata, not an authenticated key
+    identity, so the declared class alone is never sufficient: production
+    additionally requires the provisioned organizational key, which R0
+    does not possess. A generated key labeled "organization" is refused.
+    """
+    if not production:
+        return
+    if key.key_class != KEY_CLASS_ORGANIZATION:
         raise KeyPolicyError(
             "production T1 issuance requires the organizational signing key; "
             "it is not configured in R0 and ephemeral keys are refused"
+        )
+    if not organization_key_available():
+        raise KeyPolicyError(
+            "key declares the organization class but no organizational signing "
+            "key is provisioned (R0); the declaration cannot be authenticated, "
+            "so production issuance is refused"
         )
 
 

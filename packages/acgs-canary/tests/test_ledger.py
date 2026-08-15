@@ -24,7 +24,7 @@ def _prepare(ledger: AcceptanceLedger, vid: str = "vt_" + "cc" * 16, tier: str =
     return ledger.append_prepared(
         variant_id=vid,
         tier=tier,
-        variant_tree_sha256=None,
+        variant_tree_sha256=H,
         source_tree_sha256=H,
         canary_commitment_hex=H,
         allocation_manifest_sha256=H,
@@ -546,3 +546,162 @@ class TestIssuanceStateFailClosed:
         p.write_bytes(raw[:-1] + b"  \n")
         with pytest.raises(LedgerError):
             ledger.verify()
+
+
+class TestReviewHardening:
+    def test_foreign_protocol_create_rejected(self, tmp_path):
+        with pytest.raises(LedgerError):
+            AcceptanceLedger.create(
+                tmp_path / "foreign.jsonl",
+                protocol_sha256="99" * 32,
+                operator="t",
+                timestamp=T,
+            )
+
+    def test_foreign_genesis_protocol_rejected_at_verify(self, tmp_path):
+        # A self-consistent chain minted under a DIFFERENT protocol identity
+        # must not verify against this package's frozen protocol.
+        ledger = _mk(tmp_path)
+        p = tmp_path / "ledger.jsonl"
+        from acgs_canary.ledger import _entry_hash
+
+        entry = json.loads(p.read_bytes())
+        entry["protocol_sha256"] = "99" * 32
+        entry["entry_hash"] = _entry_hash(entry)
+        p.write_bytes(canonical_bytes(entry) + b"\n")
+        with pytest.raises(LedgerError):
+            ledger.verify()
+
+    def test_raw_identity_licensee_ref_rejected(self, tmp_path):
+        ledger = _mk(tmp_path)
+        for raw in ("alice@example.com", "lref_short", "lref_" + "AB" * 32):
+            with pytest.raises(LedgerStateError):
+                ledger.append_prepared(
+                    variant_id="vt_" + "dd" * 16,
+                    tier="T1",
+                    variant_tree_sha256=H,
+                    source_tree_sha256=H,
+                    canary_commitment_hex=H,
+                    allocation_manifest_sha256=H,
+                    licensee_ref=raw,
+                    acceptance_ref={"kind": "contract", "doc_hash": "22" * 32},
+                    delivery={"channel": "test", "ref": "local"},
+                    timestamp=T,
+                )
+
+    def test_t1_prepare_requires_acceptance_and_delivery(self, tmp_path):
+        ledger = _mk(tmp_path)
+        for acceptance_ref, delivery in (
+            (None, {"channel": "test", "ref": "local"}),
+            ({"kind": "contract", "doc_hash": "22" * 32}, None),
+        ):
+            with pytest.raises(LedgerStateError):
+                ledger.append_prepared(
+                    variant_id="vt_" + "dd" * 16,
+                    tier="T1",
+                    variant_tree_sha256=H,
+                    source_tree_sha256=H,
+                    canary_commitment_hex=H,
+                    allocation_manifest_sha256=H,
+                    licensee_ref="lref_" + "ab" * 32,
+                    acceptance_ref=acceptance_ref,
+                    delivery=delivery,
+                    timestamp=T,
+                )
+
+    def test_countersigned_without_variant_tree_not_completed(self, tmp_path):
+        # A countersignature over a prepared entry with no delivered tree
+        # hash must not read as a completed T1 issuance.
+        ledger = _mk(tmp_path)
+        prepared = ledger.append_prepared(
+            variant_id="vt_" + "cc" * 16,
+            tier="T1",
+            variant_tree_sha256=None,
+            source_tree_sha256=H,
+            canary_commitment_hex=H,
+            allocation_manifest_sha256=H,
+            licensee_ref="lref_" + "ab" * 32,
+            acceptance_ref={"kind": "contract", "doc_hash": "22" * 32},
+            delivery={"channel": "test", "ref": "local"},
+            timestamp=T,
+        )
+        issued = ledger.append_issuer_signature(
+            target_entry_hash=prepared["entry_hash"],
+            key=sig.ephemeral_test_key("issuer"),
+            timestamp=T,
+        )
+        ledger.append_licensee_countersignature(
+            issuer_entry_hash=issued["entry_hash"],
+            key=sig.ephemeral_test_key("licensee"),
+            timestamp=T,
+        )
+        state = ledger.issuance_state(prepared["body"]["variant_id"])
+        assert state["state"] == "countersigned"
+        assert not state["completed_t1_issuance"]
+
+    def test_org_labeled_generated_key_refused_for_production(self):
+        # key_class is caller-supplied metadata: declaring "organization"
+        # on a locally generated key must not unlock production issuance.
+        from gove_zone.signing import Ed25519Signer
+
+        fake_org = sig.BoundKey(
+            signer=Ed25519Signer.generate(key_id="fake-org"),
+            key_class=sig.KEY_CLASS_ORGANIZATION,
+        )
+        with pytest.raises(KeyPolicyError):
+            sig.enforce_production_policy(fake_org, production=True)
+
+    def test_verified_anchor_predating_state_entry_not_labeled_anchored(self, tmp_path):
+        # An old VERIFIABLE anchor plus a newer UNVERIFIABLE anchor must not
+        # combine into an "anchored" label for a state entry that only the
+        # newer anchor covers.
+        from acgs_canary.anchor import FixtureVerifier, bundle_hash
+
+        ledger = _mk(tmp_path)
+        _prepare(ledger, vid="vt_" + "aa" * 16)
+        bundle1 = _bundle_for(ledger)
+        evidence1 = _evidence_for(bundle1)
+        ledger.append_anchor(bundle=bundle1, evidence=evidence1, timestamp=T)
+        p2 = _prepare(ledger, vid="vt_" + "ee" * 16)
+        bundle2 = _bundle_for(ledger)
+        ledger.append_anchor(bundle=bundle2, evidence=_evidence_for(bundle2), timestamp=T)
+        vid2 = p2["body"]["variant_id"]
+        assert ledger.issuance_state(vid2)["anchor_entry_recorded"]
+        fx = FixtureVerifier({"fx": {"bundle_sha256": bundle_hash(bundle1), "anchored_at": T}})
+        state = ledger.anchored_issuance_state(
+            vid2, bundle=bundle1, evidence=evidence1, verifier=fx
+        )
+        assert state["evidence_label"] == "anchor-entry-recorded"
+
+    def test_concurrent_appends_serialized_by_lock(self, tmp_path):
+        # Two processes appending concurrently must produce a valid chain
+        # with unique seq numbers, never a forked head.
+        import multiprocessing as mp
+
+        ledger = _mk(tmp_path)
+        path = str(tmp_path / "ledger.jsonl")
+
+        def worker(i: int) -> None:
+            lg = AcceptanceLedger(Path(path))
+            lg.append_prepared(
+                variant_id="vt_" + f"{i:02x}" * 16,
+                tier="T0",
+                variant_tree_sha256=H,
+                source_tree_sha256=H,
+                canary_commitment_hex=H,
+                allocation_manifest_sha256=H,
+                licensee_ref=None,
+                acceptance_ref=None,
+                delivery=None,
+                timestamp=T,
+            )
+
+        ctx = mp.get_context("fork")
+        procs = [ctx.Process(target=worker, args=(i,)) for i in range(1, 6)]
+        for pr in procs:
+            pr.start()
+        for pr in procs:
+            pr.join()
+        assert all(pr.exitcode == 0 for pr in procs)
+        report = ledger.verify()
+        assert report.entries == 6  # genesis + 5 appends, one chain, no forks

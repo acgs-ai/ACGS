@@ -1,0 +1,64 @@
+# Path-filtered CI for packages/acgs-canary/ — R0 canary-provenance tooling
+# (restricted store, pool, manifests, acceptance ledger, anchor interfaces).
+# The package resolves gove-zone from the uv workspace, so tests run from the
+# repo root via `uv run --package`. gove-zone source changes also trigger this
+# workflow because the ledger's signing surface reuses gove_zone.signing.
+
+name: python-acgs-canary
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/acgs-canary/**'
+      - 'packages/gove-zone/src/gove_zone/**'
+      - 'packages/gove-zone/pyproject.toml'
+      - 'pyproject.toml'
+      - '.github/workflows/python-acgs-canary.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packages/acgs-canary/**'
+      - 'packages/gove-zone/src/gove_zone/**'
+      - 'packages/gove-zone/pyproject.toml'
+      - 'pyproject.toml'
+      - '.github/workflows/python-acgs-canary.yml'
+
+concurrency:
+  group: python-acgs-canary-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # Block fork PRs: untrusted code must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'packages/acgs-canary/pyproject.toml'
+
+      - name: Pin toolchain
+        # uv's python-build-standalone toolchain is used because
+        # actions/setup-python has no prebuilds for the self-hosted runner OS.
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Lint
+        run: |
+          uv run --python ${{ matrix.python-version }} ruff check packages/acgs-canary
+          uv run --python ${{ matrix.python-version }} ruff format --check packages/acgs-canary
+
+      - name: Test
+        run: >
+          uv run --python ${{ matrix.python-version }} --package acgs-canary
+          python -m pytest packages/acgs-canary/tests --import-mode=importlib -q
