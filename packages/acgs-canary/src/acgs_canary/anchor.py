@@ -22,6 +22,7 @@ from typing import Any, Protocol
 
 from .canonical import canonical_bytes, canonical_sha256_hex
 from .errors import AnchorError
+from .protocol import protocol_hash
 
 BUNDLE_SCHEMA = "acgs_canary_anchor_bundle/v1"
 
@@ -98,6 +99,15 @@ def validate_bundle(bundle: dict[str, Any]) -> None:
         )
     for field in ("ledger_head_hash", "pool_manifest_sha256", "protocol_sha256"):
         _require_hex64(bundle[field], field)
+    # Frozen-protocol binding: a bundle citing a foreign protocol identity
+    # must never be hashable, serializable, or recordable — otherwise a
+    # bundle built outside anchor-prepare could be anchored for a current
+    # ledger head while binding a different protocol than the ledger and
+    # package enforce (manifests and ledgers already refuse this).
+    if bundle["protocol_sha256"] != protocol_hash():
+        raise AnchorError(
+            "anchor bundle is bound to a foreign protocol identity; refusing to hash or record it"
+        )
     roots = bundle["commitment_roots_hex"]
     if not isinstance(roots, list):
         raise AnchorError("commitment_roots_hex must be a list")
@@ -142,6 +152,11 @@ class AnchorEvidence:
         if self.state not in _STATES:
             raise AnchorError(f"unknown anchor state: {self.state!r}")
         _require_hex64(self.bundle_sha256, "bundle_sha256")
+        # production gates the "anchored" vs "anchored-non-production"
+        # label: a truthy non-bool (e.g. the string "false" from a JSON-ish
+        # boundary) must never be accepted and later read as production.
+        if not isinstance(self.production, bool):
+            raise AnchorError("production must be exactly a bool")
 
     def to_dict(self) -> dict[str, Any]:
         return {

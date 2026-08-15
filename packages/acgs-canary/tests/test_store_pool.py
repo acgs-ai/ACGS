@@ -248,6 +248,44 @@ class TestPoolReviewHardening:
             assert probe.read_record(f"probe-{cid}") is not None
         assert pool.validate()["total"] == 2
 
+    def test_probe_bound_to_wrong_canary_detected_by_validate(self, pool, store):
+        # A probe record present but bound to a different canary_id must
+        # fail validation: presence alone is not probe custody health.
+        ids = pool.generate(tier="T0", count=2, placements=2, created_at=T)
+        probe = store.read_record(f"probe-{ids[0]}")
+        probe["canary_id"] = "cn_" + "00" * 8
+        store.write_record(f"probe-{ids[0]}", probe, overwrite=True)
+        with pytest.raises(PoolError):
+            pool.validate()
+
+    def test_malformed_probe_seed_detected_by_validate(self, pool, store):
+        ids = pool.generate(tier="T0", count=2, placements=2, created_at=T)
+        probe = store.read_record(f"probe-{ids[0]}")
+        probe["probe_seed_hex"] = "zz" * 16  # not hex
+        store.write_record(f"probe-{ids[0]}", probe, overwrite=True)
+        with pytest.raises(PoolError):
+            pool.validate()
+
+    def test_probe_schema_or_extra_fields_detected_by_validate(self, pool, store):
+        ids = pool.generate(tier="T0", count=2, placements=2, created_at=T)
+        probe = store.read_record(f"probe-{ids[0]}")
+        probe["extra"] = 1
+        store.write_record(f"probe-{ids[0]}", probe, overwrite=True)
+        with pytest.raises(PoolError):
+            pool.validate()
+
+    def test_t1_reselection_for_allocated_variant_refused(self, pool, store):
+        # Retrying select_t1 for an already-allocated variant must be
+        # refused BEFORE any write: a partial retry would otherwise reserve
+        # fresh uniques and permanently shrink the pool.
+        pool.generate(tier="T1", count=8, placements=2, created_at=T)
+        vid = "vt_" + "aa" * 16
+        pool.select_t1(variant_id=vid, shared=2, unique=2)
+        before = sorted(store.list_records("alloc-"))
+        with pytest.raises(SelectionError):
+            pool.select_t1(variant_id=vid, shared=2, unique=2)
+        assert sorted(store.list_records("alloc-")) == before
+
     def test_split_pool_fails_validation_without_probe_store(self, store):
         # A token-store-only view of a custody-split pool must fail closed:
         # probes are simply not there.

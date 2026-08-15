@@ -244,6 +244,19 @@ class TestAnchor:
         with pytest.raises(AnchorError):
             FixtureVerifier({}).verify(ev, bundle)
 
+    def test_non_bool_production_rejected(self):
+        # A truthy non-bool from an untyped boundary (e.g. "false") must
+        # never be accepted and later read as production evidence.
+        with pytest.raises(AnchorError):
+            AnchorEvidence(
+                kind="rfc3161",
+                state=STATE_CONFIRMED,
+                bundle_sha256=H,
+                evidence_ref="f1",
+                anchored_at=T,
+                production="false",  # type: ignore[arg-type]
+            )
+
     def test_production_slot_refuses_in_r0(self):
         bundle = self._bundle()
         ev = AnchorEvidence(
@@ -270,6 +283,13 @@ class TestProtocol:
         mutated = copy.deepcopy(PROTOCOL)
         mutated["merkle"]["odd_nodes"] = "duplicated"
         assert canonical_sha256_hex(mutated) != protocol_hash()
+
+    def test_completed_t1_binds_delivery_rules(self):
+        # The frozen identity must commit to the FULL completion predicate
+        # the ledger enforces, not just the countersignature requirement.
+        rule = PROTOCOL["ledger"]["completed_t1"]
+        for needle in ("countersignature", "variant_tree_sha256", "acceptance_ref", "delivery"):
+            assert needle in rule
 
     def test_evidentiary_limits_present(self):
         limits = PROTOCOL["evidentiary_limits"]
@@ -417,6 +437,22 @@ class TestBundleValidation:
         bundle["created_at"] = "not-a-timestamp"
         with pytest.raises(AnchorError):
             bundle_hash(bundle)
+
+    def test_foreign_protocol_rejected(self):
+        # A bundle bound to a foreign protocol identity must never be
+        # hashable or recordable, matching manifests and ledgers.
+        bundle = self._bundle()
+        bundle["protocol_sha256"] = "99" * 32
+        with pytest.raises(AnchorError):
+            bundle_hash(bundle)
+        with pytest.raises(AnchorError):
+            build_anchor_bundle(
+                ledger_head_hash=H,
+                pool_manifest_sha256=H,
+                protocol_sha256="99" * 32,
+                commitment_roots_hex=[],
+                created_at=T,
+            )
 
     def test_serialize_validates_too(self):
         from acgs_canary.anchor import serialize_bundle

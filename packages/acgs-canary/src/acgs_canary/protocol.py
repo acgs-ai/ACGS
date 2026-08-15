@@ -67,7 +67,12 @@ PROTOCOL: dict[str, Any] = {
         "chain": "entry_hash = sha256(canonical(entry minus entry_hash)); prev links",
         "genesis_prev": "64 zero chars",
         "state_transitions": "append-only entries; prior entries immutable",
-        "completed_t1": "requires licensee countersignature entry",
+        "completed_t1": (
+            "requires licensee countersignature entry AND a prepared body "
+            "binding a delivered variant tree (variant_tree_sha256, sha256 hex) "
+            "AND structurally valid acceptance_ref {kind, doc_hash(sha256 hex)} "
+            "AND delivery {channel, ref[, countersign_ref(sha256 hex)]}"
+        ),
     },
     "signature_domains": {
         "domain": "acgs-canary/v1/sig",

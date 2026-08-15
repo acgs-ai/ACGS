@@ -52,6 +52,24 @@ class TestChainBasics:
         with pytest.raises(LedgerError):
             _prepare(ledger)
 
+    def test_unknown_tier_rejected(self, tmp_path):
+        # Only T0/T1 exist; anything else would skip the T1 binding checks
+        # and verify forever as valid publisher testimony.
+        ledger = _mk(tmp_path)
+        with pytest.raises(LedgerStateError):
+            ledger.append_prepared(
+                variant_id="vt_" + "dd" * 16,
+                tier="T2",
+                variant_tree_sha256=H,
+                source_tree_sha256=H,
+                canary_commitment_hex=H,
+                allocation_manifest_sha256=H,
+                licensee_ref=None,
+                acceptance_ref=None,
+                delivery=None,
+                timestamp=T,
+            )
+
     def test_t1_without_licensee_ref_rejected(self, tmp_path):
         ledger = _mk(tmp_path)
         with pytest.raises(LedgerStateError):
@@ -93,6 +111,38 @@ class TestTampering:
         # attacker recomputes entry_hash to look self-consistent
         from acgs_canary.ledger import _entry_hash
 
+        entry["entry_hash"] = _entry_hash(entry)
+        lines[1] = canonical_bytes(entry)
+        p.write_bytes(b"\n".join(lines))
+        with pytest.raises(LedgerError):
+            ledger.verify()
+
+    def test_extra_body_field_detected(self, tmp_path):
+        # A hand-minted entry with an unknown body field and a recomputed
+        # entry_hash must be rejected: unknown critical fields fail closed.
+        from acgs_canary.ledger import _entry_hash
+
+        ledger = _mk(tmp_path)
+        _prepare(ledger)
+        p = tmp_path / "ledger.jsonl"
+        lines = self._entries(p)
+        entry = json.loads(lines[1])
+        entry["body"]["evil"] = 1
+        entry["entry_hash"] = _entry_hash(entry)
+        lines[1] = canonical_bytes(entry)
+        p.write_bytes(b"\n".join(lines))
+        with pytest.raises(LedgerError):
+            ledger.verify()
+
+    def test_missing_body_field_detected(self, tmp_path):
+        from acgs_canary.ledger import _entry_hash
+
+        ledger = _mk(tmp_path)
+        _prepare(ledger)
+        p = tmp_path / "ledger.jsonl"
+        lines = self._entries(p)
+        entry = json.loads(lines[1])
+        del entry["body"]["delivery"]
         entry["entry_hash"] = _entry_hash(entry)
         lines[1] = canonical_bytes(entry)
         p.write_bytes(b"\n".join(lines))

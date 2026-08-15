@@ -114,6 +114,46 @@ _COMMON_FIELDS = frozenset(
 )
 
 
+# Exact body field sets per entry kind: the append-only chain means a
+# hand-minted entry with an extra (or missing) body field, its entry_hash
+# recomputed, would otherwise verify forever. Unknown critical fields are
+# rejected, per the protocol's verification rules.
+_GENESIS_BODY_FIELDS = frozenset({"kind_detail", "operator", "ledger_id_confirm"})
+_PREPARED_BODY_FIELDS = frozenset(
+    {
+        "variant_id",
+        "tier",
+        "variant_tree_sha256",
+        "source_tree_sha256",
+        "canary_commitment_hex",
+        "allocation_manifest_sha256",
+        "licensee_ref",
+        "acceptance_ref",
+        "delivery",
+    }
+)
+_BODY_FIELDS_BY_KIND = {
+    KIND_ISSUER_SIGNED: frozenset({"target_entry_hash", "signature"}),
+    KIND_COUNTERSIGNED: frozenset({"issuer_entry_hash", "signature"}),
+    KIND_ANCHOR: frozenset(
+        {
+            "anchored_head_hash",
+            "bundle_sha256",
+            "evidence_kind",
+            "evidence_state",
+            "evidence_ref",
+            "production",
+        }
+    ),
+}
+
+
+def _expected_body_fields(kind: str, seq: int) -> frozenset[str]:
+    if kind == KIND_PREPARED:
+        return _GENESIS_BODY_FIELDS if seq == 0 else _PREPARED_BODY_FIELDS
+    return _BODY_FIELDS_BY_KIND[kind]
+
+
 @dataclass(frozen=True)
 class VerifyReport:
     entries: int
@@ -343,6 +383,12 @@ class AcceptanceLedger:
         delivery: dict[str, str] | None,
         timestamp: str,
     ) -> dict[str, Any]:
+        if tier not in ("T0", "T1"):
+            # The protocol defines exactly two tier namespaces. Anything
+            # else (a typo, a future value) would fall through the T1
+            # checks and be appended without licensee/delivery bindings,
+            # then verify as valid publisher testimony forever.
+            raise LedgerStateError(f"unknown tier: {tier!r}; the protocol defines only T0 and T1")
         if tier == "T1":
             if licensee_ref is None:
                 raise LedgerStateError("T1 preparation requires a licensee reference")
@@ -707,6 +753,18 @@ def _parse_entry(line: bytes, *, index: int) -> dict[str, Any]:
         raise LedgerError(f"entry {index}: unknown kind")
     if not isinstance(entry["seq"], int) or entry["seq"] < 0:
         raise LedgerError(f"entry {index}: illegal seq")
+    body = entry["body"]
+    if not isinstance(body, dict):
+        raise LedgerError(f"entry {index}: body is not an object")
+    expected = _expected_body_fields(entry["kind"], entry["seq"])
+    body_keys = set(body)
+    if body_keys != expected:
+        raise LedgerError(
+            f"entry {index}: body field set mismatch for {entry['kind']} "
+            f"(missing {sorted(expected - body_keys)}, unknown {sorted(body_keys - expected)})"
+        )
+    if entry["kind"] == KIND_ANCHOR and not isinstance(body["production"], bool):
+        raise LedgerError(f"entry {index}: anchor body production must be a bool")
     if canonical_bytes(entry) != line:
         raise LedgerError(f"entry {index}: non-canonical encoding")
     return entry

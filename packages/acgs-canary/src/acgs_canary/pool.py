@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac as hmac_mod
+import re
 import secrets as pysecrets
 from dataclasses import dataclass
 from typing import Any
@@ -44,6 +45,7 @@ _ALLOC_PREFIX = "alloc-"
 _SELECTION_DOMAIN = b"acgs-canary/v1/selection"
 _TOKEN_BYTES = 24  # 192-bit tokens
 _MIN_PLACEMENTS = 2  # design §6.2: no singleton placement assumptions
+_PROBE_SEED_RE = re.compile(r"^[0-9a-f]{32}$")  # 16 CSPRNG bytes, lowercase hex
 
 
 def _tier_domain(tier: str) -> str:
@@ -240,8 +242,22 @@ class CanaryPool:
             if rec["token_sha256"] in seen_token_hashes:
                 raise PoolError(f"{pub.canary_id}: duplicate token")
             seen_token_hashes.add(rec["token_sha256"])
-            if self._probe_store.read_record(f"{_PROBE_PREFIX}{pub.canary_id}") is None:
+            probe = self._probe_store.read_record(f"{_PROBE_PREFIX}{pub.canary_id}")
+            if probe is None:
                 raise PoolError(f"{pub.canary_id}: missing probe record")
+            # Presence alone is not health: a tampered or wrongly restored
+            # probe store could hold a record with the wrong schema, a
+            # foreign canary_id, or an unusable seed — dispute-time probing
+            # would then have no valid seed for the selected token.
+            if set(probe) != {"schema", "canary_id", "probe_seed_hex", "created_at"}:
+                raise PoolError(f"{pub.canary_id}: malformed probe record")
+            if probe["schema"] != "acgs_canary_probe/v1":
+                raise PoolError(f"{pub.canary_id}: probe record schema mismatch")
+            if probe["canary_id"] != pub.canary_id:
+                raise PoolError(f"{pub.canary_id}: probe record bound to a different canary")
+            seed = probe["probe_seed_hex"]
+            if not (isinstance(seed, str) and _PROBE_SEED_RE.match(seed)):
+                raise PoolError(f"{pub.canary_id}: malformed probe seed")
             counts[rec["status"]] += 1
         return {"total": len(publics), "by_status": counts}
 
@@ -306,6 +322,16 @@ class CanaryPool:
             alloc = self._store.read_record(name)
             if alloc is None:
                 continue
+            if alloc["variant_id"] == variant_id:
+                # A retried selection for an already-allocated variant is
+                # refused BEFORE any write: otherwise newly chosen uniques
+                # would be persisted first and stay reserved (shrinking the
+                # pool) when the later shared write collides with an
+                # existing alloc record for this variant.
+                raise SelectionError(
+                    f"variant {variant_id} already has allocation records; "
+                    "T1 selection is not retryable for an allocated variant"
+                )
             prior_any.add(alloc["canary_id"])
             if alloc["kind"] == "unique":
                 prior_unique.add(alloc["canary_id"])
