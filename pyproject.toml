@@ -29,6 +29,7 @@ members = [
     "packages/acgs-proofpack-verifier",
     "packages/agent-bus-analyzer",
     "packages/acgs-control-plane",
+    "packages/acgs-canary",
     "acgs_governance_eval_mvp",
     "acgs-cft-governance-pack",
     "packages/research-engine",
