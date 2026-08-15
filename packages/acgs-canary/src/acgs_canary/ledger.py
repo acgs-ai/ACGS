@@ -1,0 +1,515 @@
+"""Acceptance ledger — append-only, hash-chained issuance receipts.
+
+Model
+-----
+The ledger is a JSONL file of canonical entries. Lifecycle states are
+**append-only state-transition entries**, never mutations of prior lines:
+
+    variant.prepared          (publisher intends to issue variant V)
+    variant.issuer_signed     (issuer signature over the prepared entry hash)
+    variant.countersigned     (licensee countersignature binding the issuer
+                               signature — signature-substitution proof)
+    anchor.recorded           (external timestamp evidence for a chain head)
+
+Evidentiary honesty (normative, from the approved design):
+- an entry without the licensee countersignature is NEVER a completed T1
+  issuance — ``issuance_state`` reports it as incomplete;
+- unanchored publisher-held entries are labeled ``publisher-testimony``;
+  only externally anchored heads upgrade to ``anchored``;
+- the ledger proves what the publisher recorded, not what any licensee
+  did — attribution language lives in the dispute runbook, not here.
+
+Chain integrity
+---------------
+Every entry embeds: ledger_id, protocol hash, seq, prev entry hash, and
+its own entry hash over the canonical body. Verification rejects duplicate
+seqs, forks, prev-hash substitution, malformed lines, unknown critical
+fields, duplicate variant issuance, and cross-ledger signature replay
+(signatures bind ledger_id + protocol + role + purpose). A torn tail
+(crash mid-append: final line incomplete) is distinguished from mid-chain
+corruption and is recoverable only by an explicit, logged truncation.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import secrets as pysecrets
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from . import signing as sig
+from .canonical import canonical_bytes
+from .errors import LedgerError, LedgerStateError
+from .store import CanaryStoreBackend
+
+SCHEMA = "acgs_canary_ledger/v1"
+
+KIND_PREPARED = "variant.prepared"
+KIND_ISSUER_SIGNED = "variant.issuer_signed"
+KIND_COUNTERSIGNED = "variant.countersigned"
+KIND_ANCHOR = "anchor.recorded"
+_KINDS = frozenset({KIND_PREPARED, KIND_ISSUER_SIGNED, KIND_COUNTERSIGNED, KIND_ANCHOR})
+
+_GENESIS_PREV = "0" * 64
+
+_COMMON_FIELDS = frozenset(
+    {
+        "schema",
+        "ledger_id",
+        "protocol_sha256",
+        "seq",
+        "prev",
+        "kind",
+        "timestamp",
+        "body",
+        "entry_hash",
+    }
+)
+
+
+@dataclass(frozen=True)
+class VerifyReport:
+    entries: int
+    head_hash: str
+    torn_tail: bool
+
+
+class AcceptanceLedger:
+    """One JSONL ledger file. The path should live inside the restricted
+    store directory (the ledger holds no raw secrets, but it is a private
+    operational record until anchored heads are published)."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = Path(path)
+
+    # -- creation ----------------------------------------------------------
+
+    @classmethod
+    def create(
+        cls, path: Path, *, protocol_sha256: str, operator: str, timestamp: str
+    ) -> AcceptanceLedger:
+        path = Path(path)
+        if path.exists():
+            raise LedgerError("ledger already exists; refusing to overwrite")
+        ledger = cls(path)
+        genesis_body = {
+            "kind_detail": "genesis",
+            "operator": operator,
+            "ledger_id_confirm": None,
+        }
+        ledger_id = f"lg_{pysecrets.token_hex(16)}"
+        genesis_body["ledger_id_confirm"] = ledger_id
+        entry = _make_entry(
+            ledger_id=ledger_id,
+            protocol_sha256=protocol_sha256,
+            seq=0,
+            prev=_GENESIS_PREV,
+            kind=KIND_PREPARED,
+            timestamp=timestamp,
+            body=genesis_body,
+        )
+        _append_line(path, entry, create=True)
+        return ledger
+
+    # -- raw IO ------------------------------------------------------------
+
+    def _read_lines(self) -> tuple[list[dict[str, Any]], bool]:
+        """Parse all complete entries. Returns (entries, torn_tail)."""
+        if not self._path.exists():
+            raise LedgerError("ledger file does not exist")
+        raw = self._path.read_bytes()
+        torn = False
+        entries: list[dict[str, Any]] = []
+        if not raw:
+            raise LedgerError("ledger file is empty")
+        lines = raw.split(b"\n")
+        trailing = lines[-1]
+        body_lines = lines[:-1]
+        if trailing:
+            # No trailing newline: the final line may be a torn append.
+            torn = True
+        for i, line in enumerate(body_lines):
+            if not line:
+                raise LedgerError(f"blank line at index {i}")
+            entries.append(_parse_entry(line, index=i))
+        if torn:
+            try:
+                entries.append(_parse_entry(trailing, index=len(body_lines)))
+                # Parsed fine — it is a complete entry missing only the
+                # newline; still reported as torn so the operator reseals.
+            except LedgerError:
+                pass  # genuinely torn tail: excluded from entries
+        return entries, torn
+
+    # -- verification ------------------------------------------------------
+
+    def verify(self, *, allow_torn_tail: bool = False) -> VerifyReport:
+        entries, torn = self._read_lines()
+        if torn and not allow_torn_tail:
+            raise LedgerError("torn tail detected; run explicit tail recovery before use")
+        if not entries:
+            raise LedgerError("no complete entries")
+        ledger_id = entries[0]["ledger_id"]
+        protocol = entries[0]["protocol_sha256"]
+        if entries[0]["seq"] != 0 or entries[0]["prev"] != _GENESIS_PREV:
+            raise LedgerError("genesis entry malformed")
+        if entries[0]["body"].get("ledger_id_confirm") != ledger_id:
+            raise LedgerError("genesis ledger_id confirmation mismatch")
+        prev_hash = None
+        prepared_variants: set[str] = set()
+        for i, e in enumerate(entries):
+            if e["ledger_id"] != ledger_id:
+                raise LedgerError(f"entry {i}: foreign ledger_id (cross-ledger splice)")
+            if e["protocol_sha256"] != protocol:
+                raise LedgerError(f"entry {i}: protocol hash changed mid-chain")
+            if e["seq"] != i:
+                raise LedgerError(f"entry {i}: sequence violation (found {e['seq']})")
+            if i > 0 and e["prev"] != prev_hash:
+                raise LedgerError(f"entry {i}: prev-hash mismatch (fork or splice)")
+            recomputed = _entry_hash(e)
+            if recomputed != e["entry_hash"]:
+                raise LedgerError(f"entry {i}: entry hash mismatch (tampered)")
+            prev_hash = e["entry_hash"]
+            if e["kind"] == KIND_PREPARED and i > 0:
+                vid = e["body"]["variant_id"]
+                if vid in prepared_variants:
+                    raise LedgerError(f"entry {i}: duplicate issuance of {vid}")
+                prepared_variants.add(vid)
+        self._verify_signatures(entries, ledger_id, protocol)
+        return VerifyReport(entries=len(entries), head_hash=prev_hash or "", torn_tail=torn)
+
+    def _verify_signatures(
+        self, entries: list[dict[str, Any]], ledger_id: str, protocol: str
+    ) -> None:
+        by_hash = {e["entry_hash"]: e for e in entries}
+        for i, e in enumerate(entries):
+            if e["kind"] == KIND_ISSUER_SIGNED:
+                target = by_hash.get(e["body"]["target_entry_hash"])
+                if target is None or target["kind"] != KIND_PREPARED:
+                    raise LedgerError(f"entry {i}: issuer signature targets no prepared entry")
+                ok = sig.verify(
+                    e["body"]["signature"],
+                    ledger_id=ledger_id,
+                    protocol_sha256=protocol,
+                    role=sig.ROLE_ISSUER,
+                    purpose=sig.PURPOSE_ISSUE,
+                    payload=bytes.fromhex(target["entry_hash"]),
+                )
+                if not ok:
+                    raise LedgerError(f"entry {i}: issuer signature invalid")
+            elif e["kind"] == KIND_COUNTERSIGNED:
+                issuer_entry = by_hash.get(e["body"]["issuer_entry_hash"])
+                if issuer_entry is None or issuer_entry["kind"] != KIND_ISSUER_SIGNED:
+                    raise LedgerError(f"entry {i}: countersignature targets no issuer-signed entry")
+                # Countersignature binds the ISSUER SIGNATURE ENTRY hash,
+                # so substituting a different issuer signature invalidates it.
+                ok = sig.verify(
+                    e["body"]["signature"],
+                    ledger_id=ledger_id,
+                    protocol_sha256=protocol,
+                    role=sig.ROLE_LICENSEE,
+                    purpose=sig.PURPOSE_COUNTERSIGN,
+                    payload=bytes.fromhex(issuer_entry["entry_hash"]),
+                )
+                if not ok:
+                    raise LedgerError(f"entry {i}: countersignature invalid")
+
+    # -- append operations -------------------------------------------------
+
+    def _head(self) -> dict[str, Any]:
+        report_entries, torn = self._read_lines()
+        if torn:
+            raise LedgerError("torn tail detected; refusing to append")
+        if not report_entries:
+            raise LedgerError("empty ledger")
+        return report_entries[-1]
+
+    def _append(self, kind: str, body: dict[str, Any], *, timestamp: str) -> dict[str, Any]:
+        self.verify()
+        head = self._head()
+        entry = _make_entry(
+            ledger_id=head["ledger_id"],
+            protocol_sha256=head["protocol_sha256"],
+            seq=head["seq"] + 1,
+            prev=head["entry_hash"],
+            kind=kind,
+            timestamp=timestamp,
+            body=body,
+        )
+        _append_line(self._path, entry, create=False)
+        return entry
+
+    def append_prepared(
+        self,
+        *,
+        variant_id: str,
+        tier: str,
+        variant_tree_sha256: str | None,
+        source_tree_sha256: str,
+        canary_commitment_hex: str,
+        allocation_manifest_sha256: str,
+        licensee_ref: str | None,
+        acceptance_ref: dict[str, str] | None,
+        delivery: dict[str, str] | None,
+        timestamp: str,
+    ) -> dict[str, Any]:
+        if tier == "T1" and licensee_ref is None:
+            raise LedgerStateError("T1 preparation requires a licensee reference")
+        entries, _ = self._read_lines()
+        for e in entries:
+            if (
+                e["kind"] == KIND_PREPARED
+                and e["seq"] > 0
+                and e["body"]["variant_id"] == variant_id
+            ):
+                raise LedgerError(f"duplicate issuance of {variant_id}")
+        return self._append(
+            KIND_PREPARED,
+            {
+                "variant_id": variant_id,
+                "tier": tier,
+                "variant_tree_sha256": variant_tree_sha256,
+                "source_tree_sha256": source_tree_sha256,
+                "canary_commitment_hex": canary_commitment_hex,
+                "allocation_manifest_sha256": allocation_manifest_sha256,
+                "licensee_ref": licensee_ref,
+                "acceptance_ref": acceptance_ref,
+                "delivery": delivery,
+            },
+            timestamp=timestamp,
+        )
+
+    def append_issuer_signature(
+        self,
+        *,
+        target_entry_hash: str,
+        key: sig.BoundKey,
+        timestamp: str,
+        production: bool = False,
+    ) -> dict[str, Any]:
+        sig.enforce_production_policy(key, production=production)
+        head_entries, _ = self._read_lines()
+        target = next((e for e in head_entries if e["entry_hash"] == target_entry_hash), None)
+        if target is None or target["kind"] != KIND_PREPARED or target["seq"] == 0:
+            raise LedgerStateError("issuer signature target must be a prepared entry")
+        signature = sig.sign(
+            key,
+            ledger_id=target["ledger_id"],
+            protocol_sha256=target["protocol_sha256"],
+            role=sig.ROLE_ISSUER,
+            purpose=sig.PURPOSE_ISSUE,
+            payload=bytes.fromhex(target_entry_hash),
+        )
+        return self._append(
+            KIND_ISSUER_SIGNED,
+            {"target_entry_hash": target_entry_hash, "signature": signature},
+            timestamp=timestamp,
+        )
+
+    def append_licensee_countersignature(
+        self, *, issuer_entry_hash: str, key: sig.BoundKey, timestamp: str
+    ) -> dict[str, Any]:
+        entries, _ = self._read_lines()
+        issuer_entry = next((e for e in entries if e["entry_hash"] == issuer_entry_hash), None)
+        if issuer_entry is None or issuer_entry["kind"] != KIND_ISSUER_SIGNED:
+            raise LedgerStateError("countersignature target must be an issuer-signed entry")
+        signature = sig.sign(
+            key,
+            ledger_id=issuer_entry["ledger_id"],
+            protocol_sha256=issuer_entry["protocol_sha256"],
+            role=sig.ROLE_LICENSEE,
+            purpose=sig.PURPOSE_COUNTERSIGN,
+            payload=bytes.fromhex(issuer_entry_hash),
+        )
+        return self._append(
+            KIND_COUNTERSIGNED,
+            {"issuer_entry_hash": issuer_entry_hash, "signature": signature},
+            timestamp=timestamp,
+        )
+
+    def append_anchor(
+        self, *, head_hash: str, anchor_ref: dict[str, Any], timestamp: str
+    ) -> dict[str, Any]:
+        entries, _ = self._read_lines()
+        if not any(e["entry_hash"] == head_hash for e in entries):
+            raise LedgerStateError("anchor must reference an existing entry hash")
+        return self._append(
+            KIND_ANCHOR,
+            {"anchored_head_hash": head_hash, "anchor_ref": anchor_ref},
+            timestamp=timestamp,
+        )
+
+    # -- derived state -----------------------------------------------------
+
+    def issuance_state(self, variant_id: str) -> dict[str, Any]:
+        """Fold the chain into the variant's lifecycle state.
+
+        States: prepared → issuer-signed → countersigned. Anchoring is
+        tracked separately per head. The evidence label is:
+        - "publisher-testimony" until an anchor covers the state-bearing
+          entries;
+        - a T1 variant without a countersignature is NEVER "completed".
+        """
+        entries, _ = self._read_lines()
+        prepared = None
+        issuer_signed = None
+        countersigned = None
+        anchored_hashes: set[str] = set()
+        covered: set[str] = set()
+        for e in entries:
+            if (
+                e["kind"] == KIND_PREPARED
+                and e["seq"] > 0
+                and e["body"]["variant_id"] == variant_id
+            ):
+                prepared = e
+            elif e["kind"] == KIND_ISSUER_SIGNED and prepared is not None:
+                if e["body"]["target_entry_hash"] == prepared["entry_hash"]:
+                    issuer_signed = e
+            elif e["kind"] == KIND_COUNTERSIGNED and issuer_signed is not None:
+                if e["body"]["issuer_entry_hash"] == issuer_signed["entry_hash"]:
+                    countersigned = e
+            elif e["kind"] == KIND_ANCHOR:
+                anchored_hashes.add(e["body"]["anchored_head_hash"])
+        # An anchor over entry hash H covers every entry at seq <= seq(H).
+        if anchored_hashes:
+            max_anchored_seq = max(e["seq"] for e in entries if e["entry_hash"] in anchored_hashes)
+            covered = {e["entry_hash"] for e in entries if e["seq"] <= max_anchored_seq}
+        if prepared is None:
+            raise LedgerError(f"variant not in ledger: {variant_id}")
+        state = "prepared"
+        if issuer_signed is not None:
+            state = "issuer-signed"
+        if countersigned is not None:
+            state = "countersigned"
+        state_entry = countersigned or issuer_signed or prepared
+        anchored = state_entry["entry_hash"] in covered
+        completed_t1 = prepared["body"]["tier"] == "T1" and countersigned is not None
+        return {
+            "variant_id": variant_id,
+            "state": state,
+            "completed_t1_issuance": completed_t1,
+            "anchored": anchored,
+            "evidence_label": "anchored" if anchored else "publisher-testimony",
+        }
+
+    def recover_torn_tail(self) -> bool:
+        """Explicit torn-tail recovery: drop the incomplete final line.
+
+        Only removes a line that fails to parse as a complete entry; a
+        parseable final line missing its newline is resealed instead.
+        Returns True if a repair was performed.
+        """
+        raw = self._path.read_bytes()
+        if raw.endswith(b"\n"):
+            return False
+        lines = raw.split(b"\n")
+        tail = lines[-1]
+        try:
+            _parse_entry(tail, index=len(lines) - 1)
+        except LedgerError:
+            repaired = b"\n".join(lines[:-1]) + b"\n"
+            _atomic_rewrite(self._path, repaired)
+            return True
+        _atomic_rewrite(self._path, raw + b"\n")
+        return True
+
+
+# -- entry construction ----------------------------------------------------
+
+
+def _make_entry(
+    *,
+    ledger_id: str,
+    protocol_sha256: str,
+    seq: int,
+    prev: str,
+    kind: str,
+    timestamp: str,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    if kind not in _KINDS:
+        raise LedgerError(f"unknown entry kind: {kind!r}")
+    entry = {
+        "schema": SCHEMA,
+        "ledger_id": ledger_id,
+        "protocol_sha256": protocol_sha256,
+        "seq": seq,
+        "prev": prev,
+        "kind": kind,
+        "timestamp": timestamp,
+        "body": body,
+    }
+    entry["entry_hash"] = _entry_hash(entry)
+    return entry
+
+
+def _entry_hash(entry: dict[str, Any]) -> str:
+    core = {k: v for k, v in entry.items() if k != "entry_hash"}
+    return hashlib.sha256(canonical_bytes(core)).hexdigest()
+
+
+def _parse_entry(line: bytes, *, index: int) -> dict[str, Any]:
+    import json
+
+    try:
+        entry = json.loads(line)
+    except Exception as exc:
+        raise LedgerError(f"entry {index}: malformed JSON") from exc
+    if not isinstance(entry, dict):
+        raise LedgerError(f"entry {index}: not an object")
+    keys = set(entry)
+    if keys != _COMMON_FIELDS:
+        raise LedgerError(
+            f"entry {index}: field set mismatch "
+            f"(missing {sorted(_COMMON_FIELDS - keys)}, unknown {sorted(keys - _COMMON_FIELDS)})"
+        )
+    if entry["schema"] != SCHEMA:
+        raise LedgerError(f"entry {index}: schema mismatch")
+    if entry["kind"] not in _KINDS:
+        raise LedgerError(f"entry {index}: unknown kind")
+    if not isinstance(entry["seq"], int) or entry["seq"] < 0:
+        raise LedgerError(f"entry {index}: illegal seq")
+    if canonical_bytes(entry) != line.strip():
+        raise LedgerError(f"entry {index}: non-canonical encoding")
+    return entry
+
+
+def _append_line(path: Path, entry: dict[str, Any], *, create: bool) -> None:
+    data = canonical_bytes(entry) + b"\n"
+    flags = os.O_WRONLY | os.O_APPEND | (os.O_CREAT | os.O_EXCL if create else 0)
+    fd = os.open(str(path), flags, 0o600)
+    try:
+        os.write(fd, data)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _atomic_rewrite(path: Path, data: bytes) -> None:
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp-ledger-")
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def ledger_path(store: CanaryStoreBackend) -> Path:
+    """Default ledger location inside a RestrictedFileStore."""
+    from .store import RestrictedFileStore
+
+    if not isinstance(store, RestrictedFileStore):
+        raise LedgerError("file ledger requires the restricted file store")
+    return store.path / "acceptance-ledger.jsonl"
