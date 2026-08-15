@@ -14,7 +14,6 @@ from acgs_canary.anchor import (
     anchor_predates,
     build_anchor_bundle,
     bundle_hash,
-    evidence_label,
 )
 from acgs_canary.errors import AnchorError, ManifestError
 from acgs_canary.licensee import ensure_ref_key, licensee_ref
@@ -162,7 +161,9 @@ class TestAnchor:
                 observation_time="2026-08-16T00:00:00Z",
                 verifier=FixtureVerifier({}),
             )
-        assert evidence_label([mirror]) == "publisher-testimony"
+        # No free-standing label helper exists to consult: labels come only
+        # from the ledger's issuance-state paths (see anchor.py note).
+        assert not hasattr(__import__("acgs_canary.anchor", fromlist=["_"]), "evidence_label")
 
     def test_unconfirmed_evidence_fails(self):
         bundle = self._bundle()

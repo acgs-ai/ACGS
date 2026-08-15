@@ -207,12 +207,12 @@ def anchor_predates(
     return anchored < observed
 
 
-def evidence_label(evidence_list: list[AnchorEvidence]) -> str:
-    """Honest label for a bundle's evidentiary standing."""
-    has_independent = any(
-        e.kind in _INDEPENDENT_KINDS and e.state == STATE_CONFIRMED for e in evidence_list
-    )
-    return "anchored" if has_independent else "publisher-testimony"
+# NOTE: there is deliberately no free-standing evidence-label helper here.
+# Evidence labels ("publisher-testimony" / "anchor-entry-recorded" /
+# "anchored" / "anchored-non-production") are emitted only by the ledger:
+# the structural fold caps at "anchor-entry-recorded", and "anchored"
+# requires AcceptanceLedger.anchored_issuance_state running a real verifier.
+# A label derived from evidence metadata alone would be fabricable.
 
 
 def serialize_bundle(bundle: dict[str, Any]) -> bytes:
