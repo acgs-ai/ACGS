@@ -149,6 +149,12 @@ class FixtureVerifier:
             return False
         if fx.get("bundle_sha256") != evidence.bundle_sha256:
             return False
+        # The anchor time must be the recorded fixture time: evidence
+        # asserting a different (e.g. earlier) anchored_at is a forgery,
+        # not a confirmation. Fixtures without a recorded time verify only
+        # evidence that likewise asserts none.
+        if fx.get("anchored_at") != evidence.anchored_at:
+            return False
         return evidence.state == STATE_CONFIRMED
 
 

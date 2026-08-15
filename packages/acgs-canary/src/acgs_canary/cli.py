@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from . import demo as demo_mod
-from .anchor import build_anchor_bundle, bundle_hash
+from .anchor import build_anchor_bundle, bundle_hash, serialize_bundle
 from .canonical import canonical_sha256_hex
 from .errors import (
     CanaryError,
@@ -239,7 +239,9 @@ def cmd_anchor_prepare(args: argparse.Namespace) -> dict[str, Any]:
     out = Path(args.out)
     if out.exists():
         raise StoreConflictError(f"anchor bundle exists: {out}")
-    out.write_text(json.dumps(bundle, sort_keys=True) + "\n")
+    # Write the exact canonical byte form: the on-disk bundle must hash to
+    # bundle_sha256 with no re-serialization step.
+    out.write_bytes(serialize_bundle(bundle))
     return {
         "ok": True,
         "command": "anchor-prepare",

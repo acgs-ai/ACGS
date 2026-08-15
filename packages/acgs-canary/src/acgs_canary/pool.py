@@ -306,7 +306,7 @@ class CanaryPool:
                     "canary_id": cid,
                     "kind": "shared",
                 },
-                overwrite=True,
+                overwrite=False,
             )
         return {"shared": shared_ids, "unique": unique_ids}
 

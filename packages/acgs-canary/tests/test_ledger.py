@@ -473,7 +473,7 @@ class TestAnchorEntries:
         bundle = _bundle_for(ledger)
         evidence = _evidence_for(bundle)
         ledger.append_anchor(bundle=bundle, evidence=evidence, timestamp=T)
-        fx = FixtureVerifier({"fx": {"bundle_sha256": bundle_hash(bundle)}})
+        fx = FixtureVerifier({"fx": {"bundle_sha256": bundle_hash(bundle), "anchored_at": T}})
         state = ledger.anchored_issuance_state(vid, bundle=bundle, evidence=evidence, verifier=fx)
         assert state["evidence_label"] == "anchored-non-production"
 
