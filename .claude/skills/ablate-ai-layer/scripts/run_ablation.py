@@ -27,6 +27,8 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -62,6 +64,406 @@ def head_sha(root: Path) -> str:
 
 def is_dirty(root: Path) -> bool:
     return bool(git(["status", "--porcelain"], root).strip())
+
+
+def owning_git_root(root: Path, rel: str) -> Path:
+    """Nearest ancestor of the target (up to root) that is its own git repo.
+
+    A `.git` entry below root marks a nested repository / submodule boundary:
+    files under it belong to THAT repo, and root's tree records only a 160000
+    gitlink for the directory."""
+    d = (root / rel).parent
+    while d != root and root in d.parents:
+        if (d / ".git").exists():
+            return d
+        d = d.parent
+    return root
+
+
+def missing_workspace_members(root: Path, sha: str) -> list[str] | None:
+    """uv workspace members a fresh worktree of `root` cannot contain.
+
+    Returns None when no TOML parser is available (Python 3.10 without the
+    tomli backport): the preflight cannot run, but that is a limitation of
+    THIS check, not evidence the experiment is broken, so the caller skips
+    the preflight with a note instead of aborting a valid ablation.
+
+    Every run happens in a detached worktree created from `sha`, and uv
+    validates the ROOT workspace before running ANY command. A member owned by
+    a nested repo/submodule is recorded in root's tree as a bare 160000
+    gitlink, so the worktree holds only an empty directory with no
+    pyproject.toml and every `uv run` there exits with a setup error before
+    the probe task starts, in BOTH arms. That is checkout topology, not agent
+    behavior. Preflight a REPRESENTATIVE worktree (exactly what the runs will
+    see) so a broken experiment stops before anything is spent."""
+    tmp = Path(tempfile.mkdtemp(prefix="ablate-preflight-"))
+    wt = tmp / "repo"
+    try:
+        git(["worktree", "add", "--detach", "--quiet", str(wt), sha], root)
+        manifest = wt / "pyproject.toml"
+        if not manifest.is_file():
+            return []
+        # This repository-agnostic runner supports Python 3.10, whose stdlib
+        # has no tomllib (3.11+). Fall back to the tomli backport when
+        # present; with neither, report the preflight as unavailable (None)
+        # rather than raising and aborting an otherwise valid experiment.
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            try:
+                import tomli as tomllib  # type: ignore[no-redef]
+            except ModuleNotFoundError:
+                return None
+        with open(manifest, "rb") as f:
+            data = tomllib.load(f)
+        workspace = data.get("tool", {}).get("uv", {}).get("workspace", {})
+        members = workspace.get("members", [])
+        # uv drops any member match covered by [tool.uv.workspace].exclude
+        # before requiring a pyproject.toml, so `members = ["packages/*"]`
+        # plus `exclude = ["packages/b"]` is a VALID workspace even when
+        # packages/b has no manifest. Expand the exclusions the same way the
+        # member globs are expanded and never report an excluded path missing.
+        excluded: set[Path] = set()
+        for pattern in workspace.get("exclude", []):
+            pattern = pattern.rstrip("/")
+            excluded.add(wt / pattern)
+            excluded.update(wt.glob(pattern))
+        missing: list[str] = []
+        for pattern in members:
+            matches = sorted(wt.glob(pattern))
+            if not matches:
+                # An unmatched GLOB is zero members, not a missing one: uv
+                # accepts members = ["packages/*"] with no matching
+                # directories and runs fine, so fabricating "packages/*" as
+                # a required path would abort a valid experiment. Only a
+                # LITERAL member entry with no directory behind it is a real
+                # gap, so only non-glob entries synthesize a fallback path.
+                if any(ch in pattern for ch in "*?["):
+                    continue
+                matches = [wt / pattern]
+            for p in matches:
+                if p in excluded:
+                    continue
+                if not (p / "pyproject.toml").is_file():
+                    missing.append(p.relative_to(wt).as_posix())
+        return missing
+    finally:
+        subprocess.run(["git", "worktree", "remove", "--force", str(wt)],
+                       cwd=str(root), capture_output=True, text=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+        subprocess.run(["git", "worktree", "prune"], cwd=str(root),
+                       capture_output=True, text=True)
+
+
+# ------------------------------------------------------------ uv reachability
+
+# A textual `uv` only matters when executing the text could RUN uv. Prose
+# ("do not run uv; validate with pnpm"), a `uv.lock` path, or a comment inside
+# an invoked script must not trigger the workspace preflight and veto a valid
+# frontend or docs ablation. A match therefore requires either command
+# position (start of line or right after a shell connector, optionally behind
+# make recipe prefixes or a common command wrapper) or `uv <subcommand>` with
+# one of uv's own CLI verbs, which is an instruction to run uv wherever it
+# appears. `uv.lock` and bare prose mentions satisfy neither.
+RE_UV_INVOKE = re.compile(
+    r"(?:^|[;&|`(]|\$\()[ \t]*(?:[@+-][ \t]*)*"
+    r"(?:(?:command|exec|env|nohup|time|xargs|sudo)[ \t]+)*uv(?=[ \t]|$)"
+    r"|\buv[ \t]+(?:run|sync|lock|add|remove|pip|venv|tool|export|build|"
+    r"publish|python|init|tree|cache|version|self)\b",
+    re.MULTILINE)
+# Reaching uv is not the hazard; reaching WORKSPACE DISCOVERY is. An
+# invocation carrying `--no-project` among uv's OWN options (tools/kg's
+# Makefile wraps every uv call in it precisely to survive non-recursive
+# checkouts) never validates the root workspace, so it cannot trip on
+# missing members and must not trigger the preflight. The invocation's
+# argument segment ends at the next shell connector or line end, so a later
+# `uv sync` on the same line is still judged on its own.
+RE_UV_ARGS_END = re.compile(r"[\n;&|`)]")
+
+
+def _uv_own_no_project(tokens: list[str]) -> bool:
+    """True when `--no-project` appears among uv's OWN arguments.
+
+    uv stops interpreting options at the executed command (`uv run [OPTIONS]
+    COMMAND [ARGS]...`, likewise `uv tool run`): everything after that first
+    positional belongs to the CHILD program, so `uv run python tool.py
+    --no-project` still performs workspace discovery and must keep the
+    preflight. `tokens` starts at uv's first argument. The scan is best
+    effort in the safe direction: a space-separated option value (e.g.
+    `--python 3.12`) is indistinguishable from the command and ends the
+    scan early, so a real `--no-project` hiding after it merely triggers
+    the preflight, which fails closed."""
+    path: list[str] = []
+    for tok in tokens:
+        if tok == "--":
+            return False
+        if tok.startswith("-"):
+            if tok == "--no-project":
+                return True
+            continue
+        if not path:
+            path.append(tok)  # uv's subcommand (run, sync, tool, ...)
+            continue
+        if path == ["tool"] and tok == "run":
+            path.append(tok)  # `uv tool run` nests one more uv verb
+            continue
+        return False  # the executed child command: later tokens are its own
+    return False
+
+
+def _drop_comments(text: str) -> str:
+    """Comment content never executes, so `uv` (or a make/script wrapper)
+    mentioned after `#` is prose, not an invocation. Splitting each line at
+    the first `#` is best effort: a `#` inside a quoted argument is rare in
+    probe prompts, makefile recipes, and the shell scripts under inspection,
+    and the skip note still warns about agent-initiated uv."""
+    return "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+RE_MAKE_INVOKE = re.compile(r"(?:\bmake\b|\$[({]MAKE[)}])((?:\s+[A-Za-z0-9_./=-]+)*)")
+# A probe often enters a package before running its gate (`cd pkg && make
+# verify`): every wrapper after the hop belongs to THAT directory. Command
+# position only (start of line or right after a shell connector), so prose
+# like "then cd into the frontend" never moves the inspection base.
+RE_CD = re.compile(
+    r"(?:^|[;&|`(]|\$\()[ \t]*(?:[@+-][ \t]*)*cd[ \t]+([^\s;&|`)]+)",
+    re.MULTILINE)
+# A script counts as invoked when it follows an interpreter (bash x.sh,
+# python3 x.py, ./x.sh) or is a path-shaped .sh mention (scripts/x.sh). A bare
+# .py mention without an interpreter is more likely an edit target than a
+# command, so it does not trigger inspection on its own.
+RE_SCRIPT_INVOKE = re.compile(
+    r"(?:\b(?:bash|sh|zsh|source|python3?)\s+|\./)([A-Za-z0-9_./-]+\.(?:sh|bash|py))\b"
+    r"|(?<![\w/.@-])((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.(?:sh|bash))(?![\w.-])")
+
+
+def _parse_makefile(root: Path) -> tuple[dict[str, str], dict[str, tuple[list[str], list[str]]]]:
+    """Best-effort parse of the root Makefile: variable values plus, per target,
+    (prerequisites, recipe lines). Deliberately not a make implementation; it
+    only needs to answer "can this target's expansion reach uv", so continuation
+    handling, conditionals, and pattern rules are out of scope."""
+    variables: dict[str, str] = {}
+    rules: dict[str, tuple[list[str], list[str]]] = {}
+    mf = next((root / n for n in ("Makefile", "makefile", "GNUmakefile")
+               if (root / n).is_file()), None)
+    if mf is None:
+        return variables, rules
+    current: list[str] = []
+    for raw in mf.read_text(encoding="utf-8", errors="replace").splitlines():
+        if raw.startswith("\t"):
+            for t in current:
+                rules[t][1].append(raw[1:])
+            continue
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        m = re.match(r"^(?:export\s+)?([A-Za-z0-9_.-]+)\s*([:?+]?=)\s*(.*)$", line)
+        if m:
+            name, op, value = m.groups()
+            variables[name] = (f"{variables.get(name, '')} {value}".strip()
+                               if op == "+=" else value)
+            current = []
+            continue
+        m = re.match(r"^([^:\s][^:]*?):{1,2}(?!=)(.*)$", line)
+        if m:
+            current = [t for t in m.group(1).split() if not t.startswith(".")]
+            prereqs = [p for p in m.group(2).split() if not p.startswith(".")]
+            for t in current:
+                entry = rules.setdefault(t, ([], []))
+                entry[0].extend(prereqs)
+            continue
+        current = []
+    return variables, rules
+
+
+def probe_reaches_uv(prompt: str, root: Path) -> str | None:
+    """Why executing the probe task can reach uv, or None when inspection finds
+    no path to it.
+
+    Checking only for the literal word `uv` in the prompt is not enough: a probe
+    that says `make test-py` never spells out uv, but the root Makefile expands
+    that target into several `$(UV) run` commands, and in a worktree with empty
+    nested-repo gitlinks those fail at workspace discovery while the agent
+    process can still exit 0 with a diff, so run_one() would grade checkout
+    topology as agent behavior. So beyond the prompt text itself, every wrapper
+    the prompt names is inspected: make targets are expanded through the
+    makefile that owns them (recipes, prerequisites, nested `$(MAKE)` calls,
+    variables such as `$(UV)`), a `make -C <dir>` / `--directory` hop or a
+    preceding `cd <dir> &&` redirects inspection into THAT directory's
+    makefile, and invoked scripts are read, all recursively. An invocation that opts out of project/workspace
+    discovery with `--no-project` among uv's OWN options (a `--no-project`
+    after the executed command belongs to the child program) does not count:
+    it can never fail on missing workspace members, so a probe whose only
+    path to uv is such an invocation (e.g. `make -C tools/kg verify`) keeps
+    the skip. Purely
+    non-uv probes (pnpm, docs, frontend) still return None and keep it too. The walk is best effort (a `-C` directory outside
+    the repo, or one holding no readable makefile, such as an uninitialized
+    submodule gitlink, cannot be inspected), so the skip note still warns about
+    agent-initiated uv."""
+    root = root.resolve()
+    makefiles: dict[Path, tuple[dict[str, str],
+                                dict[str, tuple[list[str], list[str]]]]] = {}
+    seen_targets: set[tuple[Path, str]] = set()
+    seen_scripts: set[Path] = set()
+
+    def makefile_at(mkdir: Path) -> tuple[dict[str, str],
+                                          dict[str, tuple[list[str], list[str]]]]:
+        if mkdir not in makefiles:
+            makefiles[mkdir] = _parse_makefile(mkdir)
+        return makefiles[mkdir]
+
+    def contained_dir(base: Path, rel: str) -> Path | None:
+        try:
+            d = (base / rel).resolve()
+        except OSError:
+            return None
+        if d != root and root not in d.parents:
+            return None
+        return d if d.is_dir() else None
+
+    def expand(text: str, variables: dict[str, str]) -> str:
+        for _ in range(8):
+            new = re.sub(r"\$[({]([A-Za-z0-9_.-]+)[)}]",
+                         lambda m: variables.get(m.group(1), m.group(0)), text)
+            if new == text:
+                return new
+            text = new
+        return text
+
+    def target_reaches(mkdir: Path, target: str) -> str | None:
+        if (mkdir, target) in seen_targets:
+            return None
+        seen_targets.add((mkdir, target))
+        variables, rules = makefile_at(mkdir)
+        prereqs, recipe = rules.get(target, ([], []))
+        for line in recipe:
+            reason = text_reaches(expand(line, variables),
+                                  f"the `{target}` make recipe", mkdir)
+            if reason:
+                return reason
+        for p in prereqs:
+            reason = target_reaches(mkdir, p)
+            if reason:
+                return reason
+        return None
+
+    def script_reaches(rel: str, base: Path) -> str | None:
+        try:
+            f = (base / rel).resolve()
+        except OSError:
+            return None
+        if f in seen_scripts or root not in f.parents or not f.is_file():
+            return None
+        seen_scripts.add(f)
+        try:
+            body = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        return text_reaches(body, "it", base)
+
+    def text_reaches(text: str, origin: str, base: Path) -> str | None:
+        # `cd pkg && make verify` runs pkg's gate through pkg/Makefile, so
+        # wrappers after the hop must resolve against pkg, never against
+        # `base` (missing the hop inspects the root Makefile and skips the
+        # workspace preflight). Split at each command-position `cd` and scan
+        # every segment with the directory in effect there. Only a hop into
+        # a real directory inside the repo moves the base: a bare or
+        # unresolvable `cd` (prose like "cd into the frontend") keeps the
+        # current one, which at worst inspects an extra makefile and fails
+        # closed. Subshell scoping is out of scope for the same reason.
+        text = _drop_comments(text)
+        pos, cwd = 0, base
+        for m in RE_CD.finditer(text):
+            reason = segment_reaches(text[pos:m.start()], origin, cwd)
+            if reason:
+                return reason
+            pos = m.end()
+            cwd = contained_dir(cwd, m.group(1).strip("'\"")) or cwd
+        return segment_reaches(text[pos:], origin, cwd)
+
+    def segment_reaches(text: str, origin: str, base: Path) -> str | None:
+        for m in RE_UV_INVOKE.finditer(text):
+            # Tokenize from the match START so uv's subcommand is always part
+            # of the segment (the two RE_UV_INVOKE alternatives end at
+            # different points), shedding connector/recipe-prefix glue and
+            # wrapper tokens up to the `uv` word itself. When `uv` cannot be
+            # isolated, the empty token list counts as reaching discovery,
+            # which fails closed.
+            seg = RE_UV_ARGS_END.split(text[m.start():], 1)[0]
+            toks = seg.lstrip(";&|`($@+- \t").split()
+            while toks and toks.pop(0) != "uv":
+                pass
+            if _uv_own_no_project(toks):
+                continue
+            return f"{origin} invokes uv directly"
+        for m in RE_MAKE_INVOKE.finditer(text):
+            mkdir = base
+            entered: str | None = None
+            named_target = False
+            tokens = m.group(1).split()
+            i = 0
+            while i < len(tokens):
+                tok = tokens[i]
+                # `make -C <dir>` (or --directory) runs ANOTHER directory's
+                # makefile: a package-local gate like `make -C packages/foo
+                # verify` reaches uv through packages/foo/Makefile, never
+                # through the root one. Resolve the hop and keep inspecting
+                # there instead of treating <dir> as an unknown root target.
+                hop: str | None = None
+                if tok in ("-C", "--directory") and i + 1 < len(tokens):
+                    hop = tokens[i + 1].rstrip(".")
+                    i += 2
+                elif tok.startswith("--directory="):
+                    hop = tok.split("=", 1)[1].rstrip(".")
+                    i += 1
+                if hop is not None:
+                    nxt = contained_dir(mkdir, hop)
+                    if nxt is None:
+                        # Outside the repo or not a directory here: nothing
+                        # readable to inspect, so this invocation stays best
+                        # effort (the skip note warns about agent-run uv).
+                        break
+                    mkdir = nxt
+                    entered = hop
+                    continue
+                if tok.startswith("-") or "=" in tok:
+                    i += 1
+                    continue
+                # A sentence's trailing period glues onto the target name
+                # ("validate with make verify."), so shed trailing dots.
+                tok = tok.rstrip(".")
+                _, rules = makefile_at(mkdir)
+                if tok not in rules:
+                    # Prose like "make sure the build passes" must not be read
+                    # as a make invocation, so stop at the first token that is
+                    # not a known target of the makefile under inspection.
+                    break
+                named_target = True
+                reason = target_reaches(mkdir, tok)
+                if reason:
+                    where = f"make -C {entered} {tok}" if entered else f"make {tok}"
+                    return f"{origin} runs `{where}`: {reason}"
+                i += 1
+            # A `-C` hop that resolved to a real directory is unambiguously a
+            # make invocation, never prose. When no known target of that
+            # makefile was chased (bare `make -C <dir>` runs its FIRST rule;
+            # a token unknown to the best-effort parser is trailing prose or
+            # a target hidden behind an include), still inspect the default
+            # target rather than silently deciding the probe cannot reach uv.
+            if entered and not named_target:
+                _, rules = makefile_at(mkdir)
+                default = next(iter(rules), None)
+                if default:
+                    reason = target_reaches(mkdir, default)
+                    if reason:
+                        return (f"{origin} runs `make -C {entered}` "
+                                f"(default target `{default}`): {reason}")
+        for m in RE_SCRIPT_INVOKE.finditer(text):
+            rel = (m.group(1) or m.group(2)).lstrip("./")
+            reason = script_reaches(rel, base)
+            if reason:
+                return f"{origin} runs `{rel}`: {reason}"
+        return None
+
+    return text_reaches(prompt, "the probe task", root)
 
 
 # ---------------------------------------------------------------- the layer
@@ -260,6 +662,67 @@ def main() -> int:
         print("Nothing to ablate, so there is nothing to test.")
         return 1
 
+    # Every worktree below is created FROM `root`, so every stripped/restored
+    # target must be owned by that repository. An artifact inside a nested
+    # repo/submodule is recorded in root's tree as a 160000 gitlink: a fresh
+    # worktree of root contains only an empty directory there, in BOTH arms,
+    # so the file can neither be stripped nor present, and a probe task scoped
+    # to that package cannot run at all (a broken experiment, not a finding).
+    # The real git boundary is detected per target; nested-owned artifacts are
+    # excluded here, and probes that target a nested repo must be re-run with
+    # that repo as <repo> so the worktrees are created from the nested
+    # repository itself (repo_root already resolves it via rev-parse).
+    nested: dict[Path, list[str]] = {}
+    own_targets = []
+    for t in targets:
+        owner = owning_git_root(root, t["path"])
+        if owner == root:
+            own_targets.append(t)
+        else:
+            nested.setdefault(owner, []).append(t["path"])
+    if nested:
+        print("\nNESTED GIT BOUNDARY: these artifacts belong to nested repositories and")
+        print("are EXCLUDED (a worktree of this repo cannot contain them in either arm):")
+        for owner in sorted(nested):
+            for path in nested[owner]:
+                print(f"          - {path}  (owned by {owner.relative_to(root).as_posix()})")
+        # Print a command that is runnable as-is: real interpreter and script
+        # paths, the nested repo as <repo>, the ORIGINAL --task-file (required,
+        # resolved to an absolute path so the command works from any cwd), and
+        # every experiment-shaping option the user passed, each token
+        # shell-quoted. --out is deliberately NOT carried over: the nested run
+        # gets its own default results directory instead of writing into (and
+        # mixing with) this run's output.
+        carried: list[str] = []
+        if args.runs != 2:
+            carried += ["--runs", str(args.runs)]
+        if args.scope != "always":
+            carried += ["--scope", args.scope]
+        if args.model:
+            carried += ["--model", args.model]
+        if args.jobs != 2:
+            carried += ["--jobs", str(args.jobs)]
+        if args.timeout != 1800:
+            carried += ["--timeout", str(args.timeout)]
+        if args.runner:
+            carried += ["--runner", args.runner]
+        if args.keep_worktrees:
+            carried.append("--keep-worktrees")
+        if args.dry_run:
+            carried.append("--dry-run")
+        print("        If the probe task works inside one of those packages, re-run with")
+        print("        that path as <repo> so worktrees are created from the nested")
+        print("        repository itself:")
+        for owner in sorted(nested):
+            retry = [sys.executable, str(Path(__file__).resolve()), str(owner),
+                     "--task-file", str(Path(args.task_file).resolve()), *carried]
+            print(f"          {' '.join(shlex.quote(t) for t in retry)}")
+    targets = own_targets
+    if not targets:
+        print(f"\nAll {args.scope}-scope artifacts under {root} belong to nested "
+              "repositories. Re-run against the nested repo directly.")
+        return 1
+
     sha = head_sha(root)
     print(f"repo    {root}")
     print(f"base    {sha[:12]}" + ("   (WORKING TREE IS DIRTY: worktrees are built from "
@@ -287,6 +750,57 @@ def main() -> int:
     if args.dry_run:
         print("\n--dry-run: nothing executed.")
         return 0
+
+    # Excluding nested-owned TARGETS above is not enough: even a purely
+    # root-owned experiment launches into worktrees where every nested repo is
+    # an empty gitlink. If those paths are uv workspace members, the repo's
+    # normal uv commands exit with a setup error before the probe runs, in
+    # BOTH arms, and an expensive result would measure checkout topology
+    # rather than agent behavior. Preflight a representative worktree and stop
+    # as a broken experiment instead. Gate the stop on execution being able to
+    # reach uv: the prompt itself, or a wrapper it names (a make target whose
+    # expansion runs `$(UV)`, a script that calls uv). A frontend/docs/other
+    # probe with no path to uv keeps the skip, because aborting it
+    # unconditionally would disable EVERY root ablation on a repo with
+    # submodule workspace members.
+    uv_reason = probe_reaches_uv(prompt, root)
+    if uv_reason:
+        try:
+            missing = missing_workspace_members(root, sha)
+        except Exception as exc:
+            print(f"Workspace preflight failed ({type(exc).__name__}: {exc}): cannot "
+                  "prove a fresh worktree of this repo can run its uv commands, so "
+                  "the experiment would be uninterpretable.", file=sys.stderr)
+            return 2
+        if missing is None:
+            print("\nnote    uv workspace preflight skipped: this Python has no "
+                  "TOML parser (stdlib tomllib needs 3.11+, and the tomli "
+                  "backport is not installed), so the root workspace could not "
+                  "be inspected. If this repo's workspace declares nested-repo "
+                  "members, every `uv run` in the worktrees will fail at setup "
+                  "in both arms; run with Python 3.11+ or `pip install tomli` "
+                  "to preflight that before spending budget.")
+        elif missing:
+            print(f"\nBROKEN EXPERIMENT PREVENTED: executing the probe task can "
+                  f"reach uv ({uv_reason}), and a fresh worktree of this repo is "
+                  "missing these uv workspace members (nested repos recorded as "
+                  "empty gitlinks):", file=sys.stderr)
+            for m in missing:
+                print(f"          - {m}", file=sys.stderr)
+            print("        Every `uv run` inside such a worktree fails with a setup "
+                  "error before the probe task starts, in BOTH arms, so the runs "
+                  "would measure checkout topology, not agent behavior. If the "
+                  "probe targets one of those packages, re-run with that repo as "
+                  "<repo>; otherwise run from a checkout whose workspace declares "
+                  "only members this repo owns.", file=sys.stderr)
+            return 2
+    else:
+        print("\nnote    uv workspace preflight skipped: neither the probe task nor "
+              "any wrapper it names (make targets, invoked scripts) was seen to "
+              "invoke uv with workspace discovery (invocations opting out via "
+              "--no-project do not need the workspace). If the agent still runs "
+              "`uv ...` on its own, empty nested-repo gitlinks in the worktrees "
+              "will fail it at setup, in both arms.")
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     # Results default to a location OUTSIDE the repo: this script promises the

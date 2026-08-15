@@ -11,6 +11,8 @@
 | `packages/acgs-lite/` | PyPI-facing governance library | Nested repo/submodule. Do not stage from parent. Public API stability matters. |
 | `packages/Acgs-Swarm/` | Constitutional swarm research | Nested repo/submodule. Package-local tests only. |
 | `packages/clinicalguard/` | Clinical-domain agent | Nested/private submodule; path-filtered, may be unavailable. |
+| `packages/ACGS-agency-agents/` | Agency agents productization | Nested repo/submodule. Do not stage from parent. |
+| `packages/acgs-control-plane/` | Control plane | Nested repo/submodule. Do not stage from parent. |
 | `acgi-ai/` | Frontend/console | Privileged origin; no public-only CDN/script patterns in console routes. |
 | `acgs_governance_eval_mvp/` | Evaluation/governance MVP | Python package. |
 | `acgs-cft-governance-pack/` | Infrastructure governance pack | Python package. |
@@ -30,16 +32,22 @@ Before editing, reviewing, testing, documenting, or planning:
 5. Use the package-local validation command, not one copied from another package.
 
 ```bash
-python3 /home/martin/.claude/scripts/scope-detect.py --json .
-python3 /home/martin/.claude/scripts/validate-subproject.py .
+python3 ~/.claude/scripts/scope-detect.py --json .
+python3 ~/.claude/scripts/validate-subproject.py .
 ```
 
-Trust the script output over filesystem guesses.
+If `~/.Codex/scripts/*` exists in your environment, it may be the equivalent path. If the
+helpers are absent on this machine, derive the topology directly (`git rev-parse --show-toplevel`,
+`git submodule status`, `.gitmodules`) instead of skipping the gate. Trust the script output
+over filesystem guesses.
 
 ## Nested repo / submodule discipline
 
-`packages/acgs-lite`, `packages/Acgs-Swarm`, and `packages/clinicalguard` are independent
-repos registered in `.gitmodules`. Run `git add` / `git commit` **from inside the package**,
+All five `.gitmodules` entries are independent repos: `packages/acgs-lite`,
+`packages/Acgs-Swarm`, `packages/clinicalguard`, `packages/ACGS-agency-agents`, and
+`packages/acgs-control-plane` (when the topology changes, re-derive the list from
+`.gitmodules` / `git submodule status` rather than trusting this one).
+Run `git add` / `git commit` **from inside the package**,
 never from the parent. Treat parent gitlink pointer drift as out-of-scope unless that *is*
 the task. Parent-repo validation is not proof a nested repo is valid; validate both.
 

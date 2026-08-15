@@ -32,8 +32,11 @@ make lint-docs
 ## Frontend / console (run inside `acgi-ai/`)
 
 ```bash
-pnpm run lint && pnpm run typecheck && pnpm run test
+pnpm run test:all
 ```
+
+`acgi-ai/package.json` defines no `typecheck` script; `test:all` is the package-local
+gate (it runs `lint`, the check suites, and the console build, which typechecks via `tsc -b`).
 
 ## Broad monorepo gate (only when intentionally validating the whole workspace)
 

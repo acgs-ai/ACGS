@@ -67,8 +67,12 @@ for p in sorted(prs, key=lambda p: p["number"]):
         verdict_bits.append("NO-CHECKS")
     if p["mergeable"] == "CONFLICTING":
         verdict_bits.append("CONFLICTS")
-    if (p.get("reviewDecision") or "") == "CHANGES_REQUESTED":
+    rd = p.get("reviewDecision") or ""
+    if rd == "CHANGES_REQUESTED":
         verdict_bits.append("CHANGES-REQ")
+    elif rd == "REVIEW_REQUIRED":
+        # Required approval is still absent: not ready, even with green checks.
+        verdict_bits.append("REVIEW-REQUIRED")
     verdict = " ".join(verdict_bits) if verdict_bits else "READY-FOR-HUMAN-MERGE"
     num = p["number"]
     rows.append((f"#{num}", p["headRefName"][:40], cis,
