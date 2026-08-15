@@ -1,13 +1,13 @@
 .PHONY: lint typecheck test verify clean
 
 lint:
-	ruff check .
+	uv run ruff check .
 
 typecheck:
-	mypy src/
+	uv run mypy src/
 
 test:
-	pytest -q
+	uv run pytest -q -m "not benchmark"
 
 verify: lint typecheck test
 
