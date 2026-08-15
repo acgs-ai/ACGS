@@ -8385,3 +8385,435 @@
     margin-top: 52px;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Governed-action flow, failure-to-boundary readings, and the operating
+   sequence. Drafting-plate idiom: paper grounds, hairline rules, mono numerals
+   in gold ink, rust reserved for the interaction accent (DESIGN.md §2.2).
+   No hex literals here — every colour resolves through a token in index.css.
+   --------------------------------------------------------------------------- */
+
+/* Hero proof pillars ------------------------------------------------------ */
+
+.m-hero-proof-bar {
+  list-style: none;
+  padding: var(--space-lg) 0 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-lg);
+  margin-top: var(--space-2xl);
+  border-top: 1px solid var(--line-softer);
+}
+
+.m-proof-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.m-proof-text {
+  display: block;
+  min-width: 0;
+}
+
+/* Plate numeral, not an icon badge — keeps the triptych inside the drafting
+   idiom instead of the icon-in-a-circle feature grid the design contract bans. */
+.m-proof-no {
+  flex: 0 0 auto;
+  padding-top: 1px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  color: var(--gold-ink);
+}
+
+.m-proof-title {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.m-proof-sub {
+  display: block;
+  margin-top: 3px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* Governed-action flow ---------------------------------------------------- */
+
+.m-flow-diagram {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.92fr);
+  gap: var(--space-3xl);
+  margin-top: var(--space-2xl);
+  align-items: start;
+}
+
+.m-flow-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.m-flow-step {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 16px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line-softer);
+  position: relative;
+}
+
+.m-flow-step:first-child {
+  padding-top: 0;
+}
+
+.m-flow-step:last-child {
+  border-bottom: 0;
+}
+
+/* The receipt hop is the one the whole page exists to argue for, so it carries
+   the rust rule rather than a fill — the accent stays a line, not a block. */
+.m-flow-step.is-highlight {
+  border-left: 2px solid var(--rust);
+  padding-left: 16px;
+  margin-left: -18px;
+}
+
+.m-step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gold-ink);
+}
+
+.m-flow-step.is-highlight .m-step-badge {
+  border-color: var(--rust);
+  color: var(--rust);
+}
+
+.m-flow-step h3 {
+  margin: 4px 0 6px;
+  font-family: var(--font-display);
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.m-flow-step p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+/* Specimen receipt -------------------------------------------------------- */
+
+.m-receipt-specimen {
+  margin: 0;
+  background: var(--paper-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.m-specimen-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px 8px 14px;
+  border-bottom: 1px solid var(--line-softer);
+  background: var(--paper-3);
+}
+
+.m-specimen-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* 44px minimum hit area (DESIGN.md touch-target rule) achieved with padding
+   rather than a fixed height, so the control still sits inside the 8px bar. */
+.m-specimen-copy {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 14px;
+  background: transparent;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.m-specimen-copy:hover,
+.m-specimen-copy:focus-visible {
+  border-color: var(--rust);
+  color: var(--rust);
+}
+
+.m-specimen-pre {
+  margin: 0;
+  padding: 16px 18px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--ink-2);
+  white-space: pre;
+}
+
+.m-specimen-note {
+  margin: 0;
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--line-softer);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* Failure signal -> boundary -> safer mode -------------------------------- */
+
+.m-boundaries-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-lg);
+  margin-top: var(--space-2xl);
+}
+
+.m-boundary-card {
+  display: flex;
+  flex-direction: column;
+  padding: 22px 22px 24px;
+  background: var(--paper-2);
+  border: 1px solid var(--line-softer);
+}
+
+.m-boundary-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line-softer);
+}
+
+.m-boundary-category {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.m-boundary-badge {
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid var(--boundary-line);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--boundary-ink);
+  white-space: nowrap;
+}
+
+.m-boundary-card h3 {
+  margin: 14px 0 16px;
+  font-family: var(--font-display);
+  font-size: 19px;
+  line-height: 1.25;
+}
+
+.m-boundary-flow {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* The three readings are a descent, so each block is marked by the weight of
+   its left rule rather than by an arrow glyph a screen reader has to skip. */
+.m-boundary-block {
+  padding-left: 12px;
+  border-left: 2px solid var(--line-soft);
+}
+
+.m-boundary-block.is-failure {
+  border-left-color: var(--risk-hi);
+}
+
+.m-boundary-block.is-boundary {
+  border-left-color: var(--gold);
+}
+
+.m-boundary-block.is-safer {
+  border-left-color: var(--allow);
+}
+
+.m-boundary-block dt {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.m-boundary-block dd {
+  margin: 5px 0 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+/* Five-stage operating sequence ------------------------------------------- */
+
+.m-stage-grid {
+  list-style: none;
+  margin: var(--space-2xl) 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.m-stage-card {
+  display: flex;
+  flex-direction: column;
+  padding: 20px 18px 22px;
+  border-right: 1px solid var(--line-softer);
+}
+
+.m-stage-card:last-child {
+  border-right: 0;
+}
+
+.m-stage-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.m-stage-no {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gold-ink);
+}
+
+.m-stage-card h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+}
+
+.m-stage-question {
+  margin: 10px 0 8px;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+.m-stage-card p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.m-stage-artifact {
+  margin-top: auto;
+  padding-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.m-stage-artifact span {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.m-stage-artifact strong {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
+/* Responsive -------------------------------------------------------------- */
+
+@media (max-width: 1100px) {
+  .m-flow-diagram {
+    grid-template-columns: 1fr;
+  }
+  .m-stage-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .m-stage-card {
+    border-bottom: 1px solid var(--line-softer);
+  }
+  .m-stage-card:nth-child(2n) {
+    border-right: 0;
+  }
+}
+
+@media (max-width: 900px) {
+  .m-boundaries-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .m-hero-proof-bar {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .m-stage-grid {
+    grid-template-columns: 1fr;
+  }
+  .m-stage-card {
+    border-right: 0;
+  }
+  .m-flow-step.is-highlight {
+    margin-left: 0;
+    padding-left: 12px;
+  }
+  .m-specimen-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .m-specimen-copy {
+    width: 100%;
+  }
+}
