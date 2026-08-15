@@ -487,6 +487,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_dev.set_defaults(func=_cmd_dev_traffic)
 
+    from agent_bus_analyzer.process_mining.cli import add_process_parser
+
+    add_process_parser(subs)
+
     return parser
 
 

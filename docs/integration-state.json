@@ -1,0 +1,3294 @@
+{
+  "base": "origin/master",
+  "base_sha": "bee922df",
+  "base_full_sha": "bee922df3d6f4dd22fd4bdbea3cf25e72e038d36",
+  "generated_at": "2026-08-13T03:11:08+00:00",
+  "summary": {
+    "NO-OP": 115,
+    "STRANDED": 163,
+    "LANDED": 18,
+    "ERROR": 3
+  },
+  "repo_selector": "github.com/acgs-ai/ACGS",
+  "pr_data_available": true,
+  "branches": [
+    {
+      "branch": "001-enhanced-agent-bus-analysis",
+      "tip_sha": "751049cf14c5a02edf14f7f4ae3b9990d61de9d0",
+      "tip_date": "2026-05-16T05:20:31-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "add-claude-github-actions-1778703716073",
+      "tip_sha": "4689cf619628c8e6572c606b879a85318274c8f8",
+      "tip_date": "2026-05-16T05:17:54-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "agent/readme-release-docs",
+      "tip_sha": "0f850624404eb97d5ef7d48755131991b965f6c2",
+      "tip_date": "2026-07-18T09:43:42-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "agent/stackmap-spec",
+      "tip_sha": "60cda1c39ed34b78e3a4b3e87b714e0771da594b",
+      "tip_date": "2026-06-28T16:00:15-07:00",
+      "files_touched": 6,
+      "status": "STRANDED",
+      "files_differing": 6,
+      "differing_sample": [
+        "docs/AGENT_STACK_GOVERNANCE.md",
+        "docs/COMPARISON.md",
+        "docs/HIPAA_CONTROL_MAPPING.md",
+        "docs/HIPAA_READINESS_GAP_ANALYSIS.md",
+        "docs/superpowers/plans/2026-06-28-agent-stack-governance-map.md"
+      ]
+    },
+    {
+      "branch": "agent/wave2-prove",
+      "tip_sha": "308457fd2ec0521f679d8596784facdb6db773ca",
+      "tip_date": "2026-06-28T16:34:53-07:00",
+      "files_touched": 5,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "acgs_governance_eval_mvp/tests/test_langgraph_graph_wiring.py",
+        "docs/superpowers/plans/2026-06-28-wave2-prove-langgraph-governed-graph.md"
+      ]
+    },
+    {
+      "branch": "agent/wave3-a2a",
+      "tip_sha": "c5f6a7d8faf7b268a227331396721cc88d3394ea",
+      "tip_date": "2026-06-28T20:15:46-04:00",
+      "files_touched": 5,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "docs/superpowers/specs/2026-06-28-a2a-governed-delegation-design.md",
+        "packages/gove-zone/examples/a2a_governed_delegation/demo.py"
+      ]
+    },
+    {
+      "branch": "backup/acgi-ai-wip-2026-05-06",
+      "tip_sha": "144270d9a7ccce49d7f46e0cff0cb60fbcecf24a",
+      "tip_date": "2026-05-07T09:32:50-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "backup/gove-zone-policy-identity-pre-rebuild",
+      "tip_sha": "553a130fd41b23ea31f2c1de8f313f01ca4d2616",
+      "tip_date": "2026-07-27T06:31:21-04:00",
+      "files_touched": 177,
+      "status": "STRANDED",
+      "files_differing": 155,
+      "differing_sample": [
+        ".agents/skills/govern-zone/SKILL.md",
+        ".claude/agents/governance-reviewer.md",
+        ".claude/agents/workspace-boundary-reviewer.md",
+        ".claude/commands/feature-development.md",
+        ".claude/commands/refactoring.md"
+      ]
+    },
+    {
+      "branch": "beta/p0-architecture-008",
+      "tip_sha": "dfba6643d97e7f3bc52a9f6d8b9cdb3782bbd158",
+      "tip_date": "2026-07-13T09:28:48-04:00",
+      "files_touched": 26,
+      "status": "STRANDED",
+      "files_differing": 11,
+      "differing_sample": [
+        "docs/COMPARISON.md",
+        "docs/PRODUCT_STRATEGY.md",
+        "docs/README.md",
+        "docs/ROADMAP.md",
+        "docs/saas/ACCEPTANCE_MATRIX.md"
+      ]
+    },
+    {
+      "branch": "beta/p0-claims-002",
+      "tip_sha": "5918828010125ebcedaaf96fb9cd5e109598f2a8",
+      "tip_date": "2026-07-11T00:22:55-07:00",
+      "files_touched": 38,
+      "status": "STRANDED",
+      "files_differing": 26,
+      "differing_sample": [
+        "docs/CLAIMS.md",
+        "docs/COMPARISON.md",
+        "docs/ROADMAP.md",
+        "packages/acgs-control-plane/README.md",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py"
+      ]
+    },
+    {
+      "branch": "beta/p0-clean-sibling-cp-wheel",
+      "tip_sha": "6f10cbda9f05b07c2242d65bd911c58279d71840",
+      "tip_date": "2026-07-14T15:45:17-07:00",
+      "files_touched": 50,
+      "status": "STRANDED",
+      "files_differing": 32,
+      "differing_sample": [
+        "compliance/evidence-pack/README.md",
+        "compliance/evidence-pack/frameworks/eu-ai-act-article-12.md",
+        "compliance/evidence-pack/frameworks/iso-42001.md",
+        "compliance/evidence-pack/frameworks/soc2.md",
+        "compliance/evidence-pack/manifest.json"
+      ]
+    },
+    {
+      "branch": "beta/p0-current-state-006",
+      "tip_sha": "bda5aaf3bdb9b0f611be50d8063662ed8aaaa97f",
+      "tip_date": "2026-07-13T08:05:01-04:00",
+      "files_touched": 7,
+      "status": "STRANDED",
+      "files_differing": 5,
+      "differing_sample": [
+        "docs/ROADMAP.md",
+        "docs/saas/ACCEPTANCE_MATRIX.md",
+        "docs/saas/DELIVERY_DAG.yaml",
+        "tests/docs/test_saas_current_state_survey.py",
+        "tests/docs/test_saas_delivery_dag.py"
+      ]
+    },
+    {
+      "branch": "beta/p0-evidence-000",
+      "tip_sha": "bf08fa8bce9ad4da27a7cf07c54324f6ade17144",
+      "tip_date": "2026-07-10T23:56:22-04:00",
+      "files_touched": 29,
+      "status": "STRANDED",
+      "files_differing": 16,
+      "differing_sample": [
+        ".github/workflows/saas-beta-p0-evidence.yml",
+        ".github/workflows/tests-root-hosted.yml",
+        ".github/workflows/tests-root.yml",
+        "requirements/saas-beta/cp-test.in",
+        "requirements/saas-beta/cp-test.lock"
+      ]
+    },
+    {
+      "branch": "beta/p0-evidence-corpus-001d",
+      "tip_sha": "c3cdeff632b1306b2fd76dc5c6eac5825b95ac8a",
+      "tip_date": "2026-07-11T01:30:31-04:00",
+      "files_touched": 27,
+      "status": "STRANDED",
+      "files_differing": 15,
+      "differing_sample": [
+        "requirements/saas-beta/cp-test.in",
+        "requirements/saas-beta/cp-test.lock",
+        "requirements/saas-beta/gz-test.in",
+        "requirements/saas-beta/gz-test.lock",
+        "schemas/evidence/acgs-run-evidence-v1.schema.json"
+      ]
+    },
+    {
+      "branch": "beta/p0-evidence-corpus-002d",
+      "tip_sha": "577509b15c3ac4c2e5b74a375666976fbf585125",
+      "tip_date": "2026-07-11T00:18:33-07:00",
+      "files_touched": 33,
+      "status": "STRANDED",
+      "files_differing": 21,
+      "differing_sample": [
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/config.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/governance.py",
+        "packages/acgs-control-plane/tests/conftest.py",
+        "packages/acgs-control-plane/tests/integration/test_production_posture.py"
+      ]
+    },
+    {
+      "branch": "beta/p0-evidence-corpus-003d",
+      "tip_sha": "356654f858af20b47cba5e18ed203fcb2f88805d",
+      "tip_date": "2026-07-11T13:57:13-07:00",
+      "files_touched": 39,
+      "status": "STRANDED",
+      "files_differing": 27,
+      "differing_sample": [
+        "docs/CLAIMS.md",
+        "docs/COMPARISON.md",
+        "docs/ROADMAP.md",
+        "packages/acgs-control-plane/README.md",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py"
+      ]
+    },
+    {
+      "branch": "beta/p0-evidence-pack-eof",
+      "tip_sha": "3128775b73778b620dfa255302a0c01b3f97233a",
+      "tip_date": "2026-07-14T15:39:18-07:00",
+      "files_touched": 46,
+      "status": "STRANDED",
+      "files_differing": 29,
+      "differing_sample": [
+        "compliance/evidence-pack/README.md",
+        "compliance/evidence-pack/frameworks/eu-ai-act-article-12.md",
+        "compliance/evidence-pack/frameworks/iso-42001.md",
+        "compliance/evidence-pack/frameworks/soc2.md",
+        "compliance/evidence-pack/manifest.json"
+      ]
+    },
+    {
+      "branch": "beta/p0-evidence-t3",
+      "tip_sha": "5e5ad2d8a0d6971f5bd2f96d001fc24aa18eee92",
+      "tip_date": "2026-07-10T23:56:04-04:00",
+      "files_touched": 26,
+      "status": "STRANDED",
+      "files_differing": 13,
+      "differing_sample": [
+        "requirements/saas-beta/cp-test.in",
+        "requirements/saas-beta/cp-test.lock",
+        "requirements/saas-beta/gz-test.in",
+        "requirements/saas-beta/gz-test.lock",
+        "schemas/evidence/acgs-run-evidence-v1.schema.json"
+      ]
+    },
+    {
+      "branch": "beta/p0-g030b-pr308-rebased-repair",
+      "tip_sha": "4f0c685b5d2ffac0e6a71810b77c6357b8d56a94",
+      "tip_date": "2026-07-15T12:00:36-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p0-g102e0-audit-appender",
+      "tip_sha": "59e44207b90d7a96bed484924c4a7d913c095bfd",
+      "tip_date": "2026-07-26T05:38:13+00:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p0-g102e1-db-governance-event",
+      "tip_sha": "d988f8194d1095fdc207564f0e55658d70961801",
+      "tip_date": "2026-07-26T17:08:52-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p0-g102e2-native-receipt-ledger",
+      "tip_sha": "2944c870183a36b07286b355699a206ea533c0fd",
+      "tip_date": "2026-07-26T18:09:59-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p0-g102e3-verifiable-native-evidence",
+      "tip_sha": "26c63dd605c2fa23b4cdb32cbc87d904da170268",
+      "tip_date": "2026-07-26T18:18:40-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p0-g102e4-scope-attachment",
+      "tip_sha": "6d312620cefacde0130cbda43d9e851064403fea",
+      "tip_date": "2026-07-26T18:28:28-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p0-g102e5-native-transaction-spine",
+      "tip_sha": "705ab08fae82b090c2ba4c8e71013eed759a3ea6",
+      "tip_date": "2026-07-26T18:34:36-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p0-gates-003",
+      "tip_sha": "fc175e9963c8db357222619ac4b39a8fd075dd46",
+      "tip_date": "2026-07-11T08:37:51-04:00",
+      "files_touched": 93,
+      "status": "STRANDED",
+      "files_differing": 78,
+      "differing_sample": [
+        ".github/AGENTS.md",
+        ".github/workflows/AGENTS.md",
+        ".github/workflows/console-deploy.yml",
+        ".github/workflows/console.yml",
+        ".github/workflows/marketing-cloudflare.yml"
+      ]
+    },
+    {
+      "branch": "beta/p0-membrane-001",
+      "tip_sha": "c3ad0b0b967d1c39afe48be6ff36cf95ef7f7f76",
+      "tip_date": "2026-07-11T02:06:54-04:00",
+      "files_touched": 33,
+      "status": "STRANDED",
+      "files_differing": 21,
+      "differing_sample": [
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/config.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/governance.py",
+        "packages/acgs-control-plane/tests/conftest.py",
+        "packages/acgs-control-plane/tests/integration/test_production_posture.py"
+      ]
+    },
+    {
+      "branch": "beta/p0-membrane-rebuilt",
+      "tip_sha": "53ca32d116398057c882bfaa852fb305a9fd0fca",
+      "tip_date": "2026-07-11T16:05:08-04:00",
+      "files_touched": 7,
+      "status": "STRANDED",
+      "files_differing": 7,
+      "differing_sample": [
+        "packages/acgs-control-plane/README.md",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/config.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/governance.py",
+        "packages/acgs-control-plane/tests/conftest.py"
+      ]
+    },
+    {
+      "branch": "beta/p0-product-contract-007",
+      "tip_sha": "11c8dfc153e67b890a0d3bde049d1ff941b11132",
+      "tip_date": "2026-07-13T08:52:28-04:00",
+      "files_touched": 15,
+      "status": "STRANDED",
+      "files_differing": 9,
+      "differing_sample": [
+        "docs/COMPARISON.md",
+        "docs/PRODUCT_STRATEGY.md",
+        "docs/README.md",
+        "docs/ROADMAP.md",
+        "docs/saas/ACCEPTANCE_MATRIX.md"
+      ]
+    },
+    {
+      "branch": "beta/p0-program-record-005",
+      "tip_sha": "e4af0731aece89c1b7bcc050b609260571497145",
+      "tip_date": "2026-07-13T07:14:45-04:00",
+      "files_touched": 4,
+      "status": "STRANDED",
+      "files_differing": 4,
+      "differing_sample": [
+        "docs/ROADMAP.md",
+        "docs/saas/ACCEPTANCE_MATRIX.md",
+        "docs/saas/DELIVERY_DAG.yaml",
+        "tests/docs/test_saas_delivery_dag.py"
+      ]
+    },
+    {
+      "branch": "beta/p1-evidence-corpus-001d",
+      "tip_sha": "f6140d0c5f6916784226fb04033bc40135c0df2d",
+      "tip_date": "2026-07-25T11:22:21+00:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-evidence-corpus-002d",
+      "tip_sha": "9a69ab018231207e7af7c2475d04514fed71fb4d",
+      "tip_date": "2026-07-25T08:03:10-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-evidence-corpus-003d",
+      "tip_sha": "fbc3d99d88a934c5a855e3b801522d0912bfcc4a",
+      "tip_date": "2026-07-25T08:59:06-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-evidence-corpus-004d",
+      "tip_sha": "3422d740d9872c5e65151605edc573c6aa8fbcff",
+      "tip_date": "2026-07-25T10:21:12-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-g101-integrated-candidate",
+      "tip_sha": "bcda5ac0e02a780e99e6ce705b59915a21259064",
+      "tip_date": "2026-07-18T10:41:18-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-g101-migration-operator-cli",
+      "tip_sha": "0fff75951470652be279a8cd5acc6a46e16bff49",
+      "tip_date": "2026-07-15T06:41:34-07:00",
+      "files_touched": 53,
+      "status": "STRANDED",
+      "files_differing": 35,
+      "differing_sample": [
+        "compliance/evidence-pack/README.md",
+        "compliance/evidence-pack/frameworks/eu-ai-act-article-12.md",
+        "compliance/evidence-pack/frameworks/iso-42001.md",
+        "compliance/evidence-pack/frameworks/soc2.md",
+        "compliance/evidence-pack/manifest.json"
+      ]
+    },
+    {
+      "branch": "beta/p1-g101-migration-recovery",
+      "tip_sha": "31badd9222d80fb7d7b5f86e42a620f3bf4a81c2",
+      "tip_date": "2026-07-15T05:18:15-07:00",
+      "files_touched": 54,
+      "status": "STRANDED",
+      "files_differing": 36,
+      "differing_sample": [
+        "compliance/evidence-pack/README.md",
+        "compliance/evidence-pack/frameworks/eu-ai-act-article-12.md",
+        "compliance/evidence-pack/frameworks/iso-42001.md",
+        "compliance/evidence-pack/frameworks/soc2.md",
+        "compliance/evidence-pack/manifest.json"
+      ]
+    },
+    {
+      "branch": "beta/p1-g101-multiprocess-migration-coordination",
+      "tip_sha": "4116778995d17755e9f3328698f6519145404336",
+      "tip_date": "2026-07-15T09:20:15-04:00",
+      "files_touched": 51,
+      "status": "STRANDED",
+      "files_differing": 33,
+      "differing_sample": [
+        "compliance/evidence-pack/README.md",
+        "compliance/evidence-pack/frameworks/eu-ai-act-article-12.md",
+        "compliance/evidence-pack/frameworks/iso-42001.md",
+        "compliance/evidence-pack/frameworks/soc2.md",
+        "compliance/evidence-pack/manifest.json"
+      ]
+    },
+    {
+      "branch": "beta/p1-g101-postgres-advisory-lock",
+      "tip_sha": "829c26f3c71e995db31a495a53919d8c70fccdb2",
+      "tip_date": "2026-07-13T12:48:59-04:00",
+      "files_touched": 37,
+      "status": "STRANDED",
+      "files_differing": 22,
+      "differing_sample": [
+        "docs/COMPARISON.md",
+        "docs/PRODUCT_STRATEGY.md",
+        "docs/README.md",
+        "docs/ROADMAP.md",
+        "docs/saas/ACCEPTANCE_MATRIX.md"
+      ]
+    },
+    {
+      "branch": "beta/p1-g101-postgres-ci",
+      "tip_sha": "b635ca598a6f04672f32a5ecd570e236ddd7e8f2",
+      "tip_date": "2026-07-14T19:42:24-07:00",
+      "files_touched": 51,
+      "status": "STRANDED",
+      "files_differing": 33,
+      "differing_sample": [
+        ".github/workflows/python-acgs-control-plane.yml",
+        "compliance/evidence-pack/README.md",
+        "compliance/evidence-pack/frameworks/eu-ai-act-article-12.md",
+        "compliance/evidence-pack/frameworks/iso-42001.md",
+        "compliance/evidence-pack/frameworks/soc2.md"
+      ]
+    },
+    {
+      "branch": "beta/p1-g101-program-reconcile",
+      "tip_sha": "9ace16630c12d1ac0fe4d04828c0aa476dd81ffe",
+      "tip_date": "2026-07-25T19:24:45-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-g101-program-record",
+      "tip_sha": "bbb18a7ee0604a8a0d8f41755bcb6c9c2e202f42",
+      "tip_date": "2026-07-15T13:43:28-04:00",
+      "files_touched": 50,
+      "status": "STRANDED",
+      "files_differing": 32,
+      "differing_sample": [
+        "compliance/evidence-pack/README.md",
+        "compliance/evidence-pack/frameworks/eu-ai-act-article-12.md",
+        "compliance/evidence-pack/frameworks/iso-42001.md",
+        "compliance/evidence-pack/frameworks/soc2.md",
+        "compliance/evidence-pack/manifest.json"
+      ]
+    },
+    {
+      "branch": "beta/p1-g101-recovery-bytea-evidence",
+      "tip_sha": "131f06fc8f2bcec230f9e1b33592b6e232b22c42",
+      "tip_date": "2026-07-15T11:31:17-04:00",
+      "files_touched": 55,
+      "status": "STRANDED",
+      "files_differing": 37,
+      "differing_sample": [
+        "compliance/evidence-pack/README.md",
+        "compliance/evidence-pack/frameworks/eu-ai-act-article-12.md",
+        "compliance/evidence-pack/frameworks/iso-42001.md",
+        "compliance/evidence-pack/frameworks/soc2.md",
+        "compliance/evidence-pack/manifest.json"
+      ]
+    },
+    {
+      "branch": "beta/p1-g101-rolling-upgrade-evidence",
+      "tip_sha": "223645375d6590ef66b8bab4e22019537f541778",
+      "tip_date": "2026-07-15T11:12:41-04:00",
+      "files_touched": 61,
+      "status": "STRANDED",
+      "files_differing": 43,
+      "differing_sample": [
+        "compliance/evidence-pack/README.md",
+        "compliance/evidence-pack/frameworks/eu-ai-act-article-12.md",
+        "compliance/evidence-pack/frameworks/iso-42001.md",
+        "compliance/evidence-pack/frameworks/soc2.md",
+        "compliance/evidence-pack/manifest.json"
+      ]
+    },
+    {
+      "branch": "beta/p1-g101-startup-integration",
+      "tip_sha": "a1bc1dfc7fec676d062739d5d4f166e26a20d05b",
+      "tip_date": "2026-07-15T07:20:02-07:00",
+      "files_touched": 59,
+      "status": "STRANDED",
+      "files_differing": 41,
+      "differing_sample": [
+        "compliance/evidence-pack/README.md",
+        "compliance/evidence-pack/frameworks/eu-ai-act-article-12.md",
+        "compliance/evidence-pack/frameworks/iso-42001.md",
+        "compliance/evidence-pack/frameworks/soc2.md",
+        "compliance/evidence-pack/manifest.json"
+      ]
+    },
+    {
+      "branch": "beta/p1-g101-tool-provenance",
+      "tip_sha": "83afdbd7d5b8ae2c9f043fa13488cda739ac1e2b",
+      "tip_date": "2026-07-25T07:55:55-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-g102-request-admission",
+      "tip_sha": "ee42e4ee103162ffb3173b45c8f53c30f7222975",
+      "tip_date": "2026-07-25T19:34:26-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-g102a-program-reconcile",
+      "tip_sha": "3a92950e1f4d16bd27486c65546d857b71467a77",
+      "tip_date": "2026-07-25T19:40:53-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-g102b-program-reconcile",
+      "tip_sha": "caf262dce32044ffb05d6e1d8cc8e714e1adecd0",
+      "tip_date": "2026-07-26T00:16:40-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-g102b-receipt-cursors",
+      "tip_sha": "a649a0a3b9ed1e2e91360a5ffb8b4f1d4143cd82",
+      "tip_date": "2026-07-26T00:10:14-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-g102c-openapi-drift",
+      "tip_sha": "a6faf49a7b5f947b592f4be8372a85b173251090",
+      "tip_date": "2026-07-26T00:35:15-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-g102c-program-reconcile",
+      "tip_sha": "aed8b28a3722a30be8885df8341d13185c3cf8cf",
+      "tip_date": "2026-07-26T00:45:49-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-g102d-program-reconcile",
+      "tip_sha": "cb39ddc8820dba4c7e12b6513f56a89115bef9e9",
+      "tip_date": "2026-07-26T01:18:36-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-g102d-v1-api-contract",
+      "tip_sha": "047ddcf89530dc488ab6a2f4dd3bc00fe0211c5d",
+      "tip_date": "2026-07-26T05:07:38+00:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-ledger-003",
+      "tip_sha": "3735f81b5bffd86169f2cc34b0e7a6e398cf9e3b",
+      "tip_date": "2026-07-25T13:23:00+00:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-migration-001",
+      "tip_sha": "af0b8442effed3fe281ffac48ed5c149ad85f7a7",
+      "tip_date": "2026-07-25T11:47:24+00:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-migrations-scope-101",
+      "tip_sha": "af50c17204f9c0b63439e8a307607492e989b02f",
+      "tip_date": "2026-07-13T11:42:37-04:00",
+      "files_touched": 36,
+      "status": "STRANDED",
+      "files_differing": 21,
+      "differing_sample": [
+        "docs/COMPARISON.md",
+        "docs/PRODUCT_STRATEGY.md",
+        "docs/README.md",
+        "docs/ROADMAP.md",
+        "docs/saas/ACCEPTANCE_MATRIX.md"
+      ]
+    },
+    {
+      "branch": "beta/p1-saas-lock-coherence",
+      "tip_sha": "620424ddb5bb19b6c9eb28933574922af39e3622",
+      "tip_date": "2026-07-14T15:45:04-07:00",
+      "files_touched": 50,
+      "status": "STRANDED",
+      "files_differing": 32,
+      "differing_sample": [
+        "compliance/evidence-pack/README.md",
+        "compliance/evidence-pack/frameworks/eu-ai-act-article-12.md",
+        "compliance/evidence-pack/frameworks/iso-42001.md",
+        "compliance/evidence-pack/frameworks/soc2.md",
+        "compliance/evidence-pack/manifest.json"
+      ]
+    },
+    {
+      "branch": "beta/p1-scope-002",
+      "tip_sha": "65b0d0ecb53f5f141caa16e7df49461c71f2d2a9",
+      "tip_date": "2026-07-25T08:09:45-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-trust-004",
+      "tip_sha": "cedeee7fb759cdbad0f2f25768ea1d2f51da03fe",
+      "tip_date": "2026-07-25T13:32:07-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p1-trust-004-gz",
+      "tip_sha": "5a21ce8257d1bc417479c69b2f21d69d36861bd0",
+      "tip_date": "2026-07-25T10:33:35-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p2-evidence-corpus-000d",
+      "tip_sha": "8b1909bf00aef3ed8fbef4f8ee79bd6ae5e3d788",
+      "tip_date": "2026-07-25T14:12:25-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p2-evidence-corpus-001d",
+      "tip_sha": "ebde871d2f076af7c5fd2f7e7c4f139178ee305d",
+      "tip_date": "2026-07-25T19:01:37-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p2-evidence-isolation-002b",
+      "tip_sha": "3d5ac74da2adb68d314af6346b240438b2b0dc93",
+      "tip_date": "2026-07-30T19:22:44-04:00",
+      "files_touched": 41,
+      "status": "STRANDED",
+      "files_differing": 41,
+      "differing_sample": [
+        ".github/workflows/python-acgs-control-plane.yml",
+        "packages/acgs-control-plane/README.md",
+        "packages/acgs-control-plane/scripts/run_postgres_gate.sh",
+        "packages/acgs-control-plane/src/acgs_control_plane/agent_registration.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py"
+      ]
+    },
+    {
+      "branch": "beta/p2-idempotency-002-retry",
+      "tip_sha": "2023dce9a048e55fece5b384b94d3a27e5f0d670",
+      "tip_date": "2026-07-30T19:21:31-04:00",
+      "files_touched": 36,
+      "status": "STRANDED",
+      "files_differing": 36,
+      "differing_sample": [
+        ".github/workflows/python-acgs-control-plane.yml",
+        "packages/acgs-control-plane/README.md",
+        "packages/acgs-control-plane/scripts/run_postgres_gate.sh",
+        "packages/acgs-control-plane/src/acgs_control_plane/agent_registration.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py"
+      ]
+    },
+    {
+      "branch": "beta/p2-idempotency-evidence-002a",
+      "tip_sha": "2bacf57bbe9cd8fc49878d7feb3da86dc1d3f046",
+      "tip_date": "2026-07-26T11:45:37-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p2-register-001-retry",
+      "tip_sha": "6d49443f5890e2e8487b9c794c40ac053b24e1a4",
+      "tip_date": "2026-07-26T11:13:57-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p2-tenant-bootstrap-000",
+      "tip_sha": "3a053c00ef0930d717c6e5ea6a5b912e88151955",
+      "tip_date": "2026-07-25T18:52:53-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p2-vertical-gate-003",
+      "tip_sha": "52be2cc4ed26a7c4a6574e90abeee64cb43ca36f",
+      "tip_date": "2026-07-30T19:23:47-04:00",
+      "files_touched": 47,
+      "status": "STRANDED",
+      "files_differing": 47,
+      "differing_sample": [
+        ".github/workflows/python-acgs-control-plane.yml",
+        "packages/acgs-control-plane/README.md",
+        "packages/acgs-control-plane/scripts/run_postgres_gate.sh",
+        "packages/acgs-control-plane/src/acgs_control_plane/agent_registration.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py"
+      ]
+    },
+    {
+      "branch": "beta/p3-approval-003-reconciled",
+      "tip_sha": "a88b657a8779ac83697700945c7adc60d4cdc3cc",
+      "tip_date": "2026-07-30T21:52:32-04:00",
+      "files_touched": 68,
+      "status": "STRANDED",
+      "files_differing": 68,
+      "differing_sample": [
+        ".github/workflows/python-acgs-control-plane.yml",
+        ".github/workflows/saas-beta-p0-evidence.yml",
+        ".github/workflows/tests-root-hosted.yml",
+        ".github/workflows/tests-root.yml",
+        "docs/CLAIMS.md"
+      ]
+    },
+    {
+      "branch": "beta/p3-approval-003b-authoritative-retry",
+      "tip_sha": "242d8c9613d4d808105ecec269548fb3ed0d5d8f",
+      "tip_date": "2026-07-30T21:55:57-04:00",
+      "files_touched": 68,
+      "status": "STRANDED",
+      "files_differing": 68,
+      "differing_sample": [
+        ".github/workflows/python-acgs-control-plane.yml",
+        ".github/workflows/saas-beta-p0-evidence.yml",
+        ".github/workflows/tests-root-hosted.yml",
+        ".github/workflows/tests-root.yml",
+        "docs/CLAIMS.md"
+      ]
+    },
+    {
+      "branch": "beta/p3-approval-003c-authoritative-retry",
+      "tip_sha": "a73f9bdeb064edb123db2eb98266f03092cf9fe4",
+      "tip_date": "2026-07-30T21:59:30-04:00",
+      "files_touched": 68,
+      "status": "STRANDED",
+      "files_differing": 68,
+      "differing_sample": [
+        ".github/workflows/python-acgs-control-plane.yml",
+        ".github/workflows/saas-beta-p0-evidence.yml",
+        ".github/workflows/tests-root-hosted.yml",
+        ".github/workflows/tests-root.yml",
+        "docs/CLAIMS.md"
+      ]
+    },
+    {
+      "branch": "beta/p3-authority-consumption-guard-006",
+      "tip_sha": "4582584a31642e3c7dd6d9657ed3117e579060ac",
+      "tip_date": "2026-07-30T22:06:27-04:00",
+      "files_touched": 72,
+      "status": "STRANDED",
+      "files_differing": 72,
+      "differing_sample": [
+        ".github/workflows/python-acgs-control-plane.yml",
+        ".github/workflows/saas-beta-p0-evidence.yml",
+        ".github/workflows/tests-root-hosted.yml",
+        ".github/workflows/tests-root.yml",
+        "docs/CLAIMS.md"
+      ]
+    },
+    {
+      "branch": "beta/p3-host-uid-namespace-retry-006",
+      "tip_sha": "abbc6bb97bcbb61c51ecdcdc8f7af38c02a84f02",
+      "tip_date": "2026-07-30T22:10:00-04:00",
+      "files_touched": 72,
+      "status": "STRANDED",
+      "files_differing": 72,
+      "differing_sample": [
+        ".github/workflows/python-acgs-control-plane.yml",
+        ".github/workflows/saas-beta-p0-evidence.yml",
+        ".github/workflows/tests-root-hosted.yml",
+        ".github/workflows/tests-root.yml",
+        "docs/CLAIMS.md"
+      ]
+    },
+    {
+      "branch": "beta/p3-mutations-002",
+      "tip_sha": "4eb8e0776381882b464fc654f6e219badf2ce146",
+      "tip_date": "2026-07-30T19:28:29-04:00",
+      "files_touched": 62,
+      "status": "STRANDED",
+      "files_differing": 62,
+      "differing_sample": [
+        ".github/workflows/python-acgs-control-plane.yml",
+        "docs/CLAIMS.md",
+        "docs/SECURITY_MODEL.md",
+        "docs/saas/CURRENT_STATE_SURVEY.md",
+        "packages/acgs-control-plane/README.md"
+      ]
+    },
+    {
+      "branch": "beta/p3-policy-001",
+      "tip_sha": "9068828478532981ccb0a6f61a36a93e50844781",
+      "tip_date": "2026-07-30T19:24:55-04:00",
+      "files_touched": 52,
+      "status": "STRANDED",
+      "files_differing": 52,
+      "differing_sample": [
+        ".github/workflows/python-acgs-control-plane.yml",
+        "packages/acgs-control-plane/README.md",
+        "packages/acgs-control-plane/scripts/run_postgres_gate.sh",
+        "packages/acgs-control-plane/src/acgs_control_plane/agent_registration.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py"
+      ]
+    },
+    {
+      "branch": "beta/p3-program-reconciliation-003a",
+      "tip_sha": "1d5fad92ba718a9d495b18fab770e9e98c092e9d",
+      "tip_date": "2026-07-30T05:11:54-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "beta/p3-sealed-export-007",
+      "tip_sha": "dba1da463edeb1b80f3f1d25e8c1c84726da1a4e",
+      "tip_date": "2026-07-30T18:43:55-04:00",
+      "files_touched": 72,
+      "status": "STRANDED",
+      "files_differing": 72,
+      "differing_sample": [
+        ".github/workflows/python-acgs-control-plane.yml",
+        ".github/workflows/saas-beta-p0-evidence.yml",
+        ".github/workflows/tests-root-hosted.yml",
+        ".github/workflows/tests-root.yml",
+        "docs/CLAIMS.md"
+      ]
+    },
+    {
+      "branch": "beta/p3c-failure-harness-repair-004",
+      "tip_sha": "863a53263a64b6b5f27c628cc3eae4b24194b1bd",
+      "tip_date": "2026-07-30T22:02:55-04:00",
+      "files_touched": 70,
+      "status": "STRANDED",
+      "files_differing": 70,
+      "differing_sample": [
+        ".github/workflows/python-acgs-control-plane.yml",
+        ".github/workflows/saas-beta-p0-evidence.yml",
+        ".github/workflows/tests-root-hosted.yml",
+        ".github/workflows/tests-root.yml",
+        "docs/CLAIMS.md"
+      ]
+    },
+    {
+      "branch": "beta/p4-policy-wiring-gz-002a",
+      "tip_sha": "3932bd71e94fab943c699567ba56765c34d1e5a1",
+      "tip_date": "2026-08-06T16:07:22-04:00",
+      "files_touched": 127,
+      "status": "STRANDED",
+      "files_differing": 126,
+      "differing_sample": [
+        ".agents/skills/govern-zone/SKILL.md",
+        ".claude/skills/govern-zone/SKILL.md",
+        ".github/workflows/codex-code-review.yml",
+        ".github/workflows/python-acgs-control-plane.yml",
+        ".github/workflows/saas-beta-p0-evidence.yml"
+      ]
+    },
+    {
+      "branch": "blacksmith-migration-ee83e18",
+      "tip_sha": "bf5b1c83a2d599e0218948521cc58d6aedb8d55b",
+      "tip_date": "2026-07-25T06:12:32+00:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "chore/acgi-purge-vercel-remnants",
+      "tip_sha": "eafdbadfc388e1a398cadd48ca353135e7714bd2",
+      "tip_date": "2026-06-19T20:16:18-04:00",
+      "files_touched": 34,
+      "status": "STRANDED",
+      "files_differing": 6,
+      "differing_sample": [
+        "acgi-ai/ARCHITECTURE.md",
+        "acgi-ai/CLAUDE.md",
+        "acgi-ai/DEPLOY.md",
+        "acgi-ai/PLAN.md",
+        "acgi-ai/package.json"
+      ]
+    },
+    {
+      "branch": "chore/bump-acgs-lite-pointer",
+      "tip_sha": "69c011421727680e38bca8a24b3e14f3b7dda848",
+      "tip_date": "2026-07-11T02:46:53-04:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "packages/acgs-lite"
+      ]
+    },
+    {
+      "branch": "chore/bump-acgs-swarm-submodule",
+      "tip_sha": "1f7e4194019c27b1ff788943d8bf3d3c8a91a2c6",
+      "tip_date": "2026-06-23T03:55:57-04:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "packages/Acgs-Swarm"
+      ]
+    },
+    {
+      "branch": "chore/claude-settings-safe-automation",
+      "tip_sha": "2260ddca75a4281d294ea1db2d6f28e1ed731046",
+      "tip_date": "2026-06-18T13:43:22-04:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        ".claude/settings.json"
+      ]
+    },
+    {
+      "branch": "chore/commit-improvement-pipeline",
+      "tip_sha": "4ff92745ddab0846d0f908ad60fed46b348496c4",
+      "tip_date": "2026-08-12T22:27:38-04:00",
+      "files_touched": 36,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        ".claude/skills/deploy-drift-check/deploy-drift-check.sh",
+        ".claude/skills/pr-queue/pr-queue.sh",
+        ".claude/workflows/project-showcase-pages.js"
+      ]
+    },
+    {
+      "branch": "chore/design-sync-acgi-ai",
+      "tip_sha": "d1aec7720a0871b1ee8f2a47317246f4a7ddbf81",
+      "tip_date": "2026-07-12T02:21:18-04:00",
+      "files_touched": 5,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        ".gitignore"
+      ]
+    },
+    {
+      "branch": "chore/eval-regression-coverage-seed-harness",
+      "tip_sha": "899b666b5444aa5c8b1a9baf95fdef16e8fde964",
+      "tip_date": "2026-05-05T15:58:34-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "chore/gitignore-scratch-dirs-2026-05-13",
+      "tip_sha": "3ea85b35809ea8ad8632ad30729cc0577ddafeb6",
+      "tip_date": "2026-05-13T13:55:15-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "chore/gitignore-tooling-dirs-2026-05-13",
+      "tip_sha": "5f00d4a63617cb8ed0ad87df9e5fd4f4b27a4d8e",
+      "tip_date": "2026-05-16T05:14:57-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "chore/gove-zone-demo-f401",
+      "tip_sha": "2dbc9c2102732f5c7935769a91b09c8a1ec159f3",
+      "tip_date": "2026-07-06T20:32:01-04:00",
+      "files_touched": 104,
+      "status": "STRANDED",
+      "files_differing": 68,
+      "differing_sample": [
+        ".claude/policy/build.yaml",
+        ".gitignore",
+        ".gitmodules",
+        "MONOREPO.md",
+        "acgi-ai/scripts/check-trust-surface.mjs"
+      ]
+    },
+    {
+      "branch": "chore/hygiene-gitignore-20260709",
+      "tip_sha": "c1685eb3df850c170537a3b685234d0b4cf85c10",
+      "tip_date": "2026-07-09T04:25:48-04:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        ".gitignore"
+      ]
+    },
+    {
+      "branch": "chore/integration-state-ledger",
+      "tip_sha": "1f955f98b91cc793b79c22b1986fc377bc890dff",
+      "tip_date": "2026-08-13T02:59:35+00:00",
+      "files_touched": 3,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        "docs/INTEGRATION-STATE.md",
+        "docs/integration-state.json",
+        "scripts/integration_state.py"
+      ],
+      "open_pr": 447
+    },
+    {
+      "branch": "chore/monorepo-hardening",
+      "tip_sha": "150fe857e38c4ebc73a9c759fe035b945aa5e51d",
+      "tip_date": "2026-06-07T23:48:14-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "chore/readiness-evidence-followup",
+      "tip_sha": "88b8b91b5889fd223701f82c0edf5b11de73f918",
+      "tip_date": "2026-06-19T02:52:16-04:00",
+      "files_touched": 3,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        "docs/integration-readiness-task-map.md",
+        "scripts/platform_readiness_report.py",
+        "tests/test_root_typecheck_gate.py"
+      ]
+    },
+    {
+      "branch": "chore/ruff-format-a2a-demo",
+      "tip_sha": "53b084e7ce7fe37af6fb2b4821bd998eaee23983",
+      "tip_date": "2026-07-02T22:50:31-07:00",
+      "files_touched": 1,
+      "status": "LANDED",
+      "files_differing": 0
+    },
+    {
+      "branch": "chore/ruff-format-test-audit-chain-2026-05-13",
+      "tip_sha": "2697486569c208b1fdee9d6a650e92640c4385fa",
+      "tip_date": "2026-05-16T05:18:08-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "ci/github-hosted-invariant-fallback",
+      "tip_sha": "a0ae7a608fd2acbca3d58335c1e76982481e2fb9",
+      "tip_date": "2026-06-28T19:53:47-04:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        ".github/workflows/tests-root-hosted.yml"
+      ]
+    },
+    {
+      "branch": "ci/harden-package-runners",
+      "tip_sha": "9d80722f7040dae40f31967ce3dbd54e7c01a553",
+      "tip_date": "2026-06-06T02:40:29-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "claude/acgs-prior-art-verification-vvn6ni",
+      "tip_sha": "750154bbd5524f327b545d5db94f8f0065651f13",
+      "tip_date": "2026-07-18T09:25:29-07:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "claude/dynamic-workflow-issues-prs-es2uky",
+      "tip_sha": "46f8996c2b37c0de89b34caac22be4b73f75c9ad",
+      "tip_date": "2026-07-17T06:14:21-07:00",
+      "files_touched": 4,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "MONOREPO.md"
+      ]
+    },
+    {
+      "branch": "codex/clarify-gove-zone-prompt-examples",
+      "tip_sha": "bb13d6a2405663c40afc1a264e7c7f905bce81c9",
+      "tip_date": "2026-06-06T17:49:56-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "codex/stage-3-landing-thesis",
+      "tip_sha": "83c84f6a303369aa9018c581120bddcd358946cb",
+      "tip_date": "2026-06-04T00:51:44-04:00",
+      "files_touched": 4,
+      "status": "STRANDED",
+      "files_differing": 4,
+      "differing_sample": [
+        ".gitignore",
+        "acgi-ai/CLAIM_VALIDATION.md",
+        "acgi-ai/claim-matrix.json",
+        "acgi-ai/src/routes/Marketing.tsx"
+      ]
+    },
+    {
+      "branch": "copilot/resolve-conflict-and-merge",
+      "tip_sha": "dcb860cc48d18d3ea70553f1218913f08cb2af27",
+      "tip_date": "2026-07-03T20:05:00+00:00",
+      "files_touched": 13,
+      "status": "STRANDED",
+      "files_differing": 9,
+      "differing_sample": [
+        ".claude/hooks/__pycache__/acgs-emit-receipt.cpython-312.pyc",
+        ".gitignore",
+        ".gitmodules",
+        "MONOREPO.md",
+        "docs/constitutional-hashes.lock"
+      ]
+    },
+    {
+      "branch": "dislovelhl-ideal-goggles",
+      "tip_sha": "b07ceea66784624db87ad3267e1ea386f985ff9c",
+      "tip_date": "2026-06-24T00:28:33-04:00",
+      "files_touched": 11,
+      "status": "STRANDED",
+      "files_differing": 8,
+      "differing_sample": [
+        ".github/workflows/python-gove-zone.yml",
+        ".gitignore",
+        "MONOREPO.md",
+        "README.md",
+        "packages/gove-zone/src/gove_zone/audit.py"
+      ]
+    },
+    {
+      "branch": "dislovelhl-patch-1",
+      "tip_sha": "fb8eb1c264aa94ac58259d154c259b2066c99927",
+      "tip_date": "2026-08-11T12:51:19+00:00",
+      "files_touched": 50,
+      "status": "LANDED",
+      "files_differing": 0
+    },
+    {
+      "branch": "dislovelhl-stunning-bassoon",
+      "tip_sha": "e90595c52ef3a323ad80ade74be24d5ad4116ab0",
+      "tip_date": "2026-06-26T13:02:05-04:00",
+      "files_touched": 2,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "docs/SECURITY_MODEL.md",
+        "tests/docs/test_adversary_model.py"
+      ]
+    },
+    {
+      "branch": "docs-version-pin-fix",
+      "tip_sha": "3c57a06bbbd09164e0fdc7fd18bccc1df4ede59b",
+      "tip_date": "2026-07-21T03:59:16-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "docs/acgi-ai-console-realization-spec-2026-05-13",
+      "tip_sha": "627b20797f9052607c94fa0d676efec950cdf8a3",
+      "tip_date": "2026-05-16T05:17:41-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "docs/adr-gap-phase-b3",
+      "tip_sha": "129aa48ce715006b0b8401c2b2476362e26d93ff",
+      "tip_date": "2026-05-16T05:16:56-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "docs/agent-governance-market-roadmap-20260524",
+      "tip_sha": "c3ea38848b0011c27c2ed2ff7ff4326beef1cc6d",
+      "tip_date": "2026-05-26T21:11:49-04:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "docs/research/2026-05-24-agent-governance-market-roadmap.md"
+      ]
+    },
+    {
+      "branch": "docs/agent-stack-maturity-flip",
+      "tip_sha": "b8ae95d610bd1fa86295aaebb642aeb9656aaf4e",
+      "tip_date": "2026-07-03T10:42:29-04:00",
+      "files_touched": 3,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        "docs/AGENT_STACK_GOVERNANCE.md",
+        "docs/CLAIMS.md",
+        "docs/INTEGRATION_MATRIX.md"
+      ]
+    },
+    {
+      "branch": "docs/architecture-gitnexus-import",
+      "tip_sha": "2851acd8556ec406a5eb0d699bedbf3da9e08641",
+      "tip_date": "2026-05-16T05:21:06-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "docs/blog-replay-context-claim",
+      "tip_sha": "0247287870d3ca74b09358ae75ecec8863a43ee9",
+      "tip_date": "2026-06-11T08:07:11-04:00",
+      "files_touched": 2,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "docs/blog/2026-06-receipts-vs-guardrails-DEVTO.md",
+        "docs/blog/2026-06-receipts-vs-guardrails-positioning.md"
+      ]
+    },
+    {
+      "branch": "docs/campaign-launch-drafts",
+      "tip_sha": "92fa6b49d415bc7f1ef6d434d27cb56b598df9ad",
+      "tip_date": "2026-06-11T07:58:55-04:00",
+      "files_touched": 14,
+      "status": "STRANDED",
+      "files_differing": 11,
+      "differing_sample": [
+        "acgi-ai/src/App.css",
+        "acgi-ai/src/routes/Marketing.tsx",
+        "docs/blog/2026-06-receipts-vs-guardrails-DEVTO.md",
+        "docs/blog/2026-06-receipts-vs-guardrails-THREAD-X.md",
+        "docs/blog/2026-06-receipts-vs-guardrails-THREAD.md"
+      ]
+    },
+    {
+      "branch": "docs/check6-workflow-permissions-amendment",
+      "tip_sha": "cf957e4a21e4a43f29f0b6283be04b3a02634cd5",
+      "tip_date": "2026-05-16T05:16:42-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "docs/community-health",
+      "tip_sha": "da896580a02415b606b5fb952dd708d9939c98aa",
+      "tip_date": "2026-07-23T06:44:43-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "docs/comparison-agt-permit",
+      "tip_sha": "5c2d36497a7a69ba58e01ba838eff6ff59f0b55c",
+      "tip_date": "2026-08-09T09:20:58-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "docs/comparison-microsoft",
+      "tip_sha": "7172ac177a6eaed5732c0cad2a1b5f0887db80a3",
+      "tip_date": "2026-06-07T23:51:09-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "docs/console-forward-auth-design",
+      "tip_sha": "770c7cf2af1a4bdb96a9cdc75cf5b849874dfa14",
+      "tip_date": "2026-06-06T19:46:45-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "docs/deploy-dns-records",
+      "tip_sha": "b9bb2ddb0c5caadd5a154e35ef5461ced4b84504",
+      "tip_date": "2026-06-25T21:19:39-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "docs/deploy-vercel-residue",
+      "tip_sha": "f8a9f0300545fcd74b48e828f1041bbc24ef59f2",
+      "tip_date": "2026-06-25T21:22:21-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "docs/design-and-solutions-notes",
+      "tip_sha": "783c8ed0a560a14a6495bb62007bbb0f95515245",
+      "tip_date": "2026-06-06T14:18:18-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "docs/gove-zone-readme-honesty",
+      "tip_sha": "1c7585ca93b71445e57b34cdd4724757dbc4c4a1",
+      "tip_date": "2026-06-07T22:00:46-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "docs/gove-zone-status-headers",
+      "tip_sha": "fa48de2394a736e276898a03bd9d19f54d2bce3d",
+      "tip_date": "2026-07-24T16:30:36-04:00",
+      "files_touched": 2,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "packages/gove-zone/docs/plan-level-governance.md",
+        "packages/gove-zone/docs/workflow-receipt-chain.md"
+      ]
+    },
+    {
+      "branch": "docs/governance-failure-modes",
+      "tip_sha": "60432bc8b3e4008f207ba5b3de0ca2c04ab05283",
+      "tip_date": "2026-05-06T11:46:34-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "docs/investor-brief",
+      "tip_sha": "0a72c18825ead81d8f67e34f899bd46410aa5cf1",
+      "tip_date": "2026-07-08T19:17:20-04:00",
+      "files_touched": 2,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "docs/productization/07-investor-brief.md",
+        "docs/productization/README.md"
+      ]
+    },
+    {
+      "branch": "docs/mattermost-governance-comparison",
+      "tip_sha": "02eb7f0daf1a22a7880c259a38fc7615cc5b5419",
+      "tip_date": "2026-06-15T02:26:32-04:00",
+      "files_touched": 2,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "docs/COMPARISON.md",
+        "docs/ROADMAP.md"
+      ]
+    },
+    {
+      "branch": "docs/neutral-positioning-reconciled",
+      "tip_sha": "50ff6179b477bcfcd2d8b1e108919878e19638d8",
+      "tip_date": "2026-06-07T17:08:53-04:00",
+      "files_touched": 160,
+      "status": "STRANDED",
+      "files_differing": 77,
+      "differing_sample": [
+        ".github/workflows/python-acgs-lite.yml",
+        ".github/workflows/python-acgs-swarm.yml",
+        ".github/workflows/python-agent-bus-analyzer.yml",
+        ".github/workflows/python-eval-mvp.yml",
+        "AGENTS.md"
+      ]
+    },
+    {
+      "branch": "docs/openswarm-comparison-and-ci-handoffs-2026-05-13",
+      "tip_sha": "3ec9e56acdb6a6e2b27fac7e3ade616714d0f47e",
+      "tip_date": "2026-05-16T05:17:28-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "docs/productization-pack",
+      "tip_sha": "69c21383d745eec9d59c3d5a3e489aa315ca99c9",
+      "tip_date": "2026-07-07T14:03:11-07:00",
+      "files_touched": 8,
+      "status": "STRANDED",
+      "files_differing": 8,
+      "differing_sample": [
+        "docs/COMPLIANCE_CROSSWALK.md",
+        "docs/productization/01-enterprise-architecture.md",
+        "docs/productization/02-deployment-options.md",
+        "docs/productization/03-customer-onboarding.md",
+        "docs/productization/04-api-documentation.md"
+      ]
+    },
+    {
+      "branch": "docs/productization-review-fixes",
+      "tip_sha": "b1c2e1b27ba391f6a50ede9bdfd6d7d822122f1d",
+      "tip_date": "2026-07-08T19:13:18-04:00",
+      "files_touched": 4,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        "docs/productization/03-customer-onboarding.md",
+        "docs/productization/04-api-documentation.md",
+        "docs/productization/README.md"
+      ]
+    },
+    {
+      "branch": "docs/roadmap-comparison-refresh-20260618",
+      "tip_sha": "2aa7771eb560ab479358f89e102882870b13c84e",
+      "tip_date": "2026-06-18T19:18:47-04:00",
+      "files_touched": 2,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "docs/COMPARISON.md",
+        "docs/ROADMAP.md"
+      ]
+    },
+    {
+      "branch": "docs/roadmap-enforcement-substrate",
+      "tip_sha": "c889f732a5085ad1fecf92d1356fe38c1b7a83b1",
+      "tip_date": "2026-06-21T22:53:22-07:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "ROADMAP-ENFORCEMENT-SUBSTRATE.md"
+      ]
+    },
+    {
+      "branch": "docs/skill-forge-runbooks",
+      "tip_sha": "ea4fd67e9cfa63edf5cc8fa77084f070823e79cf",
+      "tip_date": "2026-06-07T20:44:50-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "docs/solutions-ci-gate-parity",
+      "tip_sha": "f6bcae349045cb3e232dea4e4465bdf2fa4a6fd9",
+      "tip_date": "2026-06-06T01:23:33-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "docs/submodule-token-runbook-v1",
+      "tip_sha": "4d1aa0329ba2fbf219579c2382e0f38acce5f867",
+      "tip_date": "2026-05-16T05:16:05-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "ecc-tools/govern-zone-1779994771092",
+      "tip_sha": "e845fc45a3cccdd55609793629c0b3228b6a06f6",
+      "tip_date": "2026-05-28T18:59:49+00:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat-docs-picken-crosswalk",
+      "tip_sha": "14218d7c61d9c853f95fb563f55aad0247c5968b",
+      "tip_date": "2026-07-14T13:24:05-07:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "docs/crosswalks/PICKEN_BOARD_AI_CYBER_CROSSWALK.md"
+      ]
+    },
+    {
+      "branch": "feat/acgi-ai-b16-browser-ci",
+      "tip_sha": "a58cde8161e53d44fb3da8e4b5b92244294d9f5b",
+      "tip_date": "2026-06-26T00:13:16-04:00",
+      "files_touched": 16,
+      "status": "STRANDED",
+      "files_differing": 7,
+      "differing_sample": [
+        ".github/workflows/console.yml",
+        "acgi-ai/ARCHITECTURE.md",
+        "acgi-ai/DEPLOY.md",
+        "acgi-ai/PLAN.md",
+        "acgi-ai/package.json"
+      ]
+    },
+    {
+      "branch": "feat/acgi-ai-cloudflare-pages-deploy",
+      "tip_sha": "35e67d8bcb60072c8c5a4fcaea607a51cb5057f8",
+      "tip_date": "2026-06-15T01:21:38-04:00",
+      "files_touched": 10,
+      "status": "STRANDED",
+      "files_differing": 8,
+      "differing_sample": [
+        ".github/workflows/marketing-cloudflare.yml",
+        ".github/workflows/marketing.yml",
+        "acgi-ai/CLAUDE.md",
+        "acgi-ai/DEPLOY.md",
+        "acgi-ai/infra/cloudflare/_headers"
+      ]
+    },
+    {
+      "branch": "feat/acgs-conductor-adapter-spike",
+      "tip_sha": "2b0540a9b3ce458bcbc5d6f811ef86049b30b2e4",
+      "tip_date": "2026-05-26T21:49:32-04:00",
+      "files_touched": 6,
+      "status": "LANDED",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/acgs-design-system",
+      "tip_sha": "8efd7f034df0f28d03ed53e1587bffb520cf7687",
+      "tip_date": "2026-06-07T21:27:52-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/acgs-perplexity-ask",
+      "tip_sha": "906f649df5c813de22fc8681dddbb0294474a962",
+      "tip_date": "2026-06-14T03:59:08-04:00",
+      "files_touched": 6,
+      "status": "STRANDED",
+      "files_differing": 5,
+      "differing_sample": [
+        "acgi-ai/CLAUDE.md",
+        "acgi-ai/DESIGN.md",
+        "acgi-ai/src/routes/Ask.tsx",
+        "acgi-ai/src/routes/Marketing.tsx",
+        "acgi-ai/src/surfaces/marketing/App.tsx"
+      ]
+    },
+    {
+      "branch": "feat/acgs-phoenix-observability-clean",
+      "tip_sha": "295c310c48f624625a51aae54b7390a94bb21195",
+      "tip_date": "2026-05-07T09:28:31-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/acgs-trajectory-phase2",
+      "tip_sha": "1fbb78834b0d9b0dfbd9dc841bd86e60308564fe",
+      "tip_date": "2026-08-08T22:33:32+00:00",
+      "files_touched": 66,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        ".github/workflows/python-gove-zone.yml"
+      ]
+    },
+    {
+      "branch": "feat/add-research-packages",
+      "tip_sha": "ef7cc94014225e138d4055b16519c7855850f2cf",
+      "tip_date": "2026-06-06T02:53:54-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/agent-bus-analyzer-frontend-tests",
+      "tip_sha": "97fbaed89df53c7bcd49df467989fe21a158143f",
+      "tip_date": "2026-05-28T14:58:57-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/buildable-okr-slice",
+      "tip_sha": "158bf05a68c7ebec7006d551d552ac7fb94e031a",
+      "tip_date": "2026-06-21T07:14:32-07:00",
+      "files_touched": 8,
+      "status": "STRANDED",
+      "files_differing": 5,
+      "differing_sample": [
+        "docs/CLAIMS.md",
+        "docs/EU_AI_ACT_MAPPING.md",
+        "docs/PROOF_PATH.md",
+        "packages/gove-zone/tests/test_metrics.py",
+        "tests/docs/test_eu_ai_act_mapping.py"
+      ]
+    },
+    {
+      "branch": "feat/bus-analysis-test-runner",
+      "tip_sha": "a91cbb28423f108e5426d0beb6d9d016c0b9bd53",
+      "tip_date": "2026-05-26T21:21:45-04:00",
+      "files_touched": 12,
+      "status": "STRANDED",
+      "files_differing": 5,
+      "differing_sample": [
+        "acgi-ai/.gitignore",
+        "acgi-ai/package.json",
+        "acgi-ai/playwright.config.ts",
+        "acgi-ai/pnpm-lock.yaml",
+        "acgi-ai/tests/e2e/bus-analysis.spec.ts"
+      ]
+    },
+    {
+      "branch": "feat/ci-security-scanners",
+      "tip_sha": "38599183056498fc9169bf72dce12b340ff0bac2",
+      "tip_date": "2026-06-28T16:29:21-07:00",
+      "files_touched": 2,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        ".github/workflows/gitguardian.yml",
+        ".github/workflows/socket-security.yml"
+      ]
+    },
+    {
+      "branch": "feat/compliance-evidence-pack",
+      "tip_sha": "770053fb0f7e73ea2cf8538cbee355a1fdaff9f0",
+      "tip_date": "2026-07-08T07:55:02-07:00",
+      "files_touched": 18,
+      "status": "STRANDED",
+      "files_differing": 16,
+      "differing_sample": [
+        ".github/workflows/tests-docs.yml",
+        "compliance/evidence-inputs/audit.jsonl",
+        "compliance/evidence-inputs/decision-receipt.json",
+        "compliance/evidence-inputs/side-store.jsonl",
+        "compliance/evidence-pack/README.md"
+      ]
+    },
+    {
+      "branch": "feat/compliance-mapping-engine",
+      "tip_sha": "147e2bb37e90e86084efe2c2ca176c722d95b6c0",
+      "tip_date": "2026-07-07T16:25:54-07:00",
+      "files_touched": 4,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        "compliance/COMPLIANCE_READINESS_REPORT.md",
+        "compliance/control-mapping.json",
+        "compliance/engine.py"
+      ]
+    },
+    {
+      "branch": "feat/console-cloudrun-production-gate",
+      "tip_sha": "429f0a44d0eba3dd2d3f4fffa662f0acfdafe7d1",
+      "tip_date": "2026-06-15T01:09:40-04:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        ".github/workflows/console.yml"
+      ]
+    },
+    {
+      "branch": "feat/copilot-eval-spike",
+      "tip_sha": "b11df74e2ff624e4f898440afae1c9c7083993e9",
+      "tip_date": "2026-06-07T21:45:57-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/copilot-governance-bridge",
+      "tip_sha": "b5f3464e5d1d6ce364b75ecd304b1a1ef85270c8",
+      "tip_date": "2026-06-07T20:48:30-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/enterprise-control-plane",
+      "tip_sha": "25bea1726fc1cf080a726ff97260abd205c396c3",
+      "tip_date": "2026-07-17T17:43:49-07:00",
+      "files_touched": 2,
+      "status": "LANDED",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/eval-r2-topic",
+      "status": "ERROR",
+      "error": "git merge-base --all exited 1 (no merge base with BASE?)",
+      "tip_sha": "959326795bf14adaa96d90c992144d3284acab64",
+      "tip_date": "",
+      "files_touched": 0,
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/external-submodule-openswarm-2026-05-13",
+      "tip_sha": "264f86ac17d86656757550308f7b835ee262be81",
+      "tip_date": "2026-05-16T05:17:14-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/external-submodules-2026-05-13",
+      "tip_sha": "d2298329acd05b903e5166bf6f2b047fc4b9bc54",
+      "tip_date": "2026-05-13T12:10:56-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/extract-control-plane",
+      "tip_sha": "5b4cf95007afd30f67f6ea70600a4f56782c56d7",
+      "tip_date": "2026-08-06T16:14:21-04:00",
+      "files_touched": 90,
+      "status": "LANDED",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/gove-zone-adversary-suite",
+      "tip_sha": "20f7cdb80f233a57a236851d972eee594c4362a6",
+      "tip_date": "2026-07-07T07:44:21-07:00",
+      "files_touched": 8,
+      "status": "STRANDED",
+      "files_differing": 4,
+      "differing_sample": [
+        ".github/workflows/python-gove-zone.yml",
+        ".gitignore",
+        "packages/gove-zone/tests/adversary/README.md",
+        "packages/gove-zone/tests/adversary/test_coverage_manifest.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-audit-cheap-fixes",
+      "tip_sha": "ce7cf6999a732d0d28f6fa524418ad455c6f6a25",
+      "tip_date": "2026-07-11T15:21:47-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/gove-zone-authority-at-gate",
+      "tip_sha": "b3638feeec46f48b8588a79116395d75bb2beac7",
+      "tip_date": "2026-07-08T03:37:04-07:00",
+      "files_touched": 4,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "packages/gove-zone/src/gove_zone/contracts.py",
+        "packages/gove-zone/src/gove_zone/executor.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-b13-authz",
+      "tip_sha": "2fe8ff28114d49c3a7bf09756984a14469c52b1b",
+      "tip_date": "2026-06-23T16:19:41-04:00",
+      "files_touched": 5,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "packages/gove-zone/src/gove_zone/__init__.py",
+        "packages/gove-zone/src/gove_zone/kernel.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-b13-executor-authz",
+      "tip_sha": "b648dff8313589ef7d82ec11c869740fd7712a43",
+      "tip_date": "2026-06-25T20:23:19-04:00",
+      "files_touched": 4,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        "packages/gove-zone/src/gove_zone/__init__.py",
+        "packages/gove-zone/src/gove_zone/errors.py",
+        "packages/gove-zone/src/gove_zone/executor.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-b2-key-revocation",
+      "tip_sha": "bcf08ccebbdc63ee7b12b9fbe4de3975ca431b1a",
+      "tip_date": "2026-06-25T21:22:53-04:00",
+      "files_touched": 12,
+      "status": "STRANDED",
+      "files_differing": 8,
+      "differing_sample": [
+        "packages/gove-zone/SECURITY.md",
+        "packages/gove-zone/src/gove_zone/__init__.py",
+        "packages/gove-zone/src/gove_zone/contracts.py",
+        "packages/gove-zone/src/gove_zone/errors.py",
+        "packages/gove-zone/src/gove_zone/executor.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-b20-audit-sink",
+      "tip_sha": "e0125a103edd2ad93863d3a470e876e484f6fc37",
+      "tip_date": "2026-06-24T05:59:48-04:00",
+      "files_touched": 1,
+      "status": "LANDED",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/gove-zone-b3-ttl-prune",
+      "tip_sha": "992df18ea654eac5e31fec52a340efa539a8b0d9",
+      "tip_date": "2026-06-26T05:35:33-04:00",
+      "files_touched": 4,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        "docs/SECURITY_MODEL.md",
+        "packages/gove-zone/src/gove_zone/cli.py",
+        "packages/gove-zone/src/gove_zone/consumption.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-b3rem-closeout",
+      "tip_sha": "3c00393548d9bb8bfd6b9b989adc5a715279b207",
+      "tip_date": "2026-06-23T14:53:12-04:00",
+      "files_touched": 1,
+      "status": "LANDED",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/gove-zone-conformance-plane",
+      "tip_sha": "5ad47b35613f5580c91b8956844784a3afd2ca66",
+      "tip_date": "2026-05-28T21:19:20-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/gove-zone-enforce-by-default",
+      "tip_sha": "bf7883981e575e0dca436fa30a0c4e5224675ad2",
+      "tip_date": "2026-06-10T06:00:51-04:00",
+      "files_touched": 9,
+      "status": "STRANDED",
+      "files_differing": 5,
+      "differing_sample": [
+        "packages/gove-zone/README.md",
+        "packages/gove-zone/src/gove_zone/cli.py",
+        "packages/gove-zone/src/gove_zone/integration.py",
+        "packages/gove-zone/tests/test_adapter_conformance.py",
+        "packages/gove-zone/tests/test_integration_gaps.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-framework-integration",
+      "tip_sha": "e9821fe9262fc96e5d14e061a3eca4b98bd019dd",
+      "tip_date": "2026-07-06T00:16:52-07:00",
+      "files_touched": 15,
+      "status": "STRANDED",
+      "files_differing": 10,
+      "differing_sample": [
+        ".claude/workflows/reconstruction-drive.js",
+        ".gitignore",
+        "packages/gove-zone/pyproject.toml",
+        "packages/gove-zone/src/gove_zone/__init__.py",
+        "packages/gove-zone/src/gove_zone/adapters/__init__.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-full-digest-policy-identity",
+      "tip_sha": "8517874f163726e5c0b30ba1c761aa3db9692684",
+      "tip_date": "2026-07-28T06:21:10-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/gove-zone-governance-dag",
+      "tip_sha": "c1e08f5a03063b82753d15013298a949e6641d83",
+      "tip_date": "2026-07-11T10:35:51-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/gove-zone-ledger-audit-reconciliation",
+      "tip_sha": "26e17ec21362ce6dad5b52ea53ab0946bf251a2d",
+      "tip_date": "2026-06-13T10:14:01-04:00",
+      "files_touched": 9,
+      "status": "STRANDED",
+      "files_differing": 5,
+      "differing_sample": [
+        "docs/CLAIMS.md",
+        "docs/SECURITY_MODEL.md",
+        "packages/gove-zone/src/gove_zone/cli.py",
+        "packages/gove-zone/src/gove_zone/consumption.py",
+        "packages/gove-zone/tests/test_cli.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-ledger-hwm-checkpoint",
+      "tip_sha": "8f7b9686965afc54e64422eef4c675888254a259",
+      "tip_date": "2026-06-13T22:22:56-04:00",
+      "files_touched": 11,
+      "status": "STRANDED",
+      "files_differing": 6,
+      "differing_sample": [
+        "docs/CLAIMS.md",
+        "docs/SECURITY_MODEL.md",
+        "packages/gove-zone/src/gove_zone/__init__.py",
+        "packages/gove-zone/src/gove_zone/cli.py",
+        "packages/gove-zone/src/gove_zone/consumption.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-ledger-observability",
+      "tip_sha": "cab217bc643dc7f06411113bfa4d0738e507ccce",
+      "tip_date": "2026-06-13T11:10:45-04:00",
+      "files_touched": 11,
+      "status": "STRANDED",
+      "files_differing": 6,
+      "differing_sample": [
+        "docs/CLAIMS.md",
+        "docs/SECURITY_MODEL.md",
+        "packages/gove-zone/src/gove_zone/__init__.py",
+        "packages/gove-zone/src/gove_zone/cli.py",
+        "packages/gove-zone/src/gove_zone/consumption.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-ledger-stack-onto-master",
+      "tip_sha": "317ca22802c922a12cee6d9c97869961075d3765",
+      "tip_date": "2026-06-15T01:17:33-04:00",
+      "files_touched": 8,
+      "status": "STRANDED",
+      "files_differing": 5,
+      "differing_sample": [
+        "docs/SECURITY_MODEL.md",
+        "packages/gove-zone/src/gove_zone/__init__.py",
+        "packages/gove-zone/src/gove_zone/cli.py",
+        "packages/gove-zone/src/gove_zone/consumption.py",
+        "packages/gove-zone/tests/test_cli.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-maci-role-separation",
+      "tip_sha": "0962778d1e3e9abeec168f4367d46c3e6d350341",
+      "tip_date": "2026-05-30T10:49:29-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/gove-zone-mcp-binding",
+      "tip_sha": "644fc7220d210028b54fbe7241ff904fe796bc95",
+      "tip_date": "2026-06-10T07:31:21-04:00",
+      "files_touched": 7,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        "acgs_governance_eval_mvp/governed_mcp_v0/server.py",
+        "packages/gove-zone/README.md",
+        "packages/gove-zone/src/gove_zone/__init__.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-phase-evidence-schema",
+      "tip_sha": "1fef3e7a63feabd68dbd78aaaadb5ec9dbd81ff5",
+      "tip_date": "2026-07-07T09:04:13-04:00",
+      "files_touched": 4,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        ".github/workflows/tests-docs.yml"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-plan-level-governance",
+      "tip_sha": "2565fa16997374818b6991159dd299d889b28df3",
+      "tip_date": "2026-05-30T11:25:44-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/gove-zone-policy-hash-verify",
+      "tip_sha": "b8ba3039ec67d4d63456a98cf0fba20ac95872b9",
+      "tip_date": "2026-06-18T19:40:25-04:00",
+      "files_touched": 2,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "packages/gove-zone/src/gove_zone/executor.py",
+        "packages/gove-zone/tests/test_executor_guard.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-policy-identity",
+      "tip_sha": "e5aea393cf1f5fad4c8b9fb60a2487e98e2706f0",
+      "tip_date": "2026-07-27T07:04:19-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/gove-zone-production-profile-evidence",
+      "tip_sha": "8eaa1a7e4053ce2a2e0dfdbd63ed13d701d94be0",
+      "tip_date": "2026-06-06T07:01:47-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/gove-zone-production-strict",
+      "tip_sha": "dbc64990d3cde9a76988b23d81d1c5693707d021",
+      "tip_date": "2026-06-18T19:56:57-04:00",
+      "files_touched": 6,
+      "status": "STRANDED",
+      "files_differing": 4,
+      "differing_sample": [
+        "packages/gove-zone/src/gove_zone/contracts.py",
+        "packages/gove-zone/src/gove_zone/errors.py",
+        "packages/gove-zone/src/gove_zone/executor.py",
+        "packages/gove-zone/src/gove_zone/receipt.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-proofpack-roundtrip",
+      "tip_sha": "ef33cc4ef299b852038756e640326795f787479d",
+      "tip_date": "2026-06-18T19:38:03-04:00",
+      "files_touched": 2,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "packages/gove-zone/src/gove_zone/cli.py",
+        "packages/gove-zone/tests/test_cli.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-pypi-release-prep",
+      "tip_sha": "af120941df19f334f3a5c15511953203996b5fc8",
+      "tip_date": "2026-07-03T23:13:13-07:00",
+      "files_touched": 2,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "docs/gove-zone-pypi-readiness.md",
+        "packages/gove-zone/pyproject.toml"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-receipt-consumption",
+      "tip_sha": "9350bac56e8355e994dbbfc9f532ae14c4f2cd7f",
+      "tip_date": "2026-06-10T09:41:43-04:00",
+      "files_touched": 7,
+      "status": "STRANDED",
+      "files_differing": 7,
+      "differing_sample": [
+        "packages/gove-zone/README.md",
+        "packages/gove-zone/src/gove_zone/__init__.py",
+        "packages/gove-zone/src/gove_zone/consumption.py",
+        "packages/gove-zone/src/gove_zone/errors.py",
+        "packages/gove-zone/src/gove_zone/escalation.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-rejection-allowed-alternatives",
+      "tip_sha": "854a575536f0021d2bd033ff2098c699579be679",
+      "tip_date": "2026-06-10T05:39:35-04:00",
+      "files_touched": 5,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        "packages/gove-zone/README.md",
+        "packages/gove-zone/src/gove_zone/__init__.py",
+        "packages/gove-zone/src/gove_zone/errors.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-release-prep",
+      "tip_sha": "c5a6866a8a10aa14c6a749bd53fc7f89093fe988",
+      "tip_date": "2026-07-11T03:37:49-07:00",
+      "files_touched": 12,
+      "status": "STRANDED",
+      "files_differing": 8,
+      "differing_sample": [
+        ".github/workflows/python-gove-zone.yml",
+        ".github/workflows/release-gove-zone.yml",
+        "packages/gove-zone/CHANGELOG.md",
+        "packages/gove-zone/docs/API_STABILITY.md",
+        "packages/gove-zone/docs/RELEASING.md"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-replay-side-store",
+      "tip_sha": "f7108ece5456da7876b7e8a12b9cb6e9d3d7b954",
+      "tip_date": "2026-06-06T00:49:56-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/gove-zone-simulate",
+      "tip_sha": "c4751ee98a0b7be44c282658292188ad29fa9a87",
+      "tip_date": "2026-06-10T02:25:04-04:00",
+      "files_touched": 3,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "packages/gove-zone/README.md",
+        "packages/gove-zone/src/gove_zone/kernel.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-structured-rejection",
+      "tip_sha": "0e80b0405d1219399d664034c6919e6464d323b4",
+      "tip_date": "2026-06-10T01:42:18-04:00",
+      "files_touched": 5,
+      "status": "STRANDED",
+      "files_differing": 4,
+      "differing_sample": [
+        "packages/gove-zone/README.md",
+        "packages/gove-zone/src/gove_zone/__init__.py",
+        "packages/gove-zone/src/gove_zone/errors.py",
+        "packages/gove-zone/src/gove_zone/rejection.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-tamper-evident-consumption-ledger",
+      "tip_sha": "9bbea6e2235169f4f236647d9855954b344ab6a0",
+      "tip_date": "2026-06-13T08:24:34-04:00",
+      "files_touched": 8,
+      "status": "STRANDED",
+      "files_differing": 5,
+      "differing_sample": [
+        "docs/CLAIMS.md",
+        "docs/SECURITY_MODEL.md",
+        "packages/gove-zone/src/gove_zone/cli.py",
+        "packages/gove-zone/src/gove_zone/consumption.py",
+        "packages/gove-zone/tests/test_cli.py"
+      ]
+    },
+    {
+      "branch": "feat/gove-zone-w0-m0-evidence-capture-20260726",
+      "tip_sha": "c5b6e5bdf776fbaeaf968295cf3541fc4a895b54",
+      "tip_date": "2026-07-26T20:01:51-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/gove-zone-w0-m0-runtime-capture-20260726",
+      "tip_sha": "15a76cab29350734cf26f0120ec9d659e21efcdb",
+      "tip_date": "2026-07-30T21:27:54-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/gove-zone-workflow-receipt-chain",
+      "tip_sha": "3f715b5885dad87a8ae20815a0d6345d73b32577",
+      "tip_date": "2026-05-31T03:54:48-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/governed-loop-v2",
+      "tip_sha": "d868c52b2c1a12089d6d91fcab22f4364475b64c",
+      "tip_date": "2026-07-06T18:13:37-04:00",
+      "files_touched": 15,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        ".gitignore",
+        "evidence/README.md"
+      ]
+    },
+    {
+      "branch": "feat/governed-vulnclaw-pentest",
+      "tip_sha": "f91ab63157dfde994784d98e2b8d82ed8dda153b",
+      "tip_date": "2026-07-13T04:17:46-04:00",
+      "files_touched": 119,
+      "status": "STRANDED",
+      "files_differing": 83,
+      "differing_sample": [
+        ".claude/policy/build.yaml",
+        ".claude/rules/headless-delegation.md",
+        ".gitignore",
+        ".gitmodules",
+        "MONOREPO.md"
+      ]
+    },
+    {
+      "branch": "feat/hub-receipt-gate-hero",
+      "tip_sha": "933e2921e14f4b2c6c02dfd1b3c89d719633b1c7",
+      "tip_date": "2026-06-06T07:03:10-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/hygiene-salvage-20260709",
+      "tip_sha": "410996ca6d7dd327ba97eea6bb4f74ac4d7cced8",
+      "tip_date": "2026-07-11T15:12:53-04:00",
+      "files_touched": 16,
+      "status": "STRANDED",
+      "files_differing": 5,
+      "differing_sample": [
+        "ROADMAP-ENFORCEMENT-SUBSTRATE.md",
+        "docs/security/threat-model-v2.md",
+        "hub-verification-report.md",
+        "packages/gove-zone/src/gove_zone/pql_compiler.py",
+        "packages/research-engine/pyproject.toml"
+      ]
+    },
+    {
+      "branch": "feat/iii-governance-lab-static-ci",
+      "tip_sha": "d1c979a63a4e110c35115894d8077bb10a3d2561",
+      "tip_date": "2026-05-27T16:35:14-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/kernel-unification-adr",
+      "tip_sha": "5d2c258fb08dc5f50bb6e3667d5f4cdb12052244",
+      "tip_date": "2026-07-10T21:36:34-07:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "docs/adr/0009-kernel-of-record-gove-zone.md"
+      ]
+    },
+    {
+      "branch": "feat/managed-evidence-pilot-offer",
+      "tip_sha": "a63ab30e999ddf75d94758c4f281ba912e3588bb",
+      "tip_date": "2026-07-04T01:36:41-04:00",
+      "files_touched": 4,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "docs/strategy/design-partner-kit/PILOT-OFFER.md"
+      ]
+    },
+    {
+      "branch": "feat/marketing-dark-register",
+      "tip_sha": "1cb15d4c844114da1f636b2d8687b2df9e44a38a",
+      "tip_date": "2026-07-26T08:38:14-04:00",
+      "files_touched": 3,
+      "status": "LANDED",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/marketing-drafting-print",
+      "tip_sha": "6ba8282f9fd4bb3c589cafd4472647e900bbbc2c",
+      "tip_date": "2026-07-10T21:42:16-04:00",
+      "files_touched": 2,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "acgi-ai/DESIGN.md",
+        "acgi-ai/src/index.css"
+      ]
+    },
+    {
+      "branch": "feat/marketing-gold-details",
+      "tip_sha": "00b3463b8fc9e69a4f376a42453c94cdba1f2daa",
+      "tip_date": "2026-07-10T23:48:22-04:00",
+      "files_touched": 3,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        "acgi-ai/DESIGN.md",
+        "acgi-ai/src/App.css",
+        "acgi-ai/src/index.css"
+      ]
+    },
+    {
+      "branch": "feat/marketing-governance-hub",
+      "tip_sha": "66c8a4221ad34038b0fdd7443608d2d98f6c656b",
+      "tip_date": "2026-06-06T03:25:51-04:00",
+      "files_touched": 15,
+      "status": "STRANDED",
+      "files_differing": 11,
+      "differing_sample": [
+        "acgi-ai/CLAIM_WORDING_CANDIDATES.md",
+        "acgi-ai/claim-matrix.json",
+        "acgi-ai/index.html",
+        "acgi-ai/package.json",
+        "acgi-ai/scripts/check-agent-assets.mjs"
+      ]
+    },
+    {
+      "branch": "feat/marketing-hub-claim-substantiation",
+      "tip_sha": "a5df37e03d894bff31339edf25c6970f2ea80652",
+      "tip_date": "2026-06-05T11:15:34-04:00",
+      "files_touched": 15,
+      "status": "STRANDED",
+      "files_differing": 11,
+      "differing_sample": [
+        "acgi-ai/CLAIM_WORDING_CANDIDATES.md",
+        "acgi-ai/claim-matrix.json",
+        "acgi-ai/index.html",
+        "acgi-ai/package.json",
+        "acgi-ai/scripts/check-agent-assets.mjs"
+      ]
+    },
+    {
+      "branch": "feat/marketing-hub-forward",
+      "tip_sha": "4b4717238cdc68901dff73ba3f9110185c1f9514",
+      "tip_date": "2026-07-26T03:56:04-04:00",
+      "files_touched": 10,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "acgi-ai/package.json"
+      ]
+    },
+    {
+      "branch": "feat/marketing-sitemap-robots",
+      "tip_sha": "890ca286f44962688c242cc9c552fe920ea76c36",
+      "tip_date": "2026-06-27T09:59:11-04:00",
+      "files_touched": 5,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        "acgi-ai/package.json",
+        "acgi-ai/public/llms.txt",
+        "acgi-ai/public/sitemap.xml"
+      ]
+    },
+    {
+      "branch": "feat/mcp-gateway-design",
+      "tip_sha": "4746f5f4338d5e9b4f82288fffa4ddb155d7a72d",
+      "tip_date": "2026-07-03T21:29:00-04:00",
+      "files_touched": 1,
+      "status": "LANDED",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/mcp-gateway-pilot",
+      "tip_sha": "69442f9456117068b1b8f7a70cbd8a730b6948da",
+      "tip_date": "2026-07-03T19:39:01-07:00",
+      "files_touched": 11,
+      "status": "STRANDED",
+      "files_differing": 8,
+      "differing_sample": [
+        ".github/workflows/python-gove-zone.yml",
+        "docs/SECURITY_MODEL.md",
+        "packages/gove-zone/pyproject.toml",
+        "packages/gove-zone/src/gove_zone/adapters/mcp_gateway.py",
+        "packages/gove-zone/src/gove_zone/cli.py"
+      ]
+    },
+    {
+      "branch": "feat/mcp-gateway-session-hardening",
+      "tip_sha": "f28d2a3bef66057dde324e3ecf0adcc08b334d1a",
+      "tip_date": "2026-07-09T03:25:35-04:00",
+      "files_touched": 5,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "docs/SECURITY_MODEL.md"
+      ]
+    },
+    {
+      "branch": "feat/monorepo-unification",
+      "tip_sha": "a33d0caeb27dccfb0bd4765c4155ceae8541affa",
+      "tip_date": "2026-05-12T13:35:03-04:00",
+      "files_touched": 125,
+      "status": "STRANDED",
+      "files_differing": 125,
+      "differing_sample": [
+        ".github/workflows/python-enterprise-mgr.yml",
+        "acgs-enterprise-ai-manager/backend/README.md",
+        "acgs-enterprise-ai-manager/backend/__init__.py",
+        "acgs-enterprise-ai-manager/backend/ai/AUTONOMOUS_OPS_README.md",
+        "acgs-enterprise-ai-manager/backend/ai/LEARNING.md"
+      ]
+    },
+    {
+      "branch": "feat/mutation-authority-validator-trust",
+      "tip_sha": "226022b2a9d9be0471709232d37077e6d199c484",
+      "tip_date": "2026-08-11T09:44:41-04:00",
+      "files_touched": 82,
+      "status": "LANDED",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/partner-auditor-outreach-drafts",
+      "tip_sha": "ace134e0eb9c2e8250b3fc5ca9002a6fc6c01797",
+      "tip_date": "2026-07-04T02:16:03-04:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "docs/strategy/design-partner-kit/OUTREACH-DRAFTS.md"
+      ]
+    },
+    {
+      "branch": "feat/phase-3-audit",
+      "tip_sha": "1719acf9d0f7b670be80958816a379011e636b9a",
+      "tip_date": "2026-05-16T05:16:25-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/pre-launch-hardening",
+      "tip_sha": "549266178f6209b697c2ead2aa1bf78d7dc55057",
+      "tip_date": "2026-07-22T09:53:10-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/regulated-industry-demos",
+      "tip_sha": "2b1549852a880539deda200797200ba17db2e7af",
+      "tip_date": "2026-07-08T19:24:25-04:00",
+      "files_touched": 7,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        "docs/design/governance-aml-screening.md",
+        "docs/design/governance-legal-agent.md",
+        "tests/docs/test_docs_and_examples.py"
+      ]
+    },
+    {
+      "branch": "feat/scoped-trust-http-path",
+      "tip_sha": "f0bdae34c05e5f014d76c99955d4f71a7548f8d1",
+      "tip_date": "2026-07-26T13:03:49-04:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        ".github/workflows/python-acgs-control-plane.yml"
+      ]
+    },
+    {
+      "branch": "feat/self-fitting-executor-workflow",
+      "tip_sha": "59c66cf214501bbcb7ef055d02ad55ad5647cbef",
+      "tip_date": "2026-07-06T17:51:15-04:00",
+      "files_touched": 1,
+      "status": "LANDED",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/submodule-token-runbook-v0",
+      "tip_sha": "30777938b573bf763f47d9868da5615317799789",
+      "tip_date": "2026-05-16T05:15:16-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "feat/swot-execution-artifacts",
+      "tip_sha": "7af92a7cff918fb6e8d29ee002fc1f3ee6d0417c",
+      "tip_date": "2026-07-03T17:00:55-07:00",
+      "files_touched": 12,
+      "status": "STRANDED",
+      "files_differing": 9,
+      "differing_sample": [
+        ".claude/workflows/swot-execution.js",
+        "docs/strategy/design-partner-kit/DEMO-RUNBOOK.md",
+        "docs/strategy/design-partner-kit/ONBOARDING.md",
+        "docs/strategy/design-partner-kit/ONE-PAGER.md",
+        "docs/strategy/mcp-gateway-gap-analysis.md"
+      ]
+    },
+    {
+      "branch": "feat/universal-agent-gateway",
+      "tip_sha": "ad1d516e9e3c31d78da01529e7998d23f06c3a9c",
+      "tip_date": "2026-07-08T07:51:59-07:00",
+      "files_touched": 3,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        "packages/gove-zone/src/gove_zone/__init__.py",
+        "packages/gove-zone/src/gove_zone/gateway.py",
+        "packages/gove-zone/tests/test_universal_gateway.py"
+      ]
+    },
+    {
+      "branch": "feat/vulnclaw-demo-salvage",
+      "tip_sha": "8e983f131cc0646132eb202472760e42bb9732ed",
+      "tip_date": "2026-07-03T05:49:02-07:00",
+      "files_touched": 4,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "docs/design/governance-vulnclaw-pentest.md",
+        "packages/gove-zone/tests/test_examples_run.py"
+      ]
+    },
+    {
+      "branch": "feature/governance-trajectory-pipeline",
+      "tip_sha": "1410245a87e802e6018c44d7a4cda268bb37ceda",
+      "tip_date": "2026-08-07T00:21:37-04:00",
+      "files_touched": 78,
+      "status": "LANDED",
+      "files_differing": 0
+    },
+    {
+      "branch": "final-goal/g1-4",
+      "tip_sha": "5efe1dac8fd5b38176f7f2d8149ee611d6523f62",
+      "tip_date": "2026-06-09T14:35:28-04:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "packages/gove-zone/tests/test_adapter_conformance.py"
+      ]
+    },
+    {
+      "branch": "final-goal/g1-6",
+      "tip_sha": "b79c770195f54d3be1a1620b027dafc0621dd7ab",
+      "tip_date": "2026-06-09T15:25:05-04:00",
+      "files_touched": 3,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "acgs_governance_eval_mvp/governed_mcp_v0/_io.py"
+      ]
+    },
+    {
+      "branch": "final-goal/g2-1",
+      "tip_sha": "f62293aede2b71fb05392af459c033beff0e9e32",
+      "tip_date": "2026-07-11T01:30:59-04:00",
+      "files_touched": 6,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        "packages/gove-zone/pyproject.toml",
+        "packages/gove-zone/src/gove_zone/schemas/proof-pack.v1.evidence.schema.json",
+        "packages/gove-zone/tests/test_proofpack_schema.py"
+      ]
+    },
+    {
+      "branch": "final-goal/g2-3",
+      "tip_sha": "517c07671d43c3f6912e78495e180f6b3f4f5a47",
+      "tip_date": "2026-07-10T19:51:29-07:00",
+      "files_touched": 1,
+      "status": "LANDED",
+      "files_differing": 0
+    },
+    {
+      "branch": "final-goal/g2-4",
+      "tip_sha": "d2368296b9d723e02d8efa7867de27563d8a3062",
+      "tip_date": "2026-06-09T15:35:18-04:00",
+      "files_touched": 3,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        "packages/gove-zone/src/gove_zone/__init__.py",
+        "packages/gove-zone/src/gove_zone/replay.py",
+        "packages/gove-zone/tests/test_replay_bundle_equivalence.py"
+      ]
+    },
+    {
+      "branch": "final-goal/g2-5",
+      "tip_sha": "c9ffc9f579436c8b095236b2c5907b00d56c5bbf",
+      "tip_date": "2026-06-09T14:35:31-04:00",
+      "files_touched": 5,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "acgs_governance_eval_mvp/governed_mcp_v0/_io.py"
+      ]
+    },
+    {
+      "branch": "final-goal/g3-2",
+      "tip_sha": "676113efac6c9eb5993ab0363798c535d3846622",
+      "tip_date": "2026-07-11T16:36:30-07:00",
+      "files_touched": 4,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "acgi-ai/src/App.css"
+      ]
+    },
+    {
+      "branch": "final-goal/g3-4",
+      "tip_sha": "bd9105797f4e045fb8b533a74f10e78d293b60da",
+      "tip_date": "2026-07-10T19:44:07-07:00",
+      "files_touched": 3,
+      "status": "LANDED",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix-acgi-ai-dangling-tokens",
+      "tip_sha": "6004cc42ee5b87c390254d8b645a526db3c84307",
+      "tip_date": "2026-07-13T09:50:25-04:00",
+      "files_touched": 2,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "acgi-ai/src/App.css",
+        "acgi-ai/src/index.css"
+      ]
+    },
+    {
+      "branch": "fix-fuse-denylist",
+      "tip_sha": "8089747cf19e27698baf7baf755f9dd46658f933",
+      "tip_date": "2026-06-26T13:19:00-04:00",
+      "files_touched": 5,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        ".github/workflows/python-eval-mvp.yml",
+        "acgs_governance_eval_mvp/governed_mcp_v0/_io.py"
+      ]
+    },
+    {
+      "branch": "fix/acgi-ai-biome-import-order",
+      "tip_sha": "9345a4274f67a2dc068e7332d99cfe0dc8fc0880",
+      "tip_date": "2026-07-06T18:18:11-04:00",
+      "files_touched": 8,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        "acgi-ai/DEPLOY.md",
+        "acgi-ai/PLAN.md",
+        "acgi-ai/src/App.css"
+      ]
+    },
+    {
+      "branch": "fix/acgs-ai-vercel-filesystem-route",
+      "tip_sha": "2268f9340209ba99b8dcc62d6a2c1de4b937e8cf",
+      "tip_date": "2026-06-07T22:37:57-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/agents-skill-frontmatter",
+      "tip_sha": "521c9bb62fa24977775e12d1061f0119f0dd6ba8",
+      "tip_date": "2026-08-06T13:27:21-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/ci-ephemeral-gitconfig-submodule-token",
+      "tip_sha": "08ae650a37199cd6dd1c3ca2f89e4483de082137",
+      "tip_date": "2026-07-05T18:18:52-03:00",
+      "files_touched": 4,
+      "status": "STRANDED",
+      "files_differing": 4,
+      "differing_sample": [
+        ".github/workflows/constitutional-hash.yml",
+        ".github/workflows/python-acgs-lite.yml",
+        ".github/workflows/python-acgs-swarm.yml",
+        ".github/workflows/python-clinicalguard.yml"
+      ]
+    },
+    {
+      "branch": "fix/ci-latency-test-and-swarm-submodule",
+      "tip_sha": "08a4c33f85918f8520d48477e8f7d3cea606beae",
+      "tip_date": "2026-05-16T06:16:13-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/ci-root-tests-gate",
+      "tip_sha": "82e600d935819499543d3b34f84ba1cea2c1cb1b",
+      "tip_date": "2026-06-18T23:32:39-04:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        ".github/workflows/tests-root.yml"
+      ]
+    },
+    {
+      "branch": "fix/ci-tests-docs-and-iii-lab-static",
+      "tip_sha": "068d3f8e45e9b496956d43f2af9da29a7d6c38ea",
+      "tip_date": "2026-07-25T06:39:30+00:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/ci-two-step-submodule-checkout-2026-05-13",
+      "tip_sha": "fdf37e6df050ba107b7320e97d8fd558406f91db",
+      "tip_date": "2026-05-13T16:53:08-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/ci-wrangler-devdep",
+      "tip_sha": "87ebda54e9bd03cc95e5b4d7fff8d8f3ceee729b",
+      "tip_date": "2026-07-11T04:44:14-04:00",
+      "files_touched": 2,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "acgi-ai/package.json",
+        "acgi-ai/pnpm-lock.yaml"
+      ]
+    },
+    {
+      "branch": "fix/codex-review-blacksmith-sudo",
+      "tip_sha": "5a7de48b163f93d443b16922cc5e54c26de88c4e",
+      "tip_date": "2026-08-03T20:53:37-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/codex-review-false-green",
+      "tip_sha": "5bb458a3f18281c751bda39b2f9b2be87965fbee",
+      "tip_date": "2026-07-30T19:48:12-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/console-fake-auth-and-mock-safety",
+      "tip_sha": "b19b528b75b861ade8f47b71aca931a7c1411423",
+      "tip_date": "2026-05-12T13:15:01-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/constitutional-hash-lock-clinicalguard",
+      "tip_sha": "8096b3320e6a18f522157422ac7e832ceb37ea3f",
+      "tip_date": "2026-05-16T05:09:17-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/dark-required-scans",
+      "tip_sha": "7e9c368b80cc5ed6fdfd7df52abe19be3d8d98d3",
+      "tip_date": "2026-07-30T10:25:24-04:00",
+      "files_touched": 2,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        ".github/workflows/gitguardian.yml",
+        ".github/workflows/socket-security.yml"
+      ]
+    },
+    {
+      "branch": "fix/drop-caller-worker-otel-advisories",
+      "tip_sha": "7a5d758a1c63712ee02c6ee08ecf54be9cf483be",
+      "tip_date": "2026-07-30T23:31:04+00:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/enterprise-mgr-security-and-runtime",
+      "tip_sha": "96e11436f3e01047357fe298b6d456294fcc75b0",
+      "tip_date": "2026-05-12T12:15:15-04:00",
+      "files_touched": 125,
+      "status": "STRANDED",
+      "files_differing": 125,
+      "differing_sample": [
+        ".github/workflows/python-enterprise-mgr.yml",
+        "acgs-enterprise-ai-manager/backend/README.md",
+        "acgs-enterprise-ai-manager/backend/__init__.py",
+        "acgs-enterprise-ai-manager/backend/ai/AUTONOMOUS_OPS_README.md",
+        "acgs-enterprise-ai-manager/backend/ai/LEARNING.md"
+      ]
+    },
+    {
+      "branch": "fix/evidence-pack-lf-extraction",
+      "tip_sha": "151a8b6602832c399574a4a12c8fcfafa41aeeb9",
+      "tip_date": "2026-07-18T09:48:51-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/example-demos-dev-profile",
+      "tip_sha": "389b4e482205ae738cb23af7bc26624cae5a5b31",
+      "tip_date": "2026-06-07T03:40:25-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/gove-zone-demo-duplicate-kwarg",
+      "tip_sha": "627f538886917b8a54ddeeb5e3f4aafae252abfd",
+      "tip_date": "2026-06-09T01:58:13-04:00",
+      "files_touched": 4,
+      "status": "LANDED",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/gove-zone-execution-governance",
+      "tip_sha": "bbfcfebad55e35823ebab766133d7f4c6a4f19aa",
+      "tip_date": "2026-08-11T14:21:17+00:00",
+      "files_touched": 16,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "packages/gove-zone/src/gove_zone/execution.py",
+        "packages/gove-zone/tests/test_execution_governance.py"
+      ]
+    },
+    {
+      "branch": "fix/gove-zone-pql-fail-closed-20260726",
+      "tip_sha": "18fb670c6dc9f53abe7b0f6da675203ec71718a3",
+      "tip_date": "2026-07-26T16:18:08-04:00",
+      "files_touched": 3,
+      "status": "LANDED",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/governance-critical-c1-c2-c3",
+      "tip_sha": "b0cc25f08813db09e06890afb8b37f7230c0d3c4",
+      "tip_date": "2026-05-07T01:13:09-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/hook-gate-mode-delegation",
+      "tip_sha": "d7d9def63b1e80f10e24230308807074efdd0dde",
+      "tip_date": "2026-06-10T06:52:56-04:00",
+      "files_touched": 3,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        ".claude/hooks/acgs-emit-receipt.py",
+        ".claude/settings.json",
+        "packages/gove-zone/tests/test_integration_gaps.py"
+      ]
+    },
+    {
+      "branch": "fix/keep-github-hosted-security-lanes",
+      "tip_sha": "8bc8cc79ad5eb5943689742e3f30ace040223397",
+      "tip_date": "2026-07-25T06:24:12+00:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/lint-baseline-parent-2026-05-13",
+      "tip_sha": "6d222396a430f90b86a295391148a0f3b58efa29",
+      "tip_date": "2026-05-16T05:15:43-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/marketing-deploy-workers-assets",
+      "tip_sha": "d96fc9549dfaaddf1714ace67eecd2ff1972bd23",
+      "tip_date": "2026-07-10T22:45:32-07:00",
+      "files_touched": 9,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        "acgi-ai/DEPLOY.md",
+        "acgi-ai/infra/cloudflare/workers/wrangler.toml"
+      ]
+    },
+    {
+      "branch": "fix/mcp-adapter-strict-profile-ledger",
+      "tip_sha": "c2e4ba88557c0748e8e4ba862aebed8a53ffcd3e",
+      "tip_date": "2026-07-08T03:49:07-07:00",
+      "files_touched": 2,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "packages/gove-zone/src/gove_zone/adapters/mcp_gateway.py"
+      ]
+    },
+    {
+      "branch": "fix/mcp-gateway-session-id-reuse",
+      "tip_sha": "91ca51229ccc3d7a90bcb9aef8f9e4a5ce6a0730",
+      "tip_date": "2026-07-08T21:49:56-04:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "packages/gove-zone/src/gove_zone/adapters/mcp_gateway.py"
+      ]
+    },
+    {
+      "branch": "fix/pages-jekyll-scope",
+      "tip_sha": "af775dc879291082088a8b074aaea2de8153edb3",
+      "tip_date": "2026-07-28T12:32:06-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/pg-gate-max-connections",
+      "tip_sha": "aa9e95353452565451483f17c7a47abd12a84b9c",
+      "tip_date": "2026-07-27T06:12:14-04:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "packages/acgs-control-plane/scripts/run_postgres_gate.sh"
+      ]
+    },
+    {
+      "branch": "fix/pipeline-codex-review-round-3",
+      "tip_sha": "52449817729cf6dfe3cd5c7bc5bd8d91787b795f",
+      "tip_date": "2026-08-13T03:10:17+00:00",
+      "files_touched": 10,
+      "status": "STRANDED",
+      "files_differing": 10,
+      "differing_sample": [
+        ".claude/rules/repo-boundaries.md",
+        ".claude/rules/verification-gates.md",
+        ".claude/skills/ablate-ai-layer/scripts/run_ablation.py",
+        ".claude/skills/deploy-drift-check/deploy-drift-check.sh",
+        ".claude/skills/pr-queue/pr-queue.sh"
+      ],
+      "open_pr": 448
+    },
+    {
+      "branch": "fix/postgres-gate-head-0007-assertions",
+      "tip_sha": "76a5430c9eda86ebb44ac6e597f184a71f22a865",
+      "tip_date": "2026-07-26T20:23:33-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/proofpack-manifest-version-drift",
+      "tip_sha": "f565cf985accea6ded024f5b9f84964cd4b59908",
+      "tip_date": "2026-07-03T17:00:40-07:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "packages/gove-zone/src/gove_zone/cli.py"
+      ]
+    },
+    {
+      "branch": "fix/release-publish-github-hosted-runner",
+      "tip_sha": "9c75376a22c0e9e46b3454652d18dc1bc648eb3c",
+      "tip_date": "2026-07-04T17:48:00-04:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        ".github/workflows/release.yml"
+      ]
+    },
+    {
+      "branch": "fix/research-engine-numpy-mypy",
+      "tip_sha": "643c53fc11edc7ba27ff775df85f805920ec8ff7",
+      "tip_date": "2026-06-22T06:57:55-04:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "packages/research-engine/pyproject.toml"
+      ]
+    },
+    {
+      "branch": "fix/uv-workspace-gove-zone-source",
+      "tip_sha": "aaeddadca1f5b938044025fa18c3400b85dd0b39",
+      "tip_date": "2026-07-23T05:09:59-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/worker-routes-in-config",
+      "tip_sha": "ed3ab8fd8eb92b1db4c64f69a97f126646aa5e06",
+      "tip_date": "2026-07-11T02:58:26-04:00",
+      "files_touched": 1,
+      "status": "LANDED",
+      "files_differing": 0
+    },
+    {
+      "branch": "fix/workflows-drop-truthy-fallback",
+      "tip_sha": "901f668a18b08aad90089a90c545844fc6c7b433",
+      "tip_date": "2026-05-16T05:09:43-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "improve/eval-regression-coverage-hardening",
+      "status": "ERROR",
+      "error": "git merge-base --all exited 1 (no merge base with BASE?)",
+      "tip_sha": "af9823378a8776664fe3d91328c64d52bd7e89d1",
+      "tip_date": "",
+      "files_touched": 0,
+      "files_differing": 0
+    },
+    {
+      "branch": "improve/gove_zone_membrane_overhead",
+      "tip_sha": "69c31284a23dfb08f70d28adae35438c22b95665",
+      "tip_date": "2026-07-07T16:26:18-07:00",
+      "files_touched": 6,
+      "status": "STRANDED",
+      "files_differing": 4,
+      "differing_sample": [
+        "packages/gove-zone/src/gove_zone/kernel.py",
+        "packages/gove-zone/src/gove_zone/policy.py",
+        "packages/gove-zone/src/gove_zone/receipt.py",
+        "packages/gove-zone/src/gove_zone/tool.py"
+      ]
+    },
+    {
+      "branch": "land/dependabot-npm",
+      "tip_sha": "42a3bdad989c9c62e1a37a9b1da9c401b26167f3",
+      "tip_date": "2026-07-26T17:53:34-04:00",
+      "files_touched": 2,
+      "status": "LANDED",
+      "files_differing": 0
+    },
+    {
+      "branch": "land/pql-400",
+      "tip_sha": "760ed81ca84169ef93ea55e0fb0d8f2d5607fd04",
+      "tip_date": "2026-07-26T18:06:59-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "launch/stage3-landing-thesis",
+      "tip_sha": "5998dab5cd71a719947d4912a2312e91052ef6ab",
+      "tip_date": "2026-06-06T03:56:39-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "main",
+      "status": "ERROR",
+      "error": "git merge-base --all exited 1 (no merge base with BASE?)",
+      "tip_sha": "29a2a782c8852903e9e178cb076fda52aaa1e20b",
+      "tip_date": "",
+      "files_touched": 0,
+      "files_differing": 0
+    },
+    {
+      "branch": "olla-pinyon",
+      "tip_sha": "4fe4fac4b04031803792085be4430836e0ebdb25",
+      "tip_date": "2026-05-06T15:37:31-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "perf/gove-zone-benchmarks",
+      "tip_sha": "b1cd16f8814505463ae2f5b9f904e90d1932b8c4",
+      "tip_date": "2026-07-08T03:49:47-07:00",
+      "files_touched": 14,
+      "status": "STRANDED",
+      "files_differing": 5,
+      "differing_sample": [
+        "docs/performance-report.md",
+        "packages/gove-zone/src/gove_zone/audit.py",
+        "packages/gove-zone/src/gove_zone/kernel.py",
+        "packages/gove-zone/src/gove_zone/policy.py",
+        "packages/gove-zone/tests/test_perf_optimizations.py"
+      ]
+    },
+    {
+      "branch": "phase-2-trace-crypto",
+      "tip_sha": "a777a17a0c6d79327c4841515f8394982a435958",
+      "tip_date": "2026-05-27T00:28:04-04:00",
+      "files_touched": 45,
+      "status": "STRANDED",
+      "files_differing": 11,
+      "differing_sample": [
+        ".benchmarks/propagation-gate-week2.json",
+        ".claude/settings.json",
+        ".gitignore",
+        "acgs_governance_eval_mvp/governance/audit/__init__.py",
+        "acgs_governance_eval_mvp/governance/audit/jsonl_chain.py"
+      ]
+    },
+    {
+      "branch": "port/evidence-containment-p391-orthogonal",
+      "tip_sha": "c27b87950c50d4aa637302ad18cdd1137720fc95",
+      "tip_date": "2026-07-27T06:46:41-04:00",
+      "files_touched": 5,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        ".github/workflows/saas-beta-p0-evidence.yml",
+        ".github/workflows/saas-beta-required.yml",
+        "tests/saas_beta/test_evidence_bootstrap.py"
+      ]
+    },
+    {
+      "branch": "reconstruct/doc00-s5-fail-fast-test-all-grouping",
+      "tip_sha": "f56de4f5f060652d6709396f0d6c6c34dcf9b33c",
+      "tip_date": "2026-07-06T18:25:10-04:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "acgi-ai/package.json"
+      ]
+    },
+    {
+      "branch": "reconstruct/doc00-s5-fix-stale-pointers",
+      "tip_sha": "7ea8992939ea851e8cf3e039fe591adc0dc40f6b",
+      "tip_date": "2026-07-06T18:04:15-04:00",
+      "files_touched": 3,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        "CLAUDE.md",
+        "MONOREPO.md",
+        "docs/archive/ROADMAP.md"
+      ]
+    },
+    {
+      "branch": "reconstruct/doc00-s5-hermes-fold-in",
+      "tip_sha": "0125f4e84f0a148164022a8de64322c8491ef3ed",
+      "tip_date": "2026-07-06T18:38:01-04:00",
+      "files_touched": 37,
+      "status": "STRANDED",
+      "files_differing": 8,
+      "differing_sample": [
+        ".github/workflows/python-eval-mvp.yml",
+        "CLAUDE.md",
+        "MONOREPO.md",
+        "Makefile",
+        "pyproject.toml"
+      ]
+    },
+    {
+      "branch": "reconstruct/doc00-s5-populate-or-descope-constitutional-hash-gate",
+      "tip_sha": "2db54b178cf700995495df42e6c77669acab97bb",
+      "tip_date": "2026-07-06T16:49:38-03:00",
+      "files_touched": 1,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        ".github/workflows/constitutional-hash.yml"
+      ]
+    },
+    {
+      "branch": "release-readiness-hardening-chatgpt-review",
+      "tip_sha": "3ea64b190436abc6126019c41727a85f4dbc07d7",
+      "tip_date": "2026-05-27T01:57:13-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "release/gove-zone-0.1.0",
+      "tip_sha": "ee548c34c32c1e618099b6f95868f2577c7767e5",
+      "tip_date": "2026-07-18T08:55:02-04:00",
+      "files_touched": 9,
+      "status": "STRANDED",
+      "files_differing": 9,
+      "differing_sample": [
+        ".github/workflows/python-gove-zone.yml",
+        "packages/gove-zone/CHANGELOG.md",
+        "packages/gove-zone/LICENSE",
+        "packages/gove-zone/README.md",
+        "packages/gove-zone/pyproject.toml"
+      ]
+    },
+    {
+      "branch": "storybook-scaffold-rebuild",
+      "tip_sha": "cd89abd0ab9b6b788ad58faec217d0c3b7c43d31",
+      "tip_date": "2026-05-27T05:12:26-04:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "test/coverage-hardening",
+      "tip_sha": "482574e2ea0e3ee5f1519e17f1df58182a5e03d2",
+      "tip_date": "2026-08-11T09:52:09-04:00",
+      "files_touched": 31,
+      "status": "STRANDED",
+      "files_differing": 3,
+      "differing_sample": [
+        ".github/workflows/tests-root-hosted.yml",
+        ".github/workflows/tests-root.yml",
+        "packages/gove-zone/src/gove_zone/sandbox.py"
+      ]
+    },
+    {
+      "branch": "track-f-gate-wired",
+      "tip_sha": "4843fcadc7361b8d5ddc4a2b98fd8c324a0afe75",
+      "tip_date": "2026-06-26T13:29:04-04:00",
+      "files_touched": 2,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "docs/CLAIMS.md"
+      ]
+    },
+    {
+      "branch": "verify/gates-at-45f8593d",
+      "tip_sha": "88b6917964a532c4cc0e6ccacf82c211d0d9b9f1",
+      "tip_date": "2026-07-31T05:03:04+00:00",
+      "files_touched": 0,
+      "status": "NO-OP",
+      "files_differing": 0
+    },
+    {
+      "branch": "work/wt1-issue392-trust-http",
+      "tip_sha": "4f6cef3a4108dce4e2fd0c1caafd8a88e8f9afb3",
+      "tip_date": "2026-07-31T16:59:42+00:00",
+      "files_touched": 3,
+      "status": "STRANDED",
+      "files_differing": 1,
+      "differing_sample": [
+        "packages/gove-zone/src/gove_zone/gateway.py"
+      ]
+    },
+    {
+      "branch": "work/wt3-test-gaps-a2a-gateway",
+      "tip_sha": "198f354177fdb9de380955eb22a914082f772d4b",
+      "tip_date": "2026-08-06T16:07:24-04:00",
+      "files_touched": 9,
+      "status": "STRANDED",
+      "files_differing": 2,
+      "differing_sample": [
+        ".github/workflows/saas-beta-required.yml",
+        "tests/saas_beta/test_ci_gate_contract.py"
+      ]
+    }
+  ]
+}

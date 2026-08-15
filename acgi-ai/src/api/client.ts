@@ -31,6 +31,10 @@ import type {
   MaciLanes,
   OverviewSummary,
   PolicyRule,
+  ProcessComplianceReport,
+  ProcessDetail,
+  ProcessList,
+  ProcessVariantList,
   ReceiptProofPacket,
   SettingSection,
   Tenant,
@@ -70,6 +74,9 @@ export function makeHttp(prefix: string) {
 
 const http = makeHttp('/api/v1')
 const busHttp = makeHttp('/api/bus')
+// Versioned alias mounted by agent-bus-analyzer's mount_process_intelligence();
+// analytical read-only projections over the audit chain — never an execution path.
+const processHttp = makeHttp('/api/process-intelligence/v1')
 
 function evaluationEvidenceQuery(status?: EvaluationEvidenceStatus): string {
   return status ? `?status=${encodeURIComponent(status)}` : ''
@@ -151,6 +158,20 @@ export const api = {
   },
   account: {
     get: () => http<AccountView>('/account'),
+  },
+  process: {
+    list: (offset = 0, limit = 50) =>
+      processHttp<ProcessList>(`/processes?offset=${offset}&limit=${limit}`),
+    detail: (processId: string) =>
+      processHttp<ProcessDetail>(`/processes/${encodeURIComponent(processId)}`),
+    variants: (processId: string, offset = 0, limit = 50) =>
+      processHttp<ProcessVariantList>(
+        `/processes/${encodeURIComponent(processId)}/variants?offset=${offset}&limit=${limit}`,
+      ),
+    compliance: (processId: string) =>
+      processHttp<ProcessComplianceReport>(
+        `/processes/${encodeURIComponent(processId)}/compliance`,
+      ),
   },
   bus: {
     listTraces: (cursor?: string | null) => {

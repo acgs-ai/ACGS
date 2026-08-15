@@ -258,11 +258,44 @@ Be skeptical: a unit test importing a function directly does NOT prove the gate 
     { label: `audit:${c.id}`, phase: 'Audit', schema: AUDIT_SCHEMA },
   )))
 
-const audits = auditResults.filter(Boolean)
+// Fail closed on missing lanes: a crashed audit agent (null / unstructured
+// result) must stay visible as an explicit "unknown" for its criterion.
+// Silently dropping it would shrink the scoreboard and could make "remaining
+// gaps are human-gated" a statement about criteria that were never evaluated
+// (with the default exclusions, a dropped G5 lane can empty `candidates`).
+// Each lane must also report the criterion it was asked to audit: a result
+// with the wrong id (e.g. the G1 lane labeling itself G2) would duplicate one
+// criterion while silently omitting another, so require r.id === c.id.
+const auditedCriteria = CRITERIA.filter(c => c.id !== 'G6')
+const audits = auditedCriteria.map((c, i) => {
+  const r = auditResults[i]
+  return r && r.id === c.id ? r : {
+    id: c.id,
+    status: 'unknown',
+    evidence: '',
+    gapSummary: 'audit lane crashed, returned no structured result, or reported a mismatched criterion id: criterion NOT evaluated',
+    agentImplementable: false,
+    nextAction: 're-run this audit lane',
+    scope: 'small',
+  }
+})
 audits.push(G6_AUDIT)
 const scoreboard = audits.map(a => ({ id: a.id, status: a.status, scope: a.scope, gap: a.gapSummary }))
 const met = audits.filter(a => a.status === 'met').length
 log(`Scoreboard: ${met}/${CRITERIA.length} met`)
+
+// Every criterion must be accounted for before prioritization: ranking against
+// an incomplete scoreboard can mislabel never-evaluated gaps as human-gated.
+const unaudited = audits.filter(a => a.status === 'unknown')
+if (unaudited.length > 0) {
+  log(`STOPPING (fail-closed): ${unaudited.length} criteria produced no audit verdict: ${unaudited.map(a => a.id).join(', ')}`)
+  return {
+    scoreboard,
+    selected: [],
+    unaudited: unaudited.map(a => a.id),
+    note: `Audit incomplete: ${unaudited.length}/${CRITERIA.length} criteria returned no verdict (crashed/empty audit lanes). Prioritization was NOT run, because an incomplete scoreboard cannot prove "remaining gaps are human-gated". Re-run the workflow.`,
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Phase 2 — Prioritize (barrier is correct: ranking needs all 7 results)

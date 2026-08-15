@@ -56,6 +56,44 @@ const RE_PATH = /^[A-Za-z0-9._/-]+$/ // filesystem path
 const RE_REF = /^[A-Za-z0-9._/@~^{}-]+$/ // git ref / branch name
 const RE_SLUG = /^[A-Za-z0-9._-]+$/ // slug / id component
 
+// Nested git repositories registered in .gitmodules. In a worktree of the
+// PARENT repo these paths are empty 160000 gitlinks, so work targeting them
+// must be dispatched through a worktree of the nested repo itself.
+const NESTED_REPOS = [
+  'packages/acgs-lite',
+  'packages/Acgs-Swarm',
+  'packages/clinicalguard',
+  'packages/ACGS-agency-agents',
+  'packages/acgs-control-plane',
+]
+
+// Boundary containment for planner-produced packageDir values. RE_PATH only
+// validates CHARACTERS: it still admits an arbitrary absolute path outside
+// ${REPO} ("/tmp/evil") or a `..` escape, either of which would launch an
+// implementation lane outside the git boundary this workflow governs. Fail
+// closed on both, then report which nested repo (if any) owns the path so the
+// dispatch site can create the worktree at the right repository.
+function resolveBoundary(dir, label) {
+  const s = String(dir)
+  if (s.split('/').includes('..')) {
+    throw new Error(`final-goal-pursuit: refusing to run: \`${label}\` = ${JSON.stringify(s)} contains a ".." segment (path escape).`)
+  }
+  // Normalize BEFORE containment and nested-owner matching: drop "." segments,
+  // repeated slashes, and trailing slashes. A valid but noncanonical path such
+  // as "packages/./acgs-lite" or "packages//acgs-lite" would otherwise pass
+  // containment yet miss NESTED_REPOS and get dispatched through a parent
+  // worktree, where the nested repo is only an empty gitlink.
+  const segs = s.split('/').filter(seg => seg !== '' && seg !== '.')
+  const joined = segs.join('/')
+  const abs = s.startsWith('/') ? (joined ? `/${joined}` : '/') : (joined ? `${REPO}/${joined}` : REPO)
+  if (abs !== REPO && !abs.startsWith(`${REPO}/`)) {
+    throw new Error(`final-goal-pursuit: refusing to run: \`${label}\` = ${JSON.stringify(s)} resolves outside the repository boundary ${REPO}. Work outside the selected subproject cannot be reviewed or committed at the correct boundary.`)
+  }
+  const rel = abs === REPO ? '' : abs.slice(REPO.length + 1)
+  const nested = NESTED_REPOS.find(n => rel === n || rel.startsWith(`${n}/`)) ?? null
+  return { abs, nestedRepoDir: nested ? `${REPO}/${nested}` : null }
+}
+
 // EXCLUDE elements are arg-derived and appear in prompt/display text (newline =
 // prompt injection). They are criterion ids like "G1.1" — validate fail-closed.
 // (Display-only, never shell-interpolated, so no shq needed here.)
@@ -124,13 +162,15 @@ const PLAN_SCHEMA = {
 
 const IMPL_SCHEMA = {
   type: 'object',
-  required: ['completed', 'branch', 'worktree', 'filesChanged', 'summary'],
+  required: ['completed', 'branch', 'baseRef', 'baseBranch', 'worktree', 'filesChanged', 'summary'],
   properties: {
     completed: { type: 'boolean' },
     noChangesNeeded: { type: 'boolean', description: 'true when the criterion is already satisfied and ZERO changes were made — then branch must be "" and filesChanged []' },
     branch: { type: 'string', description: 'git ref name only (e.g. final-goal/g1-2); empty string when noChangesNeeded — never prose' },
+    baseRef: { type: 'string', description: 'the resolvable commit-ish the feature branch was actually created from, exactly as passed to git (e.g. origin/main when only the remote-tracking ref exists, or main when a local branch does); empty string when noChangesNeeded' },
+    baseBranch: { type: 'string', description: 'short PR-facing base name with any origin/ prefix stripped (e.g. main); empty string when noChangesNeeded' },
     worktree: { type: 'string', description: 'Absolute path of the worktree the changes live in' },
-    filesChanged: { type: 'array', items: { type: 'string' } },
+    filesChanged: { type: 'array', items: { type: 'string' }, description: 'Changed file paths RELATIVE to the worktree root, matching git diff --name-only output' },
     summary: { type: 'string' },
     blockers: { type: 'string' },
   },
@@ -200,14 +240,17 @@ Be skeptical: a unit test that imports a handler directly does NOT prove wiring;
   // Fail closed on missing lanes: a crashed audit agent (null result) must stay
   // visible as an explicit "unknown" for its criterion — silently dropping it
   // would shrink the scoreboard and could make "no implementable gaps remain"
-  // a statement about criteria that were never evaluated.
+  // a statement about criteria that were never evaluated. Each lane must also
+  // report the criterion it was asked to audit: a result with the wrong id
+  // would duplicate one criterion while silently omitting another, so require
+  // r.id === c.id.
   wave.forEach((c, j) => {
     const r = results[j]
-    audits.push(r && r.id ? r : {
+    audits.push(r && r.id === c.id ? r : {
       id: c.id,
       status: 'unknown',
       evidence: '',
-      gapSummary: 'audit lane crashed or returned no structured result — criterion NOT evaluated',
+      gapSummary: 'audit lane crashed, returned no structured result, or reported a mismatched criterion id: criterion NOT evaluated',
       agentImplementable: false,
       nextAction: 're-run this audit lane',
       scope: 'small',
@@ -281,6 +324,13 @@ const selected = (plan?.items ?? []).slice(0, MAX_ITEMS)
 for (const it of selected) {
   assertShellSafe(it.criterionId, 'criterionId', RE_SLUG)
   assertShellSafe(it.packageDir, 'packageDir', RE_PATH)
+  // Character validation is not containment: also require packageDir to live
+  // inside ${REPO}, and record whether a nested repo owns it so Stage 1 can
+  // create the worktree at that repository instead of the parent (where the
+  // nested path is an empty gitlink and nothing can be committed).
+  const boundary = resolveBoundary(it.packageDir, `items[${it.criterionId}].packageDir`)
+  it.packageDir = boundary.abs
+  it.nestedRepoDir = boundary.nestedRepoDir
 }
 log(`Selected ${selected.length} work item(s): ${selected.map(s => s.criterionId).join(', ')}`)
 
@@ -301,6 +351,46 @@ const outcomes = await pipeline(
       log(`Budget low — skipping implementation of ${item.criterionId}`)
       return null
     }
+    const slug = item.criterionId.toLowerCase().replace('.', '-')
+    // Nested-repo targets CANNOT use a parent worktree: the nested path is an
+    // empty 160000 gitlink there, so the task is unperformable and nothing can
+    // be committed at the correct boundary. Dispatch those through a worktree
+    // of the nested repository itself (mirrors acgs-lite-pep-closure-pursuit).
+    if (item.nestedRepoDir) {
+      // The planner's packageDir (and any absolute paths inside its plan text)
+      // point into the SHARED checkout, but the implementation happens in the
+      // temporary worktree created in step 2. Hand the lane the package path
+      // RELATIVE to the nested repo root so following it lands inside the
+      // worktree, and mark the shared checkout as read-only: an implementer
+      // following absolute plan paths would edit the original submodule while
+      // the reviewer and verifier inspect the worktree.
+      const nestedRel = item.packageDir === item.nestedRepoDir ? '.' : item.packageDir.slice(item.nestedRepoDir.length + 1)
+      return agent(
+        `You are the implementation lane for ONE work item toward the ACGS final goal. The work targets a NESTED git repository (${item.nestedRepoDir} has its own .git, registered as a submodule of ${REPO}); inside that repository the work lives at ${JSON.stringify(nestedRel)} relative to the repo root. A worktree of the parent repo records the nested repo as an empty gitlink, so you MUST create and work in a worktree of the nested repo itself.
+
+${REPO_RULES}
+
+Work item (criterion ${item.criterionId}): ${JSON.stringify(item.title)}
+
+Plan (any absolute paths in it refer to the shared checkout; translate them to the same paths relative to YOUR worktree root before acting, and never follow them into the shared checkout):
+${JSON.stringify(item.plan)}
+
+Procedure:
+1. Determine the nested repo's base explicitly (NEVER base on the shared checkout's current HEAD, which may sit on an unrelated in-flight branch). Resolve TWO values: base_ref, the resolvable commit-ish the worktree starts from, and base_branch, the short PR-facing name. A detached submodule checkout often has ONLY remote-tracking refs, and a short name that exists only under refs/remotes/ is NOT resolvable by "git worktree add", so never strip origin/ from the start ref. Resolve in this order:
+   a. base_ref="$(git -C ${shq(item.nestedRepoDir)} symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" (e.g. origin/main). If non-empty: base_branch="\${base_ref#origin/}".
+   b. Else the first name of main, master for which "git -C ${shq(item.nestedRepoDir)} show-ref --verify --quiet refs/heads/<name>" succeeds: base_ref=<name>, base_branch=<name>.
+   c. Else the first name of main, master for which "git -C ${shq(item.nestedRepoDir)} show-ref --verify --quiet refs/remotes/origin/<name>" succeeds: base_ref=origin/<name>, base_branch=<name>.
+   d. If none resolve, STOP: set completed=false and explain in blockers. Do not guess a ref.
+2. Create an isolated worktree of the NESTED repo (not the parent), starting from that ref: git -C ${shq(item.nestedRepoDir)} worktree add "$(mktemp -d)/wt" -b ${shq(`final-goal/${slug}`)} "$base_ref" (if the branch already exists, append a -2 suffix).
+3. cd into that worktree and do ALL reading, editing, running, and staging from inside it, addressing files by paths relative to its root (the work lives at ${JSON.stringify(nestedRel)}). The shared checkout at ${item.nestedRepoDir} is the source for "git worktree add" ONLY: never edit, run validation in, or stage files there. Read the package-local CLAUDE.md / AGENTS.md first and obey them.
+4. Make the smallest safe change that closes the gap, WITH tests (TDD where practical).
+5. Run the validation command locally from inside the worktree: ${JSON.stringify(item.validationCommand)}
+6. Stage ONLY the files you changed (explicit paths, never -A), commit on the feature branch with a conventional message. Do NOT push. NEVER touch the parent repo or its submodule pointer.
+Report the absolute worktree path, branch name, the base you resolved in step 1 (baseRef = the exact start ref you passed to git, e.g. origin/main; baseBranch = the short PR-facing name, e.g. main), and the files you changed as paths RELATIVE to the worktree root (matching git diff --name-only output). If you hit a hard blocker, set completed=false and explain in blockers.
+If you determine the criterion is ALREADY satisfied and zero changes are required: set completed=true, noChangesNeeded=true, branch="" (empty — NEVER prose in the branch field), baseRef="", baseBranch="", filesChanged=[], and put the evidence in summary.`,
+        { label: `impl:${item.criterionId}`, phase: 'Implement', schema: IMPL_SCHEMA },
+      )
+    }
     return agent(
       `You are the implementation lane for ONE work item toward the ACGS final goal. You are running in an isolated git worktree of ${REPO} — discover your worktree root with "git rev-parse --show-toplevel" and work there.
 
@@ -315,12 +405,17 @@ Package directory (relative to the worktree what ${item.packageDir} is to the ma
 
 Procedure:
 1. Read the package-local CLAUDE.md / AGENTS.md first and obey them.
-2. Create a feature branch named "final-goal/${item.criterionId.toLowerCase().replace('.', '-')}".
-3. Make the smallest safe change that closes the gap, WITH tests (TDD where practical).
-4. Run the validation command locally: ${JSON.stringify(item.validationCommand)}
-5. Stage ONLY the files you changed (explicit paths, never -A), commit on the feature branch with a conventional message. Do NOT push.
-Report the absolute worktree path, branch name, and the files you changed. If you hit a hard blocker, set completed=false and explain in blockers.
-If you determine the criterion is ALREADY satisfied and zero changes are required: set completed=true, noChangesNeeded=true, branch="" (empty — NEVER prose in the branch field), filesChanged=[], and put the evidence in summary.`,
+2. Resolve the repository's real base explicitly (NEVER report the branch the worktree happened to start on: isolation worktrees can begin on a generated transient branch or a detached HEAD, neither of which is a ref a PR can target). Resolve TWO values: base_ref, the resolvable commit-ish to branch from, and base_branch, the short PR-facing name. A checkout may expose the base ONLY as a remote-tracking ref, and a short name that exists only under refs/remotes/ is NOT resolvable, so never strip origin/ from the start ref. Resolve in this order:
+   a. base_ref="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" (e.g. origin/master). If non-empty: base_branch="\${base_ref#origin/}".
+   b. Else the first name of master, main for which "git show-ref --verify --quiet refs/heads/<name>" succeeds: base_ref=<name>, base_branch=<name>. (master FIRST: this repository's declared PR base is master, so a stale or unrelated local main must never win when both exist.)
+   c. Else the first name of master, main for which "git show-ref --verify --quiet refs/remotes/origin/<name>" succeeds: base_ref=origin/<name>, base_branch=<name>.
+   d. If none resolve, STOP: set completed=false and explain in blockers. Do not guess a ref.
+3. Create the feature branch FROM that ref: git switch -c ${shq(`final-goal/${slug}`)} "$base_ref" (if the branch already exists, append a -2 suffix).
+4. Make the smallest safe change that closes the gap, WITH tests (TDD where practical).
+5. Run the validation command locally: ${JSON.stringify(item.validationCommand)}
+6. Stage ONLY the files you changed (explicit paths, never -A), commit on the feature branch with a conventional message. Do NOT push.
+Report the absolute worktree path, branch name, the base you resolved in step 2 (baseRef = the exact start ref you passed to git, e.g. origin/master; baseBranch = the short PR-facing name, e.g. master), and the files you changed as paths RELATIVE to the worktree root (matching git diff --name-only output). If you hit a hard blocker, set completed=false and explain in blockers.
+If you determine the criterion is ALREADY satisfied and zero changes are required: set completed=true, noChangesNeeded=true, branch="" (empty — NEVER prose in the branch field), baseRef="", baseBranch="", filesChanged=[], and put the evidence in summary.`,
       { label: `impl:${item.criterionId}`, phase: 'Implement', isolation: 'worktree', schema: IMPL_SCHEMA },
     )
   },
@@ -342,6 +437,86 @@ If you determine the criterion is ALREADY satisfied and zero changes are require
     // to escape newlines/control chars (prompt-injection defense).
     assertShellSafe(impl.worktree, 'impl.worktree', RE_PATH)
     assertShellSafe(impl.branch, 'impl.branch', RE_REF)
+    // Normalize reported filesChanged BEFORE the reviewer's diff preflight sees
+    // them: the schema asks for worktree-relative paths but permits absolute
+    // ones, and "git diff --name-only" emits repository-relative paths, so an
+    // absolute entry like "<worktree>/src/foo.py" would fail the mandatory
+    // inclusion check (and the verifier's drift check against "git status
+    // --short") even when the diff covers every change. Strip the worktree
+    // prefix from entries under the worktree; an absolute path NOT under the
+    // worktree cannot appear in the reviewed diff at all, so block fail-closed
+    // rather than hand the reviewer a list it can never satisfy. Mutating
+    // impl.filesChanged keeps Stage 3 and the final report consistent.
+    const wtPrefix = impl.worktree.endsWith('/') ? impl.worktree : `${impl.worktree}/`
+    const normalizedFiles = []
+    for (const f of impl.filesChanged ?? []) {
+      const s = String(f)
+      if (s.startsWith(wtPrefix)) normalizedFiles.push(s.slice(wtPrefix.length))
+      else if (s.startsWith('/')) {
+        return { impl, review: { verdict: 'block', issues: [`implementer reported changed file ${JSON.stringify(s)} outside its worktree ${JSON.stringify(impl.worktree)}: the file cannot be part of the reviewed diff, so the change cannot receive an effective review`] } }
+      } else {
+        normalizedFiles.push(s.replace(/^(\.\/)+/, ''))
+      }
+    }
+    impl.filesChanged = normalizedFiles
+    // The base the implementer branched from. The reviewer must diff against
+    // impl.baseRef, the exact commit-ish the branch was created from: the
+    // short baseBranch name can be UNRESOLVABLE in the worktree (a nested or
+    // detached checkout often exposes only refs/remotes/origin/main, where
+    // "main" does not resolve but "origin/main" does). No fallback: guessing
+    // a ref makes the diff exit 128 and the change would sail through with no
+    // effective review. A non-no-op result missing either field is blocked
+    // fail-closed instead.
+    if (!impl.baseRef || !impl.baseBranch) {
+      return { impl, review: { verdict: 'block', issues: ['implementer reported no baseRef/baseBranch: the reviewer cannot diff against the ref the feature branch was created from, so the change cannot receive an effective review'] } }
+    }
+    const reviewBase = impl.baseRef
+    assertShellSafe(reviewBase, 'impl.baseRef', RE_REF)
+    assertShellSafe(impl.baseBranch, 'impl.baseBranch', RE_REF)
+    // A character-valid baseBranch can still be INCONSISTENT with baseRef: an
+    // implementer reporting baseRef="origin/main" alongside baseBranch="master"
+    // would pass the reviewer's preflight (which validates only baseRef) while
+    // the final handoff tells the human to open the PR against the unchecked
+    // master. The PR-facing name is fully determined by the start ref (strip a
+    // single origin/ prefix, nothing else, exactly as the implementer prompts
+    // instruct), so derive it here and block on mismatch instead of trusting
+    // the reported field.
+    const expectedBaseBranch = reviewBase.startsWith('origin/') ? reviewBase.slice('origin/'.length) : reviewBase
+    if (impl.baseBranch !== expectedBaseBranch) {
+      return { impl, review: { verdict: 'block', issues: [`implementer reported baseBranch=${JSON.stringify(impl.baseBranch)} inconsistent with baseRef=${JSON.stringify(reviewBase)} (the PR-facing base derived from that ref is ${JSON.stringify(expectedBaseBranch)}): the review preflight validates only baseRef, so the handoff would target a base the review never checked`] } }
+    }
+    // A syntactically valid baseRef can still be the WRONG ref: if the
+    // implementer reports its own feature branch (or HEAD, or the feature
+    // branch's remote-tracking ref) as the base, the instructed diff is empty
+    // and the change would be approved with zero hunks reviewed. Refuse the
+    // obvious self-references deterministically here; the remaining
+    // properties (base resolves, is an ancestor, and the diff actually
+    // covers the reported files) can only be proven inside the worktree, so
+    // the reviewer preflights them below and blocks on failure.
+    if (reviewBase === impl.branch || reviewBase === `origin/${impl.branch}` || reviewBase.toUpperCase() === 'HEAD' || reviewBase === '@') {
+      return { impl, review: { verdict: 'block', issues: [`implementer reported baseRef=${JSON.stringify(reviewBase)}, which is the feature branch itself (or HEAD): diffing it against HEAD is empty, so the change cannot receive an effective review`] } }
+    }
+    // RE_REF still admits REVISION EXPRESSIONS (HEAD~1, master^2, a raw SHA):
+    // with baseRef=baseBranch="HEAD~1" every preflight above passes when that
+    // commit is an ancestor and the diff covers the files, yet the handoff
+    // would advertise a PR base that is not a branch at all (gh pr create
+    // --base takes the branch the change merges into). The base must identify
+    // an ACTUAL branch, so pin every git command below to the fully qualified
+    // form: refs/remotes/origin/<name> when the ref is origin/<name>, else
+    // refs/heads/<name>. Qualifying also removes rev-parse's name-resolution
+    // ambiguity (an unqualified name preferring a same-named tag over the
+    // branch). HEAD~1, SHAs, and tags fail the step-1a verify and block.
+    const qualifiedBase = reviewBase.startsWith('origin/') ? `refs/remotes/${reviewBase}` : `refs/heads/${reviewBase}`
+    // The scope boundary handed to the reviewer must use the coordinates the
+    // reviewer actually inspects. item.packageDir is an ABSOLUTE path into the
+    // shared checkout, but the reviewed worktree is a different directory (for
+    // nested-repo items, a worktree of the nested repository), so that path
+    // never appears in the diff: the reviewer would reject valid in-scope
+    // changes or miss out-of-scope ones. Hand it the same worktree-relative
+    // path the implementer received (relative to the nested repo root for
+    // nested items, to the parent repo root otherwise).
+    const scopeRoot = item.nestedRepoDir ?? REPO
+    const scopeRel = item.packageDir === scopeRoot ? '.' : item.packageDir.slice(scopeRoot.length + 1)
     return agent(
       `You are the review lane — you did NOT write this change. Review it adversarially against the repo's rules.
 
@@ -350,13 +525,18 @@ ${REPO_RULES}
 Change under review: criterion ${item.criterionId} — ${JSON.stringify(item.title)}
 Worktree: ${impl.worktree}
 Branch: ${impl.branch}
+Base ref: ${reviewBase} (the branch the feature branch was created from; PR-facing base name: ${impl.baseBranch}; validated below as ${qualifiedBase})
 Files changed: ${JSON.stringify(impl.filesChanged)}
 Implementer's summary: ${JSON.stringify(impl.summary)}
 
 Procedure:
-1. cd ${shq(impl.worktree)} && git diff master...HEAD (or the merge-base diff) — review every hunk.
-2. Check: fail-closed behavior preserved? sealed/hash-marked files untouched? handler actually WIRED into the dispatch path (grep the symbol outside its own file — zero hits = not wired = block)? tests exercise the registration path, not just the function? scope stayed inside ${item.packageDir}? no new runtime deps in gove-zone?
-3. Verdict: approve / request-changes (fixable nits) / block (correctness, security, or boundary violation).`,
+1. cd ${shq(impl.worktree)}, then PREFLIGHT the diff basis before reviewing anything. The base ref above was reported by the implementation lane and may be wrong; verdict=block (do not review further) if ANY of these fails:
+   a. git rev-parse --verify ${shq(`${qualifiedBase}^{commit}`)} succeeds (the fully qualified form proves the base is an ACTUAL branch a PR can target, not a revision expression, SHA, or tag), and its commit differs from "git rev-parse HEAD" (a base equal to the tip diffs empty: nothing would be reviewed).
+   b. git merge-base --is-ancestor ${shq(qualifiedBase)} HEAD exits 0 (the base must be an ancestor of the feature branch).
+   c. git diff --name-only ${shq(qualifiedBase)}...HEAD is non-empty and includes EVERY file in the "Files changed" list above (a diff that misses reported files means the base is wrong and hunks would silently escape review).
+2. git diff ${shq(qualifiedBase)}...HEAD: review every hunk.
+3. Check: fail-closed behavior preserved? sealed/hash-marked files untouched? handler actually WIRED into the dispatch path (grep the symbol outside its own file; zero hits = not wired = block)? tests exercise the registration path, not just the function? scope stayed inside ${JSON.stringify(scopeRel)} relative to the worktree root (every reviewed path must sit under it)? no new runtime deps in gove-zone?
+4. Verdict: approve / request-changes (fixable nits) / block (correctness, security, or boundary violation).`,
       { label: `review:${item.criterionId}`, phase: 'Review', schema: REVIEW_SCHEMA },
     ).then(review => ({ impl, review }))
   },
@@ -399,6 +579,14 @@ return {
     criterion: o.item,
     noop: o.noop === true || undefined,
     branch: o.impl?.branch,
+    // baseRef is the exact commit-ish the feature branch was created from
+    // (possibly a remote-tracking ref like origin/main), as reported by the
+    // implementer and preflighted by the reviewer. baseBranch is its short
+    // PR-facing name. The PR handoff MUST target baseBranch: nested repos
+    // expose main (not master), so assuming the parent repo's default branch
+    // would open PRs against a base that does not exist.
+    baseRef: o.impl?.baseRef,
+    baseBranch: o.impl?.baseBranch,
     worktree: o.impl?.worktree,
     files: o.impl?.filesChanged,
     review: o.review?.verdict,
@@ -407,5 +595,5 @@ return {
     verifyOutput: o.verify?.outputTail,
   })),
   humanGated: audits.filter(a => a.status === 'blocked-human').map(a => ({ id: a.id, gap: a.gapSummary, nextAction: a.nextAction })),
-  nextSteps: 'Verified branches live in their worktrees — human opens PRs against master (gh pr merge is human-gated). Re-run this workflow for the next increment; pass {dryRun:true} for scoreboard only.',
+  nextSteps: 'Verified branches live in their worktrees. A human opens each PR against that result\'s baseBranch (nested repos expose main, not master; never assume the parent repo\'s default branch). gh pr merge is human-gated. Re-run this workflow for the next increment; pass {dryRun:true} for scoreboard only.',
 }
