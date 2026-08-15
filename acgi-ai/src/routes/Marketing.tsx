@@ -1065,7 +1065,6 @@ export function MarketingFrame({ children }: { children: ReactNode }) {
             <NavigationLink href="/ask" onNavigate={() => setNavOpen(false)}>
               Ask
             </NavigationLink>
-            <a href="/#governed-flow">Governed flow</a>
             <a href="/#interview">Interview</a>
             <NavigationLink href="/founder" onNavigate={() => setNavOpen(false)}>
               Founder

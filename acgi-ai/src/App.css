@@ -8629,9 +8629,13 @@
   color: var(--muted);
 }
 
+/* --boundary-ink is specified against --boundary (see index.css); pairing it
+   with the dark card ground drops it to ~2:1, so the pill carries its own
+   parchment background the way every other boundary chip on the site does. */
 .m-boundary-badge {
   margin-left: auto;
   padding: 2px 8px;
+  background: var(--boundary);
   border: 1px solid var(--boundary-line);
   border-radius: var(--radius-pill);
   font-family: var(--font-mono);
