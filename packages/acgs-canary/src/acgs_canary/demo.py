@@ -201,13 +201,21 @@ def run_selfcheck() -> dict[str, Any]:
         invariants["fixture_anchor_predates_observation"] = anchor_predates(
             evidence, bundle, observation_time="2026-08-16T00:00:00Z", verifier=verifier
         )
-        ledger.append_anchor(
-            head_hash=report.head_hash,
-            anchor_ref={"kind": "rfc3161", "bundle_sha256": bhash, "production": False},
-            timestamp=_now(),
-        )
+        ledger.append_anchor(bundle=bundle, evidence=evidence, timestamp=_now())
         state3 = ledger.issuance_state(t1_vid)
-        invariants["anchored_state_tracked"] = state3["anchored"]
+        # The structural fold never claims "anchored" — recording an entry
+        # is not verification (review MAJOR-1).
+        invariants["anchor_entry_recorded_not_anchored"] = (
+            state3["anchor_entry_recorded"] and state3["evidence_label"] == "anchor-entry-recorded"
+        )
+        # The verified path with FIXTURE evidence labels itself
+        # non-production — it can never read as real anchoring.
+        state4 = ledger.anchored_issuance_state(
+            t1_vid, bundle=bundle, evidence=evidence, verifier=verifier
+        )
+        invariants["verified_anchor_label_is_non_production"] = (
+            state4["evidence_label"] == "anchored-non-production"
+        )
 
         # Mirror evidence must never satisfy the independent-anchor test.
         mirror = AnchorEvidence(

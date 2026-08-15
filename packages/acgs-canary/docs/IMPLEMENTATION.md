@@ -52,6 +52,10 @@ Explicitly NOT countered (design non-goals, restated):
   token disclosure does not burn the probe set (design §6.5).
 - The in-memory backend is constructible only with a literal test-only
   acknowledgment string — no configuration pathway reaches it.
+- On a host without a working `git` binary, the store's
+  inside-a-worktree check fails closed and every location is refused —
+  intentional; install git or run elsewhere rather than weakening the
+  check.
 
 ## 3. State machine (issuance lifecycle)
 
@@ -59,13 +63,25 @@ Explicitly NOT countered (design non-goals, restated):
 variant.prepared ──issuer signs──▶ issuer-signed ──licensee countersigns──▶ countersigned
       │                                   │                                     │
       └────────── all states: evidence_label = "publisher-testimony" ───────────┘
-                                          until an anchor entry covers them ──▶ "anchored"
+              anchor entry recorded ──▶ "anchor-entry-recorded" (still unverified)
+              verified via anchored_issuance_state + real evidence ──▶ "anchored"
+              (fixture / non-production evidence ──▶ "anchored-non-production")
 ```
 
 - Transitions are **append-only ledger entries**; prior entries are never
   mutated.
-- `completed_t1_issuance` is true only in `countersigned`.
-- Anchoring is orthogonal: it upgrades the evidence label, not the state.
+- `completed_t1_issuance` is true only in `countersigned`, and
+  `issuance_state` verifies the full chain (hashes + signatures) before
+  reporting anything — a forged countersignature raises instead of
+  surfacing as completion.
+- Anchoring is orthogonal to the state, and **recording an anchor entry is
+  not verification**: the ledger's structural fold emits at most
+  "anchor-entry-recorded". The "anchored" label exists only on
+  `anchored_issuance_state`, which re-verifies the evidence through a real
+  verifier — and non-production (fixture) evidence yields
+  "anchored-non-production", never "anchored". `append_anchor` itself
+  refuses mirror evidence and any evidence whose hash does not match a
+  validated bundle whose head is present in the chain.
 - Rollback (deleting newest entries) yields a valid shorter chain by
   construction — this is inherent to hash chains, is covered by a test,
   and is exactly why heads must be anchored externally: a published

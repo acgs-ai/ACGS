@@ -24,7 +24,7 @@ Tests:
 uv run --package acgs-canary python -m pytest packages/acgs-canary/tests --import-mode=importlib -q
 ```
 
-Normative design: `RUNG3_CANARY_DESIGN.md` v2.1 (approved with conditions,
+Normative design: `docs/DESIGN.md` v2.1 (approved with conditions,
 two independent adversarial review rounds; conditions applied). The frozen
 protocol identity is `acgs-canary protocol-hash`; any semantic change to
 the protocol changes that hash.

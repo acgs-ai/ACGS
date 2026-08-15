@@ -367,13 +367,75 @@ class TestSignatures:
             ledger.verify()
 
 
-class TestAnchorEntries:
-    def test_anchor_must_reference_existing_entry(self, tmp_path):
-        ledger = _mk(tmp_path)
-        with pytest.raises(LedgerStateError):
-            ledger.append_anchor(head_hash="ab" * 32, anchor_ref={"kind": "rfc3161"}, timestamp=T)
+def _bundle_for(ledger: AcceptanceLedger):
+    from acgs_canary.anchor import build_anchor_bundle
 
-    def test_anchor_upgrades_evidence_label(self, tmp_path):
+    head = ledger.verify().head_hash
+    return build_anchor_bundle(
+        ledger_head_hash=head,
+        pool_manifest_sha256=H,
+        protocol_sha256=protocol_hash(),
+        commitment_roots_hex=[],
+        created_at=T,
+    )
+
+
+def _evidence_for(bundle, *, kind="rfc3161", state=None, production=False):
+    from acgs_canary.anchor import STATE_CONFIRMED, AnchorEvidence, bundle_hash
+
+    return AnchorEvidence(
+        kind=kind,
+        state=state or STATE_CONFIRMED,
+        bundle_sha256=bundle_hash(bundle),
+        evidence_ref="fx",
+        anchored_at=T,
+        production=production,
+    )
+
+
+class TestAnchorEntries:
+    def test_anchor_head_must_be_in_chain(self, tmp_path):
+        from acgs_canary.anchor import build_anchor_bundle
+
+        ledger = _mk(tmp_path)
+        bogus = build_anchor_bundle(
+            ledger_head_hash="ab" * 32,
+            pool_manifest_sha256=H,
+            protocol_sha256=protocol_hash(),
+            commitment_roots_hex=[],
+            created_at=T,
+        )
+        with pytest.raises(LedgerStateError):
+            ledger.append_anchor(bundle=bogus, evidence=_evidence_for(bogus), timestamp=T)
+
+    def test_mirror_evidence_refused_at_append(self, tmp_path):
+        ledger = _mk(tmp_path)
+        bundle = _bundle_for(ledger)
+        with pytest.raises(LedgerStateError):
+            ledger.append_anchor(
+                bundle=bundle, evidence=_evidence_for(bundle, kind="mirror"), timestamp=T
+            )
+
+    def test_evidence_bundle_mismatch_refused(self, tmp_path):
+        from acgs_canary.anchor import STATE_CONFIRMED, AnchorEvidence
+
+        ledger = _mk(tmp_path)
+        bundle = _bundle_for(ledger)
+        mismatched = AnchorEvidence(
+            kind="rfc3161",
+            state=STATE_CONFIRMED,
+            bundle_sha256="44" * 32,  # not the bundle's hash
+            evidence_ref="fx",
+            anchored_at=T,
+            production=False,
+        )
+        with pytest.raises(LedgerStateError):
+            ledger.append_anchor(bundle=bundle, evidence=mismatched, timestamp=T)
+
+    def test_recorded_anchor_is_never_labeled_anchored_structurally(self, tmp_path):
+        # Review MAJOR-1 regression: recording an anchor entry — even a
+        # legitimate one — must not surface as "anchored" from the
+        # structural fold. That label needs the verified path.
         ledger = _mk(tmp_path)
         prepared = _prepare(ledger)
         issuer = sig.ephemeral_test_key("issuer")
@@ -381,15 +443,106 @@ class TestAnchorEntries:
         issued = ledger.append_issuer_signature(
             target_entry_hash=prepared["entry_hash"], key=issuer, timestamp=T
         )
-        counter = ledger.append_licensee_countersignature(
+        ledger.append_licensee_countersignature(
             issuer_entry_hash=issued["entry_hash"], key=licensee, timestamp=T
         )
         vid = prepared["body"]["variant_id"]
         assert ledger.issuance_state(vid)["evidence_label"] == "publisher-testimony"
-        ledger.append_anchor(
-            head_hash=counter["entry_hash"],
-            anchor_ref={"kind": "rfc3161", "bundle_sha256": "33" * 32, "production": False},
-            timestamp=T,
-        )
+        bundle = _bundle_for(ledger)
+        evidence = _evidence_for(bundle)
+        ledger.append_anchor(bundle=bundle, evidence=evidence, timestamp=T)
         state = ledger.issuance_state(vid)
-        assert state["anchored"] and state["evidence_label"] == "anchored"
+        assert state["anchor_entry_recorded"]
+        assert state["evidence_label"] == "anchor-entry-recorded"
+        assert "anchored" not in (state["evidence_label"],)
+
+    def test_verified_path_labels_fixture_evidence_non_production(self, tmp_path):
+        from acgs_canary.anchor import FixtureVerifier, bundle_hash
+
+        ledger = _mk(tmp_path)
+        prepared = _prepare(ledger)
+        issuer = sig.ephemeral_test_key("issuer")
+        licensee = sig.ephemeral_test_key("licensee")
+        issued = ledger.append_issuer_signature(
+            target_entry_hash=prepared["entry_hash"], key=issuer, timestamp=T
+        )
+        ledger.append_licensee_countersignature(
+            issuer_entry_hash=issued["entry_hash"], key=licensee, timestamp=T
+        )
+        vid = prepared["body"]["variant_id"]
+        bundle = _bundle_for(ledger)
+        evidence = _evidence_for(bundle)
+        ledger.append_anchor(bundle=bundle, evidence=evidence, timestamp=T)
+        fx = FixtureVerifier({"fx": {"bundle_sha256": bundle_hash(bundle)}})
+        state = ledger.anchored_issuance_state(vid, bundle=bundle, evidence=evidence, verifier=fx)
+        assert state["evidence_label"] == "anchored-non-production"
+
+    def test_verified_path_falls_back_on_unverifiable_evidence(self, tmp_path):
+        from acgs_canary.anchor import FixtureVerifier
+
+        ledger = _mk(tmp_path)
+        prepared = _prepare(ledger)
+        issuer = sig.ephemeral_test_key("issuer")
+        licensee = sig.ephemeral_test_key("licensee")
+        issued = ledger.append_issuer_signature(
+            target_entry_hash=prepared["entry_hash"], key=issuer, timestamp=T
+        )
+        ledger.append_licensee_countersignature(
+            issuer_entry_hash=issued["entry_hash"], key=licensee, timestamp=T
+        )
+        vid = prepared["body"]["variant_id"]
+        bundle = _bundle_for(ledger)
+        evidence = _evidence_for(bundle)
+        ledger.append_anchor(bundle=bundle, evidence=evidence, timestamp=T)
+        empty_verifier = FixtureVerifier({})  # cannot confirm anything
+        state = ledger.anchored_issuance_state(
+            vid, bundle=bundle, evidence=evidence, verifier=empty_verifier
+        )
+        assert state["evidence_label"] == "anchor-entry-recorded"
+
+
+class TestIssuanceStateFailClosed:
+    def test_forged_countersignature_never_reports_completion(self, tmp_path):
+        # Review MAJOR-2 regression: a hand-minted countersigned entry with
+        # a garbage signature must not surface as completed T1 — the fold
+        # verifies the chain first and raises.
+        ledger = _mk(tmp_path)
+        prepared = _prepare(ledger)
+        issuer = sig.ephemeral_test_key("issuer")
+        issued = ledger.append_issuer_signature(
+            target_entry_hash=prepared["entry_hash"], key=issuer, timestamp=T
+        )
+        from acgs_canary.ledger import _make_entry
+
+        forged_sig_meta = {
+            "algorithm": "ed25519",
+            "key_id": "fake",
+            "key_class": "ephemeral-test",
+            "public_key_hex": sig.ephemeral_test_key("x").signer.public_bytes().hex(),
+            "role": "licensee",
+            "purpose": "variant-countersign",
+            "signature_hex": "00" * 64,
+        }
+        forged = _make_entry(
+            ledger_id=issued["ledger_id"],
+            protocol_sha256=issued["protocol_sha256"],
+            seq=issued["seq"] + 1,
+            prev=issued["entry_hash"],
+            kind="variant.countersigned",
+            timestamp=T,
+            body={"issuer_entry_hash": issued["entry_hash"], "signature": forged_sig_meta},
+        )
+        p = tmp_path / "ledger.jsonl"
+        with open(p, "ab") as fh:
+            fh.write(canonical_bytes(forged) + b"\n")
+        with pytest.raises(LedgerError):
+            ledger.issuance_state(prepared["body"]["variant_id"])
+
+    def test_whitespace_padded_line_rejected(self, tmp_path):
+        # Review MINOR-1 regression: canonical check compares exact bytes.
+        ledger = _mk(tmp_path)
+        p = tmp_path / "ledger.jsonl"
+        raw = p.read_bytes()
+        p.write_bytes(raw[:-1] + b"  \n")
+        with pytest.raises(LedgerError):
+            ledger.verify()

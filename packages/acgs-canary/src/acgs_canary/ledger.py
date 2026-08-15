@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import anchor as anchor_mod
 from . import signing as sig
 from .canonical import canonical_bytes
 from .errors import LedgerError, LedgerStateError
@@ -331,28 +332,66 @@ class AcceptanceLedger:
         )
 
     def append_anchor(
-        self, *, head_hash: str, anchor_ref: dict[str, Any], timestamp: str
+        self,
+        *,
+        bundle: dict[str, Any],
+        evidence: anchor_mod.AnchorEvidence,
+        timestamp: str,
     ) -> dict[str, Any]:
+        """Record an anchor entry, bound to a validated bundle.
+
+        Recording an entry NEVER by itself upgrades evidentiary standing —
+        the ledger cannot verify external evidence; only
+        :meth:`anchored_issuance_state` (which runs a real verifier) may
+        emit an "anchored" label. What this method DOES enforce:
+
+        - the bundle is well-formed and its ``ledger_head_hash`` is an
+          entry actually present in this chain;
+        - the evidence is of an independent kind (mirror refused);
+        - ``evidence.bundle_sha256`` equals the recomputed bundle hash.
+        """
+        if evidence.kind not in (anchor_mod.KIND_RFC3161, anchor_mod.KIND_OTS):
+            raise LedgerStateError(
+                "only independent anchor kinds may be recorded; "
+                "mirror metadata is supplementary and does not belong here"
+            )
+        recomputed = anchor_mod.bundle_hash(bundle)  # validates schema
+        if evidence.bundle_sha256 != recomputed:
+            raise LedgerStateError("evidence does not match the bundle hash")
+        head_hash = bundle["ledger_head_hash"]
         entries, _ = self._read_lines()
         if not any(e["entry_hash"] == head_hash for e in entries):
-            raise LedgerStateError("anchor must reference an existing entry hash")
+            raise LedgerStateError("anchor bundle's ledger_head_hash is not an entry in this chain")
         return self._append(
             KIND_ANCHOR,
-            {"anchored_head_hash": head_hash, "anchor_ref": anchor_ref},
+            {
+                "anchored_head_hash": head_hash,
+                "bundle_sha256": recomputed,
+                "evidence_kind": evidence.kind,
+                "evidence_state": evidence.state,
+                "evidence_ref": evidence.evidence_ref,
+                "production": evidence.production,
+            },
             timestamp=timestamp,
         )
 
     # -- derived state -----------------------------------------------------
 
     def issuance_state(self, variant_id: str) -> dict[str, Any]:
-        """Fold the chain into the variant's lifecycle state.
+        """Fold the chain into the variant's lifecycle state. FAIL-CLOSED:
+        the full chain (hashes, sequence, signatures) is verified first, so
+        a forged countersignature can never surface as completion.
 
-        States: prepared → issuer-signed → countersigned. Anchoring is
-        tracked separately per head. The evidence label is:
-        - "publisher-testimony" until an anchor covers the state-bearing
-          entries;
-        - a T1 variant without a countersignature is NEVER "completed".
+        States: prepared → issuer-signed → countersigned. A T1 variant
+        without a valid countersignature is NEVER "completed".
+
+        Evidence labeling is deliberately conservative: this method emits
+        only "publisher-testimony" or "anchor-entry-recorded" — the ledger
+        cannot verify external evidence, so a recorded anchor entry stays
+        explicitly unverified here. The "anchored" label exists only on the
+        verified path, :meth:`anchored_issuance_state`.
         """
+        self.verify()
         entries, _ = self._read_lines()
         prepared = None
         issuer_signed = None
@@ -386,15 +425,60 @@ class AcceptanceLedger:
         if countersigned is not None:
             state = "countersigned"
         state_entry = countersigned or issuer_signed or prepared
-        anchored = state_entry["entry_hash"] in covered
+        anchor_entry_recorded = state_entry["entry_hash"] in covered
         completed_t1 = prepared["body"]["tier"] == "T1" and countersigned is not None
         return {
             "variant_id": variant_id,
             "state": state,
             "completed_t1_issuance": completed_t1,
-            "anchored": anchored,
-            "evidence_label": "anchored" if anchored else "publisher-testimony",
+            "anchor_entry_recorded": anchor_entry_recorded,
+            "evidence_label": (
+                "anchor-entry-recorded" if anchor_entry_recorded else "publisher-testimony"
+            ),
         }
+
+    def anchored_issuance_state(
+        self,
+        variant_id: str,
+        *,
+        bundle: dict[str, Any],
+        evidence: anchor_mod.AnchorEvidence,
+        verifier: anchor_mod.AnchorVerifier,
+    ) -> dict[str, Any]:
+        """The ONLY path that can emit an "anchored" evidence label.
+
+        Runs the structural fold (which verifies the chain), then verifies
+        the external evidence through the supplied verifier: independent
+        kind, confirmed state, evidence bound to the bundle hash, bundle's
+        head present in the chain and matching a recorded anchor entry.
+
+        Fixture / non-production evidence yields
+        "anchored-non-production" — it never reads as real anchoring.
+        """
+        state = self.issuance_state(variant_id)
+        if not state["anchor_entry_recorded"]:
+            return state
+        recomputed = anchor_mod.bundle_hash(bundle)
+        entries, _ = self._read_lines()
+        recorded = [
+            e
+            for e in entries
+            if e["kind"] == KIND_ANCHOR and e["body"]["bundle_sha256"] == recomputed
+        ]
+        if not recorded:
+            return state
+        if bundle["ledger_head_hash"] != recorded[-1]["body"]["anchored_head_hash"]:
+            return state
+        if evidence.kind not in (anchor_mod.KIND_RFC3161, anchor_mod.KIND_OTS):
+            return state
+        if evidence.state != anchor_mod.STATE_CONFIRMED:
+            return state
+        if evidence.bundle_sha256 != recomputed:
+            return state
+        if not verifier.verify(evidence, bundle):
+            return state
+        state["evidence_label"] = "anchored" if evidence.production else "anchored-non-production"
+        return state
 
     def recover_torn_tail(self) -> bool:
         """Explicit torn-tail recovery: drop the incomplete final line.
@@ -473,7 +557,7 @@ def _parse_entry(line: bytes, *, index: int) -> dict[str, Any]:
         raise LedgerError(f"entry {index}: unknown kind")
     if not isinstance(entry["seq"], int) or entry["seq"] < 0:
         raise LedgerError(f"entry {index}: illegal seq")
-    if canonical_bytes(entry) != line.strip():
+    if canonical_bytes(entry) != line:
         raise LedgerError(f"entry {index}: non-canonical encoding")
     return entry
 
