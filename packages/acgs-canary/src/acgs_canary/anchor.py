@@ -269,6 +269,12 @@ def anchor_predates(
         return False
     if evidence.anchored_at is None:
         return False
+    # Bind the evidence to THIS bundle before consulting the verifier:
+    # a verifier that only validates the timestamp proof named by the
+    # evidence would otherwise let confirmed evidence for bundle A be
+    # reused to answer the dispute question for bundle B.
+    if evidence.bundle_sha256 != bundle_hash(bundle):
+        return False
     if not verifier.verify(evidence, bundle):
         return False
     anchored = _parse_ts(evidence.anchored_at, "anchored_at")

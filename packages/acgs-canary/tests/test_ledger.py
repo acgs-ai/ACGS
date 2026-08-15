@@ -771,6 +771,96 @@ class TestReviewHardening:
         assert state["state"] == "countersigned"
         assert not state["completed_t1_issuance"]
 
+    def test_malformed_variant_id_rejected_at_append(self, tmp_path):
+        # Library callers bypassing the CLI must not write a raw identifier
+        # (email, contract name) as the permanent variant lookup key.
+        ledger = _mk(tmp_path)
+        for vid in ("alice@example.com", "contract-42", "vt_short", "vt_" + "AB" * 16, None):
+            with pytest.raises(LedgerStateError):
+                ledger.append_prepared(
+                    variant_id=vid,
+                    tier="T0",
+                    variant_tree_sha256=H,
+                    source_tree_sha256=H,
+                    canary_commitment_hex=H,
+                    allocation_manifest_sha256=H,
+                    licensee_ref=None,
+                    acceptance_ref=None,
+                    delivery=None,
+                    timestamp=T,
+                )
+
+    def test_hand_minted_prepared_body_values_rejected_at_parse(self, tmp_path):
+        # A canonical hand-minted prepared entry with the exact field NAMES
+        # but malformed VALUES (tier "T2", non-SHA digests, raw identifiers)
+        # and a recomputed entry_hash must fail verify(): the disk verifier
+        # re-applies the append-time value validators.
+        from acgs_canary.ledger import _make_entry
+
+        good_body = {
+            "variant_id": "vt_" + "dd" * 16,
+            "tier": "T1",
+            "variant_tree_sha256": H,
+            "source_tree_sha256": H,
+            "canary_commitment_hex": H,
+            "allocation_manifest_sha256": H,
+            "licensee_ref": "lref_" + "ab" * 32,
+            "acceptance_ref": {"kind": "contract", "doc_hash": "22" * 32},
+            "delivery": {"channel": "test", "ref": "local"},
+        }
+        cases = (
+            ("variant_id", "alice@example.com"),
+            ("tier", "T2"),
+            ("variant_tree_sha256", "bad"),
+            ("source_tree_sha256", "bad"),
+            ("canary_commitment_hex", "ZZ" * 32),
+            ("allocation_manifest_sha256", "22" * 31),
+            ("licensee_ref", "alice@example.com"),
+            ("licensee_ref", None),  # T1 without a licensee reference
+        )
+        for i, (field, bad) in enumerate(cases):
+            name = f"case{i}.jsonl"
+            ledger = _mk(tmp_path, name)
+            p = tmp_path / name
+            genesis = json.loads(p.read_bytes().split(b"\n")[0])
+            forged = _make_entry(
+                ledger_id=genesis["ledger_id"],
+                protocol_sha256=genesis["protocol_sha256"],
+                seq=1,
+                prev=genesis["entry_hash"],
+                kind="variant.prepared",
+                timestamp=T,
+                body={**good_body, field: bad},
+            )
+            with open(p, "ab") as fh:
+                fh.write(canonical_bytes(forged) + b"\n")
+            with pytest.raises(LedgerError):
+                ledger.verify()
+
+    def test_countersignature_over_earlier_issuer_signature_completes(self, tmp_path):
+        # An issuer-signature retry appended before the licensee
+        # countersigns the ORIGINAL issuer entry must not orphan the
+        # countersignature: the fold tracks every issuer signature over the
+        # prepared entry, not just the latest.
+        ledger = _mk(tmp_path)
+        prepared = _prepare(ledger)
+        issuer = sig.ephemeral_test_key("issuer")
+        licensee = sig.ephemeral_test_key("licensee")
+        first = ledger.append_issuer_signature(
+            target_entry_hash=prepared["entry_hash"], key=issuer, timestamp=T
+        )
+        retry = ledger.append_issuer_signature(
+            target_entry_hash=prepared["entry_hash"], key=issuer, timestamp=T
+        )
+        assert retry["entry_hash"] != first["entry_hash"]
+        ledger.append_licensee_countersignature(
+            issuer_entry_hash=first["entry_hash"], key=licensee, timestamp=T
+        )
+        ledger.verify()
+        state = ledger.issuance_state(prepared["body"]["variant_id"])
+        assert state["state"] == "countersigned"
+        assert state["completed_t1_issuance"]
+
     def test_org_labeled_generated_key_refused_for_production(self):
         # key_class is caller-supplied metadata: declaring "organization"
         # on a locally generated key must not unlock production issuance.

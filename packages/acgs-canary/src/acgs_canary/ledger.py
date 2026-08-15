@@ -63,6 +63,7 @@ _GENESIS_PREV = "0" * 64
 
 _LREF_RE = re.compile(r"^lref_[0-9a-f]{64}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_VARIANT_ID_RE = re.compile(r"^vt_[0-9a-f]{32}$")  # protocol: vt_ + 128-bit CSPRNG hex
 
 
 def _is_sha256_hex(value: Any) -> bool:
@@ -383,6 +384,16 @@ class AcceptanceLedger:
         delivery: dict[str, str] | None,
         timestamp: str,
     ) -> dict[str, Any]:
+        if not (isinstance(variant_id, str) and _VARIANT_ID_RE.match(variant_id)):
+            # The variant id is the permanent, append-only lookup key: a raw
+            # identifier written here (an email address, a contract name)
+            # would breach the protocol's non-identifying variant-id
+            # boundary forever. Library callers bypassing the CLI get the
+            # same validation manifests enforce.
+            raise LedgerStateError(
+                "variant_id must be vt_ + 32 lowercase hex chars (128-bit CSPRNG); "
+                "raw identifiers are refused"
+            )
         if tier not in ("T0", "T1"):
             # The protocol defines exactly two tier namespaces. Anything
             # else (a typo, a future value) would fall through the T1
@@ -558,6 +569,7 @@ class AcceptanceLedger:
         entries, _ = self._read_lines()
         prepared = None
         issuer_signed = None
+        issuer_signed_hashes: set[str] = set()
         countersigned = None
         anchored_hashes: set[str] = set()
         covered: set[str] = set()
@@ -570,9 +582,14 @@ class AcceptanceLedger:
                 prepared = e
             elif e["kind"] == KIND_ISSUER_SIGNED and prepared is not None:
                 if e["body"]["target_entry_hash"] == prepared["entry_hash"]:
+                    # Track EVERY issuer signature over the prepared entry,
+                    # not just the latest: an issuer-signature retry appended
+                    # before the licensee countersigns the original must not
+                    # orphan a valid countersignature over the earlier entry.
                     issuer_signed = e
-            elif e["kind"] == KIND_COUNTERSIGNED and issuer_signed is not None:
-                if e["body"]["issuer_entry_hash"] == issuer_signed["entry_hash"]:
+                    issuer_signed_hashes.add(e["entry_hash"])
+            elif e["kind"] == KIND_COUNTERSIGNED and issuer_signed_hashes:
+                if e["body"]["issuer_entry_hash"] in issuer_signed_hashes:
                     countersigned = e
             elif e["kind"] == KIND_ANCHOR:
                 anchored_hashes.add(e["body"]["anchored_head_hash"])
@@ -765,9 +782,42 @@ def _parse_entry(line: bytes, *, index: int) -> dict[str, Any]:
         )
     if entry["kind"] == KIND_ANCHOR and not isinstance(body["production"], bool):
         raise LedgerError(f"entry {index}: anchor body production must be a bool")
+    if entry["kind"] == KIND_PREPARED and entry["seq"] > 0:
+        _validate_prepared_body_values(body, index=index)
     if canonical_bytes(entry) != line:
         raise LedgerError(f"entry {index}: non-canonical encoding")
     return entry
+
+
+def _validate_prepared_body_values(body: dict[str, Any], *, index: int) -> None:
+    """Re-apply the append-time value validators when parsing from disk.
+
+    Exact field NAMES alone are not fail-closed: a canonical hand-minted
+    prepared entry with tier "T2", non-SHA digests, a raw-identifier
+    variant_id, or a raw-identity licensee_ref (entry_hash recomputed)
+    would otherwise pass verify() forever and surface from
+    issuance_state() as publisher testimony.
+    """
+
+    def _fail(msg: str) -> None:
+        raise LedgerError(f"entry {index}: {msg}")
+
+    vid = body["variant_id"]
+    if not (isinstance(vid, str) and _VARIANT_ID_RE.match(vid)):
+        _fail("variant_id must be vt_ + 32 lowercase hex chars")
+    tier = body["tier"]
+    if tier not in ("T0", "T1"):
+        _fail(f"unknown tier {tier!r}; the protocol defines only T0 and T1")
+    if body["variant_tree_sha256"] is not None and not _is_sha256_hex(body["variant_tree_sha256"]):
+        _fail("variant_tree_sha256 must be null or a 64-char lowercase hex SHA-256 digest")
+    for field in ("source_tree_sha256", "canary_commitment_hex", "allocation_manifest_sha256"):
+        if not _is_sha256_hex(body[field]):
+            _fail(f"{field} must be a 64-char lowercase hex SHA-256 digest")
+    lref = body["licensee_ref"]
+    if lref is not None and not (isinstance(lref, str) and _LREF_RE.match(lref)):
+        _fail("licensee_ref must be an opaque lref_ reference")
+    if tier == "T1" and lref is None:
+        _fail("T1 prepared entry missing licensee_ref")
 
 
 def _append_line(path: Path, entry: dict[str, Any], *, create: bool) -> None:

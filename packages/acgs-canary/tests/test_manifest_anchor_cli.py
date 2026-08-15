@@ -231,6 +231,40 @@ class TestAnchor:
         fx = FixtureVerifier({"f1": {"bundle_sha256": bundle_hash(other)}})
         assert not anchor_predates(ev, bundle, observation_time="2026-08-16T00:00:00Z", verifier=fx)
 
+    def test_evidence_reuse_across_bundles_fails_with_permissive_verifier(self):
+        # A verifier implementation that validates only the timestamp proof
+        # named by the evidence (never binding the supplied bundle) must not
+        # let confirmed evidence for bundle A answer the dispute question
+        # for bundle B: anchor_predates itself binds evidence.bundle_sha256
+        # to the provided bundle before consulting the verifier.
+        bundle_a = self._bundle()
+        bundle_b = build_anchor_bundle(
+            ledger_head_hash="44" * 32,
+            pool_manifest_sha256=H,
+            protocol_sha256=protocol_hash(),
+            commitment_roots_hex=[],
+            created_at=T,
+        )
+        ev = AnchorEvidence(
+            kind="rfc3161",
+            state=STATE_CONFIRMED,
+            bundle_sha256=bundle_hash(bundle_a),
+            evidence_ref="f1",
+            anchored_at=T,
+            production=False,
+        )
+
+        class ProofOnlyVerifier:
+            def verify(self, evidence, bundle):
+                return True  # trusts the named proof, ignores the bundle
+
+        assert anchor_predates(
+            ev, bundle_a, observation_time="2026-08-16T00:00:00Z", verifier=ProofOnlyVerifier()
+        )
+        assert not anchor_predates(
+            ev, bundle_b, observation_time="2026-08-16T00:00:00Z", verifier=ProofOnlyVerifier()
+        )
+
     def test_fixture_verifier_refuses_production_evidence(self):
         bundle = self._bundle()
         ev = AnchorEvidence(

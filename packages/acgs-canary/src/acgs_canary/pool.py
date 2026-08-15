@@ -46,6 +46,23 @@ _SELECTION_DOMAIN = b"acgs-canary/v1/selection"
 _TOKEN_BYTES = 24  # 192-bit tokens
 _MIN_PLACEMENTS = 2  # design §6.2: no singleton placement assumptions
 _PROBE_SEED_RE = re.compile(r"^[0-9a-f]{32}$")  # 16 CSPRNG bytes, lowercase hex
+_TOKEN_HEX_RE = re.compile(rf"^[0-9a-f]{{{_TOKEN_BYTES * 2}}}$")  # exactly 192-bit lowercase hex
+_ALLOCATION_LOCK = "t1-allocation"
+
+_CANARY_RECORD_SCHEMA = "acgs_canary_record/v1"
+_CANARY_RECORD_FIELDS = frozenset(
+    {
+        "schema",
+        "canary_id",
+        "tier",
+        "token_hex",
+        "token_sha256",
+        "status",
+        "placements",
+        "created_at",
+        "retired_at",
+    }
+)
 
 
 def _tier_domain(tier: str) -> str:
@@ -177,7 +194,7 @@ class CanaryPool:
             self._store.write_record(
                 f"{_CANARY_PREFIX}{canary_id}",
                 {
-                    "schema": "acgs_canary_record/v1",
+                    "schema": _CANARY_RECORD_SCHEMA,
                     "canary_id": canary_id,
                     "tier": tier,
                     "token_hex": token.hex(),  # SECRET: never exported
@@ -230,13 +247,32 @@ class CanaryPool:
         publics = self.all_public()
         for pub in publics:
             rec = self._record(pub.canary_id)
+            # Schema-first: a restored or tampered record with the wrong
+            # field set or schema is unhealthy even when the fields it does
+            # carry look individually plausible.
+            if set(rec) != _CANARY_RECORD_FIELDS:
+                raise PoolError(f"{pub.canary_id}: canary record field set mismatch")
+            if rec["schema"] != _CANARY_RECORD_SCHEMA:
+                raise PoolError(f"{pub.canary_id}: canary record schema mismatch")
             if rec["status"] not in _STATUSES:
                 raise PoolError(f"{pub.canary_id}: illegal status {rec['status']!r}")
             if rec["tier"] not in _TIERS:
                 raise PoolError(f"{pub.canary_id}: illegal tier {rec['tier']!r}")
+            if not isinstance(rec["placements"], int) or isinstance(rec["placements"], bool):
+                raise PoolError(f"{pub.canary_id}: placements must be an integer")
             if rec["placements"] < _MIN_PLACEMENTS:
                 raise PoolError(f"{pub.canary_id}: singleton placement")
-            actual = hashlib.sha256(bytes.fromhex(rec["token_hex"])).hexdigest()
+            token_hex = rec["token_hex"]
+            # A digest recomputed over the STORED bytes proves nothing about
+            # length: the protocol requires 192-bit CSPRNG tokens, so a
+            # restored one-byte token with a self-consistent digest must
+            # never enter selection or manifests.
+            if not (isinstance(token_hex, str) and _TOKEN_HEX_RE.match(token_hex)):
+                raise PoolError(
+                    f"{pub.canary_id}: token must be exactly {_TOKEN_BYTES} "
+                    "CSPRNG bytes of lowercase hex"
+                )
+            actual = hashlib.sha256(bytes.fromhex(token_hex)).hexdigest()
             if actual != rec["token_sha256"]:
                 raise PoolError(f"{pub.canary_id}: token digest mismatch")
             if rec["token_sha256"] in seen_token_hashes:
@@ -315,64 +351,71 @@ class CanaryPool:
         if shared + unique < 1:
             raise SelectionError("T1 selection requires a positive total count")
         salt = self._selection_salt()
-        candidates = self._active_ids(TIER_T1)
-        prior_unique: set[str] = set()
-        prior_any: set[str] = set()
-        for name in self._store.list_records(_ALLOC_PREFIX):
-            alloc = self._store.read_record(name)
-            if alloc is None:
-                continue
-            if alloc["variant_id"] == variant_id:
-                # A retried selection for an already-allocated variant is
-                # refused BEFORE any write: otherwise newly chosen uniques
-                # would be persisted first and stay reserved (shrinking the
-                # pool) when the later shared write collides with an
-                # existing alloc record for this variant.
+        # The scan, selection, and writes form ONE transaction: allocation
+        # record names include the variant_id, so overwrite=False alone
+        # cannot stop two concurrent selections for DIFFERENT variants from
+        # both passing the prior-allocation scan and then allocating the
+        # same canary (alloc-vA-cid and alloc-vB-cid never collide) — which
+        # would corrupt the allocation matrix and coalition inference.
+        with self._store.exclusive_lock(_ALLOCATION_LOCK):
+            candidates = self._active_ids(TIER_T1)
+            prior_unique: set[str] = set()
+            prior_any: set[str] = set()
+            for name in self._store.list_records(_ALLOC_PREFIX):
+                alloc = self._store.read_record(name)
+                if alloc is None:
+                    continue
+                if alloc["variant_id"] == variant_id:
+                    # A retried selection for an already-allocated variant is
+                    # refused BEFORE any write: otherwise newly chosen uniques
+                    # would be persisted first and stay reserved (shrinking the
+                    # pool) when the later shared write collides with an
+                    # existing alloc record for this variant.
+                    raise SelectionError(
+                        f"variant {variant_id} already has allocation records; "
+                        "T1 selection is not retryable for an allocated variant"
+                    )
+                prior_any.add(alloc["canary_id"])
+                if alloc["kind"] == "unique":
+                    prior_unique.add(alloc["canary_id"])
+            shared_pool = [c for c in candidates if c not in prior_unique]
+            shared_ranked = sorted(shared_pool, key=lambda c: self._rank(salt, b"t1-shared", c))
+            shared_ids = shared_ranked[:shared]
+            if len(shared_ids) < shared:
+                raise SelectionError(f"need {shared} shared T1 canaries, have {len(shared_ids)}")
+            taken = prior_any | set(shared_ids)
+            unique_pool = [c for c in candidates if c not in taken]
+            unique_ranked = sorted(
+                unique_pool,
+                key=lambda c: self._rank(salt, b"t1-unique\x1f" + variant_id.encode(), c),
+            )
+            unique_ids = unique_ranked[:unique]
+            if len(unique_ids) < unique:
                 raise SelectionError(
-                    f"variant {variant_id} already has allocation records; "
-                    "T1 selection is not retryable for an allocated variant"
+                    f"need {unique} unallocated unique T1 canaries, have {len(unique_ids)}"
                 )
-            prior_any.add(alloc["canary_id"])
-            if alloc["kind"] == "unique":
-                prior_unique.add(alloc["canary_id"])
-        shared_pool = [c for c in candidates if c not in prior_unique]
-        shared_ranked = sorted(shared_pool, key=lambda c: self._rank(salt, b"t1-shared", c))
-        shared_ids = shared_ranked[:shared]
-        if len(shared_ids) < shared:
-            raise SelectionError(f"need {shared} shared T1 canaries, have {len(shared_ids)}")
-        taken = prior_any | set(shared_ids)
-        unique_pool = [c for c in candidates if c not in taken]
-        unique_ranked = sorted(
-            unique_pool,
-            key=lambda c: self._rank(salt, b"t1-unique\x1f" + variant_id.encode(), c),
-        )
-        unique_ids = unique_ranked[:unique]
-        if len(unique_ids) < unique:
-            raise SelectionError(
-                f"need {unique} unallocated unique T1 canaries, have {len(unique_ids)}"
-            )
-        for cid in unique_ids:
-            self._store.write_record(
-                f"{_ALLOC_PREFIX}{variant_id}-{cid}",
-                {
-                    "schema": "acgs_canary_alloc/v1",
-                    "variant_id": variant_id,
-                    "canary_id": cid,
-                    "kind": "unique",
-                },
-                overwrite=False,
-            )
-        for cid in shared_ids:
-            self._store.write_record(
-                f"{_ALLOC_PREFIX}{variant_id}-{cid}",
-                {
-                    "schema": "acgs_canary_alloc/v1",
-                    "variant_id": variant_id,
-                    "canary_id": cid,
-                    "kind": "shared",
-                },
-                overwrite=False,
-            )
+            for cid in unique_ids:
+                self._store.write_record(
+                    f"{_ALLOC_PREFIX}{variant_id}-{cid}",
+                    {
+                        "schema": "acgs_canary_alloc/v1",
+                        "variant_id": variant_id,
+                        "canary_id": cid,
+                        "kind": "unique",
+                    },
+                    overwrite=False,
+                )
+            for cid in shared_ids:
+                self._store.write_record(
+                    f"{_ALLOC_PREFIX}{variant_id}-{cid}",
+                    {
+                        "schema": "acgs_canary_alloc/v1",
+                        "variant_id": variant_id,
+                        "canary_id": cid,
+                        "kind": "shared",
+                    },
+                    overwrite=False,
+                )
         return {"shared": shared_ids, "unique": unique_ids}
 
     # -- commitments and export -------------------------------------------

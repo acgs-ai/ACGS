@@ -23,12 +23,16 @@ prints content.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import stat
 import subprocess
 import tempfile
+import threading
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -200,6 +204,12 @@ class CanaryStoreBackend:
     def list_records(self, prefix: str) -> list[str]:
         raise NotImplementedError
 
+    def exclusive_lock(self, name: str) -> AbstractContextManager[None]:
+        """Exclusive lock serializing multi-record read-modify-write
+        transactions (e.g. T1 allocation: scan, select, write) across
+        concurrent writers of the same store."""
+        raise NotImplementedError
+
 
 _NAME_ALLOWED = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-_.")
 
@@ -276,6 +286,24 @@ class RestrictedFileStore(CanaryStoreBackend):
             and not p.name.startswith(".tmp-")
         )
 
+    @contextmanager
+    def exclusive_lock(self, name: str) -> Iterator[None]:
+        """Cross-process advisory flock scoped to this store directory.
+
+        The lock file starts with a dot, so it can never collide with a
+        record name (record names may not start with '.') and is invisible
+        to list_records prefixes.
+        """
+        self.assert_initialized()
+        lock_path = self._dir / f".lock-{_check_name(name)}"
+        fd = os.open(str(lock_path), os.O_WRONLY | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
 
 class InMemoryStore(CanaryStoreBackend):
     """Test-only backend. Cannot be selected by production configuration:
@@ -291,6 +319,7 @@ class InMemoryStore(CanaryStoreBackend):
         if acknowledge != self._ACK:
             raise StoreLocationError("InMemoryStore requires explicit test-only acknowledgment")
         self._records: dict[str, dict[str, Any]] = {}
+        self._locks: dict[str, threading.Lock] = {}
         self.initialized = False
 
     def initialize(self, *, operator: str) -> None:
@@ -320,3 +349,9 @@ class InMemoryStore(CanaryStoreBackend):
     def list_records(self, prefix: str) -> list[str]:
         self.assert_initialized()
         return sorted(n for n in self._records if n.startswith(prefix))
+
+    @contextmanager
+    def exclusive_lock(self, name: str) -> Iterator[None]:
+        self.assert_initialized()
+        with self._locks.setdefault(_check_name(name), threading.Lock()):
+            yield

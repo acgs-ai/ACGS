@@ -224,6 +224,63 @@ class TestPoolReviewHardening:
         b = pool.select_t1(variant_id="vt_" + "bb" * 16, shared=0, unique=3)
         assert not set(a["shared"]) & set(b["unique"])
 
+    def test_short_token_with_consistent_digest_detected_by_validate(self, store):
+        # A restored/tampered record whose token is not 192 bits must fail
+        # validation even when the stored digest matches the stored bytes:
+        # hashing whatever is there is not token health.
+        import hashlib
+
+        pool = _mkpool(store)
+        ids = pool.generate(tier="T0", count=2, placements=2, created_at=T)
+        rec = store.read_record(f"canary-{ids[0]}")
+        rec["token_hex"] = "aa"  # one byte
+        rec["token_sha256"] = hashlib.sha256(bytes.fromhex("aa")).hexdigest()
+        store.write_record(f"canary-{ids[0]}", rec, overwrite=True)
+        with pytest.raises(PoolError):
+            pool.validate()
+
+    def test_malformed_canary_record_detected_by_validate(self, store):
+        # Wrong field set or schema is unhealthy even when individual
+        # fields look plausible.
+        pool = _mkpool(store)
+        ids = pool.generate(tier="T0", count=2, placements=2, created_at=T)
+        rec = store.read_record(f"canary-{ids[0]}")
+        rec["extra"] = 1
+        store.write_record(f"canary-{ids[0]}", rec, overwrite=True)
+        with pytest.raises(PoolError):
+            pool.validate()
+        del rec["extra"]
+        rec["schema"] = "acgs_canary_record/v0"
+        store.write_record(f"canary-{ids[0]}", rec, overwrite=True)
+        with pytest.raises(PoolError):
+            pool.validate()
+
+    def test_concurrent_t1_selection_never_double_allocates(self, store):
+        # Two operators preparing DIFFERENT variants concurrently must not
+        # both allocate the same canary: alloc record names include the
+        # variant_id, so overwrite=False alone cannot catch the race — the
+        # scan+selection+write section is serialized by a store lock.
+        import multiprocessing as mp
+
+        pool = _mkpool(store)
+        pool.generate(tier="T1", count=6, placements=2, created_at=T)
+        path = store.path
+
+        def worker(i: int) -> None:
+            p = CanaryPool(RestrictedFileStore(path))
+            p.select_t1(variant_id="vt_" + f"{i:02x}" * 16, shared=0, unique=2)
+
+        ctx = mp.get_context("fork")
+        procs = [ctx.Process(target=worker, args=(i,)) for i in range(1, 4)]
+        for pr in procs:
+            pr.start()
+        for pr in procs:
+            pr.join()
+        assert all(pr.exitcode == 0 for pr in procs)
+        allocated = [store.read_record(n)["canary_id"] for n in store.list_records("alloc-")]
+        assert len(allocated) == 6
+        assert len(set(allocated)) == 6  # no canary unique in two variants
+
     def test_probe_write_failure_leaves_no_orphan_token(self, store):
         # If probe persistence fails (here: uninitialized probe store),
         # generate() must not leave an active canary in the token store that
