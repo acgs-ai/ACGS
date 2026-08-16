@@ -80,6 +80,8 @@ def make_gateway(
     profile: GovernanceProfile | None = None,
     allowed_actors: frozenset[str] | None = None,
     approver_actors: frozenset[str] | None = None,
+    max_pending: int = 256,
+    max_pending_per_principal: int = 64,
 ) -> UniversalGateway:
     signer = FakeSigner()
     return UniversalGateway(
@@ -93,6 +95,8 @@ def make_gateway(
         ledger_path=tmp_path / "ledger.jsonl",
         allowed_actors=allowed_actors,
         approver_actors=approver_actors,
+        max_pending=max_pending,
+        max_pending_per_principal=max_pending_per_principal,
     )
 
 
@@ -522,6 +526,74 @@ def test_only_proposer_may_resume_via_handle_mcp_call(tmp_path: Path) -> None:
     )
     assert resumed["isError"] is False
     assert calls == [{"env": "prod"}]
+
+
+def test_human_loop_refusal_is_audited_and_chain_verifies(tmp_path: Path) -> None:
+    from gove_zone.audit import ChainHashAuditStore
+    from gove_zone.gateway import HUMAN_LOOP_REFUSED_RULE, MCP_APPROVE_TOOL
+
+    gateway = make_gateway(tmp_path, approver_actors=frozenset({"human-approver"}))
+    calls: list[Any] = []
+    gateway.register_tool("deploy", lambda **kwargs: calls.append(kwargs))
+    # The proposer is also a mapped approver, so the not_approver guard does
+    # not fire and the self-approval rule is the one that must audit.
+    parked = gateway.handle_mcp_call(
+        {"name": "deploy", "arguments": {"env": "prod"}}, actor="human-approver"
+    )
+    event_id = parked["_meta"]["gove_zone"]["escalation_event_id"]
+
+    refused = gateway.handle_mcp_call(
+        {"name": MCP_APPROVE_TOOL, "arguments": {"event_id": event_id}},
+        actor="human-approver",
+    )
+    assert refused["isError"] is True
+    envelope = refused["_meta"]["gove_zone"]["envelope"]
+    assert envelope["audit_hash"]
+    assert envelope["matched_rules"] == [f"{HUMAN_LOOP_REFUSED_RULE}:self_approval"]
+    assert calls == []
+    assert event_id in gateway._pending
+
+    report = ChainHashAuditStore(str(tmp_path / "audit.jsonl")).verify_chain()
+    assert report["valid"] is True
+    assert any(
+        event.get("matched_rules") == [f"{HUMAN_LOOP_REFUSED_RULE}:self_approval"]
+        for event in audit_events(tmp_path)
+    )
+
+
+def test_pending_capacity_backpressure_on_universal_gateway(tmp_path: Path) -> None:
+    from gove_zone.gateway import CAPACITY_REJECTED_RULE
+
+    gateway = make_gateway(
+        tmp_path,
+        approver_actors=frozenset({"human-approver"}),
+        max_pending=2,
+        max_pending_per_principal=2,
+    )
+    calls: list[Any] = []
+    gateway.register_tool("deploy", lambda **kwargs: calls.append(kwargs))
+
+    first = gateway.handle_mcp_call({"name": "deploy", "arguments": {"env": "a"}}, actor="agent-a")
+    second = gateway.handle_mcp_call({"name": "deploy", "arguments": {"env": "b"}}, actor="agent-a")
+    assert first["_meta"]["gove_zone"]["decision"] == "escalated"
+    assert second["_meta"]["gove_zone"]["decision"] == "escalated"
+    assert len(gateway._pending) == 2
+
+    overflow = gateway.handle_mcp_call(
+        {"name": "deploy", "arguments": {"env": "c"}}, actor="agent-a"
+    )
+    assert overflow["isError"] is True
+    assert overflow["_meta"]["gove_zone"]["decision"] == "denied"
+    assert overflow["_meta"]["gove_zone"]["envelope"]["matched_rules"] == [
+        f"{CAPACITY_REJECTED_RULE}:pending"
+    ]
+    assert len(gateway._pending) == 2
+    assert calls == []
+
+
+def test_constructor_rejects_nonpositive_pending_caps(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="capacity caps must be positive"):
+        make_gateway(tmp_path, max_pending=0)
 
 
 def test_openai_tool_specs_from_signatures(tmp_path: Path) -> None:

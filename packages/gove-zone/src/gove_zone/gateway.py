@@ -121,6 +121,8 @@ BYPASS_RULE = "BYPASS_ATTEMPT"
 _SYNTHETIC_POLICY_VERSION = "gateway/synthesized/v1"
 
 _ACTOR_ALLOWLIST_RULE = "ACTOR_NOT_ALLOWED"
+HUMAN_LOOP_REFUSED_RULE = "HUMAN_LOOP_REFUSED"
+CAPACITY_REJECTED_RULE = "CAPACITY_REJECTED"
 
 #: One-shot execution grant bound to a specific SealedTool *instance*. Set by
 #: ``invoke`` immediately around the executor gate; consumed by that sealed
@@ -289,6 +291,10 @@ class UniversalGateway:
     from ``allowed_actors`` when that allowlist is set, so a proposing agent
     cannot also be configured as its own approver.
 
+    ``max_pending`` / ``max_pending_per_principal`` bound parked escalations.
+    Capacity is freed only by a successful resume, never by a clock. Exceeding
+    either cap is an audited DENY and the new escalation is not parked.
+
     The single-use consumption ledger is always on: every executed receipt is
     burned, so one decision authorizes at most one side effect through this
     gateway even when the profile is not strict.
@@ -330,6 +336,8 @@ class UniversalGateway:
         trust_registry: ReceiptTrustRegistry | None = None,
         trust_purpose: str = DECISION_RECEIPT_PURPOSE,
         approver_actors: frozenset[str] | set[str] | None = None,
+        max_pending: int = 256,
+        max_pending_per_principal: int = 64,
     ) -> None:
         self.tenant_id = tenant_id
         self.execution_boundary = execution_boundary
@@ -355,6 +363,14 @@ class UniversalGateway:
                     "approver_actors collide with allowed_actors "
                     f"{clash}; a proposing actor must not be able to self-approve"
                 )
+        if max_pending <= 0 or max_pending_per_principal <= 0:
+            raise ValueError(
+                "escalation capacity caps must be positive: "
+                f"max_pending={max_pending}, "
+                f"max_pending_per_principal={max_pending_per_principal}"
+            )
+        self.max_pending = max_pending
+        self.max_pending_per_principal = max_pending_per_principal
 
         if profile.require_expiry and receipt_ttl_seconds is None:
             # Fail loud at construction instead of rejecting 100% of calls at
@@ -559,6 +575,9 @@ class UniversalGateway:
                 ),
             )
         if record.decision is Decision.ESCALATE:
+            capacity = self._enforce_pending_capacity(call, actor, tool)
+            if capacity is not None:
+                return capacity
             pending = PendingApproval(record, audit_hash, dict(call.args))
             self._pending[record.event_id] = pending
             return GatewayResult(
@@ -773,15 +792,8 @@ class UniversalGateway:
     def _human_loop_invoke(self, actor: str, tool: str, args: dict[str, Any]) -> GatewayResult:
         event_id = args.get("event_id")
         if set(args) != {"event_id"} or not isinstance(event_id, str) or not event_id.strip():
-            return GatewayResult(
-                status="denied",
-                tool=tool,
-                actor=actor,
-                envelope={
-                    "decision": "deny",
-                    "reason": "invalid reserved-tool arguments",
-                    "audit_hash": None,
-                },
+            return self._human_loop_denied(
+                actor, tool, "invalid reserved-tool arguments", code="invalid_args"
             )
         if tool == MCP_APPROVE_TOOL:
             return self._approve_pending(actor, event_id)
@@ -789,38 +801,17 @@ class UniversalGateway:
 
     def _approve_pending(self, actor: str, event_id: str) -> GatewayResult:
         if actor not in self.approver_actors:
-            return GatewayResult(
-                status="denied",
-                tool=MCP_APPROVE_TOOL,
-                actor=actor,
-                envelope={
-                    "decision": "deny",
-                    "reason": "caller is not a mapped approver",
-                    "audit_hash": None,
-                },
+            return self._human_loop_denied(
+                actor, MCP_APPROVE_TOOL, "caller is not a mapped approver", code="not_approver"
             )
         pending = self._pending.get(event_id)
         if pending is None:
-            return GatewayResult(
-                status="denied",
-                tool=MCP_APPROVE_TOOL,
-                actor=actor,
-                envelope={
-                    "decision": "deny",
-                    "reason": "unknown pending event",
-                    "audit_hash": None,
-                },
+            return self._human_loop_denied(
+                actor, MCP_APPROVE_TOOL, "unknown pending event", code="unknown_pending"
             )
         if actor == pending.record.actor:
-            return GatewayResult(
-                status="denied",
-                tool=MCP_APPROVE_TOOL,
-                actor=actor,
-                envelope={
-                    "decision": "deny",
-                    "reason": "self-approval is forbidden",
-                    "audit_hash": None,
-                },
+            return self._human_loop_denied(
+                actor, MCP_APPROVE_TOOL, "self-approval is forbidden", code="self_approval"
             )
         try:
             receipt = approve_escalation(
@@ -836,15 +827,8 @@ class UniversalGateway:
                 signer=self.profile.signer,
             )
         except (ReceiptValidationError, GoveZoneError):
-            return GatewayResult(
-                status="denied",
-                tool=MCP_APPROVE_TOOL,
-                actor=actor,
-                envelope={
-                    "decision": "deny",
-                    "reason": "approval refused",
-                    "audit_hash": None,
-                },
+            return self._human_loop_denied(
+                actor, MCP_APPROVE_TOOL, "approval refused", code="approval_refused"
             )
         self._approvals[event_id] = (receipt, receipt.audit_event_hash)
         return GatewayResult(
@@ -859,38 +843,20 @@ class UniversalGateway:
     def _resume_pending(self, actor: str, event_id: str) -> GatewayResult:
         pending = self._pending.get(event_id)
         if pending is None:
-            return GatewayResult(
-                status="denied",
-                tool=MCP_RESUME_TOOL,
-                actor=actor,
-                envelope={
-                    "decision": "deny",
-                    "reason": "unknown pending event",
-                    "audit_hash": None,
-                },
+            return self._human_loop_denied(
+                actor, MCP_RESUME_TOOL, "unknown pending event", code="unknown_pending"
             )
         if actor != pending.record.actor:
-            return GatewayResult(
-                status="denied",
-                tool=MCP_RESUME_TOOL,
-                actor=actor,
-                envelope={
-                    "decision": "deny",
-                    "reason": "only the proposing actor may resume",
-                    "audit_hash": None,
-                },
+            return self._human_loop_denied(
+                actor,
+                MCP_RESUME_TOOL,
+                "only the proposing actor may resume",
+                code="not_proposer",
             )
         captured = self._approvals.get(event_id)
         if captured is None:
-            return GatewayResult(
-                status="denied",
-                tool=MCP_RESUME_TOOL,
-                actor=actor,
-                envelope={
-                    "decision": "deny",
-                    "reason": "pending is not approved",
-                    "audit_hash": None,
-                },
+            return self._human_loop_denied(
+                actor, MCP_RESUME_TOOL, "pending is not approved", code="not_approved"
             )
         receipt, approval_hash = captured
         # Resume is a real execution. Capture uses the parked ESCALATE record
@@ -985,6 +951,73 @@ class UniversalGateway:
                 "audit_hash": audit_hash,
                 "timestamp_iso": datetime.now(UTC).isoformat(),
             }
+        )
+
+    def _human_loop_denied(
+        self, actor: str, tool: str, reason: str, *, code: str
+    ) -> GatewayResult:
+        """Audited fail-closed refusal for a reserved approve/resume call."""
+        call = ToolCall(name=tool, args={}, actor=actor)
+        try:
+            record, audit_hash = self._append_synthesized_deny(
+                call,
+                rule=f"{HUMAN_LOOP_REFUSED_RULE}:{code}",
+                reason=reason,
+            )
+        except AuditError:
+            return GatewayResult(
+                status="denied",
+                tool=tool,
+                actor=actor,
+                envelope={"decision": "deny", "reason": reason, "audit_hash": None},
+            )
+        return GatewayResult(
+            status="denied",
+            tool=tool,
+            actor=actor,
+            audit_hash=audit_hash,
+            envelope=rejection_dict(
+                record, audit_hash, resumable=False, resolution=REVISE_AND_RETRY
+            ),
+        )
+
+    def _enforce_pending_capacity(
+        self, call: ToolCall, actor: str, tool: str
+    ) -> GatewayResult | None:
+        """Refuse a new park when the global or per-principal cap is full."""
+        global_full = len(self._pending) >= self.max_pending
+        principal_pending = sum(
+            1 for pending in self._pending.values() if pending.record.actor == actor
+        )
+        principal_full = principal_pending >= self.max_pending_per_principal
+        if not (global_full or principal_full):
+            return None
+        scope = "pending" if global_full else "principal"
+        try:
+            record, audit_hash = self._append_synthesized_deny(
+                call,
+                rule=f"{CAPACITY_REJECTED_RULE}:{scope}",
+                reason="escalation capacity exhausted; call refused",
+            )
+        except AuditError:
+            return GatewayResult(
+                status="denied",
+                tool=tool,
+                actor=actor,
+                envelope={
+                    "decision": "deny",
+                    "reason": "escalation capacity exhausted; call refused",
+                    "audit_hash": None,
+                },
+            )
+        return GatewayResult(
+            status="denied",
+            tool=tool,
+            actor=actor,
+            audit_hash=audit_hash,
+            envelope=rejection_dict(
+                record, audit_hash, resumable=False, resolution=REVISE_AND_RETRY
+            ),
         )
 
     def _append_synthesized_deny(

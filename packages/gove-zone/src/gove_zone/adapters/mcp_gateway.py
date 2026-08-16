@@ -49,7 +49,7 @@ from weakref import WeakKeyDictionary
 
 from gove_zone.audit import ChainHashAuditStore
 from gove_zone.consumption import ReceiptConsumptionLedger
-from gove_zone.decision import Decision, DecisionRecord
+from gove_zone.decision import Decision, DecisionRecord, sha256_json
 from gove_zone.errors import (
     AuditError,
     GoveZoneError,
@@ -807,7 +807,17 @@ class GovernedGateway:
     ) -> mcp_types.CallToolResult:
         event_id = self._event_id_arg(arguments)
         if event_id is None:
-            return self._human_loop_denied_result(name, "invalid reserved-tool arguments")
+            actor = (
+                self._resolve_approver(session)
+                or self._resolve_principal(session)
+                or "<unmapped>"
+            )
+            return self._human_loop_denied_result(
+                name,
+                "invalid reserved-tool arguments",
+                actor=actor,
+                code="invalid_args",
+            )
         if name == MCP_APPROVE_TOOL:
             return self._mcp_approve(session, event_id)
         return await self._mcp_resume(session, event_id)
@@ -817,14 +827,28 @@ class GovernedGateway:
 
         approver = self._resolve_approver(session)
         if approver is None:
+            actor = self._resolve_principal(session) or "<unmapped>"
             return self._human_loop_denied_result(
-                MCP_APPROVE_TOOL, "caller is not a mapped approver"
+                MCP_APPROVE_TOOL,
+                "caller is not a mapped approver",
+                actor=actor,
+                code="not_approver",
             )
         pending = self._pending.get(event_id)
         if pending is None:
-            return self._human_loop_denied_result(MCP_APPROVE_TOOL, "unknown pending event")
+            return self._human_loop_denied_result(
+                MCP_APPROVE_TOOL,
+                "unknown pending event",
+                actor=approver,
+                code="unknown_pending",
+            )
         if approver == pending.record.actor:
-            return self._human_loop_denied_result(MCP_APPROVE_TOOL, "self-approval is forbidden")
+            return self._human_loop_denied_result(
+                MCP_APPROVE_TOOL,
+                "self-approval is forbidden",
+                actor=approver,
+                code="self_approval",
+            )
         try:
             receipt = self.approve(
                 event_id,
@@ -832,7 +856,12 @@ class GovernedGateway:
                 expires_at=self._receipt_expires_at(),
             )
         except (KeyError, ReceiptValidationError, GoveZoneError):
-            return self._human_loop_denied_result(MCP_APPROVE_TOOL, "approval refused")
+            return self._human_loop_denied_result(
+                MCP_APPROVE_TOOL,
+                "approval refused",
+                actor=approver,
+                code="approval_refused",
+            )
         return types.CallToolResult(
             isError=False,
             content=[
@@ -861,29 +890,72 @@ class GovernedGateway:
         principal = self._resolve_principal(session)
         if principal is None:
             return self._human_loop_denied_result(
-                MCP_RESUME_TOOL, "caller is not a mapped principal"
+                MCP_RESUME_TOOL,
+                "caller is not a mapped principal",
+                actor="<unmapped>",
+                code="not_principal",
             )
         pending = self._pending.get(event_id)
         if pending is None:
-            return self._human_loop_denied_result(MCP_RESUME_TOOL, "unknown pending event")
+            return self._human_loop_denied_result(
+                MCP_RESUME_TOOL,
+                "unknown pending event",
+                actor=principal,
+                code="unknown_pending",
+            )
         if principal != pending.record.actor:
             return self._human_loop_denied_result(
-                MCP_RESUME_TOOL, "only the proposing actor may resume"
+                MCP_RESUME_TOOL,
+                "only the proposing actor may resume",
+                actor=principal,
+                code="not_proposer",
             )
         captured = self._approvals.get(event_id)
         if captured is None:
-            return self._human_loop_denied_result(MCP_RESUME_TOOL, "pending is not approved")
+            return self._human_loop_denied_result(
+                MCP_RESUME_TOOL,
+                "pending is not approved",
+                actor=principal,
+                code="not_approved",
+            )
         receipt, _approval_hash = captured
         try:
             return await self.resume(event_id, receipt)
         except ReceiptAlreadyUsedError:
-            return self._human_loop_denied_result(MCP_RESUME_TOOL, "approval already consumed")
+            return self._human_loop_denied_result(
+                MCP_RESUME_TOOL,
+                "approval already consumed",
+                actor=principal,
+                code="already_consumed",
+            )
         except (KeyError, ReceiptValidationError, GoveZoneError):
-            return self._human_loop_denied_result(MCP_RESUME_TOOL, "resume refused")
+            return self._human_loop_denied_result(
+                MCP_RESUME_TOOL,
+                "resume refused",
+                actor=principal,
+                code="resume_refused",
+            )
 
-    def _human_loop_denied_result(self, name: str, reason: str) -> mcp_types.CallToolResult:
+    def _human_loop_denied_result(
+        self, name: str, reason: str, *, actor: str, code: str
+    ) -> mcp_types.CallToolResult:
         import mcp.types as types
 
+        try:
+            reject_record = DecisionRecord(
+                decision=Decision.DENY,
+                tool=name,
+                argument_hash=sha256_json({}),
+                policy_version=self._config.policy.version,
+                event_id=new_event_id(),
+                matched_rules=(f"HUMAN_LOOP_REFUSED:{code}",),
+                reason=reason,
+                actor=actor,
+            )
+            event = self._audit.append(reject_record)
+            audit_hash: str | None = str(event.get("event_hash")) or None
+        except AuditError:
+            return self._audit_unrecordable_result()
         return types.CallToolResult(
             isError=True,
             content=[
@@ -895,9 +967,9 @@ class GovernedGateway:
             structuredContent={
                 "decision": "deny",
                 "reason": reason,
-                "audit_hash": None,
+                "audit_hash": audit_hash,
             },
-            _meta={"gove_zone": {"decision": "deny", "audit_hash": None}},
+            _meta={"gove_zone": {"decision": "deny", "audit_hash": audit_hash}},
         )
 
     # -- MCP result builders (§3.3) ---------------------------------------- #
