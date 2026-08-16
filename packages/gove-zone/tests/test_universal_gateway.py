@@ -79,6 +79,7 @@ def make_gateway(
     policy: Policy | None = None,
     profile: GovernanceProfile | None = None,
     allowed_actors: frozenset[str] | None = None,
+    approver_actors: frozenset[str] | None = None,
 ) -> UniversalGateway:
     signer = FakeSigner()
     return UniversalGateway(
@@ -91,6 +92,7 @@ def make_gateway(
         audit_path=tmp_path / "audit.jsonl",
         ledger_path=tmp_path / "ledger.jsonl",
         allowed_actors=allowed_actors,
+        approver_actors=approver_actors,
     )
 
 
@@ -157,6 +159,8 @@ def test_escalate_returns_envelope(tmp_path: Path) -> None:
     assert outcome.envelope is not None
     assert outcome.envelope["outcome"] == "escalated"
     assert outcome.envelope["resolution"] == "human_approval"
+    assert outcome.envelope["resumable"] is True
+    assert outcome.envelope["approval"]["event_id"]
 
 
 def test_unknown_tool_is_structurally_uncallable(tmp_path: Path) -> None:
@@ -342,10 +346,118 @@ def test_mcp_call_malformed_and_unregistered(tmp_path: Path) -> None:
 
 
 def test_mcp_tools_list_matches_registry(tmp_path: Path) -> None:
+    from gove_zone.gateway import MCP_APPROVE_TOOL, MCP_RESUME_TOOL
+
     gateway = make_gateway(tmp_path)
     gateway.register_tool("b_tool", lambda: None)
     gateway.register_tool("a_tool", lambda: None)
-    assert gateway.mcp_tools_list() == {"tools": [{"name": "a_tool"}, {"name": "b_tool"}]}
+    assert gateway.mcp_tools_list() == {
+        "tools": [
+            {"name": MCP_APPROVE_TOOL},
+            {"name": MCP_RESUME_TOOL},
+            {"name": "a_tool"},
+            {"name": "b_tool"},
+        ]
+    }
+
+
+def test_reserved_name_cannot_be_registered(tmp_path: Path) -> None:
+    from gove_zone.gateway import MCP_APPROVE_TOOL
+
+    gateway = make_gateway(tmp_path)
+    with pytest.raises(ValueError, match="reserved"):
+        gateway.register_tool(MCP_APPROVE_TOOL, lambda **kwargs: "nope")
+
+
+def test_approver_actors_must_be_disjoint_from_allowed_actors(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="approver_actors collide"):
+        make_gateway(
+            tmp_path,
+            allowed_actors=frozenset({"agent-a"}),
+            approver_actors=frozenset({"agent-a"}),
+        )
+
+
+def test_mcp_human_loop_is_reachable_through_handle_mcp_call(tmp_path: Path) -> None:
+    from gove_zone.gateway import MCP_APPROVE_TOOL, MCP_RESUME_TOOL
+
+    gateway = make_gateway(tmp_path, approver_actors=frozenset({"human-approver"}))
+    calls: list[dict[str, Any]] = []
+    gateway.register_tool("deploy", lambda **kwargs: calls.append(dict(kwargs)) or "deployed")
+
+    parked = gateway.handle_mcp_call(
+        {"name": "deploy", "arguments": {"env": "prod"}}, actor="agent-a"
+    )
+    assert parked["isError"] is True
+    assert parked["_meta"]["gove_zone"]["decision"] == "escalated"
+    event_id = parked["_meta"]["gove_zone"]["escalation_event_id"]
+    assert calls == []
+
+    self_approve = gateway.handle_mcp_call(
+        {"name": MCP_APPROVE_TOOL, "arguments": {"event_id": event_id}},
+        actor="agent-a",
+    )
+    assert self_approve["isError"] is True
+    assert calls == []
+
+    approved = gateway.handle_mcp_call(
+        {"name": MCP_APPROVE_TOOL, "arguments": {"event_id": event_id}},
+        actor="human-approver",
+    )
+    assert approved["isError"] is False
+    assert approved["_meta"]["gove_zone"]["executed"] is False
+    assert calls == []
+
+    resumed = gateway.handle_mcp_call(
+        {"name": MCP_RESUME_TOOL, "arguments": {"event_id": event_id}},
+        actor="agent-a",
+    )
+    assert resumed["isError"] is False
+    assert calls == [{"env": "prod"}]
+
+    replay = gateway.handle_mcp_call(
+        {"name": MCP_RESUME_TOOL, "arguments": {"event_id": event_id}},
+        actor="agent-a",
+    )
+    assert replay["isError"] is True
+    assert calls == [{"env": "prod"}]
+
+
+def test_mcp_resume_expired_approval_does_not_execute(tmp_path: Path) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from gove_zone.gateway import MCP_RESUME_TOOL
+
+    gateway = make_gateway(tmp_path, approver_actors=frozenset({"human-approver"}))
+    calls: list[Any] = []
+    gateway.register_tool("deploy", lambda **kwargs: calls.append(kwargs))
+    parked = gateway.invoke("agent-a", "deploy", {"env": "prod"})
+    event_id = parked.envelope["approval"]["event_id"]
+    expired = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
+    from gove_zone.escalation import approve_escalation
+    from gove_zone.receipt import Validator
+
+    pending = gateway._pending[event_id]
+    receipt = approve_escalation(
+        pending,
+        validator=Validator(validator_id="human-approver", role="approver"),
+        authority=gateway.authority,
+        tenant_id=gateway.tenant_id,
+        execution_boundary=gateway.execution_boundary,
+        policy_bundle_id=gateway.policy_bundle_id,
+        policy_hash=gateway.policy.version,
+        audit=gateway._audit,
+        expires_at=expired,
+        signer=gateway.profile.signer,
+    )
+    gateway._approvals[event_id] = (receipt, receipt.audit_event_hash)
+
+    resumed = gateway.handle_mcp_call(
+        {"name": MCP_RESUME_TOOL, "arguments": {"event_id": event_id}},
+        actor="agent-a",
+    )
+    assert resumed["isError"] is True
+    assert calls == []
 
 
 # -- OpenAI function-calling surface --------------------------------------------- #
