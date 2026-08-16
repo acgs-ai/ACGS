@@ -53,6 +53,7 @@ from gove_zone.decision import Decision, DecisionRecord
 from gove_zone.errors import (
     AuditError,
     GoveZoneError,
+    ReceiptAlreadyUsedError,
     ReceiptValidationError,
 )
 from gove_zone.escalation import PendingApproval, approve_escalation, resume_with_receipt
@@ -75,6 +76,13 @@ if TYPE_CHECKING:  # pragma: no cover - typing only; never imported at runtime t
 #: rejected at config load (§3.2) so an unrouted TRANSFORM cannot silently
 #: hard-fail every such call at the receipt gate.
 _TRANSFORM_POLICY_ID = "transform-policy"
+
+#: Reserved ``tools/call`` names owned by this gateway. They never forward
+#: downstream: ``gove.approve`` mints a same-tenant approval; ``gove.resume``
+#: verifies and burns that approval, then executes the original tool once.
+MCP_APPROVE_TOOL = "gove.approve"
+MCP_RESUME_TOOL = "gove.resume"
+MCP_HUMAN_LOOP_TOOLS = frozenset({MCP_APPROVE_TOOL, MCP_RESUME_TOOL})
 
 _MISSING_MCP_MSG = (
     "the governed-MCP gateway requires the official Model Context Protocol SDK; "
@@ -141,6 +149,12 @@ class GatewayConfig:
     # are generous so existing embedders/tests are unaffected.
     max_pending: int = 256
     max_pending_per_principal: int = 64
+    # clientInfo.name → validator_id for MCP ``gove.approve``. Distinct from
+    # ``principals`` (proposing agents). Empty means MCP approve is unavailable
+    # (CLI ``approve-escalation`` still works). Names and mapped ids must not
+    # overlap ``principals`` — otherwise the proposing agent could self-approve
+    # through ``tools/call``.
+    approver_principals: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # Self-validation guard, fail-closed at config load: the validator must
@@ -162,6 +176,19 @@ class GatewayConfig:
                 "escalation capacity caps must be positive: "
                 f"max_pending={self.max_pending}, "
                 f"max_pending_per_principal={self.max_pending_per_principal}"
+            )
+        name_clash = sorted(set(self.principals) & set(self.approver_principals))
+        if name_clash:
+            raise ValueError(
+                "approver_principals clientInfo names collide with principals "
+                f"{name_clash}; an agent session must not also be an approver session"
+            )
+        id_clash = sorted(set(self.principals.values()) & set(self.approver_principals.values()))
+        if id_clash:
+            raise ValueError(
+                "approver_principals ids collide with principals "
+                f"{id_clash}; a proposing actor must not be able to self-approve "
+                "through gove.approve"
             )
 
 
@@ -228,6 +255,9 @@ def load_gateway_config(path: str | Path) -> GatewayConfig:
         role=str(ident.get("validator_role") or "validator"),
     )
     principals = {str(k): str(v) for k, v in dict(ident.get("principals", {})).items()}
+    approver_principals = {
+        str(k): str(v) for k, v in dict(ident.get("approver_principals", {})).items()
+    }
 
     profile_name = str(gov.get("profile") or "production").strip().lower()
     if profile_name == "dev":
@@ -253,6 +283,7 @@ def load_gateway_config(path: str | Path) -> GatewayConfig:
         profile=profile,
         validator=validator,
         principals=principals,
+        approver_principals=approver_principals,
         audit_path=audit_path,
         ledger_path=ledger_path,
         allow_sampling=bool(raw.get("sampling", {}).get("allow", False)),
@@ -366,6 +397,19 @@ class GovernedGateway:
             return None
         return self._config.principals.get(name)
 
+    def _resolve_approver(self, session: ServerSession) -> str | None:
+        """Resolve the MCP approver from ``clientInfo`` + ``approver_principals``.
+
+        Never falls back to ``principals``: a proposing agent must not mint
+        its own approval through ``gove.approve``.
+        """
+        params = getattr(session, "client_params", None)
+        client_info = getattr(params, "clientInfo", None)
+        name = getattr(client_info, "name", None)
+        if not isinstance(name, str) or not name:
+            return None
+        return self._config.approver_principals.get(name)
+
     def _session_context(self, session: ServerSession) -> SessionContext | None:
         ctx = self._sessions.get(session)
         if ctx is not None:
@@ -385,10 +429,12 @@ class GovernedGateway:
     def build_server(self) -> Server:
         """Build the low-level MCP server the host connects to.
 
-        Registers only ``tools/list`` (forward the downstream catalogue) and
-        ``tools/call`` (the governed gate). Every other method is left
-        unregistered so the SDK answers *method-not-found* — a fail-closed
-        non-forward for unknown / unsupported side-effecting methods (bar #2).
+        Registers only ``tools/list`` (downstream catalogue plus reserved
+        ``gove.approve`` / ``gove.resume``) and ``tools/call`` (the governed
+        gate). Reserved names are intercepted before policy or downstream
+        forward. Every other method is left unregistered so the SDK answers
+        *method-not-found* — a fail-closed non-forward for unknown /
+        unsupported side-effecting methods (bar #2).
         ``sampling/createMessage`` is a server→client request and is denied by
         construction: the runtime (:func:`run_stdio_gateway`) constructs the
         downstream client session with no sampling callback (partner opt-in is a
@@ -404,7 +450,11 @@ class GovernedGateway:
         @server.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
         async def _list_tools() -> list[mcp_types.Tool]:
             downstream_tools = await self._downstream.list_tools()
-            return list(downstream_tools.tools)
+            advertised = [
+                tool for tool in downstream_tools.tools if tool.name not in MCP_HUMAN_LOOP_TOOLS
+            ]
+            advertised[0:0] = self._human_loop_tool_defs()
+            return advertised
 
         # validate_input=False: the governance decision runs on RAW args (G6);
         # schema pre-validation must not shadow an arg-keyed deny, and the
@@ -421,6 +471,10 @@ class GovernedGateway:
         self, server: Server, name: str, arguments: dict[str, Any]
     ) -> mcp_types.CallToolResult:
         session = server.request_context.session
+        if name in MCP_HUMAN_LOOP_TOOLS:
+            # Reserved names never reach policy or the downstream catalog.
+            return await self._human_loop_tools_call(session, name, arguments)
+
         ctx = self._session_context(session)
         if ctx is None:
             # Principal could not be resolved from clientInfo (the low-level
@@ -707,6 +761,145 @@ class GovernedGateway:
         self._approvals.pop(event_id, None)
         return self._wrap_allow_result(downstream_result, pending.record, receipt.audit_event_hash)
 
+    # -- MCP-reachable human loop (gove.approve / gove.resume) ------------- #
+
+    def _human_loop_tool_defs(self) -> list[mcp_types.Tool]:
+        import mcp.types as types
+
+        event_schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {"event_id": {"type": "string"}},
+            "required": ["event_id"],
+            "additionalProperties": False,
+        }
+        return [
+            types.Tool(
+                name=MCP_APPROVE_TOOL,
+                description=(
+                    "Approve a parked ESCALATE pending. Does not execute the "
+                    "original tool. Requires an approver session."
+                ),
+                inputSchema=event_schema,
+            ),
+            types.Tool(
+                name=MCP_RESUME_TOOL,
+                description=(
+                    "Resume an approved pending exactly once. Caller must be "
+                    "the original proposing principal."
+                ),
+                inputSchema=event_schema,
+            ),
+        ]
+
+    def _event_id_arg(self, arguments: Mapping[str, Any]) -> str | None:
+        if set(arguments) != {"event_id"}:
+            return None
+        event_id = arguments.get("event_id")
+        if not isinstance(event_id, str) or not event_id.strip():
+            return None
+        return event_id
+
+    async def _human_loop_tools_call(
+        self,
+        session: ServerSession,
+        name: str,
+        arguments: dict[str, Any],
+    ) -> mcp_types.CallToolResult:
+        event_id = self._event_id_arg(arguments)
+        if event_id is None:
+            return self._human_loop_denied_result(name, "invalid reserved-tool arguments")
+        if name == MCP_APPROVE_TOOL:
+            return self._mcp_approve(session, event_id)
+        return await self._mcp_resume(session, event_id)
+
+    def _mcp_approve(self, session: ServerSession, event_id: str) -> mcp_types.CallToolResult:
+        import mcp.types as types
+
+        approver = self._resolve_approver(session)
+        if approver is None:
+            return self._human_loop_denied_result(
+                MCP_APPROVE_TOOL, "caller is not a mapped approver"
+            )
+        pending = self._pending.get(event_id)
+        if pending is None:
+            return self._human_loop_denied_result(MCP_APPROVE_TOOL, "unknown pending event")
+        if approver == pending.record.actor:
+            return self._human_loop_denied_result(MCP_APPROVE_TOOL, "self-approval is forbidden")
+        try:
+            receipt = self.approve(
+                event_id,
+                validator=Validator(validator_id=approver, role="approver"),
+                expires_at=self._receipt_expires_at(),
+            )
+        except (KeyError, ReceiptValidationError, GoveZoneError):
+            return self._human_loop_denied_result(MCP_APPROVE_TOOL, "approval refused")
+        return types.CallToolResult(
+            isError=False,
+            content=[
+                types.TextContent(
+                    type="text",
+                    text=f"gove-zone APPROVED {event_id}; not executed",
+                )
+            ],
+            structuredContent={
+                "decision": "allow",
+                "executed": False,
+                "event_id": event_id,
+                "audit_hash": receipt.audit_event_hash,
+            },
+            _meta={
+                "gove_zone": {
+                    "decision": "allow",
+                    "executed": False,
+                    "escalation_event_id": event_id,
+                    "audit_hash": receipt.audit_event_hash,
+                }
+            },
+        )
+
+    async def _mcp_resume(self, session: ServerSession, event_id: str) -> mcp_types.CallToolResult:
+        principal = self._resolve_principal(session)
+        if principal is None:
+            return self._human_loop_denied_result(
+                MCP_RESUME_TOOL, "caller is not a mapped principal"
+            )
+        pending = self._pending.get(event_id)
+        if pending is None:
+            return self._human_loop_denied_result(MCP_RESUME_TOOL, "unknown pending event")
+        if principal != pending.record.actor:
+            return self._human_loop_denied_result(
+                MCP_RESUME_TOOL, "only the proposing actor may resume"
+            )
+        captured = self._approvals.get(event_id)
+        if captured is None:
+            return self._human_loop_denied_result(MCP_RESUME_TOOL, "pending is not approved")
+        receipt, _approval_hash = captured
+        try:
+            return await self.resume(event_id, receipt)
+        except ReceiptAlreadyUsedError:
+            return self._human_loop_denied_result(MCP_RESUME_TOOL, "approval already consumed")
+        except (KeyError, ReceiptValidationError, GoveZoneError):
+            return self._human_loop_denied_result(MCP_RESUME_TOOL, "resume refused")
+
+    def _human_loop_denied_result(self, name: str, reason: str) -> mcp_types.CallToolResult:
+        import mcp.types as types
+
+        return types.CallToolResult(
+            isError=True,
+            content=[
+                types.TextContent(
+                    type="text",
+                    text=f"gove-zone DENIED {name}: {reason}",
+                )
+            ],
+            structuredContent={
+                "decision": "deny",
+                "reason": reason,
+                "audit_hash": None,
+            },
+            _meta={"gove_zone": {"decision": "deny", "audit_hash": None}},
+        )
+
     # -- MCP result builders (§3.3) ---------------------------------------- #
 
     def _wrap_allow_result(
@@ -760,7 +953,10 @@ class GovernedGateway:
             approval={
                 "via": "approve_escalation",
                 "event_id": record.event_id,
-                "how_to_approve": "gove-zone approve-escalation --pending <descriptor>",
+                "how_to_approve": (
+                    "tools/call gove.approve {event_id} from an approver "
+                    "session, or gove-zone approve-escalation --pending <descriptor>"
+                ),
             },
         )
         return types.CallToolResult(

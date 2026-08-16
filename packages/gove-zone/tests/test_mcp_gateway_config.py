@@ -84,6 +84,49 @@ def test_validator_equal_to_principal_rejected_at_load(tmp_path: Path) -> None:
         load_gateway_config(path)
 
 
+def test_config_post_init_rejects_approver_principal_name_clash(tmp_path: Path) -> None:
+    policy = RuleSetPolicy.from_dict(_RULESET_BUNDLE)
+    with pytest.raises(ValueError, match="approver_principals clientInfo names collide"):
+        GatewayConfig(
+            tenant_id="t",
+            execution_boundary="b",
+            policy=policy,
+            policy_bundle_id="p",
+            profile=GovernanceProfile.dev(),
+            validator=Validator(validator_id="council", role="council"),
+            principals={"host": "agent:x"},
+            approver_principals={"host": "human:y"},
+            audit_path=tmp_path / "a.jsonl",
+            ledger_path=tmp_path / "c.jsonl",
+        )
+
+
+def test_config_post_init_rejects_approver_principal_id_clash(tmp_path: Path) -> None:
+    policy = RuleSetPolicy.from_dict(_RULESET_BUNDLE)
+    with pytest.raises(ValueError, match="approver_principals ids collide"):
+        GatewayConfig(
+            tenant_id="t",
+            execution_boundary="b",
+            policy=policy,
+            policy_bundle_id="p",
+            profile=GovernanceProfile.dev(),
+            validator=Validator(validator_id="council", role="council"),
+            principals={"agent": "same-id"},
+            approver_principals={"human": "same-id"},
+            audit_path=tmp_path / "a.jsonl",
+            ledger_path=tmp_path / "c.jsonl",
+        )
+
+
+def test_load_config_reads_approver_principals(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, bundle=_RULESET_BUNDLE)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["identity"]["approver_principals"] = {"human-approver": "constitutional-council"}
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    config = load_gateway_config(path)
+    assert config.approver_principals == {"human-approver": "constitutional-council"}
+
+
 def test_config_post_init_rejects_validator_principal_clash(tmp_path: Path) -> None:
     policy = RuleSetPolicy.from_dict(_RULESET_BUNDLE)
     with pytest.raises(ValueError, match="self-validation forbidden"):
