@@ -1,0 +1,93 @@
+# Path-filtered CI for packages/acgs-canary/ — R0 canary-provenance tooling
+# (restricted store, pool, manifests, acceptance ledger, anchor interfaces).
+# The package resolves gove-zone from the uv workspace, so tests run from the
+# repo root via `uv run --package`. gove-zone source changes also trigger this
+# workflow because the ledger's signing surface reuses gove_zone.signing.
+
+name: python-acgs-canary
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/acgs-canary/**'
+      - 'packages/gove-zone/src/gove_zone/**'
+      - 'packages/gove-zone/pyproject.toml'
+      - 'pyproject.toml'
+      - '.github/workflows/python-acgs-canary.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packages/acgs-canary/**'
+      - 'packages/gove-zone/src/gove_zone/**'
+      - 'packages/gove-zone/pyproject.toml'
+      - 'pyproject.toml'
+      - '.github/workflows/python-acgs-canary.yml'
+
+concurrency:
+  group: python-acgs-canary-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # Block fork PRs: untrusted code must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      # Two-step checkout: see constitutional-hash.yml for rationale.
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      # uv discovers the whole workspace from the root pyproject.toml, so
+      # every workspace member that is a gitlink submodule must have its
+      # pyproject.toml present or `uv run` aborts before Ruff/pytest runs.
+      - name: Init workspace-member submodules
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        run: |
+          # Ephemeral global gitconfig: this job runs on the self-hosted
+          # runner as the operator's user, so a plain `git config --global`
+          # would write SUBMODULE_TOKEN into the real ~/.gitconfig and
+          # persist after the job. Redirect global config to a job-scoped
+          # temp file instead; it dies with the job.
+          export GIT_CONFIG_GLOBAL="${RUNNER_TEMP}/submodule-gitconfig"
+          if [ -n "${SUBMODULE_TOKEN}" ]; then
+            git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
+          fi
+          # Only the uv workspace members (pyproject.toml [tool.uv.workspace]);
+          # non-member submodules like ACGS-agency-agents stay uninitialized.
+          for sub in packages/acgs-lite packages/Acgs-Swarm packages/clinicalguard packages/acgs-control-plane; do
+            git submodule sync -- "$sub"
+            if ! git submodule update --init --recursive -- "$sub"; then
+              echo "::error::failed to initialize workspace member $sub; private submodules require SUBMODULE_TOKEN with Contents: Read" >&2
+              exit 1
+            fi
+          done
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'packages/acgs-canary/pyproject.toml'
+
+      - name: Pin toolchain
+        # uv's python-build-standalone toolchain is used because
+        # actions/setup-python has no prebuilds for the self-hosted runner OS.
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Lint
+        run: |
+          uv run --python ${{ matrix.python-version }} ruff check packages/acgs-canary
+          uv run --python ${{ matrix.python-version }} ruff format --check packages/acgs-canary
+
+      - name: Test
+        run: >
+          uv run --python ${{ matrix.python-version }} --package acgs-canary
+          python -m pytest packages/acgs-canary/tests --import-mode=importlib -q

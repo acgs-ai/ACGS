@@ -25,6 +25,7 @@ PYTHON_PACKAGES := \
 	packages/acgs-lite \
 	packages/Acgs-Swarm \
 	packages/gove-zone \
+	packages/acgs-canary \
 	packages/agent-bus-analyzer \
 	packages/research-engine \
 	acgs_governance_eval_mvp \
@@ -107,7 +108,7 @@ build-py:
 test-py:
 	@set -e; \
 	$(MAKE) -C packages/acgs-lite test; \
-	for pkg in packages/Acgs-Swarm packages/gove-zone packages/agent-bus-analyzer packages/research-engine acgs_governance_eval_mvp acgs-cft-governance-pack; do \
+	for pkg in packages/Acgs-Swarm packages/gove-zone packages/acgs-canary packages/agent-bus-analyzer packages/research-engine acgs_governance_eval_mvp acgs-cft-governance-pack; do \
 	  echo "==> test $$pkg"; \
 	  (cd $$pkg && $(UV) run python -m pytest --import-mode=importlib) || exit $$?; \
 	done; \
@@ -116,8 +117,8 @@ test-py:
 
 lint-py:
 	@set -e; \
-	$(UV) run ruff check packages/gove-zone packages/agent-bus-analyzer packages/research-engine acgs_governance_eval_mvp acgs-cft-governance-pack; \
-	$(UV) run ruff format --check packages/gove-zone packages/agent-bus-analyzer packages/research-engine acgs_governance_eval_mvp acgs-cft-governance-pack; \
+	$(UV) run ruff check packages/gove-zone packages/acgs-canary packages/agent-bus-analyzer packages/research-engine acgs_governance_eval_mvp acgs-cft-governance-pack; \
+	$(UV) run ruff format --check packages/gove-zone packages/acgs-canary packages/agent-bus-analyzer packages/research-engine acgs_governance_eval_mvp acgs-cft-governance-pack; \
 	$(MAKE) -C packages/acgs-lite lint; \
 	(cd packages/Acgs-Swarm && $(UV) run ruff check src/)
 
