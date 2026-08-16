@@ -460,7 +460,68 @@ def test_mcp_resume_expired_approval_does_not_execute(tmp_path: Path) -> None:
     assert calls == []
 
 
-# -- OpenAI function-calling surface --------------------------------------------- #
+def test_non_approver_cannot_approve_via_handle_mcp_call(tmp_path: Path) -> None:
+    from gove_zone.gateway import MCP_APPROVE_TOOL
+
+    gateway = make_gateway(tmp_path, approver_actors=frozenset({"human-approver"}))
+    calls: list[dict[str, Any]] = []
+    gateway.register_tool("deploy", lambda **kwargs: calls.append(dict(kwargs)) or "deployed")
+
+    parked = gateway.handle_mcp_call(
+        {"name": "deploy", "arguments": {"env": "prod"}}, actor="agent-a"
+    )
+    event_id = parked["_meta"]["gove_zone"]["escalation_event_id"]
+
+    refused = gateway.handle_mcp_call(
+        {"name": MCP_APPROVE_TOOL, "arguments": {"event_id": event_id}},
+        actor="agent-b",
+    )
+    assert refused["isError"] is True
+    assert refused["_meta"]["gove_zone"]["decision"] == "denied"
+    assert calls == []
+    assert event_id in gateway._pending
+    assert event_id not in gateway._approvals
+
+    later = gateway.handle_mcp_call(
+        {"name": MCP_APPROVE_TOOL, "arguments": {"event_id": event_id}},
+        actor="human-approver",
+    )
+    assert later["isError"] is False
+    assert calls == []
+
+
+def test_only_proposer_may_resume_via_handle_mcp_call(tmp_path: Path) -> None:
+    from gove_zone.gateway import MCP_APPROVE_TOOL, MCP_RESUME_TOOL
+
+    gateway = make_gateway(tmp_path, approver_actors=frozenset({"human-approver"}))
+    calls: list[dict[str, Any]] = []
+    gateway.register_tool("deploy", lambda **kwargs: calls.append(dict(kwargs)) or "deployed")
+
+    parked = gateway.handle_mcp_call(
+        {"name": "deploy", "arguments": {"env": "prod"}}, actor="agent-a"
+    )
+    event_id = parked["_meta"]["gove_zone"]["escalation_event_id"]
+    approved = gateway.handle_mcp_call(
+        {"name": MCP_APPROVE_TOOL, "arguments": {"event_id": event_id}},
+        actor="human-approver",
+    )
+    assert approved["isError"] is False
+
+    stranger = gateway.handle_mcp_call(
+        {"name": MCP_RESUME_TOOL, "arguments": {"event_id": event_id}},
+        actor="agent-b",
+    )
+    assert stranger["isError"] is True
+    assert stranger["_meta"]["gove_zone"]["decision"] == "denied"
+    assert calls == []
+    assert event_id in gateway._pending
+
+    resumed = gateway.handle_mcp_call(
+        {"name": MCP_RESUME_TOOL, "arguments": {"event_id": event_id}},
+        actor="agent-a",
+    )
+    assert resumed["isError"] is False
+    assert calls == [{"env": "prod"}]
 
 
 def test_openai_tool_specs_from_signatures(tmp_path: Path) -> None:
