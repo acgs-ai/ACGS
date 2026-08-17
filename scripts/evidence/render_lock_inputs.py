@@ -25,7 +25,7 @@ EVIDENCE_INPUTS = (
     "rfc8785==0.1.4",
     "cryptography>=42",
     "jsonschema>=4.23,<5",
-    "pytest>=8.3,<9",
+    "pytest>=9.0.3,<10",
 )
 PRODUCT_CODES = ("CP", "GZ")
 ALLOWED_ASSIGNMENTS = {

@@ -38,7 +38,7 @@ EXPECTED_DIRECT = (
     "rfc8785==0.1.4",
     "cryptography>=42",
     "jsonschema>=4.23,<5",
-    "pytest>=8.3,<9",
+    "pytest>=9.0.3,<10",
 )
 P2_REGISTER_RETIRED_CP_STUB_SELECTORS = (
     "tests/integration/test_production_posture.py::"
@@ -649,6 +649,14 @@ def test_every_lock_entry_is_pinned_hashed_and_toolchain_bound(name: str, input_
         f"requirements/saas-beta/{input_name}",
         f"requirements/saas-beta/{name}",
     )
+
+
+def test_evidence_lock_excludes_pytest_tmpdir_vulnerable_versions() -> None:
+    locked = _common.parse_lock(LOCK_ROOT / "evidence-test.lock")
+    version = tuple(int(part) for part in locked["pytest"]["version"].split("."))
+
+    assert version >= (9, 0, 3)
+    assert version < (10,)
 
 
 def test_lock_parser_rejects_missing_malformed_duplicate_and_dynamic_hash_state(
