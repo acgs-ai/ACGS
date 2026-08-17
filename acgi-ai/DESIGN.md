@@ -228,14 +228,21 @@ Six governance components live under `src/components/governance/` and are always
 > landing and the parchment login / privilege boundary stay warm paper. A
 > deliberate hybrid, approved by the maintainer.
 
-One system, two registers — they share every token, the five type families, the
-asterism `⁂`, and the governance law (gate · default-deny · record · replay):
+> **Supersession (2026-07-26).** The marketing landing no longer uses the warm
+> paper register. It moved to a third register, **editorial-dark** (§2.7). The
+> warm-paper `:root` is retained as the default for `/ask`, the parchment login
+> boundary, and any surface not wrapped in `.marketing`.
 
-1. **Editorial (warm paper + rust)** — the default `:root`. Marketing landing,
-   product atlas prose, login boundary.
+One system, three registers — they share every token, the five type families,
+the asterism `⁂`, and the governance law (gate · default-deny · record · replay):
+
+1. **Editorial (warm paper + rust)** — the default `:root`. `/ask`, login
+   boundary, and any unwrapped surface.
 2. **Control-plane (dark)** — opt-in via `data-theme="control-plane"` on a
    subtree (set on the console shell root in `Console.tsx`). Near-black
    cool-tinted slate, brightened rust, instrumented density.
+3. **Editorial-dark (§2.7)** — the marketing surface. Neutral near-black,
+   achromatic greys, crimson spent only on signal marks.
 
 Mechanism: components and surfaces read `--gz-*` semantic aliases (`--gz-bg`,
 `--gz-surface`, `--gz-fg`, `--gz-brand`, …). Under `[data-theme="control-plane"]`
@@ -244,7 +251,60 @@ those flip to dark values, **and** the warm-paper base aliases (`--paper`,
 hardcoded-hex-free console rules invert to dark with no per-rule changes. Two
 intentional non-remaps: the parchment privilege boundary (`--boundary*`) stays a
 warm structural strip on dark (§4.3), and `--accent-on` (text/icon on a rust
-fill) stays light in both registers.
+fill) stays light in the editorial and control-plane registers. Editorial-dark
+overrides `--accent-on` — see §2.7.
+
+## Editorial-dark register (§2.7)
+
+The marketing surface register, applied through the `.marketing` wrapper
+(Marketing, Trust, Security, Privacy, EvalMvp, NotFound) so the whole editorial
+surface shares one register. `[data-theme="editorial-dark"]` is the explicit
+opt-in hook for anything not wrapped.
+
+Same mechanism as §2.6: override the `--gz-*` aliases, remap the base tokens
+onto them. Declared **before** `[data-theme="control-plane"]` in `index.css`
+because the selectors have equal specificity — source order decides when one
+element carries both, and a nested control-plane subtree must win.
+
+Character: neutral near-black with no warm or cool tint, achromatic grey text
+ramp, softer radii, pill-shaped controls, a vertical ink→muted gradient fill on
+the hero headline, and crimson demoted from "the brand colour" to a signal mark
+(asterism, status tags, `fail_closed`).
+
+| Token | Value | Contrast on `--gz-bg` / `--gz-surface` |
+|---|---|---|
+| `--gz-bg` | `#080808` | ground |
+| `--gz-surface` | `#111111` | card |
+| `--gz-surface-2` | `#0d0d0d` | recessed panel |
+| `--gz-surface-3` | `#1a1a1a` | raised / hover; the primary control fill |
+| `--gz-line` | `#1f1f1f` | hairline |
+| `--gz-line-strong` | `#2e2e2e` | strong rule |
+| `--gz-fg` | `#ffffff` | 20.03 / 18.88 |
+| `--gz-fg-2` | `#a6a6a6` | 8.23 / 7.76 |
+| `--gz-fg-3` | `#7d7d7d` | 4.87 / 4.59 — **AA floor, do not darken** |
+| `--gz-brand` | `#e5484d` | 5.12 / 4.82 |
+| `--gz-brand-2` | `#f0666a` | 6.50 / 6.13 |
+| `--gold` / `--gold-ink` | `#c9a75c` / `#dcc07f` | 8.74 / 11.34 |
+
+Radii are overridden at the token level (`--radius-sm` 8px, `--radius-md` 10px,
+`--radius-lg` 14px; pill unchanged) so all ~134 call sites adapt with no
+per-rule change.
+
+Status colours carry the same bright tuning as control-plane. The editorial
+values measure 3.13:1–4.13:1 on `#080808` and **all fail AA**, so they cannot be
+inherited here.
+
+**Deviation — `--accent-on`.** §2.6 states it stays light in both registers.
+That holds while the accent is dark enough to carry light text. This register
+lifts the crimson to `#e5484d` so it passes AA as *text* on near-black, and
+white on that fill measures 3.91:1 — below AA. Near-black on it measures
+5.06:1. So `--accent-on` flips to `#0a0a0a` **in this register only**; the
+override is scoped and `:root` keeps the light value for console and `/ask`.
+
+**Gradient headline fallback.** `.m-hero h1` keeps `color: var(--ink)` beneath
+the `background-clip: text` gradient so any engine without support renders solid
+ink rather than invisible text, and a `forced-colors: active` block drops the
+gradient for system colours.
 
 ### Status colours — signal, not decoration
 
@@ -268,7 +328,7 @@ pills (`--risk-*`) map to the bright `--allow/--review/--deny` under the
 control-plane register.
 
 > **Divergence from canonical.** Per `CLAUDE.md`, this file is downstream of
-> `/home/martin/Downloads/govern-zone/ACGS/DESIGN.md`, which "wins for tokens."
+> the canonical design-token `DESIGN.md`, which "wins for tokens."
 > The two-register model, the `--gz-*` aliases, `--accent-on`, and the status
 > colour system are a project-local superset added here on 2026-06-07. Fold them
 > back into the canonical file when it is next revised.
@@ -315,6 +375,7 @@ The console shell reads `CONSOLE_WIRE_DECISIONS` from `src/routes/console/wire-d
 | `/console/compile` | Shell title, compile summary, draft table, promotion receipt | Promote a validated draft | Replay checks, discard local draft evidence, inspect rows | Metric cards over dense draft table | Status controls above change table | No pagination; active compile unit only | Ledger and queue context while receipts render inline | Compile receipt remains until promote, replay, or discard replaces it | Local discard only; production discard or deploy requires confirmation |
 | `/console/audit` | Shell title, audit filters, immutable event list, selected evidence | Open audit event for hash and actor context | Filter by event type, matter, or hash | Dense audit rows with mono hashes and timestamps | Filters above immutable event list | No local pagination; production stream requires cursors | Current ledger context while audit stays immutable | Shows persisted receipts and mints none | No destructive actions on immutable evidence |
 | `/console/bus` | Shell title, bus trace explorer, selected trace detail, back navigation | Open a trace for schema and latency evidence | Back to list or inspect bus payload details | Inspector trace list with compact detail panels | Inline route controls rather than global text filter | No local pagination; production traces require cursors | Global health while trace detail explains propagation | References persisted bus evidence only | No destructive actions |
+| `/console/process` | Shell title, process window list, variant breakdown, conformance findings, receipt deep links | Open a process window and follow a finding into its persisted receipt proof | Filter windows, inspect variants with incomplete-case counts, review nullable conformance scores | Dense window rows over variant and finding lists with mono snapshot identifiers | SearchToolbar above the window list filters by process, snapshot, and chain status | No local pagination; windows are immutable snapshots capped per tenant scope | Ledger context stays visible while analytical verdicts stay non-authoritative | Mints no receipts; findings deep-link to persisted receipt proofs only | No destructive actions; analytical ALLOW is never an execution authorization |
 | `/console/settings` | Shell title, settings search, parameter table, staged receipt | Stage a setting-change receipt | Defer parameter, search settings, inspect rationale | Dense parameter table with compact receipt panel | SearchToolbar above settings table | No pagination; bounded parameter list | Ledger context while staged receipts stay inline | Settings receipt remains until another local action replaces it | Production parameter changes require confirmation |
 | `/console/tenants` | Shell title, tenant search, tenancy cards, active tenant receipt | Switch or inspect tenant context | Search tenants and review region, matters, posture | Compact tenant cards with dense metadata | SearchToolbar above tenant cards | No pagination; active operator scope only | Queue and coverage context during tenant switching | Tenant receipt remains until next switch or inspect action | Tenant switching is local; destructive tenant changes absent |
 | `/console/account` | Shell title, identity card, session table, account receipts | Rotate identity evidence or revoke session receipt | Inspect session metadata and local account status | Compact identity cards with dense session table | No filter; account surface stays short | No pagination; active sessions in one table | Privileged status while personal receipts stay inline | Account receipt remains until another identity or session action replaces it | Local revocation queue only; production revoke requires confirmation |

@@ -1,0 +1,2293 @@
+{
+ "agent": {
+  "uid": 1000,
+  "user": "agent-user"
+ },
+ "classification_rule": {
+  "NON_ROOT_EQUIVALENT": "measured not to, with the measurement stated",
+  "ROOT_EQUIVALENT": "measured to confer uid-0-equivalent authority",
+  "UNKNOWN": "not established; blocking, never a pass"
+ },
+ "counts": {
+  "non_root_equivalent": 14,
+  "root_equivalent": 2,
+  "total": 57,
+  "unknown": 41
+ },
+ "mutations_performed": [],
+ "non_root_equivalent_paths": [
+  "container_runtimes:containerd_socket",
+  "filecaps:/usr/bin/arping",
+  "filecaps:/usr/bin/clockdiff",
+  "filecaps:/usr/bin/mtr-packet",
+  "filecaps:/usr/bin/newgidmap",
+  "filecaps:/usr/bin/newuidmap",
+  "filecaps:/usr/libexec/gstreamer-1.0/gst-ptp-helper",
+  "setuid:/usr/bin/fusermount",
+  "setuid:/usr/bin/fusermount3",
+  "setuid:/usr/bin/grub2-set-bootflag",
+  "setuid:/usr/bin/mount",
+  "setuid:/usr/bin/pam_timestamp_check",
+  "setuid:/usr/bin/umount",
+  "systemd:systemd_unit_control"
+ ],
+ "paths": {
+  "container_runtimes:containerd_socket": {
+   "classification": "NON_ROOT_EQUIVALENT",
+   "evidence": {
+    "socket": {
+     "connect": "REFUSED: Permission denied",
+     "exists": true,
+     "mode": "0o660",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/run/containerd/containerd.sock",
+     "readable_by_agent": false,
+     "setuid": false,
+     "writable_by_agent": false
+    }
+   },
+   "why": "containerd runs as uid 0; reaching its socket is equivalent to reaching the docker socket"
+  },
+  "container_runtimes:docker_rootful_socket": {
+   "classification": "ROOT_EQUIVALENT",
+   "evidence": {
+    "corroborating_measurement": "ROOT_EQUIVALENT_REGISTRY.json: a container started through this socket reported uid_map 0 0 4294967295 and chowned a host file to uid 4242",
+    "docker_info_rc": 0,
+    "rootless": false,
+    "socket": {
+     "connect": "ACCEPTED",
+     "exists": true,
+     "mode": "0o660",
+     "owner_gid": 969,
+     "owner_uid": 0,
+     "path": "/var/run/docker.sock",
+     "readable_by_agent": true,
+     "setuid": false,
+     "writable_by_agent": true
+    }
+   },
+   "resolved_by": "remove the agent from group 'docker' and any ACL on the socket",
+   "why": "the daemon runs as uid 0 and executes container specifications chosen by whoever reaches the socket, including bind mounts of / with label=disable"
+  },
+  "container_runtimes:libvirt_ro_socket": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "daemon_active": "inactive\ninactive",
+    "socket": {
+     "connect": "ACCEPTED",
+     "exists": true,
+     "mode": "0o666",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/var/run/libvirt/libvirt-sock-ro",
+     "readable_by_agent": true,
+     "setuid": false,
+     "writable_by_agent": true
+    }
+   },
+   "resolved_by": "administrator checks the libvirt auth_unix_rw setting in /etc/libvirt/libvirtd.conf and the org.libvirt.unix.manage polkit action for the agent's groups",
+   "why": "libvirt's socket is world-connectable by design (0666) and socket-activated; authorisation happens at the RPC layer via polkit, which was not exercised. A libvirt session that IS authorised can attach host block devices and is root-equivalent, so this cannot be dismissed either"
+  },
+  "container_runtimes:libvirt_socket": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "daemon_active": "inactive\ninactive",
+    "socket": {
+     "connect": "ACCEPTED",
+     "exists": true,
+     "mode": "0o666",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/var/run/libvirt/libvirt-sock",
+     "readable_by_agent": true,
+     "setuid": false,
+     "writable_by_agent": true
+    }
+   },
+   "resolved_by": "administrator checks the libvirt auth_unix_rw setting in /etc/libvirt/libvirtd.conf and the org.libvirt.unix.manage polkit action for the agent's groups",
+   "why": "libvirt's socket is world-connectable by design (0666) and socket-activated; authorisation happens at the RPC layer via polkit, which was not exercised. A libvirt session that IS authorised can attach host block devices and is root-equivalent, so this cannot be dismissed either"
+  },
+  "filecaps:/usr/bin/arping": {
+   "classification": "NON_ROOT_EQUIVALENT",
+   "evidence": {
+    "agent_cap_inheritable": "0000000800000000",
+    "capabilities": {
+     "capabilities": [
+      "cap_net_raw"
+     ],
+     "effective": false,
+     "flags": "p",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_net_raw=p"
+    },
+    "exists": true,
+    "mode": "0o755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/arping",
+    "readable_by_agent": true,
+    "setuid": false,
+    "writable_by_agent": false
+   },
+   "why": "every capability on this file is bounded to networking or scheduling (['cap_net_raw']); none confers authority over another principal's files, processes or credentials"
+  },
+  "filecaps:/usr/bin/clockdiff": {
+   "classification": "NON_ROOT_EQUIVALENT",
+   "evidence": {
+    "agent_cap_inheritable": "0000000800000000",
+    "capabilities": {
+     "capabilities": [
+      "cap_net_raw"
+     ],
+     "effective": false,
+     "flags": "p",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_net_raw=p"
+    },
+    "exists": true,
+    "mode": "0o755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/clockdiff",
+    "readable_by_agent": true,
+    "setuid": false,
+    "writable_by_agent": false
+   },
+   "why": "every capability on this file is bounded to networking or scheduling (['cap_net_raw']); none confers authority over another principal's files, processes or credentials"
+  },
+  "filecaps:/usr/bin/mtr-packet": {
+   "classification": "NON_ROOT_EQUIVALENT",
+   "evidence": {
+    "agent_cap_inheritable": "0000000800000000",
+    "capabilities": {
+     "capabilities": [
+      "cap_net_raw"
+     ],
+     "effective": true,
+     "flags": "ep",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_net_raw=ep"
+    },
+    "exists": true,
+    "mode": "0o755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/mtr-packet",
+    "readable_by_agent": true,
+    "setuid": false,
+    "writable_by_agent": false
+   },
+   "why": "every capability on this file is bounded to networking or scheduling (['cap_net_raw']); none confers authority over another principal's files, processes or credentials"
+  },
+  "filecaps:/usr/bin/newgidmap": {
+   "classification": "NON_ROOT_EQUIVALENT",
+   "evidence": {
+    "agent_cap_inheritable": "0000000800000000",
+    "capabilities": {
+     "capabilities": [
+      "cap_setgid"
+     ],
+     "effective": true,
+     "flags": "ep",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_setgid=ep"
+    },
+    "exists": true,
+    "mode": "0o755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/newgidmap",
+    "readable_by_agent": true,
+    "setuid": false,
+    "writable_by_agent": false
+   },
+   "why": "bounded by /etc/subgid"
+  },
+  "filecaps:/usr/bin/newuidmap": {
+   "classification": "NON_ROOT_EQUIVALENT",
+   "evidence": {
+    "agent_cap_inheritable": "0000000800000000",
+    "capabilities": {
+     "capabilities": [
+      "cap_setuid"
+     ],
+     "effective": true,
+     "flags": "ep",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_setuid=ep"
+    },
+    "exists": true,
+    "mode": "0o755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/newuidmap",
+    "readable_by_agent": true,
+    "setuid": false,
+    "writable_by_agent": false
+   },
+   "why": "bounded by /etc/subuid; V3 measured it refusing uid 940"
+  },
+  "filecaps:/usr/bin/suexec": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "agent_cap_inheritable": "0000000800000000",
+    "capabilities": {
+     "capabilities": [
+      "cap_setgid",
+      "cap_setuid"
+     ],
+     "effective": true,
+     "flags": "ep",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_setgid,cap_setuid=ep"
+    },
+    "exists": true,
+    "mode": "0o510",
+    "owner_gid": 48,
+    "owner_uid": 0,
+    "path": "/usr/bin/suexec",
+    "readable_by_agent": false,
+    "setuid": false,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator confirms whether caller-controlled input can reach the privileged effect, or removes the file capability",
+   "why": "file capabilities ['cap_setgid', 'cap_setuid'] in the permitted set: assumes any gid; assumes any uid, including 0"
+  },
+  "filecaps:/usr/bin/warp-svc": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "agent_cap_inheritable": "0000000800000000",
+    "capabilities": {
+     "capabilities": [
+      "cap_dac_read_search",
+      "cap_net_admin",
+      "cap_net_bind_service",
+      "cap_net_raw",
+      "cap_setgid",
+      "cap_setuid",
+      "cap_sys_ptrace"
+     ],
+     "effective": true,
+     "flags": "ei",
+     "inheritable_only": true,
+     "permitted": false,
+     "raw": "cap_dac_read_search,cap_setgid,cap_setuid,cap_net_bind_service,cap_net_admin,cap_net_raw,cap_sys_ptrace=ei"
+    },
+    "exists": true,
+    "mode": "0o755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/warp-svc",
+    "readable_by_agent": true,
+    "setuid": false,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator confirms the agent's inheritable set cannot activate these capabilities",
+   "why": "the escalating capabilities ['cap_dac_read_search', 'cap_setgid', 'cap_setuid', 'cap_sys_ptrace'] are inheritable-only (flags 'ei'), so the file grants them only to a caller that already holds them. The agent's CapInh is 0000000800000000; whether that intersects these capabilities decides it, and the decision was not exercised"
+  },
+  "filecaps:/usr/libexec/gstreamer-1.0/gst-ptp-helper": {
+   "classification": "NON_ROOT_EQUIVALENT",
+   "evidence": {
+    "agent_cap_inheritable": "0000000800000000",
+    "capabilities": {
+     "capabilities": [
+      "cap_net_admin",
+      "cap_net_bind_service",
+      "cap_sys_nice"
+     ],
+     "effective": true,
+     "flags": "ep",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_net_bind_service,cap_net_admin,cap_sys_nice=ep"
+    },
+    "exists": true,
+    "mode": "0o755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/libexec/gstreamer-1.0/gst-ptp-helper",
+    "readable_by_agent": true,
+    "setuid": false,
+    "writable_by_agent": false
+   },
+   "why": "every capability on this file is bounded to networking or scheduling (['cap_net_admin', 'cap_net_bind_service', 'cap_sys_nice']); none confers authority over another principal's files, processes or credentials"
+  },
+  "filecaps:/usr/libexec/sssd/krb5_child": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "agent_cap_inheritable": "0000000800000000",
+    "capabilities": {
+     "capabilities": [
+      "cap_dac_read_search",
+      "cap_setgid",
+      "cap_setuid"
+     ],
+     "effective": false,
+     "flags": "p",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_dac_read_search,cap_setgid,cap_setuid=p"
+    },
+    "exists": true,
+    "mode": "0o750",
+    "owner_gid": 980,
+    "owner_uid": 0,
+    "path": "/usr/libexec/sssd/krb5_child",
+    "readable_by_agent": false,
+    "setuid": false,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator confirms whether caller-controlled input can reach the privileged effect, or removes the file capability",
+   "why": "file capabilities ['cap_dac_read_search', 'cap_setgid', 'cap_setuid'] in the permitted set: reads every file, /etc/shadow included; assumes any gid; assumes any uid, including 0"
+  },
+  "filecaps:/usr/libexec/sssd/ldap_child": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "agent_cap_inheritable": "0000000800000000",
+    "capabilities": {
+     "capabilities": [
+      "cap_dac_read_search"
+     ],
+     "effective": false,
+     "flags": "p",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_dac_read_search=p"
+    },
+    "exists": true,
+    "mode": "0o750",
+    "owner_gid": 980,
+    "owner_uid": 0,
+    "path": "/usr/libexec/sssd/ldap_child",
+    "readable_by_agent": false,
+    "setuid": false,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator confirms whether caller-controlled input can reach the privileged effect, or removes the file capability",
+   "why": "file capabilities ['cap_dac_read_search'] in the permitted set: reads every file, /etc/shadow included"
+  },
+  "filecaps:/usr/libexec/sssd/sssd_pam": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "agent_cap_inheritable": "0000000800000000",
+    "capabilities": {
+     "capabilities": [
+      "cap_dac_read_search"
+     ],
+     "effective": false,
+     "flags": "p",
+     "inheritable_only": false,
+     "permitted": true,
+     "raw": "cap_dac_read_search=p"
+    },
+    "exists": true,
+    "mode": "0o750",
+    "owner_gid": 980,
+    "owner_uid": 0,
+    "path": "/usr/libexec/sssd/sssd_pam",
+    "readable_by_agent": false,
+    "setuid": false,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator confirms whether caller-controlled input can reach the privileged effect, or removes the file capability",
+   "why": "file capabilities ['cap_dac_read_search'] in the permitted set: reads every file, /etc/shadow included"
+  },
+  "groups:membership_docker": {
+   "classification": "ROOT_EQUIVALENT",
+   "evidence": {
+    "group": "docker",
+    "held": true
+   },
+   "why": "member of 'docker': controls a rootful container daemon"
+  },
+  "groups:membership_wheel": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "group": "wheel",
+    "held": true
+   },
+   "resolved_by": "administrator reads the local sudo and polkit policy",
+   "why": "member of 'wheel': sudo/polkit administrator group on RPM-family hosts. Whether it grants root here depends on sudoers/polkit policy that is not agent-readable"
+  },
+  "polkit:dbus_system_bus": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "reachable": "ACCEPTED",
+    "socket": {
+     "exists": true,
+     "mode": "0o666",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/run/dbus/system_bus_socket",
+     "readable_by_agent": true,
+     "setuid": false,
+     "writable_by_agent": true
+    }
+   },
+   "resolved_by": "administrator enumerates polkit actions for the bus services and confirms none grant unit control or file writes to the agent",
+   "why": "the system bus exposes privileged services (systemd1, hostname1, packagekit) whose authorisation is polkit-mediated; which methods this credential may call was not enumerated and cannot be assumed"
+  },
+  "polkit:pkexec": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "agent_readable_rule_files": 26,
+    "authority_of_org.freedesktop.policykit.exec": "not queried",
+    "binary": {
+     "exists": true,
+     "mode": "0o4755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/pkexec",
+     "readable_by_agent": true,
+     "setuid": true,
+     "writable_by_agent": false
+    },
+    "polkit_rule_files": 26,
+    "rules_naming_a_group_this_credential_holds": {
+     "/usr/share/polkit-1/rules.d/50-default.rules": [
+      "wheel"
+     ],
+     "/usr/share/polkit-1/rules.d/com.endlessm.ParentalControls.rules": [
+      "wheel"
+     ],
+     "/usr/share/polkit-1/rules.d/gnome-control-center.rules": [
+      "wheel"
+     ],
+     "/usr/share/polkit-1/rules.d/org.fedoraproject.FirewallD1.desktop.rules.choice": [
+      "wheel"
+     ],
+     "/usr/share/polkit-1/rules.d/org.fedoraproject.FirewallD1.rules": [
+      "wheel"
+     ],
+     "/usr/share/polkit-1/rules.d/org.fedoraproject.thirdparty.rules": [
+      "wheel"
+     ],
+     "/usr/share/polkit-1/rules.d/org.freedesktop.Flatpak.rules": [
+      "wheel"
+     ],
+     "/usr/share/polkit-1/rules.d/org.freedesktop.NetworkManager.rules": [
+      "wheel"
+     ],
+     "/usr/share/polkit-1/rules.d/org.freedesktop.bolt.rules": [
+      "wheel"
+     ],
+     "/usr/share/polkit-1/rules.d/org.freedesktop.fwupd.rules": [
+      "wheel"
+     ],
+     "/usr/share/polkit-1/rules.d/org.freedesktop.packagekit.rules": [
+      "wheel"
+     ],
+     "/usr/share/polkit-1/rules.d/org.gtk.vfs.file-operations.rules": [
+      "wheel"
+     ],
+     "/usr/share/polkit-1/rules.d/org.rpm.dnf.v0.rules": [
+      "wheel"
+     ]
+    }
+   },
+   "resolved_by": "administrator enumerates `pkaction --verbose`, reads /etc/polkit-1/rules.d and confirms which actions allow_active for the agent's groups",
+   "why": "pkexec is setuid root and defers to polkit. Whether this credential is authorised for org.freedesktop.policykit.exec depends on rules that are partly unreadable here, and the authorisation itself is an interactive prompt that was not exercised"
+  },
+  "setuid:/opt/1Password/chrome-sandbox": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/opt/1Password/chrome-sandbox",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "setuid:/opt/google/chrome-unstable/chrome-sandbox": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/opt/google/chrome-unstable/chrome-sandbox",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "setuid:/opt/google/chrome/chrome-sandbox": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/opt/google/chrome/chrome-sandbox",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "setuid:/usr/bin/at": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/at",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "setuid:/usr/bin/chage": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/chage",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator confirms the local policy for this binary",
+   "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+  },
+  "setuid:/usr/bin/chfn": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4711",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/chfn",
+    "readable_by_agent": false,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator confirms the local policy for this binary",
+   "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+  },
+  "setuid:/usr/bin/chsh": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4711",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/chsh",
+    "readable_by_agent": false,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator confirms the local policy for this binary",
+   "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+  },
+  "setuid:/usr/bin/crontab": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/crontab",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "setuid:/usr/bin/fusermount": {
+   "classification": "NON_ROOT_EQUIVALENT",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/fusermount",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "why": "bounded to the caller's own FUSE mounts"
+  },
+  "setuid:/usr/bin/fusermount-glusterfs": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/fusermount-glusterfs",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "setuid:/usr/bin/fusermount3": {
+   "classification": "NON_ROOT_EQUIVALENT",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/fusermount3",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "why": "bounded to the caller's own FUSE mounts"
+  },
+  "setuid:/usr/bin/gpasswd": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/gpasswd",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator confirms the local policy for this binary",
+   "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+  },
+  "setuid:/usr/bin/grub2-set-bootflag": {
+   "classification": "NON_ROOT_EQUIVALENT",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/grub2-set-bootflag",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "why": "writes one bootflag byte"
+  },
+  "setuid:/usr/bin/mount": {
+   "classification": "NON_ROOT_EQUIVALENT",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/mount",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "why": "bounded by fstab 'user' entries"
+  },
+  "setuid:/usr/bin/mount.nfs": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/mount.nfs",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "setuid:/usr/bin/newgrp": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/newgrp",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator confirms the local policy for this binary",
+   "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+  },
+  "setuid:/usr/bin/pam_timestamp_check": {
+   "classification": "NON_ROOT_EQUIVALENT",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/pam_timestamp_check",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "why": "timestamp file only"
+  },
+  "setuid:/usr/bin/passwd": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/passwd",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator confirms the local policy for this binary",
+   "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+  },
+  "setuid:/usr/bin/pkexec": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/pkexec",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator confirms the local policy for this binary",
+   "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+  },
+  "setuid:/usr/bin/su": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/su",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator confirms the local policy for this binary",
+   "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+  },
+  "setuid:/usr/bin/sudo": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4111",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/sudo",
+    "readable_by_agent": false,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator confirms the local policy for this binary",
+   "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+  },
+  "setuid:/usr/bin/umount": {
+   "classification": "NON_ROOT_EQUIVALENT",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/umount",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "why": "bounded by fstab 'user' entries"
+  },
+  "setuid:/usr/bin/unix_chkpwd": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/unix_chkpwd",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator confirms the local policy for this binary",
+   "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+  },
+  "setuid:/usr/bin/userhelper": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4711",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/userhelper",
+    "readable_by_agent": false,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "setuid:/usr/bin/vmware-user-suid-wrapper": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/bin/vmware-user-suid-wrapper",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "setuid:/usr/lib/claude-desktop-unofficial/chrome-sandbox": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/lib/claude-desktop-unofficial/chrome-sandbox",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "setuid:/usr/lib/polkit-1/polkit-agent-helper-1": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/lib/polkit-1/polkit-agent-helper-1",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "setuid:/usr/lib64/cef/chrome-sandbox": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/lib64/cef/chrome-sandbox",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "setuid:/usr/libexec/dbus-1/dbus-daemon-launch-helper": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4750",
+    "owner_gid": 81,
+    "owner_uid": 0,
+    "path": "/usr/libexec/dbus-1/dbus-daemon-launch-helper",
+    "readable_by_agent": false,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "setuid:/usr/libexec/libgtop_server2": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/libexec/libgtop_server2",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "setuid:/usr/libexec/qemu-bridge-helper": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/libexec/qemu-bridge-helper",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "setuid:/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "setuid:/usr/share/antigravity/chrome-sandbox": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/share/antigravity/chrome-sandbox",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "setuid:/usr/share/code/chrome-sandbox": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/share/code/chrome-sandbox",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "setuid:/usr/share/cursor/chrome-sandbox": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "exists": true,
+    "mode": "0o4755",
+    "owner_gid": 0,
+    "owner_uid": 0,
+    "path": "/usr/share/cursor/chrome-sandbox",
+    "readable_by_agent": true,
+    "setuid": true,
+    "writable_by_agent": false
+   },
+   "resolved_by": "administrator classifies this binary",
+   "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+  },
+  "sudo:sudo": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "policy_readable_by_agent": false,
+    "probe": {
+     "argv": [
+      "sudo",
+      "-n",
+      "-l"
+     ],
+     "rc": 1,
+     "stderr": "sudo: a password is required",
+     "stdout": ""
+    },
+    "sudoers": {
+     "exists": true,
+     "mode": "0o440",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/etc/sudoers",
+     "readable_by_agent": false,
+     "setuid": false,
+     "writable_by_agent": false
+    },
+    "sudoers_d": {
+     "exists": true,
+     "mode": "0o750",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/etc/sudoers.d",
+     "readable_by_agent": false,
+     "setuid": false,
+     "writable_by_agent": false
+    },
+    "sudoers_d_entries": {}
+   },
+   "resolved_by": "administrator runs `sudo -l -U <user>` and reads /etc/sudoers plus /etc/sudoers.d/*",
+   "why": "sudo is installed and the non-interactive probe was refused with an authentication demand. Whether this credential is authorised cannot be read: the policy files are not agent-readable, and exercising the password gate is outside this task's authority"
+  },
+  "systemd:systemd_run": {
+   "classification": "UNKNOWN",
+   "evidence": {
+    "binary": {
+     "exists": true,
+     "mode": "0o755",
+     "owner_gid": 0,
+     "owner_uid": 0,
+     "path": "/usr/bin/systemd-run",
+     "readable_by_agent": true,
+     "setuid": false,
+     "writable_by_agent": false
+    },
+    "note": "`systemd-run --user` is not escalation; `systemd-run` against the system manager is polkit-mediated and was not exercised"
+   },
+   "resolved_by": "resolved together with the polkit enumeration",
+   "why": "starting a transient system unit would run as uid 0; whether polkit authorises this credential to do so is the same unresolved question as pkexec"
+  },
+  "systemd:systemd_unit_control": {
+   "classification": "NON_ROOT_EQUIVALENT",
+   "evidence": {
+    "root_services_with_agent_writable_exec": [],
+    "unit_dirs": {
+     "/etc/systemd/system": {
+      "exists": true,
+      "mode": "0o755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/etc/systemd/system",
+      "readable_by_agent": true,
+      "setuid": false,
+      "writable_by_agent": false
+     },
+     "/run/systemd/system": {
+      "exists": true,
+      "mode": "0o755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/run/systemd/system",
+      "readable_by_agent": true,
+      "setuid": false,
+      "writable_by_agent": false
+     },
+     "/usr/lib/systemd/system": {
+      "exists": true,
+      "mode": "0o755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/lib/systemd/system",
+      "readable_by_agent": true,
+      "setuid": false,
+      "writable_by_agent": false
+     }
+    }
+   },
+   "why": "no system unit directory is agent-writable and no root service has an agent-writable executable"
+  }
+ },
+ "read_only": true,
+ "root_equivalent_paths": [
+  "container_runtimes:docker_rootful_socket",
+  "groups:membership_docker"
+ ],
+ "sections": {
+  "container_runtimes": {
+   "docker_group_held": true,
+   "paths": {
+    "containerd_socket": {
+     "classification": "NON_ROOT_EQUIVALENT",
+     "evidence": {
+      "socket": {
+       "connect": "REFUSED: Permission denied",
+       "exists": true,
+       "mode": "0o660",
+       "owner_gid": 0,
+       "owner_uid": 0,
+       "path": "/run/containerd/containerd.sock",
+       "readable_by_agent": false,
+       "setuid": false,
+       "writable_by_agent": false
+      }
+     },
+     "why": "containerd runs as uid 0; reaching its socket is equivalent to reaching the docker socket"
+    },
+    "docker_rootful_socket": {
+     "classification": "ROOT_EQUIVALENT",
+     "evidence": {
+      "corroborating_measurement": "ROOT_EQUIVALENT_REGISTRY.json: a container started through this socket reported uid_map 0 0 4294967295 and chowned a host file to uid 4242",
+      "docker_info_rc": 0,
+      "rootless": false,
+      "socket": {
+       "connect": "ACCEPTED",
+       "exists": true,
+       "mode": "0o660",
+       "owner_gid": 969,
+       "owner_uid": 0,
+       "path": "/var/run/docker.sock",
+       "readable_by_agent": true,
+       "setuid": false,
+       "writable_by_agent": true
+      }
+     },
+     "resolved_by": "remove the agent from group 'docker' and any ACL on the socket",
+     "why": "the daemon runs as uid 0 and executes container specifications chosen by whoever reaches the socket, including bind mounts of / with label=disable"
+    },
+    "libvirt_ro_socket": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "daemon_active": "inactive\ninactive",
+      "socket": {
+       "connect": "ACCEPTED",
+       "exists": true,
+       "mode": "0o666",
+       "owner_gid": 0,
+       "owner_uid": 0,
+       "path": "/var/run/libvirt/libvirt-sock-ro",
+       "readable_by_agent": true,
+       "setuid": false,
+       "writable_by_agent": true
+      }
+     },
+     "resolved_by": "administrator checks the libvirt auth_unix_rw setting in /etc/libvirt/libvirtd.conf and the org.libvirt.unix.manage polkit action for the agent's groups",
+     "why": "libvirt's socket is world-connectable by design (0666) and socket-activated; authorisation happens at the RPC layer via polkit, which was not exercised. A libvirt session that IS authorised can attach host block devices and is root-equivalent, so this cannot be dismissed either"
+    },
+    "libvirt_socket": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "daemon_active": "inactive\ninactive",
+      "socket": {
+       "connect": "ACCEPTED",
+       "exists": true,
+       "mode": "0o666",
+       "owner_gid": 0,
+       "owner_uid": 0,
+       "path": "/var/run/libvirt/libvirt-sock",
+       "readable_by_agent": true,
+       "setuid": false,
+       "writable_by_agent": true
+      }
+     },
+     "resolved_by": "administrator checks the libvirt auth_unix_rw setting in /etc/libvirt/libvirtd.conf and the org.libvirt.unix.manage polkit action for the agent's groups",
+     "why": "libvirt's socket is world-connectable by design (0666) and socket-activated; authorisation happens at the RPC layer via polkit, which was not exercised. A libvirt session that IS authorised can attach host block devices and is root-equivalent, so this cannot be dismissed either"
+    }
+   },
+   "rootless_docker": false
+  },
+  "filecaps": {
+   "agent_cap_inheritable": "0000000800000000",
+   "count": 11,
+   "paths": {
+    "/usr/bin/arping": {
+     "classification": "NON_ROOT_EQUIVALENT",
+     "evidence": {
+      "agent_cap_inheritable": "0000000800000000",
+      "capabilities": {
+       "capabilities": [
+        "cap_net_raw"
+       ],
+       "effective": false,
+       "flags": "p",
+       "inheritable_only": false,
+       "permitted": true,
+       "raw": "cap_net_raw=p"
+      },
+      "exists": true,
+      "mode": "0o755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/arping",
+      "readable_by_agent": true,
+      "setuid": false,
+      "writable_by_agent": false
+     },
+     "why": "every capability on this file is bounded to networking or scheduling (['cap_net_raw']); none confers authority over another principal's files, processes or credentials"
+    },
+    "/usr/bin/clockdiff": {
+     "classification": "NON_ROOT_EQUIVALENT",
+     "evidence": {
+      "agent_cap_inheritable": "0000000800000000",
+      "capabilities": {
+       "capabilities": [
+        "cap_net_raw"
+       ],
+       "effective": false,
+       "flags": "p",
+       "inheritable_only": false,
+       "permitted": true,
+       "raw": "cap_net_raw=p"
+      },
+      "exists": true,
+      "mode": "0o755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/clockdiff",
+      "readable_by_agent": true,
+      "setuid": false,
+      "writable_by_agent": false
+     },
+     "why": "every capability on this file is bounded to networking or scheduling (['cap_net_raw']); none confers authority over another principal's files, processes or credentials"
+    },
+    "/usr/bin/mtr-packet": {
+     "classification": "NON_ROOT_EQUIVALENT",
+     "evidence": {
+      "agent_cap_inheritable": "0000000800000000",
+      "capabilities": {
+       "capabilities": [
+        "cap_net_raw"
+       ],
+       "effective": true,
+       "flags": "ep",
+       "inheritable_only": false,
+       "permitted": true,
+       "raw": "cap_net_raw=ep"
+      },
+      "exists": true,
+      "mode": "0o755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/mtr-packet",
+      "readable_by_agent": true,
+      "setuid": false,
+      "writable_by_agent": false
+     },
+     "why": "every capability on this file is bounded to networking or scheduling (['cap_net_raw']); none confers authority over another principal's files, processes or credentials"
+    },
+    "/usr/bin/newgidmap": {
+     "classification": "NON_ROOT_EQUIVALENT",
+     "evidence": {
+      "agent_cap_inheritable": "0000000800000000",
+      "capabilities": {
+       "capabilities": [
+        "cap_setgid"
+       ],
+       "effective": true,
+       "flags": "ep",
+       "inheritable_only": false,
+       "permitted": true,
+       "raw": "cap_setgid=ep"
+      },
+      "exists": true,
+      "mode": "0o755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/newgidmap",
+      "readable_by_agent": true,
+      "setuid": false,
+      "writable_by_agent": false
+     },
+     "why": "bounded by /etc/subgid"
+    },
+    "/usr/bin/newuidmap": {
+     "classification": "NON_ROOT_EQUIVALENT",
+     "evidence": {
+      "agent_cap_inheritable": "0000000800000000",
+      "capabilities": {
+       "capabilities": [
+        "cap_setuid"
+       ],
+       "effective": true,
+       "flags": "ep",
+       "inheritable_only": false,
+       "permitted": true,
+       "raw": "cap_setuid=ep"
+      },
+      "exists": true,
+      "mode": "0o755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/newuidmap",
+      "readable_by_agent": true,
+      "setuid": false,
+      "writable_by_agent": false
+     },
+     "why": "bounded by /etc/subuid; V3 measured it refusing uid 940"
+    },
+    "/usr/bin/suexec": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "agent_cap_inheritable": "0000000800000000",
+      "capabilities": {
+       "capabilities": [
+        "cap_setgid",
+        "cap_setuid"
+       ],
+       "effective": true,
+       "flags": "ep",
+       "inheritable_only": false,
+       "permitted": true,
+       "raw": "cap_setgid,cap_setuid=ep"
+      },
+      "exists": true,
+      "mode": "0o510",
+      "owner_gid": 48,
+      "owner_uid": 0,
+      "path": "/usr/bin/suexec",
+      "readable_by_agent": false,
+      "setuid": false,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator confirms whether caller-controlled input can reach the privileged effect, or removes the file capability",
+     "why": "file capabilities ['cap_setgid', 'cap_setuid'] in the permitted set: assumes any gid; assumes any uid, including 0"
+    },
+    "/usr/bin/warp-svc": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "agent_cap_inheritable": "0000000800000000",
+      "capabilities": {
+       "capabilities": [
+        "cap_dac_read_search",
+        "cap_net_admin",
+        "cap_net_bind_service",
+        "cap_net_raw",
+        "cap_setgid",
+        "cap_setuid",
+        "cap_sys_ptrace"
+       ],
+       "effective": true,
+       "flags": "ei",
+       "inheritable_only": true,
+       "permitted": false,
+       "raw": "cap_dac_read_search,cap_setgid,cap_setuid,cap_net_bind_service,cap_net_admin,cap_net_raw,cap_sys_ptrace=ei"
+      },
+      "exists": true,
+      "mode": "0o755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/warp-svc",
+      "readable_by_agent": true,
+      "setuid": false,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator confirms the agent's inheritable set cannot activate these capabilities",
+     "why": "the escalating capabilities ['cap_dac_read_search', 'cap_setgid', 'cap_setuid', 'cap_sys_ptrace'] are inheritable-only (flags 'ei'), so the file grants them only to a caller that already holds them. The agent's CapInh is 0000000800000000; whether that intersects these capabilities decides it, and the decision was not exercised"
+    },
+    "/usr/libexec/gstreamer-1.0/gst-ptp-helper": {
+     "classification": "NON_ROOT_EQUIVALENT",
+     "evidence": {
+      "agent_cap_inheritable": "0000000800000000",
+      "capabilities": {
+       "capabilities": [
+        "cap_net_admin",
+        "cap_net_bind_service",
+        "cap_sys_nice"
+       ],
+       "effective": true,
+       "flags": "ep",
+       "inheritable_only": false,
+       "permitted": true,
+       "raw": "cap_net_bind_service,cap_net_admin,cap_sys_nice=ep"
+      },
+      "exists": true,
+      "mode": "0o755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/libexec/gstreamer-1.0/gst-ptp-helper",
+      "readable_by_agent": true,
+      "setuid": false,
+      "writable_by_agent": false
+     },
+     "why": "every capability on this file is bounded to networking or scheduling (['cap_net_admin', 'cap_net_bind_service', 'cap_sys_nice']); none confers authority over another principal's files, processes or credentials"
+    },
+    "/usr/libexec/sssd/krb5_child": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "agent_cap_inheritable": "0000000800000000",
+      "capabilities": {
+       "capabilities": [
+        "cap_dac_read_search",
+        "cap_setgid",
+        "cap_setuid"
+       ],
+       "effective": false,
+       "flags": "p",
+       "inheritable_only": false,
+       "permitted": true,
+       "raw": "cap_dac_read_search,cap_setgid,cap_setuid=p"
+      },
+      "exists": true,
+      "mode": "0o750",
+      "owner_gid": 980,
+      "owner_uid": 0,
+      "path": "/usr/libexec/sssd/krb5_child",
+      "readable_by_agent": false,
+      "setuid": false,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator confirms whether caller-controlled input can reach the privileged effect, or removes the file capability",
+     "why": "file capabilities ['cap_dac_read_search', 'cap_setgid', 'cap_setuid'] in the permitted set: reads every file, /etc/shadow included; assumes any gid; assumes any uid, including 0"
+    },
+    "/usr/libexec/sssd/ldap_child": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "agent_cap_inheritable": "0000000800000000",
+      "capabilities": {
+       "capabilities": [
+        "cap_dac_read_search"
+       ],
+       "effective": false,
+       "flags": "p",
+       "inheritable_only": false,
+       "permitted": true,
+       "raw": "cap_dac_read_search=p"
+      },
+      "exists": true,
+      "mode": "0o750",
+      "owner_gid": 980,
+      "owner_uid": 0,
+      "path": "/usr/libexec/sssd/ldap_child",
+      "readable_by_agent": false,
+      "setuid": false,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator confirms whether caller-controlled input can reach the privileged effect, or removes the file capability",
+     "why": "file capabilities ['cap_dac_read_search'] in the permitted set: reads every file, /etc/shadow included"
+    },
+    "/usr/libexec/sssd/sssd_pam": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "agent_cap_inheritable": "0000000800000000",
+      "capabilities": {
+       "capabilities": [
+        "cap_dac_read_search"
+       ],
+       "effective": false,
+       "flags": "p",
+       "inheritable_only": false,
+       "permitted": true,
+       "raw": "cap_dac_read_search=p"
+      },
+      "exists": true,
+      "mode": "0o750",
+      "owner_gid": 980,
+      "owner_uid": 0,
+      "path": "/usr/libexec/sssd/sssd_pam",
+      "readable_by_agent": false,
+      "setuid": false,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator confirms whether caller-controlled input can reach the privileged effect, or removes the file capability",
+     "why": "file capabilities ['cap_dac_read_search'] in the permitted set: reads every file, /etc/shadow included"
+    }
+   },
+   "tool_available": true
+  },
+  "groups": {
+   "paths": {
+    "membership_docker": {
+     "classification": "ROOT_EQUIVALENT",
+     "evidence": {
+      "group": "docker",
+      "held": true
+     },
+     "why": "member of 'docker': controls a rootful container daemon"
+    },
+    "membership_wheel": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "group": "wheel",
+      "held": true
+     },
+     "resolved_by": "administrator reads the local sudo and polkit policy",
+     "why": "member of 'wheel': sudo/polkit administrator group on RPM-family hosts. Whether it grants root here depends on sudoers/polkit policy that is not agent-readable"
+    }
+   },
+   "summary": {
+    "escalating_groups_held": {
+     "docker": "controls a rootful container daemon",
+     "wheel": "sudo/polkit administrator group on RPM-family hosts"
+    },
+    "kernel_credential_gids": [
+     10,
+     969,
+     1000
+    ],
+    "kernel_credential_groups": [
+     "docker",
+     "agent-user",
+     "wheel"
+    ],
+    "note": "read from os.getgroups(); the `id` utility can disagree inside a sandboxed launcher, which is why the kernel credential is the source here"
+   }
+  },
+  "polkit": {
+   "paths": {
+    "dbus_system_bus": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "reachable": "ACCEPTED",
+      "socket": {
+       "exists": true,
+       "mode": "0o666",
+       "owner_gid": 0,
+       "owner_uid": 0,
+       "path": "/run/dbus/system_bus_socket",
+       "readable_by_agent": true,
+       "setuid": false,
+       "writable_by_agent": true
+      }
+     },
+     "resolved_by": "administrator enumerates polkit actions for the bus services and confirms none grant unit control or file writes to the agent",
+     "why": "the system bus exposes privileged services (systemd1, hostname1, packagekit) whose authorisation is polkit-mediated; which methods this credential may call was not enumerated and cannot be assumed"
+    },
+    "pkexec": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "agent_readable_rule_files": 26,
+      "authority_of_org.freedesktop.policykit.exec": "not queried",
+      "binary": {
+       "exists": true,
+       "mode": "0o4755",
+       "owner_gid": 0,
+       "owner_uid": 0,
+       "path": "/usr/bin/pkexec",
+       "readable_by_agent": true,
+       "setuid": true,
+       "writable_by_agent": false
+      },
+      "polkit_rule_files": 26,
+      "rules_naming_a_group_this_credential_holds": {
+       "/usr/share/polkit-1/rules.d/50-default.rules": [
+        "wheel"
+       ],
+       "/usr/share/polkit-1/rules.d/com.endlessm.ParentalControls.rules": [
+        "wheel"
+       ],
+       "/usr/share/polkit-1/rules.d/gnome-control-center.rules": [
+        "wheel"
+       ],
+       "/usr/share/polkit-1/rules.d/org.fedoraproject.FirewallD1.desktop.rules.choice": [
+        "wheel"
+       ],
+       "/usr/share/polkit-1/rules.d/org.fedoraproject.FirewallD1.rules": [
+        "wheel"
+       ],
+       "/usr/share/polkit-1/rules.d/org.fedoraproject.thirdparty.rules": [
+        "wheel"
+       ],
+       "/usr/share/polkit-1/rules.d/org.freedesktop.Flatpak.rules": [
+        "wheel"
+       ],
+       "/usr/share/polkit-1/rules.d/org.freedesktop.NetworkManager.rules": [
+        "wheel"
+       ],
+       "/usr/share/polkit-1/rules.d/org.freedesktop.bolt.rules": [
+        "wheel"
+       ],
+       "/usr/share/polkit-1/rules.d/org.freedesktop.fwupd.rules": [
+        "wheel"
+       ],
+       "/usr/share/polkit-1/rules.d/org.freedesktop.packagekit.rules": [
+        "wheel"
+       ],
+       "/usr/share/polkit-1/rules.d/org.gtk.vfs.file-operations.rules": [
+        "wheel"
+       ],
+       "/usr/share/polkit-1/rules.d/org.rpm.dnf.v0.rules": [
+        "wheel"
+       ]
+      }
+     },
+     "resolved_by": "administrator enumerates `pkaction --verbose`, reads /etc/polkit-1/rules.d and confirms which actions allow_active for the agent's groups",
+     "why": "pkexec is setuid root and defers to polkit. Whether this credential is authorised for org.freedesktop.policykit.exec depends on rules that are partly unreadable here, and the authorisation itself is an interactive prompt that was not exercised"
+    }
+   }
+  },
+  "setuid": {
+   "count": 35,
+   "paths": {
+    "/opt/1Password/chrome-sandbox": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/opt/1Password/chrome-sandbox",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    },
+    "/opt/google/chrome-unstable/chrome-sandbox": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/opt/google/chrome-unstable/chrome-sandbox",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    },
+    "/opt/google/chrome/chrome-sandbox": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/opt/google/chrome/chrome-sandbox",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    },
+    "/usr/bin/at": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/at",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    },
+    "/usr/bin/chage": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/chage",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator confirms the local policy for this binary",
+     "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+    },
+    "/usr/bin/chfn": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4711",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/chfn",
+      "readable_by_agent": false,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator confirms the local policy for this binary",
+     "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+    },
+    "/usr/bin/chsh": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4711",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/chsh",
+      "readable_by_agent": false,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator confirms the local policy for this binary",
+     "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+    },
+    "/usr/bin/crontab": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/crontab",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    },
+    "/usr/bin/fusermount": {
+     "classification": "NON_ROOT_EQUIVALENT",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/fusermount",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "why": "bounded to the caller's own FUSE mounts"
+    },
+    "/usr/bin/fusermount-glusterfs": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/fusermount-glusterfs",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    },
+    "/usr/bin/fusermount3": {
+     "classification": "NON_ROOT_EQUIVALENT",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/fusermount3",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "why": "bounded to the caller's own FUSE mounts"
+    },
+    "/usr/bin/gpasswd": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/gpasswd",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator confirms the local policy for this binary",
+     "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+    },
+    "/usr/bin/grub2-set-bootflag": {
+     "classification": "NON_ROOT_EQUIVALENT",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/grub2-set-bootflag",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "why": "writes one bootflag byte"
+    },
+    "/usr/bin/mount": {
+     "classification": "NON_ROOT_EQUIVALENT",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/mount",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "why": "bounded by fstab 'user' entries"
+    },
+    "/usr/bin/mount.nfs": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/mount.nfs",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    },
+    "/usr/bin/newgrp": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/newgrp",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator confirms the local policy for this binary",
+     "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+    },
+    "/usr/bin/pam_timestamp_check": {
+     "classification": "NON_ROOT_EQUIVALENT",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/pam_timestamp_check",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "why": "timestamp file only"
+    },
+    "/usr/bin/passwd": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/passwd",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator confirms the local policy for this binary",
+     "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+    },
+    "/usr/bin/pkexec": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/pkexec",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator confirms the local policy for this binary",
+     "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+    },
+    "/usr/bin/su": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/su",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator confirms the local policy for this binary",
+     "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+    },
+    "/usr/bin/sudo": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4111",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/sudo",
+      "readable_by_agent": false,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator confirms the local policy for this binary",
+     "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+    },
+    "/usr/bin/umount": {
+     "classification": "NON_ROOT_EQUIVALENT",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/umount",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "why": "bounded by fstab 'user' entries"
+    },
+    "/usr/bin/unix_chkpwd": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/unix_chkpwd",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator confirms the local policy for this binary",
+     "why": "setuid root, escalation gated on an authentication factor that was not exercised"
+    },
+    "/usr/bin/userhelper": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4711",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/userhelper",
+      "readable_by_agent": false,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    },
+    "/usr/bin/vmware-user-suid-wrapper": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/bin/vmware-user-suid-wrapper",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    },
+    "/usr/lib/claude-desktop-unofficial/chrome-sandbox": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/lib/claude-desktop-unofficial/chrome-sandbox",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    },
+    "/usr/lib/polkit-1/polkit-agent-helper-1": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/lib/polkit-1/polkit-agent-helper-1",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    },
+    "/usr/lib64/cef/chrome-sandbox": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/lib64/cef/chrome-sandbox",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    },
+    "/usr/libexec/dbus-1/dbus-daemon-launch-helper": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4750",
+      "owner_gid": 81,
+      "owner_uid": 0,
+      "path": "/usr/libexec/dbus-1/dbus-daemon-launch-helper",
+      "readable_by_agent": false,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    },
+    "/usr/libexec/libgtop_server2": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/libexec/libgtop_server2",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    },
+    "/usr/libexec/qemu-bridge-helper": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/libexec/qemu-bridge-helper",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    },
+    "/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    },
+    "/usr/share/antigravity/chrome-sandbox": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/share/antigravity/chrome-sandbox",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    },
+    "/usr/share/code/chrome-sandbox": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/share/code/chrome-sandbox",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    },
+    "/usr/share/cursor/chrome-sandbox": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "exists": true,
+      "mode": "0o4755",
+      "owner_gid": 0,
+      "owner_uid": 0,
+      "path": "/usr/share/cursor/chrome-sandbox",
+      "readable_by_agent": true,
+      "setuid": true,
+      "writable_by_agent": false
+     },
+     "resolved_by": "administrator classifies this binary",
+     "why": "setuid root and not on this package's measured-bounded list; unrecognised is UNKNOWN, not safe"
+    }
+   }
+  },
+  "sudo": {
+   "paths": {
+    "sudo": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "policy_readable_by_agent": false,
+      "probe": {
+       "argv": [
+        "sudo",
+        "-n",
+        "-l"
+       ],
+       "rc": 1,
+       "stderr": "sudo: a password is required",
+       "stdout": ""
+      },
+      "sudoers": {
+       "exists": true,
+       "mode": "0o440",
+       "owner_gid": 0,
+       "owner_uid": 0,
+       "path": "/etc/sudoers",
+       "readable_by_agent": false,
+       "setuid": false,
+       "writable_by_agent": false
+      },
+      "sudoers_d": {
+       "exists": true,
+       "mode": "0o750",
+       "owner_gid": 0,
+       "owner_uid": 0,
+       "path": "/etc/sudoers.d",
+       "readable_by_agent": false,
+       "setuid": false,
+       "writable_by_agent": false
+      },
+      "sudoers_d_entries": {}
+     },
+     "resolved_by": "administrator runs `sudo -l -U <user>` and reads /etc/sudoers plus /etc/sudoers.d/*",
+     "why": "sudo is installed and the non-interactive probe was refused with an authentication demand. Whether this credential is authorised cannot be read: the policy files are not agent-readable, and exercising the password gate is outside this task's authority"
+    }
+   }
+  },
+  "systemd": {
+   "paths": {
+    "systemd_run": {
+     "classification": "UNKNOWN",
+     "evidence": {
+      "binary": {
+       "exists": true,
+       "mode": "0o755",
+       "owner_gid": 0,
+       "owner_uid": 0,
+       "path": "/usr/bin/systemd-run",
+       "readable_by_agent": true,
+       "setuid": false,
+       "writable_by_agent": false
+      },
+      "note": "`systemd-run --user` is not escalation; `systemd-run` against the system manager is polkit-mediated and was not exercised"
+     },
+     "resolved_by": "resolved together with the polkit enumeration",
+     "why": "starting a transient system unit would run as uid 0; whether polkit authorises this credential to do so is the same unresolved question as pkexec"
+    },
+    "systemd_unit_control": {
+     "classification": "NON_ROOT_EQUIVALENT",
+     "evidence": {
+      "root_services_with_agent_writable_exec": [],
+      "unit_dirs": {
+       "/etc/systemd/system": {
+        "exists": true,
+        "mode": "0o755",
+        "owner_gid": 0,
+        "owner_uid": 0,
+        "path": "/etc/systemd/system",
+        "readable_by_agent": true,
+        "setuid": false,
+        "writable_by_agent": false
+       },
+       "/run/systemd/system": {
+        "exists": true,
+        "mode": "0o755",
+        "owner_gid": 0,
+        "owner_uid": 0,
+        "path": "/run/systemd/system",
+        "readable_by_agent": true,
+        "setuid": false,
+        "writable_by_agent": false
+       },
+       "/usr/lib/systemd/system": {
+        "exists": true,
+        "mode": "0o755",
+        "owner_gid": 0,
+        "owner_uid": 0,
+        "path": "/usr/lib/systemd/system",
+        "readable_by_agent": true,
+        "setuid": false,
+        "writable_by_agent": false
+       }
+      }
+     },
+     "why": "no system unit directory is agent-writable and no root service has an agent-writable executable"
+    }
+   }
+  }
+ },
+ "unknown_privilege_paths": [
+  "container_runtimes:libvirt_ro_socket",
+  "container_runtimes:libvirt_socket",
+  "filecaps:/usr/bin/suexec",
+  "filecaps:/usr/bin/warp-svc",
+  "filecaps:/usr/libexec/sssd/krb5_child",
+  "filecaps:/usr/libexec/sssd/ldap_child",
+  "filecaps:/usr/libexec/sssd/sssd_pam",
+  "groups:membership_wheel",
+  "polkit:dbus_system_bus",
+  "polkit:pkexec",
+  "setuid:/opt/1Password/chrome-sandbox",
+  "setuid:/opt/google/chrome-unstable/chrome-sandbox",
+  "setuid:/opt/google/chrome/chrome-sandbox",
+  "setuid:/usr/bin/at",
+  "setuid:/usr/bin/chage",
+  "setuid:/usr/bin/chfn",
+  "setuid:/usr/bin/chsh",
+  "setuid:/usr/bin/crontab",
+  "setuid:/usr/bin/fusermount-glusterfs",
+  "setuid:/usr/bin/gpasswd",
+  "setuid:/usr/bin/mount.nfs",
+  "setuid:/usr/bin/newgrp",
+  "setuid:/usr/bin/passwd",
+  "setuid:/usr/bin/pkexec",
+  "setuid:/usr/bin/su",
+  "setuid:/usr/bin/sudo",
+  "setuid:/usr/bin/unix_chkpwd",
+  "setuid:/usr/bin/userhelper",
+  "setuid:/usr/bin/vmware-user-suid-wrapper",
+  "setuid:/usr/lib/claude-desktop-unofficial/chrome-sandbox",
+  "setuid:/usr/lib/polkit-1/polkit-agent-helper-1",
+  "setuid:/usr/lib64/cef/chrome-sandbox",
+  "setuid:/usr/libexec/dbus-1/dbus-daemon-launch-helper",
+  "setuid:/usr/libexec/libgtop_server2",
+  "setuid:/usr/libexec/qemu-bridge-helper",
+  "setuid:/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper",
+  "setuid:/usr/share/antigravity/chrome-sandbox",
+  "setuid:/usr/share/code/chrome-sandbox",
+  "setuid:/usr/share/cursor/chrome-sandbox",
+  "sudo:sudo",
+  "systemd:systemd_run"
+ ]
+}

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useDeliberations } from '../../api/hooks'
 import type { Deliberation } from '../../api/types'
+import { track } from '../../surfaces/console/telemetry'
 import {
   CONSTITUTION_HASH,
   ConsoleError,
@@ -44,6 +45,9 @@ export function Deliberations() {
     matter: string,
     cite: string,
   ) => {
+    // Only the bounded action kind is telemetered — never the matter,
+    // deliberation id, or citation (design §4 payload hygiene).
+    track('deliberation_action_taken', { action_kind: action })
     setReceipt({
       title: `Local deliberation receipt · ${action}`,
       body: `${id} for ${matter} recorded in this browser only; backend attestation is still required before dispatch.`,

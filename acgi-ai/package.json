@@ -18,15 +18,18 @@
     "gen:api": "openapi-typescript contracts/bus.openapi.json -o src/api/bus.generated.ts && biome format --write src/api/bus.generated.ts",
     "lint": "biome check src index.html package.json vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.json biome.json",
     "format": "biome format --write src index.html package.json vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.json biome.json",
+    "typecheck": "tsc -b",
     "test:security": "node scripts/check-security-invariants.mjs",
     "test:mvp": "node scripts/check-gove-zone-mvp.mjs",
     "test:font-manifest": "node scripts/check-font-manifest.mjs",
     "verify:postdeploy": "bash scripts/postdeploy-verify.sh",
     "smoke:gove-zone-live": "node scripts/smoke-gove-zone-live.mjs",
-    "test:all": "pnpm run lint && pnpm run test:mvp && pnpm run test:font-manifest && pnpm run test:bus-schema && pnpm run test:bus-proxy && pnpm run test:cloudrun-templates && pnpm run test:cloudrun-renderer && pnpm run test:production-deploy-contract && pnpm run test:production-launch-handoff && pnpm run test:production-authority-packet && pnpm run test:production-evidence-template && pnpm run test:production-live-verifier && pnpm run test:production-blocker-report && pnpm run test:production-evidence-validator && pnpm run test:production-cutover-plan && pnpm run test:production-evidence-draft && pnpm run test:container-pins && pnpm run test:postdeploy-live-assets && pnpm run test:claim-matrix && pnpm run test:trust-surface && pnpm run test:platform-blueprint && pnpm run test:state-coverage && pnpm run test:polling-hygiene && pnpm run test:session-sync && pnpm run test:app-errors && pnpm run test:login-interstitial && pnpm run test:privilege-banner && pnpm run test:wire-decisions && pnpm run test:test-surface && pnpm run test:buyer-evidence && pnpm run test:storybook-runtime-plan && pnpm run test:storybook-publication && pnpm run test:hosted-storybook-handoff && pnpm run test:hosted-storybook-proof-template && pnpm run test:hosted-storybook-proof-gap-report && pnpm run test:browser-evidence && pnpm run test:tthw && pnpm run test:msw-node && pnpm run test:a11y && pnpm run test:docs-scaffold && pnpm run test:runtime-primitives && pnpm run test:router && pnpm run test:marketing-csp && pnpm run test:marketing-routes && pnpm run test:ci-gates && pnpm run test:sitemap && pnpm run build:console && pnpm run test:security && pnpm run test:auth-boundary && pnpm run test:e2e-http && pnpm run test:surfaces && pnpm run test:performance && pnpm run test:style-bundle && pnpm run test:csp",
+    "test:all": "pnpm run lint && pnpm run test:mvp && pnpm run test:font-manifest && pnpm run test:bus-schema && pnpm run test:bus-proxy && pnpm run test:cloudrun-templates && pnpm run test:cloudrun-renderer && pnpm run test:production-deploy-contract && pnpm run test:production-launch-handoff && pnpm run test:production-authority-packet && pnpm run test:production-evidence-template && pnpm run test:production-live-verifier && pnpm run test:production-blocker-report && pnpm run test:production-evidence-validator && pnpm run test:production-cutover-plan && pnpm run test:production-evidence-draft && pnpm run test:container-pins && pnpm run test:postdeploy-live-assets && pnpm run test:claim-matrix && pnpm run test:trust-surface && pnpm run test:platform-blueprint && pnpm run test:state-coverage && pnpm run test:polling-hygiene && pnpm run test:session-sync && pnpm run test:app-errors && pnpm run test:login-interstitial && pnpm run test:privilege-banner && pnpm run test:wire-decisions && pnpm run test:test-surface && pnpm run test:buyer-evidence && pnpm run test:storybook-runtime-plan && pnpm run test:storybook-publication && pnpm run test:hosted-storybook-handoff && pnpm run test:hosted-storybook-proof-template && pnpm run test:hosted-storybook-proof-gap-report && pnpm run test:browser-evidence && pnpm run test:tthw && pnpm run test:msw-node && pnpm run test:a11y && pnpm run test:docs-scaffold && pnpm run test:runtime-primitives && pnpm run test:router && pnpm run test:marketing-csp && pnpm run test:marketing-routes && pnpm run test:agent-assets && pnpm run test:ci-gates && pnpm run test:sitemap && pnpm run build:console && pnpm run test:security && pnpm run test:auth-boundary && pnpm run test:e2e-http && pnpm run test:surfaces && pnpm run test:performance && pnpm run test:style-bundle && pnpm run test:csp && pnpm run test:unit",
     "preview": "vite preview",
     "build:console": "tsc -b && vite build --mode console",
-    "build:marketing": "tsc -b && vite build --mode marketing",
+    "build:marketing": "tsc -b && vite build --mode marketing && node --experimental-strip-types scripts/gen-agent-assets.mjs",
+    "gen:agent-assets": "node --experimental-strip-types scripts/gen-agent-assets.mjs",
+    "test:agent-assets": "node --experimental-strip-types scripts/check-agent-assets.mjs",
     "test:surfaces": "node scripts/check-surface-bundles.mjs",
     "test:performance": "node scripts/check-performance-budget.mjs",
     "test:bus-proxy": "node scripts/check-bus-proxy-contract.mjs",
@@ -142,7 +145,7 @@
     "tailwindcss": "^4.2.4",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.2",
-    "vite": "^8.0.10",
+    "vite": "^8.0.16",
     "vitest": "^4.1.7",
     "wrangler": "^4.110.0"
   },
@@ -150,5 +153,16 @@
     "workerDirectory": [
       "public"
     ]
+  },
+  "pnpm": {
+    "overrides": {
+      "seroval": "^1.5.3",
+      "undici": "^7.28.0",
+      "js-yaml": "^4.3.0",
+      "brace-expansion@>=2.0.0 <3.0.0": "^2.1.2",
+      "brace-expansion@>=3.0.0": "^5.0.7",
+      "@babel/core": "^7.29.6",
+      "sharp": "^0.35.0"
+    }
   }
 }

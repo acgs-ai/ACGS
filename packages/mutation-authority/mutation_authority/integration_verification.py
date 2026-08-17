@@ -1,0 +1,721 @@
+"""Integration verification: MUTATION_AUTHORITY_INTEGRATION_V1 attack suite.
+
+Covers the integrated mutation path (runtime adapter -> engine -> receipt
+-> effect -> evidence -> CI gate) with adversarial checks A-G, plus a
+compatibility check that re-runs the full kernel suite. Fresh sandbox per
+check; logical clock; deterministic.
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+
+from .adapters import AuthorityContext, MutationGateway
+from .ci_gate import run_ci_gate
+from .effect import ACCEPTED, REJECTED
+from .evidence_emitter import EvidenceEmitter
+from .ledger import LedgerIntegrityError
+from .receipt import MutationDecisionReceipt
+from .verification import CheckFailure, CheckResult, Sandbox, _expect
+from .verification import run_all_checks as run_kernel_checks
+
+APPLIED = "APPLIED"
+DENIED = "DENIED"
+GW_REJECTED = "REJECTED"
+
+
+@dataclass
+class IntegrationSandbox:
+    kernel: Sandbox
+    evidence: EvidenceEmitter
+    gateway: MutationGateway
+
+    @classmethod
+    def build(cls, base: Path) -> IntegrationSandbox:
+        kernel = Sandbox.build(base)
+        evidence = EvidenceEmitter(base / "evidence_graph.jsonl")
+        gateway = MutationGateway(kernel.root, kernel.ledger, kernel.repo, evidence)
+        return cls(kernel=kernel, evidence=evidence, gateway=gateway)
+
+    def ctx(self, actor: str, task: str = "TASK-1") -> AuthorityContext:
+        return AuthorityContext(
+            actor_id=actor,
+            actor_key=self.kernel.root.actor_key(actor),
+            task_reference=task,
+        )
+
+    def gate(self):
+        return run_ci_gate(self.kernel.root, self.kernel.ledger, self.kernel.repo, self.evidence)
+
+
+# ---------------------------------------------------------------------------
+# Structural checks
+# ---------------------------------------------------------------------------
+
+
+def check_integrated_happy_path(base: Path) -> str:
+    sb = IntegrationSandbox.build(base)
+    resource = "src/verify_readiness.py"
+    result = sb.gateway.request_mutation(
+        sb.ctx("agent-alpha"), resource, "UPDATE", b"print('readiness v2')\n"
+    )
+    _expect(result.status == APPLIED, f"{result.status}: {result.reason}")
+    _expect(result.receipt is not None and result.evidence_id is not None, "missing refs")
+    records = sb.evidence.records()
+    _expect(len(records) == 1, "expected exactly one evidence record")
+    record = records[0]
+    for key in (
+        "actor",
+        "resource",
+        "previous_hash",
+        "new_hash",
+        "decision",
+        "receipt_id",
+        "policy_version",
+        "authority_chain_ref",
+    ):
+        _expect(key in record, f"evidence record missing {key}")
+    gate = sb.gate()
+    _expect(gate.passed, f"CI gate failed on clean state: {gate.failures}")
+    return "APPLIED with receipt + evidence; CI gate green"
+
+
+def check_deterministic_gateway(base: Path) -> str:
+    sb = IntegrationSandbox.build(base)
+    first = sb.gateway.request_mutation(sb.ctx("agent-gamma"), "src/module_a.py", "UPDATE", b"x\n")
+    second = sb.gateway.request_mutation(sb.ctx("agent-gamma"), "src/module_a.py", "UPDATE", b"x\n")
+    _expect(first.status == second.status == DENIED, "expected DENY both times")
+    _expect(first.reason == second.reason, "same request, different reasons")
+    _expect(sb.evidence.records() == [], "denied request emitted evidence")
+    return "identical request ⇒ identical verdict; denials emit no evidence"
+
+
+def check_kernel_suite_compatibility(base: Path) -> str:
+    results = run_kernel_checks(base / "kernel")
+    failed = [r.name for r in results if not r.passed]
+    _expect(not failed, f"kernel checks regressed: {failed}")
+    return f"kernel suite still green ({len(results)}/{len(results)})"
+
+
+# ---------------------------------------------------------------------------
+# Attack suite A-G (integration boundary)
+# ---------------------------------------------------------------------------
+
+
+def attack_a_direct_filesystem_bypass(base: Path) -> str:
+    sb = IntegrationSandbox.build(base)
+    (sb.kernel.repo / "src/verify_readiness.py").write_bytes(b"rogue\n")
+    gate = sb.gate()
+    _expect(not gate.passed, "CI gate passed over an unauthorized mutation")
+    _expect(any("unauthorized mutation" in f for f in gate.failures), str(gate.failures))
+    result = sb.gateway.request_mutation(
+        sb.ctx("agent-alpha"), "src/verify_readiness.py", "UPDATE", b"v2\n"
+    )
+    _expect(result.status == DENIED, "gateway allowed a laundering mutation")
+    _expect("diverged" in result.reason, result.reason)
+    return "gate FAIL (attributed to resource); laundering request DENIED"
+
+
+def attack_b_fake_receipt(base: Path) -> str:
+    sb = IntegrationSandbox.build(base)
+    applied = sb.gateway.request_mutation(
+        sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 2\n"
+    )
+    assert applied.receipt is not None
+    forged = MutationDecisionReceipt.from_dict(
+        {**applied.receipt.to_dict(), "resource": "src/verify_readiness.py"}
+    )
+    result = sb.gateway.binder.commit(forged, b"pwn\n", 99)
+    _expect(result.status == REJECTED, "forged receipt accepted")
+    _expect("signature invalid" in result.reason, result.reason)
+
+    # Fabricated evidence with no backing COMMIT event.
+    fake = dict(sb.evidence.records()[0])
+    fake["receipt_id"] = "0" * 64
+    body = {k: v for k, v in fake.items() if k != "evidence_id"}
+    from .canonical import hash_obj
+
+    fake["evidence_id"] = hash_obj(body)
+    with sb.evidence.path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(fake, sort_keys=True) + "\n")
+    gate = sb.gate()
+    _expect(not gate.passed, "gate accepted fabricated evidence")
+    # The forged record carries a receipt_id with no COMMIT and no valid
+    # root-key signature; either rejection (signature or fabricated) is a
+    # correct fail — signature is the stronger, earlier catch.
+    _expect(
+        any(("fabricated evidence" in f or "signature" in f) for f in gate.failures),
+        str(gate.failures),
+    )
+    return "forged receipt REJECTED; unsigned/fabricated evidence fails the gate"
+
+
+def attack_c_receipt_reuse(base: Path) -> str:
+    sb = IntegrationSandbox.build(base)
+    applied = sb.gateway.request_mutation(
+        sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 2\n"
+    )
+    assert applied.receipt is not None
+    replay = sb.gateway.binder.commit(applied.receipt, b"VALUE = 666\n", 99)
+    _expect(replay.status == REJECTED, "receipt reuse accepted")
+    _expect("already consumed" in replay.reason, replay.reason)
+    _expect(
+        (sb.kernel.repo / "src/module_a.py").read_bytes() == b"VALUE = 2\n",
+        "replay changed the file",
+    )
+    _expect(sb.gate().passed, "gate failed after correctly-rejected replay")
+    return "consumed receipt reuse REJECTED; state and gate unaffected"
+
+
+def attack_d_actor_scope_escalation(base: Path) -> str:
+    sb = IntegrationSandbox.build(base)
+    # (1) Actor requests a resource outside its registered scope.
+    out_of_scope = sb.gateway.request_mutation(
+        sb.ctx("agent-gamma"), "src/verify_readiness.py", "UPDATE", b"v2\n"
+    )
+    _expect(out_of_scope.status == DENIED, "out-of-scope request allowed")
+    _expect("scope does not permit" in out_of_scope.reason, out_of_scope.reason)
+    # (2) Impersonation: claim alpha's identity with gamma's key.
+    stolen = AuthorityContext(
+        actor_id="agent-alpha",
+        actor_key=sb.kernel.root.actor_key("agent-gamma"),
+        task_reference="TASK-1",
+    )
+    impersonation = sb.gateway.request_mutation(
+        stolen, "src/verify_readiness.py", "UPDATE", b"v2\n"
+    )
+    _expect(impersonation.status == DENIED, "impersonation allowed")
+    _expect("signature invalid" in impersonation.reason, impersonation.reason)
+    return "out-of-scope DENIED; cross-actor key impersonation DENIED"
+
+
+def attack_e_ledger_rollback(base: Path) -> str:
+    sb = IntegrationSandbox.build(base)
+    sb.gateway.request_mutation(sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 2\n")
+    lines = sb.kernel.ledger.path.read_text().splitlines()
+    sb.kernel.ledger.path.write_text("\n".join(lines[:-1]) + "\n")
+    gate = sb.gate()
+    _expect(not gate.passed, "gate passed over a rolled-back ledger")
+    _expect(any("anchor" in f for f in gate.failures), str(gate.failures))
+    try:
+        sb.gateway.request_mutation(
+            sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 3\n"
+        )
+    except LedgerIntegrityError:
+        return "rollback DETECTED by gate; gateway fails closed on the rolled-back chain"
+    raise CheckFailure("gateway kept operating on a rolled-back ledger")
+
+
+def attack_f_evidence_removed(base: Path) -> str:
+    sb = IntegrationSandbox.build(base)
+    sb.gateway.request_mutation(sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 2\n")
+    _expect(sb.gate().passed, "gate not green before evidence removal")
+    sb.evidence.path.write_text("")  # attacker strips the evidence graph
+    gate = sb.gate()
+    _expect(not gate.passed, "silent mutation went undetected")
+    _expect(any("silent mutation" in f for f in gate.failures), str(gate.failures))
+    return "stripped evidence ⇒ gate FAIL: silent mutation named per COMMIT"
+
+
+def attack_g_adapter_bypass(base: Path) -> str:
+    sb = IntegrationSandbox.build(base)
+    # (1) No authority context at all.
+    no_ctx = sb.gateway.request_mutation(None, "src/module_a.py", "UPDATE", b"x\n")
+    _expect(no_ctx.status == GW_REJECTED, "missing context accepted")
+    _expect("missing authority context" in no_ctx.reason, no_ctx.reason)
+    # (2) Context that does not resolve to a registered actor.
+    ghost = AuthorityContext(
+        actor_id="agent-ghost", actor_key=b"\x00" * 32, task_reference="TASK-1"
+    )
+    unresolved = sb.gateway.request_mutation(ghost, "src/module_a.py", "UPDATE", b"x\n")
+    _expect(unresolved.status == GW_REJECTED, "unregistered actor accepted")
+    # (3) Incomplete context (no task authority).
+    incomplete = AuthorityContext(
+        actor_id="agent-alpha",
+        actor_key=sb.kernel.root.actor_key("agent-alpha"),
+        task_reference="",
+    )
+    no_task = sb.gateway.request_mutation(incomplete, "src/module_a.py", "UPDATE", b"x\n")
+    _expect(no_task.status == GW_REJECTED, "context without task authority accepted")
+    # (4) Skipping the adapter: direct EffectBinder call with an unissued receipt.
+    decision = sb.kernel.engine.decide(
+        sb.kernel.intent("agent-alpha", "src/module_a.py"), sb.kernel.tick()
+    )
+    assert decision.receipt is not None
+    unissued = MutationDecisionReceipt.from_dict(
+        {**decision.receipt.to_dict(), "receipt_id": "f" * 64}
+    )
+    direct = sb.gateway.binder.commit(unissued, b"x\n", sb.kernel.tick())
+    _expect(direct.status == REJECTED, "unissued receipt accepted by binder")
+    _expect(sb.evidence.records() == [], "bypass attempts emitted evidence")
+    return "no/unresolved/incomplete context REJECTED; binder demands issued receipt"
+
+
+def attack_h_clock_skew_dos(base: Path) -> str:
+    """Uncredentialed caller injects a huge timestamp to expire live receipts."""
+    sb = IntegrationSandbox.build(base)
+    # A legitimate agent takes out a live receipt (issued, unconsumed).
+    decision = sb.kernel.engine.decide(
+        sb.kernel.intent("agent-beta", "src/module_a.py"), sb.gateway._next_tick()
+    )
+    _expect(decision.decision == "ALLOW" and decision.receipt is not None, "setup failed")
+    assert decision.receipt is not None
+    open_before = sb.kernel.ledger.open_receipts_for("src/module_a.py", sb.gateway._next_tick())
+    _expect(len(open_before) == 1, "beta receipt should be live")
+
+    # Attacker calls decide() directly with a giant now. Even a guaranteed
+    # DENY (here: agent-gamma, out of scope on src/*) appends a DECISION
+    # event carrying that attacker-chosen timestamp.
+    bogus = sb.kernel.intent("agent-gamma", "src/module_a.py")
+    denied = sb.kernel.engine.decide(bogus, 999_999_999)
+    _expect(denied.decision == "DENY", "setup expected a DENY")
+
+    # Gateway clock must NOT have leapt forward; beta's receipt still live.
+    tick = sb.gateway._next_tick()
+    _expect(tick < 1000, f"clock skewed to {tick} by unauthenticated event")
+    still_open = sb.kernel.ledger.open_receipts_for("src/module_a.py", tick)
+    _expect(len(still_open) == 1, "victim receipt was expired by clock-skew DoS")
+    result = sb.gateway.binder.commit(decision.receipt, b"VALUE = 2\n", sb.gateway._next_tick())
+    _expect(result.status == ACCEPTED, f"victim commit failed after skew attempt: {result.reason}")
+    return "count-based clock immune to injected timestamps; victim receipt survives"
+
+
+def attack_i_evidence_forgery(base: Path) -> str:
+    """Forge a self-consistent evidence record without the root key."""
+    sb = IntegrationSandbox.build(base)
+    sb.gateway.request_mutation(sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 2\n")
+    _expect(sb.gate().passed, "gate not green pre-attack")
+    commit = next(e for e in sb.kernel.ledger.events() if e.type == "COMMIT")
+    # Attacker rebuilds a record from public ledger data with forged fields,
+    # signs the content hash (no root key) — exactly the prior CRITICAL repro.
+    from .canonical import hash_obj
+
+    forged_body = {
+        "actor": commit.payload["actor"],
+        "resource": commit.payload["resource"],
+        "previous_hash": commit.payload["before_hash"],
+        "new_hash": commit.payload["after_hash"],
+        "decision": "OVERRIDDEN",
+        "receipt_id": commit.payload["receipt_id"],
+        "policy_version": "0" * 64,
+        "authority_chain_ref": {
+            "ledger_seq": commit.seq,
+            "ledger_event_hash": commit.event_hash,
+        },
+        "timestamp": commit.timestamp,
+    }
+    forged = {**forged_body, "evidence_id": hash_obj(forged_body), "signature": "deadbeef"}
+    # (a) forged duplicate appended alongside the genuine record.
+    with sb.evidence.path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(forged, sort_keys=True) + "\n")
+    gate = sb.gate()
+    _expect(not gate.passed, "gate accepted a forged evidence record")
+    _expect(
+        any("signature" in f or "duplicate" in f for f in gate.failures),
+        str(gate.failures),
+    )
+    return "forged record fails root-key signature; duplicate shadowing blocked"
+
+
+def attack_j_gate_exception_safe(base: Path) -> str:
+    """Malformed evidence / ledger payload must FAIL the gate, not raise."""
+    sb = IntegrationSandbox.build(base)
+    sb.gateway.request_mutation(sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 2\n")
+    # (1) Corrupt evidence line (invalid JSON).
+    with sb.evidence.path.open("a", encoding="utf-8") as fh:
+        fh.write("{ not json\n")
+    gate = sb.gate()
+    _expect(not gate.passed, "malformed evidence line did not fail the gate")
+    _expect(any("fail closed" in f for f in gate.failures), str(gate.failures))
+    # (2) Schema-violating COMMIT payload appended straight to the ledger.
+    sb2 = IntegrationSandbox.build(base / "b")
+    sb2.kernel.ledger.append("COMMIT", {"receipt_id": "x", "actor": "a", "resource": "r"}, 5)
+    gate2 = sb2.gate()
+    _expect(not gate2.passed, "malformed COMMIT payload did not fail the gate")
+    return "malformed evidence and ledger payloads both fail closed (no raw raise)"
+
+
+def attack_k_gateway_path_escape(base: Path) -> str:
+    """Absolute/traversal resource paths are rejected BEFORE the gateway
+    touches the filesystem: no pre-state hash of files outside the repo,
+    no intent, no ledger event, no effect."""
+    sb = IntegrationSandbox.build(base)
+    outside = base / "outside.txt"
+    outside.write_text("untouchable", encoding="utf-8")
+    before_events = sum(1 for _ in sb.kernel.ledger.events())
+    for path in ("../outside.txt", "/etc/hostname", "src/../../outside.txt", ""):
+        res = sb.gateway.request_mutation(sb.ctx("agent-alpha"), path, "UPDATE", b"pwn")
+        _expect(res.status == GW_REJECTED, f"escaping path {path!r} not rejected: {res.status}")
+        _expect(res.receipt is None, f"escaping path {path!r} produced a receipt")
+    _expect(
+        sum(1 for _ in sb.kernel.ledger.events()) == before_events,
+        "path-escape rejection appended ledger events",
+    )
+    _expect(outside.read_text(encoding="utf-8") == "untouchable", "outside file was mutated")
+    return "absolute/traversal paths rejected before any read; zero events, zero effects"
+
+
+def attack_m_commit_post_state_laundering(base: Path) -> str:
+    """A chain-valid COMMIT referencing a legitimately issued receipt but
+    recording a DIFFERENT after_hash (arbitrary bytes written in-process,
+    evidence then 'recovered') must fail the gate on the receipt binding:
+    the receipt authorized exactly one post-state."""
+    sb = IntegrationSandbox.build(base)
+    decision = sb.kernel.engine.decide(
+        sb.kernel.intent("agent-alpha", "src/module_a.py"), sb.kernel.tick()
+    )
+    _expect(decision.decision == "ALLOW" and decision.receipt is not None, "setup failed")
+    receipt = decision.receipt
+    assert receipt is not None
+    from .canonical import sha256_hex
+
+    malicious = b"MALICIOUS = 666\n"
+    _expect(sha256_hex(malicious) != receipt.expected_state_hash, "fixture must differ")
+    (sb.kernel.repo / "src/module_a.py").write_bytes(malicious)
+    sb.kernel.ledger.append(
+        "COMMIT",
+        {
+            "receipt_id": receipt.receipt_id,
+            "actor": receipt.actor,
+            "resource": receipt.resource,
+            "before_hash": receipt.previous_state_hash,
+            "after_hash": sha256_hex(malicious),
+            "decision": "ALLOW",
+        },
+        sb.kernel.tick(),
+    )
+    sb.evidence.recover_missing(sb.kernel.root, sb.kernel.ledger)
+    gate = sb.gate()
+    _expect(not gate.passed, "gate laundered unauthorized bytes under a real receipt")
+    _expect(
+        any("does not match its receipt's binding" in f for f in gate.failures),
+        str(gate.failures),
+    )
+    return "COMMIT post-state must equal the receipt's expected_state_hash; gate FAIL"
+
+
+def attack_q_unsigned_receipt_laundering(base: Path) -> str:
+    """Code that bypasses the binder and uses the exported AuditLedger.append
+    API appends an ALLOW DECISION carrying an arbitrary UNSIGNED
+    receipt-shaped dict plus a matching COMMIT, mutates the governed file,
+    and asks the emitter to 'recover' evidence. The gate must reject the
+    COMMIT: in-chain issuance alone proves nothing — the receipt must parse
+    as a v2 receipt AND its root-key signature must verify."""
+    sb = IntegrationSandbox.build(base)
+    from .canonical import hash_file, sha256_hex
+    from .receipt import MUTATION_RECEIPT_SCHEMA
+
+    target = sb.kernel.repo / "src/module_a.py"
+    before_hash = hash_file(target)
+    malicious = b"MALICIOUS = 666\n"
+    after_hash = sha256_hex(malicious)
+    forged = {
+        "schema": MUTATION_RECEIPT_SCHEMA,
+        "receipt_id": "a" * 64,
+        "intent_hash": "b" * 64,
+        "decision_hash": "c" * 64,
+        "actor": "agent-alpha",
+        "resource": "src/module_a.py",
+        "operation": "UPDATE",
+        "allowed_scope": "src/",
+        "issued_at": 1,
+        "expiry": 999_999,
+        "previous_state_hash": before_hash,
+        "expected_state_hash": after_hash,
+        "expected_state_mode": 0o644,
+        "parent_ancestor_path": "src",
+        "parent_ancestor_device": 0,
+        "parent_ancestor_inode": 0,
+        "signature": "not-valid",
+    }
+    sb.kernel.ledger.append(
+        "DECISION",
+        {
+            "decision": "ALLOW",
+            "actor": "agent-alpha",
+            "resource": "src/module_a.py",
+            "receipt": forged,
+        },
+        sb.kernel.tick(),
+    )
+    target.write_bytes(malicious)
+    sb.kernel.ledger.append(
+        "COMMIT",
+        {
+            "receipt_id": "a" * 64,
+            "actor": "agent-alpha",
+            "resource": "src/module_a.py",
+            "before_hash": before_hash,
+            "after_hash": after_hash,
+            "decision": "ALLOW",
+        },
+        sb.kernel.tick(),
+    )
+    sb.evidence.recover_missing(sb.kernel.root, sb.kernel.ledger)
+    gate = sb.gate()
+    _expect(not gate.passed, "gate laundered a COMMIT under an unsigned receipt")
+    _expect(
+        any("signature does not verify" in f for f in gate.failures),
+        str(gate.failures),
+    )
+    return "unsigned receipt in an injected DECISION cannot launder a COMMIT; gate FAIL"
+
+
+def attack_r_duplicate_commit_receipt_reuse(base: Path) -> str:
+    """The exported AuditLedger.append API can add a SECOND chain-valid COMMIT
+    referencing an already-committed receipt_id. Under last-wins selection
+    only the later COMMIT would remain in the receipt->COMMIT map, so ONE
+    signed evidence record satisfies the bijection while the earlier
+    evidence-less COMMIT is silently accepted — receipt replay. The gate must
+    detect the duplicate receipt id before building the map and fail."""
+    sb = IntegrationSandbox.build(base)
+    applied = sb.gateway.request_mutation(
+        sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 2\n"
+    )
+    _expect(applied.status == APPLIED, f"setup failed: {applied.status}: {applied.reason}")
+    _expect(sb.gate().passed, "gate not green before the replay")
+    commit = next(e for e in sb.kernel.ledger.events() if e.type == "COMMIT")
+    sb.kernel.ledger.append("COMMIT", dict(commit.payload), sb.kernel.tick())
+    gate = sb.gate()
+    _expect(not gate.passed, "gate accepted two COMMITs sharing one receipt")
+    _expect(any("reuses receipt" in f for f in gate.failures), str(gate.failures))
+    return "duplicate COMMIT for one receipt ⇒ receipt replay named; gate FAIL"
+
+
+def attack_l_malformed_evidence_projection(base: Path) -> str:
+    """A corrupt evidence_graph.jsonl must block the mutation BEFORE the
+    effect (fail closed, side effect did not run) instead of surfacing as an
+    uncaught JSONDecodeError after the effect is already durable."""
+    sb = IntegrationSandbox.build(base)
+    sb.gateway.request_mutation(sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 2\n")
+    sb.evidence.path.write_text("{ not json\n", encoding="utf-8")
+    target = sb.kernel.repo / "src/module_a.py"
+    before = target.read_bytes()
+    before_events = sum(1 for _ in sb.kernel.ledger.events())
+    res = sb.gateway.request_mutation(
+        sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 3\n"
+    )
+    _expect(res.status == GW_REJECTED, f"expected REJECTED, got {res.status}: {res.reason}")
+    _expect("evidence projection" in res.reason, res.reason)
+    _expect(target.read_bytes() == before, "side effect ran despite a malformed projection")
+    _expect(
+        sum(1 for _ in sb.kernel.ledger.events()) == before_events,
+        "malformed-projection rejection appended ledger events",
+    )
+    return "malformed evidence projection rejects the request before any effect"
+
+
+def attack_s_non_object_evidence_record(base: Path) -> str:
+    """A parseable NON-OBJECT evidence line (JSON list or scalar) must fail
+    the gateway's pre-effect readability check exactly like corrupt JSON:
+    admitting it would let the mutation commit and then crash
+    recover_missing() (which calls .get() on every record) AFTER the effect
+    and its COMMIT are durable — the governed file changes while the gateway
+    raises instead of returning APPLIED."""
+    sb = IntegrationSandbox.build(base)
+    sb.gateway.request_mutation(sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 2\n")
+    for hostile in ("[1, 2, 3]\n", '"scalar"\n'):
+        with sb.evidence.path.open("a", encoding="utf-8") as fh:
+            fh.write(hostile)
+        target = sb.kernel.repo / "src/module_a.py"
+        before = target.read_bytes()
+        before_events = sum(1 for _ in sb.kernel.ledger.events())
+        res = sb.gateway.request_mutation(
+            sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 3\n"
+        )
+        _expect(
+            res.status == GW_REJECTED,
+            f"non-object line {hostile!r}: expected REJECTED, got {res.status}: {res.reason}",
+        )
+        _expect("evidence projection" in res.reason, res.reason)
+        _expect(
+            target.read_bytes() == before,
+            f"side effect ran despite non-object evidence line {hostile!r}",
+        )
+        _expect(
+            sum(1 for _ in sb.kernel.ledger.events()) == before_events,
+            "non-object evidence rejection appended ledger events",
+        )
+        # Restore a clean projection for the next hostile shape.
+        lines = sb.evidence.path.read_text(encoding="utf-8").splitlines(keepends=True)
+        sb.evidence.path.write_text("".join(lines[:-1]), encoding="utf-8")
+    return "non-object evidence lines reject the request before any effect"
+
+
+def attack_n_concurrent_evidence_recovery(base: Path) -> str:
+    """Two emitters recovering missing evidence concurrently (as two gateways
+    finishing commits would) must serialize the read-check-append sequence:
+    every COMMIT ends up with exactly ONE evidence record, never the
+    duplicates the CI gate's bijection rejects."""
+    sb = IntegrationSandbox.build(base)
+    for i, resource in enumerate(("src/module_a.py", "src/verify_readiness.py")):
+        res = sb.gateway.request_mutation(
+            sb.ctx("agent-alpha"), resource, "UPDATE", f"print({i})\n".encode()
+        )
+        _expect(res.status == APPLIED, f"setup failed: {res.status}: {res.reason}")
+    # Evidence appends failed after the COMMITs succeeded (e.g. full disk).
+    sb.evidence.path.unlink()
+
+    start = threading.Barrier(2)
+    errors: list[Exception] = []
+
+    def recoverer() -> None:
+        # A separate emitter instance per recoverer, as two processes would have.
+        emitter = EvidenceEmitter(sb.evidence.path)
+        start.wait()
+        try:
+            emitter.recover_missing(sb.kernel.root, sb.kernel.ledger)
+        except Exception as exc:  # surfaced below as a check failure
+            errors.append(exc)
+
+    threads = [threading.Thread(target=recoverer) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    _expect(not errors, f"concurrent recovery raised: {errors}")
+    receipt_ids = [r.get("receipt_id") for r in sb.evidence.records()]
+    _expect(
+        len(receipt_ids) == len(set(receipt_ids)) == 2,
+        f"concurrent recovery duplicated evidence records: {receipt_ids}",
+    )
+    gate = sb.gate()
+    _expect(gate.passed, f"CI gate failed after concurrent recovery: {gate.failures}")
+    return "racing recoveries serialized ⇒ one record per COMMIT, gate green"
+
+
+def attack_o_symlinked_evidence_projection(base: Path) -> str:
+    """Swap evidence_graph.jsonl for a symlink: the emitter must refuse to
+    read or write through it — otherwise signed evidence records would be
+    appended into an arbitrary file outside the governed store — and the
+    request must be rejected BEFORE any effect."""
+    sb = IntegrationSandbox.build(base)
+    setup = sb.gateway.request_mutation(
+        sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 2\n"
+    )
+    _expect(setup.status == APPLIED, f"setup failed: {setup.status}: {setup.reason}")
+    external = base / "outside-evidence.jsonl"
+    external.write_bytes(sb.evidence.path.read_bytes())
+    before_external = external.read_bytes()
+    sb.evidence.path.unlink()
+    sb.evidence.path.symlink_to(external)
+    target = sb.kernel.repo / "src/module_a.py"
+    before = target.read_bytes()
+    res = sb.gateway.request_mutation(
+        sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 3\n"
+    )
+    _expect(res.status == GW_REJECTED, f"expected REJECTED, got {res.status}: {res.reason}")
+    _expect("evidence projection" in res.reason, res.reason)
+    _expect(target.read_bytes() == before, "side effect ran despite a symlinked projection")
+    _expect(
+        external.read_bytes() == before_external,
+        "evidence bytes were written through the symlink into an external file",
+    )
+    gate = sb.gate()
+    _expect(not gate.passed, "CI gate passed over a symlinked evidence projection")
+    return "symlinked evidence projection ⇒ request rejected before effect, gate fails closed"
+
+
+def attack_p_gateway_prestate_symlink_swap(base: Path) -> str:
+    """Swap a path component to a symlink between the gateway's containment
+    check and its pre-state read: the read must be pinned and no-follow (the
+    same fd-anchored capture the engine uses), so the gateway can never hash
+    — and thereby leak — the content of a file outside the repository."""
+    sb = IntegrationSandbox.build(base)
+    outside = base / "outside"
+    outside.mkdir()
+    (outside / "module_a.py").write_bytes(b"SECRET = True\n")
+    src = sb.kernel.repo / "src"
+    real_next_tick = sb.gateway._next_tick
+    fired: list[bool] = []
+
+    def swapping_next_tick() -> int:
+        tick = real_next_tick()
+        if not fired:
+            # Race the window between the resolve()-based containment check
+            # and the pre-state read.
+            fired.append(True)
+            src.rename(sb.kernel.repo / "src-moved")
+            src.symlink_to(outside, target_is_directory=True)
+        return tick
+
+    sb.gateway._next_tick = swapping_next_tick  # type: ignore[method-assign]
+    res = sb.gateway.request_mutation(
+        sb.ctx("agent-alpha"), "src/module_a.py", "UPDATE", b"VALUE = 9\n"
+    )
+    _expect(res.status == GW_REJECTED, f"expected REJECTED, got {res.status}: {res.reason}")
+    _expect("cannot read pre-state" in res.reason, res.reason)
+    return "pre-state read is pinned and no-follow ⇒ symlink swap rejected, nothing hashed outside"
+
+
+INTEGRATION_CHECKS: list[tuple[str, Callable[[Path], str]]] = [
+    (
+        "integrated happy path: adapter → receipt → effect → evidence → gate",
+        check_integrated_happy_path,
+    ),
+    ("deterministic gateway behavior", check_deterministic_gateway),
+    ("ATTACK A: direct filesystem mutation bypass", attack_a_direct_filesystem_bypass),
+    ("ATTACK B: fake mutation receipt / fabricated evidence", attack_b_fake_receipt),
+    ("ATTACK C: valid receipt reused", attack_c_receipt_reuse),
+    ("ATTACK D: actor scope escalation / impersonation", attack_d_actor_scope_escalation),
+    ("ATTACK E: ledger rollback", attack_e_ledger_rollback),
+    ("ATTACK F: evidence emission removed", attack_f_evidence_removed),
+    ("ATTACK G: runtime adapter bypass", attack_g_adapter_bypass),
+    ("ATTACK H: clock-skew receipt-expiry DoS", attack_h_clock_skew_dos),
+    ("ATTACK I: evidence forgery / duplicate shadowing", attack_i_evidence_forgery),
+    ("ATTACK J: ci_gate exception-safety (malformed input)", attack_j_gate_exception_safe),
+    ("ATTACK K: gateway path escape (absolute / traversal)", attack_k_gateway_path_escape),
+    (
+        "ATTACK L: malformed evidence projection blocks before effect",
+        attack_l_malformed_evidence_projection,
+    ),
+    (
+        "ATTACK M: COMMIT post-state laundering under an issued receipt",
+        attack_m_commit_post_state_laundering,
+    ),
+    (
+        "ATTACK N: concurrent evidence recovery duplicates records",
+        attack_n_concurrent_evidence_recovery,
+    ),
+    (
+        "ATTACK O: evidence projection swapped for a symlink",
+        attack_o_symlinked_evidence_projection,
+    ),
+    (
+        "ATTACK P: pre-state read through a swapped-in symlink",
+        attack_p_gateway_prestate_symlink_swap,
+    ),
+    (
+        "ATTACK Q: COMMIT laundering under an unsigned injected receipt",
+        attack_q_unsigned_receipt_laundering,
+    ),
+    (
+        "ATTACK R: receipt replay via duplicate COMMIT events",
+        attack_r_duplicate_commit_receipt_reuse,
+    ),
+    (
+        "ATTACK S: non-object evidence record blocks before effect",
+        attack_s_non_object_evidence_record,
+    ),
+    ("compatibility: full kernel suite re-run", check_kernel_suite_compatibility),
+]
+
+
+def run_all_integration_checks(work_dir: Path) -> list[CheckResult]:
+    results: list[CheckResult] = []
+    for index, (name, fn) in enumerate(INTEGRATION_CHECKS):
+        sandbox_dir = work_dir / f"integration-{index:02d}"
+        try:
+            detail = fn(sandbox_dir)
+            results.append(CheckResult(name=name, passed=True, detail=detail))
+        except (CheckFailure, AssertionError) as exc:
+            results.append(CheckResult(name=name, passed=False, detail=str(exc)))
+        except Exception as exc:
+            results.append(
+                CheckResult(name=name, passed=False, detail=f"{type(exc).__name__}: {exc}")
+            )
+    return results

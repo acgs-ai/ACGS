@@ -156,6 +156,7 @@
     "packages/acgs-lite/src/acgs_lite/policygen/__init__.py": "608508a9bd224290",
     "packages/acgs-lite/src/acgs_lite/policygen/context.py": "608508a9bd224290",
     "packages/acgs-lite/src/acgs_lite/policygen/generator.py": "608508a9bd224290",
+    "packages/acgs-lite/src/acgs_lite/policygen/manifest.py": "608508a9bd224290",
     "packages/acgs-lite/src/acgs_lite/policygen/research.py": "608508a9bd224290",
     "packages/acgs-lite/src/acgs_lite/pqc.py": "608508a9bd224290",
     "packages/acgs-lite/src/acgs_lite/report.py": "608508a9bd224290",

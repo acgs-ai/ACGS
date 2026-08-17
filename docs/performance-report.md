@@ -1,6 +1,6 @@
 # gove-zone Runtime Performance Report
 
-**Date:** 2026-07-07 · **Package:** `packages/gove-zone` (0.1.0a1) · **Benchmark:** [`governed_actions_bench.py`](../packages/gove-zone/benchmarks/governed_actions_bench.py) (run via [`benchmarks/run_gove_zone.sh`](../benchmarks/run_gove_zone.sh))
+**Date:** 2026-07-07 · **Package:** `packages/gove-zone` (1.0.0rc1) · **Benchmark:** [`governed_actions_bench.py`](https://github.com/acgs-ai/ACGS/blob/master/packages/gove-zone/benchmarks/governed_actions_bench.py) (run via [`benchmarks/run_gove_zone.sh`](https://github.com/acgs-ai/ACGS/blob/master/benchmarks/run_gove_zone.sh))
 
 This report measures the four gove-zone runtime hot paths — receipt validation,
 policy evaluation, audit write, and replay verification — at 100 / 1,000 /
@@ -35,7 +35,7 @@ and receipt validation checks are untouched. Full gate after the pass:
 
 - Suite: `packages/gove-zone/benchmarks/governed_actions_bench.py`, new in this
   pass, alongside the existing per-call
-  [`overhead_receipt_gate.py`](../packages/gove-zone/benchmarks/overhead_receipt_gate.py).
+  [`overhead_receipt_gate.py`](https://github.com/acgs-ai/ACGS/blob/master/packages/gove-zone/benchmarks/overhead_receipt_gate.py).
 - Scales: 100 / 1,000 / 100,000 governed actions per arm (baseline also ran
   10,000 to characterize the quadratic replay curve; baseline 100,000 was not
   run because its replay arm extrapolates to ~6 hours).

@@ -62,7 +62,7 @@ uv run --package gove-zone gove-zone smoke
 
 Verified output (`"status": "pass"`): a safe `write_file` was **allowed** and executed; an `id_rsa` path write was **denied before any side effect** (`matchedRules: ["SMOKE_SECRET_BOUNDARY:keyword:id_rsa"]`); and the two decisions verify as a hash-linked chain (`"audit": {"valid": true, "checked": 2}`). It exits non-zero if any check fails — there is no fake green.
 
-For the **signed, tamper-proof** version (production profile, needs the `crypto` extra), run the flagship:
+For the **signed, tamper-evident** version (production profile, needs the `crypto` extra), run the flagship:
 
 ```bash
 uv run --package gove-zone python packages/gove-zone/examples/undeniable-demo/demo.py

@@ -848,6 +848,14 @@
             "minLength": 1
           },
           "uniqueItems": true
+        },
+        "cwd_scope": {
+          "enum": [
+            "REPO_ROOT",
+            "CP",
+            "GZ",
+            "UI"
+          ]
         }
       }
     },

@@ -1,6 +1,10 @@
-# govern-zone monorepo registry
+# ACGS monorepo registry
 
 Single source of truth for "what's in this monorepo and how it's gated."
+
+ACGS is the project and the monorepo. `packages/gove-zone` contains the runtime
+enforcement kernel; the other packages are separate components with their own
+maturity levels and gates, and are not covered by the kernel's guarantees.
 Companion to `docs/PLAN-MONOREPO.md` (the execution plan) and the hardening
 report at `artifacts/hardening_reports/` (the most recent verification run).
 
@@ -18,7 +22,6 @@ Parent-tracked packages (declared in `pyproject.toml` `[tool.uv.workspace]` or
 | `docs/archive/acgs-enterprise-ai-manager/frontend/` | parent files | Vue 3, Vite 5 (archived) | none (archived) | Enterprise manager frontend — archived 2026-07-05, removed from pnpm workspace; rationale in `docs/archive/acgs-enterprise-ai-manager/ARCHIVED.md` |
 | `acgs_governance_eval_mvp/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-eval-mvp.yml` | Eval MVP — path-filtered on `acgs_governance_eval_mvp/**`; also hosts the Hermes/Phoenix host adapter (`governance/adapters/hermes/`, folded in from the retired `hermes_acgs_bundle/`) |
 | `acgs-cft-governance-pack/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-cft-pack.yml` | CFT governance pack — path-filtered |
-| `packages/acgs-control-plane/` | parent files | Python ≥3.11, FastAPI, SQLAlchemy 2 (PostgreSQL), pytest, ruff, mypy | `.github/workflows/python-acgs-control-plane.yml` (path-filtered) | Enterprise Governance Control Plane — multi-tenant receipt-gated management API over gove-zone (org model, agent/policy registries, receipt explorer, audit dashboard, compliance export, RBAC) |
 | `packages/agent-bus-analyzer/` | parent files | Python ≥3.11, pytest, ruff | `.github/workflows/python-agent-bus-analyzer.yml` (path-filtered); also in root Makefile fan-out | Enhanced Agent Bus observability layer |
 | `packages/research-engine/` | parent files | Python ≥3.11, pytest, ruff, mypy `--strict` | `.github/workflows/python-research-engine.yml` (path-filtered); also in root Makefile fan-out (`lint-py`/`test-py`/`typecheck-py`) | `delve` — self-deepening research engine (fan-out research, citation-backed knowledge graph, adversarial verification); core has zero runtime deps, real backends are optional extras |
 | `packages/gove-zone/` | parent files | Python ≥3.11, pytest, ruff | `.github/workflows/python-gove-zone.yml` (path-filtered); also in root Makefile fan-out | Governed runtime kernel — main receipt-gated execution membrane |
@@ -50,32 +53,28 @@ pinned SHA in a follow-up parent commit.
 
 | Package | Submodule pin (branch) | PyPI? | uv.sources dev resolver | Parent CI |
 |---|---|---|---|---|
-| `packages/acgs-lite/` | `main` | yes — v2.10.0 (`requires-python = ">=3.10"`) | n/a (it IS acgs-lite) | `python-acgs-lite.yml` |
+| `packages/acgs-lite/` | `main` | yes — v2.10.1 (`requires-python = ">=3.10"`) | n/a (it IS acgs-lite) | `python-acgs-lite.yml` |
 | `packages/Acgs-Swarm/` | `main` | no — depends on `acgs-lite>=2.8.1` | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-acgs-swarm.yml` |
 | `packages/clinicalguard/` | `main` | no | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-clinicalguard.yml` |
+| `packages/acgs-control-plane/` | `main` — **private** `acgs-ai/acgs-control-plane` (proprietary; history through `9c6168f` remains Apache-2.0) | no | still a `[tool.uv.workspace]` member — requires an initialized submodule for root `uv` commands | `python-acgs-control-plane.yml`; also built by `saas-beta-required.yml` (required gate) and `saas-beta-p0-evidence.yml` — all three hard-fail without `SUBMODULE_TOKEN` access to the private repo |
 | `packages/ACGS-agency-agents/` | pinned SHA (no `branch` in `.gitmodules`) | no | n/a — not a uv workspace member; often an empty checkout locally | none |
 
-## Third-party `external/` submodules
+## Third-party `external/` references
 
-Reference checkouts of upstream research/agent projects, registered in
-`.gitmodules` and pinned by SHA. Unlike `packages/*` these are **not first-party
-ACGS code**: they carry their own upstream licenses, are **not** built, linted,
-imported, or gated by any parent CI workflow, and are left uninitialized by
-default (`git submodule status` shows them with a leading `-`). They exist only
-as provenance-anchored reading material; nothing in the tree imports them.
+Upstream research/agent projects referenced for provenance. These are **not
+first-party ACGS code**: they carry their own upstream licenses and are **not**
+built, linted, imported, or gated by any CI workflow — nothing in the tree
+imports them.
 
-| Submodule | Upstream | Why vendored | License |
-|---|---|---|---|
-| `external/natural_language_autoencoders/` | `kitft/natural_language_autoencoders` | Research reference for NL→latent encoding experiments | upstream (verify before reuse) |
-| `external/UI-TARS-desktop/` | `bytedance/UI-TARS-desktop` | Reference GUI-agent architecture | Apache-2.0 (upstream) |
-| `external/everything-claude-code/` | `affaan-m/everything-claude-code` | Agent-tooling pattern reference | upstream (verify before reuse) |
-| `external/openswarm/` | `VRSEN/OpenSwarm` | Multi-agent orchestration reference | upstream (verify before reuse) |
+They are **no longer git submodules.** Embedding them as submodules made
+`git clone --recursive` pull megabytes of unrelated upstream code (and fail when
+an upstream remote was unavailable), so they were removed from `.gitmodules` and
+are recorded as a pinned reference list in [`external/README.md`](external/README.md)
+(project, purpose, upstream URL, pinned commit, license). A plain `git clone`
+now succeeds for any reviewer. See [`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md).
 
-Because no first-party code depends on them, no SHA bump is required for ACGS
-releases. To pull one for inspection: `git submodule update --init
-external/<name>`. To pin it to a tracking branch, add a `branch = ...` line to
-its `.gitmodules` stanza (currently SHA-only). Before vendoring any of this code
-into first-party packages, confirm the upstream license permits redistribution.
+Before reusing any of this code in first-party packages, confirm the upstream
+license permits redistribution.
 
 ## Cross-cutting CI
 

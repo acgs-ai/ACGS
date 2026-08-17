@@ -1,0 +1,57 @@
+{
+  "outcome_version": "governance_outcome/v1",
+  "outcome_id": "317a1370da89acbb39c16b3bf2cf92a6c9aab7ab8da02f16a81bc031303176b7",
+  "trajectory_ref": {
+    "trajectory_id": "0f48970646ff6f1b789918b44bb28e7b54b1cd114564cfa7d0604344d9dbfa77",
+    "normalized_sha256": "2df4a30baf04a684d5c3a2b3e3f8fd968652d3042262e24a69cffc50736317b0"
+  },
+  "annotation_ref": {
+    "annotation_id": "2e0afe1f6bf51d2e1da83555107be776207ee5664fc794ef4609e4fc3d967c83",
+    "annotation_sha256": "0c2fbbdc616216d59e41bdc35b3b19dd81d244267c43c7e1d9a6384a4ee972be",
+    "evaluator_version": "governance_evaluator/0.1.0"
+  },
+  "commit": {
+    "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "diff_ref": {
+      "uri": "git:x..y",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  },
+  "tests": {
+    "passed": true,
+    "command": "pytest -q",
+    "marker_sha256": null
+  },
+  "ci": {
+    "status": "passed"
+  },
+  "review": {
+    "decision": "approved",
+    "reviewer": "human"
+  },
+  "deploy": {
+    "status": "none"
+  },
+  "grounded_tier": {
+    "assigned": "S",
+    "confirmed_by": [
+      "tests:pytest -q",
+      "commit:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "review:human",
+      "ci:passed"
+    ],
+    "reasons": [
+      "confirmed_S_verified_outcome_reviewed_ci_green"
+    ]
+  },
+  "integrity": {
+    "outcome_sha256": "c17b16ecd8a0f49eddd021122d6519efafe388ec086c80c7608c9688d6164e80",
+    "inputs_present": [
+      "commit",
+      "tests",
+      "ci",
+      "review"
+    ],
+    "fail_closed": true
+  }
+}

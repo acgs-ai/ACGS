@@ -108,8 +108,11 @@ def _verify(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="acgs",
-        description="ACGS governance evidence tooling.",
+        # Must match this package's [project.scripts] entry point, not gove-zone's
+        # `acgs` script. A verifier whose --help names a command the user did not
+        # install is the one place a wrong string costs trust.
+        prog="acgs-verify",
+        description="ACGS governance evidence tooling — offline proof-pack verifier.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

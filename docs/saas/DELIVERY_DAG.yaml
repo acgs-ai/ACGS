@@ -2,7 +2,7 @@
   "schema": {
     "name": "acgs-saas-delivery-dag",
     "version": 3,
-    "updated": "2026-07-13",
+    "updated": "2026-07-30",
     "source_of_truth": "docs/ROADMAP.md",
     "serialization": "JSON, a strict YAML 1.2 subset"
   },
@@ -15,23 +15,319 @@
     "termination_rule": "Beta code-complete requires every mandatory non-external node and the clean-environment journey to pass its evidence gate; production launch and external validation remain separate.",
     "worktree_locator": "git worktree list --porcelain",
     "survey_snapshot": {
-      "baseline_commit": "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96",
-      "github_observed_at": "2026-07-13T09:59:25Z",
-      "repository": "dislovelhl/ACGS",
+      "baseline_commit": "c20b51ee9ab1d89cfa496330568ca032c34d5022",
+      "github_observed_at": "2026-07-30T07:41:08Z",
+      "repository": "acgs-ai/ACGS",
       "pull_requests": [
         {
-          "number": 308,
-          "state": "OPEN",
-          "merged": false,
-          "disposition": "active_baseline_candidate",
-          "url": "https://github.com/dislovelhl/ACGS/pull/308"
+          "number": 353,
+          "state": "MERGED",
+          "merged": true,
+          "draft": false,
+          "disposition": "merged_current_master_p0_gate_rebuild_hosted_contract_passed_exact_proof_skipped",
+          "head": "beta/p0-gates-003-master-rebuild",
+          "head_sha": "dd55c3b86e3e669a0c67eee90c6df0aa05ae384a",
+          "base": "master",
+          "merge_commit": "787dd0b8de8da4ccd8c828714a5bc6cf0143c1b3",
+          "merged_at": "2026-07-25T11:02:09Z",
+          "checks": [
+            "codex-review:SUCCESS",
+            "hosted-contract:SUCCESS",
+            "SaaS beta required gate:SUCCESS",
+            "tests-docs 3.11/3.12:SUCCESS",
+            "python-gove-zone 3.11/3.12:SUCCESS",
+            "exact-proof:SKIPPED"
+          ],
+          "url": "https://github.com/acgs-ai/ACGS/pull/353"
         },
         {
-          "number": 267,
-          "state": "CLOSED",
+          "number": 354,
+          "state": "MERGED",
+          "merged": true,
+          "draft": false,
+          "disposition": "merged_g101_migration_gate",
+          "head": "beta/p1-migration-001",
+          "head_sha": "af0b8442effed3fe281ffac48ed5c149ad85f7a7",
+          "base": "master",
+          "merge_commit": "f1d735607fabc779e3f80b65dab488a6618ca2a1",
+          "merged_at": "2026-07-25T11:53:32Z",
+          "checks": [
+            "codex-review:SUCCESS",
+            "postgresql-migrations:SUCCESS",
+            "test (3.11):SUCCESS",
+            "test (3.12):SUCCESS",
+            "SaaS beta required gate:SUCCESS",
+            "[code]smith:SUCCESS"
+          ],
+          "url": "https://github.com/acgs-ai/ACGS/pull/354"
+        },
+        {
+          "number": 355,
+          "state": "MERGED",
+          "merged": true,
+          "draft": false,
+          "disposition": "merged_g101_recovery_tool_provenance",
+          "head": "beta/p1-g101-tool-provenance",
+          "head_sha": "83afdbd7d5b8ae2c9f043fa13488cda739ac1e2b",
+          "base": "master",
+          "merge_commit": "67f7e3062e9b3745f3a44d16c3c660b6884b670a",
+          "merged_at": "2026-07-25T12:02:48Z",
+          "checks": [
+            "codex-review:SUCCESS",
+            "postgresql-migrations:SUCCESS",
+            "test (3.11):SUCCESS",
+            "test (3.12):SUCCESS",
+            "SaaS beta required gate:SUCCESS",
+            "[code]smith:SUCCESS"
+          ],
+          "url": "https://github.com/acgs-ai/ACGS/pull/355"
+        },
+        {
+          "number": 357,
+          "state": "MERGED",
+          "merged": true,
+          "draft": false,
+          "disposition": "merged_g102a_request_admission",
+          "head": "beta/p1-g102-request-admission",
+          "head_sha": "ee42e4ee103162ffb3173b45c8f53c30f7222975",
+          "base": "master",
+          "merge_commit": "007d0fde3056119b2a297936276920cd7bb44cd9",
+          "merged_at": "2026-07-25T23:39:30Z",
+          "checks": [
+            "codex-review:SUCCESS",
+            "postgresql-migrations:SUCCESS",
+            "test (3.11):SUCCESS",
+            "test (3.12):SUCCESS",
+            "SaaS beta required gate:SUCCESS"
+          ],
+          "url": "https://github.com/acgs-ai/ACGS/pull/357"
+        },
+        {
+          "number": 359,
+          "state": "MERGED",
+          "merged": true,
+          "draft": false,
+          "disposition": "merged_g102b_receipt_cursor_pagination",
+          "head": "beta/p1-g102b-receipt-cursors",
+          "head_sha": "a649a0a3b9ed1e2e91360a5ffb8b4f1d4143cd82",
+          "base": "master",
+          "merge_commit": "f51133e7504262695b7a4d426c1a24cacffe88aa",
+          "merged_at": "2026-07-26T04:14:47Z",
+          "checks": [
+            "codex-review:SUCCESS",
+            "postgresql-migrations:SUCCESS",
+            "test (3.11):SUCCESS",
+            "test (3.12):SUCCESS",
+            "SaaS beta required gate:SUCCESS",
+            "[code]smith:SKIPPED"
+          ],
+          "url": "https://github.com/acgs-ai/ACGS/pull/359"
+        },
+        {
+          "number": 361,
+          "state": "MERGED",
+          "merged": true,
+          "draft": false,
+          "disposition": "merged_g102c_openapi_drift_sentinel",
+          "head": "beta/p1-g102c-openapi-drift",
+          "head_sha": "a6faf49a7b5f947b592f4be8372a85b173251090",
+          "base": "master",
+          "merge_commit": "2abc3d4eca0deffb46c469cb54bdda380196c2a3",
+          "merged_at": "2026-07-26T04:42:52Z",
+          "checks": [
+            "codex-review:SUCCESS",
+            "postgresql-migrations:SUCCESS",
+            "test (3.11):SUCCESS",
+            "test (3.12):SUCCESS",
+            "SaaS beta required gate:SUCCESS"
+          ],
+          "url": "https://github.com/acgs-ai/ACGS/pull/361"
+        },
+        {
+          "number": 363,
+          "state": "MERGED",
+          "merged": true,
+          "draft": false,
+          "disposition": "merged_g102d_v1_api_contract",
+          "head": "beta/p1-g102d-v1-api-contract",
+          "head_sha": "047ddcf89530dc488ab6a2f4dd3bc00fe0211c5d",
+          "base": "master",
+          "merge_commit": "4da060934ebc454760b2bb2981d3278f1a6afa6e",
+          "merged_at": "2026-07-26T05:15:10Z",
+          "checks": [
+            "codex-review:SUCCESS",
+            "postgresql-migrations:SUCCESS",
+            "test (3.11):SUCCESS",
+            "test (3.12):SUCCESS",
+            "SaaS beta required gate:SUCCESS",
+            "[code]smith:SUCCESS"
+          ],
+          "url": "https://github.com/acgs-ai/ACGS/pull/363"
+        },
+        {
+          "number": 369,
+          "state": "MERGED",
+          "merged": true,
+          "draft": false,
+          "disposition": "merged_g103_scope_attachment_precursor_partial",
+          "head": "beta/p0-g102e4-scope-attachment",
+          "head_sha": "6d312620cefacde0130cbda43d9e851064403fea",
+          "base": "master",
+          "merge_commit": "101e8279a6c5df12bf86861353e22eb045fe0253",
+          "merged_at": "2026-07-26T22:34:24Z",
+          "checks": [
+            "codex-review:SUCCESS",
+            "postgresql-migrations:SUCCESS",
+            "test (3.11):SUCCESS",
+            "test (3.12):SUCCESS",
+            "SaaS beta required gate:SUCCESS",
+            "[code]smith:SKIPPED"
+          ],
+          "url": "https://github.com/acgs-ai/ACGS/pull/369"
+        },
+        {
+          "number": 370,
+          "state": "MERGED",
+          "merged": true,
+          "draft": false,
+          "disposition": "merged_g105_one_route_native_transaction_spine_partial",
+          "head": "beta/p0-g102e5-native-transaction-spine",
+          "head_sha": "705ab08fae82b090c2ba4c8e71013eed759a3ea6",
+          "base": "master",
+          "merge_commit": "34cd5b6bdb584873ca9ddaea6d47808c679fbc09",
+          "merged_at": "2026-07-26T22:46:48Z",
+          "checks": [
+            "codex-review:SUCCESS",
+            "postgresql-migrations:SUCCESS",
+            "python-acgs-control-plane 3.11/3.12:SUCCESS",
+            "python-gove-zone 3.11/3.12:SUCCESS",
+            "tests-docs 3.11/3.12:SUCCESS",
+            "SaaS beta required gate:SUCCESS",
+            "[code]smith:SKIPPED"
+          ],
+          "url": "https://github.com/acgs-ai/ACGS/pull/370"
+        },
+        {
+          "number": 371,
+          "state": "MERGED",
+          "merged": true,
+          "draft": false,
+          "disposition": "merged_g106_route_scoped_idempotency_outbox_partial",
+          "head": "beta/p1-g102-durable-idempotency",
+          "head_sha": "1f3a672380410646c2c1dd5a31f2f069b306c9a3",
+          "base": "master",
+          "merge_commit": "5c7660412f4cff65bdb5b5166e52eb7058928768",
+          "merged_at": "2026-07-26T22:53:52Z",
+          "checks": [
+            "codex-review:SUCCESS",
+            "postgresql-migrations:SUCCESS",
+            "test (3.11):SUCCESS",
+            "test (3.12):SUCCESS",
+            "SaaS beta required gate:SUCCESS",
+            "[code]smith:SKIPPED"
+          ],
+          "url": "https://github.com/acgs-ai/ACGS/pull/371"
+        },
+        {
+          "number": 391,
+          "state": "OPEN",
           "merged": false,
-          "disposition": "superseded_closed_unmerged",
-          "url": "https://github.com/dislovelhl/ACGS/pull/267"
+          "draft": false,
+          "merge_state": "CLEAN",
+          "disposition": "current_local_g042_evidence_isolation_stack_unmerged",
+          "head": "beta/p2-evidence-isolation-002b",
+          "head_sha": "2194ae43308d01fbbd0819ebad7d31ac2a10636c",
+          "base": "beta/p2-idempotency-002-retry",
+          "checks": [
+            "codex-review:SUCCESS",
+            "p2-idempotency-evidence-gate:SUCCESS",
+            "postgresql-migrations:SUCCESS",
+            "test (3.11):SUCCESS",
+            "test (3.12):SUCCESS",
+            "[code]smith:SUCCESS"
+          ],
+          "url": "https://github.com/acgs-ai/ACGS/pull/391"
+        },
+        {
+          "number": 393,
+          "state": "OPEN",
+          "merged": false,
+          "draft": false,
+          "merge_state": "CLEAN",
+          "disposition": "current_local_g201_bootstrap_registration_stack_unmerged",
+          "head": "beta/p2-vertical-gate-003",
+          "head_sha": "a1567e340b8d8b821f853892df40c7e4f5112027",
+          "base": "beta/p2-evidence-isolation-002b",
+          "checks": [
+            "codex-review:SUCCESS",
+            "p2-idempotency-evidence-gate:SUCCESS",
+            "postgresql-migrations:SUCCESS",
+            "test (3.11):SUCCESS",
+            "test (3.12):SUCCESS",
+            "[code]smith:SUCCESS"
+          ],
+          "url": "https://github.com/acgs-ai/ACGS/pull/393"
+        },
+        {
+          "number": 395,
+          "state": "OPEN",
+          "merged": false,
+          "draft": false,
+          "merge_state": "CLEAN",
+          "disposition": "current_local_g202_signed_policy_stack_unmerged",
+          "head": "beta/p3-policy-001",
+          "head_sha": "ca7ab32b3c75de901f4687d308458e4cbe8c06d1",
+          "base": "beta/p2-vertical-gate-003",
+          "checks": [
+            "codex-review:SUCCESS",
+            "p2-idempotency-evidence-gate:SUCCESS",
+            "postgresql-migrations:SUCCESS",
+            "test (3.11):SUCCESS",
+            "test (3.12):SUCCESS",
+            "[code]smith:SUCCESS"
+          ],
+          "url": "https://github.com/acgs-ai/ACGS/pull/395"
+        },
+        {
+          "number": 398,
+          "state": "OPEN",
+          "merged": false,
+          "draft": false,
+          "merge_state": "CLEAN",
+          "disposition": "current_local_g105_mutation_inventory_stack_unmerged",
+          "head": "beta/p3-mutations-002",
+          "head_sha": "a2299d510d792dd04646204653e405e0485204a6",
+          "base": "beta/p3-policy-001",
+          "checks": [
+            "codex-review:SUCCESS",
+            "p2-idempotency-evidence-gate:SUCCESS",
+            "postgresql-migrations:SUCCESS",
+            "test (3.11):SUCCESS",
+            "test (3.12):SUCCESS",
+            "[code]smith:SUCCESS"
+          ],
+          "url": "https://github.com/acgs-ai/ACGS/pull/398"
+        },
+        {
+          "number": 413,
+          "state": "OPEN",
+          "merged": false,
+          "draft": false,
+          "merge_state": "CLEAN",
+          "disposition": "current_local_g015_g305_fixed_quorum_agent_register_unmerged_failed_authoritative_proof",
+          "head": "beta/p3-approval-003-reconciled",
+          "head_sha": "88377db825c522748e1e1ef1ea7db5b86d141106",
+          "base": "beta/p3-mutations-002",
+          "proof_head": "c8518859818916d772fb939ea567b6c22fe0ed54",
+          "checks": [
+            "codex-review:SUCCESS",
+            "p2-idempotency-evidence-gate:SUCCESS",
+            "postgresql-migrations:SUCCESS",
+            "test (3.11):SUCCESS",
+            "test (3.12):SUCCESS",
+            "[code]smith:SKIPPED"
+          ],
+          "url": "https://github.com/acgs-ai/ACGS/pull/413"
         }
       ]
     },
@@ -42,6 +338,18 @@
         "external_only_excluded": true
       },
       "production_launch": "Not mechanically implied by beta code completion; requires the external-only nodes and explicit owner authorization."
+    },
+    "local_orchestration_snapshot": {
+      "observed_at": "2026-07-30T07:41:08Z",
+      "G015-p3-approval-003": {
+        "status": "failed",
+        "reason": "authoritative one-shot proof failed and was consumed; later PR #413 CI/local repair is non-authoritative follow-up only"
+      },
+      "G016-p4-enrollment-001": {
+        "status": "pending",
+        "scheduler_blocker": "local OMX dependency is G015, so scheduling remains blocked until a distinct replacement approval evidence node succeeds"
+      },
+      "canonical_dependency_boundary": "This local scheduler relation does not add a G305 -> G201 edge; canonical G201 depends on G106 only."
     }
   },
   "vocabularies": {
@@ -181,6 +489,24 @@
         "G601",
         "G606",
         "G704"
+      ]
+    },
+    {
+      "id": "EXT-GITHUB-BILLING",
+      "title": "GitHub Actions account billing lock",
+      "owner": "repository owner or GitHub organization billing administrator",
+      "state": "resolved",
+      "exact_need": "Resolved by hosted GitHub checks starting and completing on PR #353 and PR #354-#371, plus the current open PR #391/#393/#395/#398/#413 stack.",
+      "why_not_assumed": "Resolved only after live GitHub evidence showed hosted checks completed; this does not imply merge, deployment, production readiness, or authoritative exact-proof completion.",
+      "validation_after_unblock": "for pr in 353 354 355 357 359 361 363 369 370 371 391 393 395 398 413; do gh pr view \"$pr\" --repo acgs-ai/ACGS --json number,state,isDraft,mergeStateStatus,mergedAt,headRefOid,statusCheckRollup; done",
+      "downstream_nodes": [
+        "G004",
+        "G101",
+        "G102",
+        "G102A",
+        "G102B",
+        "G102C",
+        "G102D"
       ]
     }
   ],
@@ -430,8 +756,8 @@
     {
       "id": "G030B",
       "phase": 0,
-      "title": "PR 308 baseline reconciliation",
-      "buyer_user_outcome": "G004 proof work uses a current accepted membrane baseline rather than overlapping or stale changes.",
+      "title": "Current master baseline reconciliation",
+      "buyer_user_outcome": "G004 proof work uses current origin/master plus the active rebuild stack rather than stale or closed-unmerged changes.",
       "repo_owner": "root integration evidence",
       "dependencies": [
         "G005"
@@ -440,31 +766,46 @@
         "G004"
       ],
       "likely_interfaces_files": [
-        "GitHub PR 308",
-        "GitHub PR 267",
+        "GitHub PR 353",
+        "GitHub PR 354",
+        "GitHub PR 355",
+        "GitHub PR 357",
+        "GitHub PR 359",
+        "GitHub PR 361",
+        "GitHub PR 363",
+        "GitHub PR 369",
+        "GitHub PR 370",
+        "GitHub PR 371",
+        "GitHub PR 391",
+        "GitHub PR 393",
+        "GitHub PR 395",
+        "GitHub PR 398",
+        "GitHub PR 413",
         "worktree and branch inventory"
       ],
       "risk_class": "red",
       "positive_tests": [
-        "PR 308 disposition and exact accepted source identity are recorded."
+        "Current origin/master c20b51ee9ab1d89cfa496330568ca032c34d5022 and live acgs-ai/ACGS PR ancestry are recorded: #353/#354/#355/#357/#359/#361/#363/#369/#370/#371 merged with hosted checks, and #391/#393/#395/#398/#413 open, clean, and unmerged with exact heads."
       ],
       "forbidden_side_effect_negative_tests": [
-        "Closed-unmerged PR 267 or an overlapping dirty worktree cannot become authoritative evidence."
+        "Closed, stale, wrong-repository, unmerged, or proof-failed records cannot become authoritative current verification; open stacked PR CI cannot replace an exact one-shot proof."
       ],
       "validation_commands": [
-        "gh pr view 308 --repo dislovelhl/ACGS --json number,state,mergedAt,closedAt,url,headRefName,baseRefName",
-        "gh pr view 267 --repo dislovelhl/ACGS --json number,state,mergedAt,closedAt,url,headRefName,baseRefName",
+        "git rev-parse origin/master",
+        "gh pr view 353 --repo acgs-ai/ACGS --json number,state,isDraft,mergedAt,mergeCommit,headRefName,baseRefName,headRefOid,statusCheckRollup",
+        "gh pr view 391 --repo acgs-ai/ACGS --json number,state,isDraft,mergeStateStatus,headRefName,baseRefName,headRefOid,statusCheckRollup",
+        "gh pr view 413 --repo acgs-ai/ACGS --json number,state,isDraft,mergeStateStatus,headRefName,baseRefName,headRefOid,statusCheckRollup",
         "git diff --check"
       ],
-      "evidence_artifact": "PR 308 baseline reconciliation packet",
+      "evidence_artifact": "Current baseline reconciliation packet: origin/master c20b51ee9ab1d89cfa496330568ca032c34d5022; #353 merged at 2026-07-25T11:02:09Z with merge 787dd0b8de8da4ccd8c828714a5bc6cf0143c1b3, hosted-contract SUCCESS, SaaS beta required gate SUCCESS, and exact-proof SKIPPED; #354/#355/#357/#359/#361/#363/#369/#370/#371 merged into current master with hosted checks; #391/#393/#395/#398/#413 are open clean current-local stack evidence with exact heads recorded in survey_snapshot.",
       "branch": null,
       "worktree": null,
-      "pr": "#308",
-      "status": "blocked",
-      "implementation_state": "conflicting",
-      "evidence_state": "unverified",
-      "blocker": "PR #308 is open; PR #267 is closed unmerged and superseded.",
-      "next_safe_action": "Resolve PR #308 through normal review and record the exact accepted commit; never reuse PR #267 as current evidence.",
+      "pr": 353,
+      "status": "completed",
+      "implementation_state": "built",
+      "evidence_state": "local_verified",
+      "blocker": null,
+      "next_safe_action": "Use current origin/master plus the merged/open acgs-ai/ACGS snapshot above as the current evidence boundary; never reuse dislovelhl/ACGS or closed historical PRs as executable current validation.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
@@ -535,17 +876,18 @@
       "validation_commands": [
         "uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q",
         "test -f evidence/g004/manifest.json",
+        "gh pr view 353 --repo acgs-ai/ACGS --json number,state,isDraft,mergedAt,mergeCommit,url,headRefName,baseRefName,headRefOid,statusCheckRollup",
         "git diff --check"
       ],
-      "evidence_artifact": "New accepted-baseline G004 proof; prior material remains historical only",
-      "branch": "beta/p0-gates-003",
+      "evidence_artifact": "PR #353 merged into current master at head dd55c3b86e3e669a0c67eee90c6df0aa05ae384a with merge 787dd0b8de8da4ccd8c828714a5bc6cf0143c1b3; hosted-contract, SaaS beta required gate, docs/root/kernel checks succeeded, but exact-proof was SKIPPED and evidence/g004/manifest.json is absent in current master. Prior PR #267/#308 material remains historical only.",
+      "branch": "beta/p0-gates-003-master-rebuild",
       "worktree": null,
-      "pr": null,
+      "pr": 353,
       "status": "blocked",
-      "implementation_state": "conflicting",
-      "evidence_state": "historical_only",
-      "blocker": "PR #308 remains open, so no accepted current membrane baseline is available for rebuilding G004 against the reviewed G031 claims and conformance corpus.",
-      "next_safe_action": "After PR #308 resolves and the accepted current baseline is recorded, rebuild G004 using the reviewed G031 corpus rather than reuse historical output.",
+      "implementation_state": "built",
+      "evidence_state": "local_verified",
+      "blocker": "Authoritative G004 proof is still missing: PR #353 is merged and hosted checks passed, but evidence/g004/manifest.json is absent and the exact-proof job was skipped, so the accepted gate proof cannot be completed.",
+      "next_safe_action": "Run a distinct current-baseline G004 exact-proof evidence node that writes and verifies evidence/g004/manifest.json; do not treat PR #353 hosted checks or prior PR #267/#308 output as authoritative proof.",
       "historical_evidence": {
         "disposition": "superseded",
         "usable_as_current_verification": false,
@@ -566,6 +908,10 @@
       ],
       "consumers": [
         "G102",
+        "G102A",
+        "G102B",
+        "G102C",
+        "G102D",
         "G103"
       ],
       "likely_interfaces_files": [
@@ -577,35 +923,48 @@
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/env.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0001_legacy_v0.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0002_project_environment.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migration_cli.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migration_recovery.py",
         "packages/acgs-control-plane/tests/test_migrations.py",
         "packages/acgs-control-plane/tests/test_project_environment_scope.py",
-        "packages/acgs-control-plane/tests/test_postgresql_migrations.py"
+        "packages/acgs-control-plane/tests/test_postgresql_migrations.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migration_cli.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migration_recovery.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migration_recovery_bytea.py",
+        "packages/acgs-control-plane/tests/test_postgresql_rolling_upgrade.py",
+        ".github/workflows/python-acgs-control-plane.yml",
+        "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0010_scope_attachment.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/scope_defaults.py",
+        "packages/acgs-control-plane/tests/test_scope_attachment.py"
       ],
       "risk_class": "red",
       "positive_tests": [
-        "Current-local verification retains the SQLite migration-core suite and adds disposable PostgreSQL 17.10-bookworm evidence for transaction-level advisory-lock contention, raw Alembic stamp/upgrade denial, injected atomic rollback and retry, and the cross-organization parent constraint."
+        "Current-local verification retains the SQLite migration-core suite; adds disposable PostgreSQL 17.10-bookworm coverage for advisory-lock contention, raw Alembic command denial, rollback/retry, startup exact-schema classification, CLI forward-only acknowledgement, rolling-upgrade compatibility, and migration recovery tool provenance; records full control-plane package evidence at 214 passed and 32 skipped; and later PR #369 scope-attachment slice evidence at commit e4898d7fe250c519f623647cbf7951f7c1f076d4 records project/environment attachment for agents and policy bundles with full control-plane package evidence at 391 passed and 35 skipped."
       ],
       "forbidden_side_effect_negative_tests": [
-        "On local disposable PostgreSQL 17.10-bookworm, held advisory locks and raw Alembic stamp/upgrade commands are rejected before schema or version mutation; injected failures roll back the one controlled transaction before a retry."
+        "On local disposable PostgreSQL 17.10-bookworm, held advisory locks, raw Alembic stamp/upgrade commands, unsafe recovery tool paths, exact-schema startup drift, failed upgrades, and missing forward-only acknowledgement are rejected before schema/version mutation or recovery tool spawn; scope-attachment tests reject missing and cross-tenant environment bindings before accepting agent or policy-bundle rows."
       ],
       "validation_commands": [
         "cd packages/acgs-control-plane && uv run pytest -q",
         "cd packages/acgs-control-plane && ACP_TEST_POSTGRES_URL=<ephemeral PG17 URL> ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE=1 uv run --extra postgres python -m pytest tests/test_postgresql_migrations.py --import-mode=importlib -q",
+        "cd packages/acgs-control-plane && ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE=1 ACP_TEST_RECOVERY_SOURCE_URL=<ephemeral PG17 source URL> ACP_TEST_RECOVERY_TARGET_URL=<ephemeral PG17 empty target URL> PATH=<absolute pg_dump/pg_restore wrapper dir>:$PATH uv run --extra postgres python -m pytest tests/test_postgresql_migration_recovery.py --import-mode=importlib -q",
+        "cd packages/acgs-control-plane && ACP_TEST_POSTGRES_URL=<ephemeral PG17 URL> ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE=1 uv run --extra postgres python -m pytest tests/test_postgresql_migration_cli.py tests/test_postgresql_rolling_upgrade.py --import-mode=importlib -q",
         "cd packages/acgs-control-plane && uv run ruff check .",
         "cd packages/acgs-control-plane && uv run ruff format --check .",
         "cd packages/acgs-control-plane && uv run mypy src/",
         "uv lock --check",
-        "git diff --check"
+        "git diff --check",
+        "cd packages/acgs-control-plane && uv run pytest tests/test_scope_attachment.py -q"
       ],
-      "evidence_artifact": "Independently reviewed, current-local migration-core record: SQLite coverage plus four disposable PostgreSQL 17.10-bookworm tests for a nonblocking transaction-level advisory lock, raw Alembic stamp/upgrade denial, and injected atomic rollback/retry. It is not CI-backed PostgreSQL migration, recovery, G103 tenant database isolation, or accepted Phase-1 evidence.",
-      "branch": "beta/p1-g101-postgres-advisory-lock",
-      "worktree": "saas-beta/p1-g101-postgres-advisory-lock",
-      "pr": 324,
-      "status": "in_progress",
-      "implementation_state": "partial",
-      "evidence_state": "local_verified",
-      "blocker": "Deliberately partial migration/core record: #308 startup integration remains unresolved; CI-backed PostgreSQL migration coverage and full multi-instance migration coordination remain unimplemented or unverified; migration backup/restore and a forward-only rollback runbook remain incomplete. Tenant database isolation is planned only in G103 after G101 and G102 complete.",
-      "next_safe_action": "Carry the isolated current-local migration core through a draft PR with its explicit limits, then resolve #308 startup integration without restoring create_all and add CI-backed PostgreSQL migration and multi-instance coordination coverage plus migration backup/restore and forward-only rollback operations evidence. G103 owns tenant database isolation after G101 and G102 complete.",
+      "evidence_artifact": "#354/#355 merged migration/recovery foundation plus #369 scope-attachment precursor are in current master with hosted PostgreSQL/codex-review/test checks passing; this is independently reviewed local implementation evidence, not production DR/PITR/object/witness recovery or complete tenant isolation. Head 83afdbd7d5b8ae2c9f043fa13488cda739ac1e2b; merge 67f7e3062e9b3745f3a44d16c3c660b6884b670a; PR #355.",
+      "branch": "beta/p1-g101-tool-provenance",
+      "worktree": "saas-beta/p1-g101-tool-provenance",
+      "pr": 355,
+      "status": "completed",
+      "implementation_state": "built",
+      "evidence_state": "independently_reviewed",
+      "blocker": null,
+      "next_safe_action": "Use this slice as completed dependency evidence; keep the remaining aggregate G102 and downstream tenant/trust/policy/fleet gaps explicit.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
@@ -616,7 +975,11 @@
       "buyer_user_outcome": "API consumers receive stable /v1 errors, pagination, IDs, idempotency, limits, and asynchronous export contracts.",
       "repo_owner": "packages/acgs-control-plane",
       "dependencies": [
-        "G101"
+        "G101",
+        "G102A",
+        "G102B",
+        "G102C",
+        "G102D"
       ],
       "consumers": [
         "G103",
@@ -624,29 +987,268 @@
         "G401"
       ],
       "likely_interfaces_files": [
-        "packages/acgs-control-plane",
-        "OpenAPI contract"
+        "OpenAPI contract",
+        "packages/acgs-control-plane/README.md",
+        "packages/acgs-control-plane/pyproject.toml",
+        "packages/acgs-control-plane/src/acgs_control_plane/api_contract.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/config.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/governance.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/idempotency.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/pagination.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/schemas.py",
+        "packages/acgs-control-plane/tests/integration/test_production_posture.py",
+        "packages/acgs-control-plane/tests/test_api_contract.py",
+        "packages/acgs-control-plane/tests/test_openapi_drift.py",
+        "packages/acgs-control-plane/tests/test_receipt_cursor_pagination.py",
+        "packages/acgs-control-plane/tests/test_startup_preflight.py",
+        "packages/acgs-control-plane/tests/test_v1_api_contract.py",
+        "requirements/saas-beta/cp-test.in",
+        "requirements/saas-beta/cp-test.lock",
+        "packages/acgs-control-plane/src/acgs_control_plane/db.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/exports.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/models.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/native_receipts.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/scope_defaults.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0010_scope_attachment.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0011_managed_idempotency_results.py",
+        "packages/acgs-control-plane/tests/test_agent_create_idempotency.py",
+        "packages/acgs-control-plane/tests/test_exports.py",
+        "packages/acgs-control-plane/tests/test_native_agent_transaction_route.py",
+        "packages/acgs-control-plane/tests/test_native_evidence_verifier.py",
+        "packages/acgs-control-plane/tests/test_native_receipt_ledger.py",
+        "packages/acgs-control-plane/tests/test_receipts_dashboard.py",
+        "packages/acgs-control-plane/tests/test_scope_attachment.py"
       ],
       "risk_class": "yellow",
       "positive_tests": [
-        "OpenAPI drift, pagination, idempotency, payload-limit, and export-job tests pass."
+        "G102A proves the bounded request-admission and redacted-error slice locally; G102B proves bounded opaque cursor pagination only for the receipt explorer route; G102C proves a current-v0 OpenAPI drift sentinel locally; G102D proves additive legacy-v0 /v1 aliases and a typed /v1 root locally; the PR #369 scope-attachment slice proves project/environment attachment for agents and policy bundles locally; the PR #370 native transaction slice proves the first canonical native agent-create route locally with signed native DecisionReceipts, environment-bound full policy hash, SQL-transaction receipt/event/outbox/head/consumption state, and export/verify/dashboard preservation of native versus legacy assurance; the PR #371 durable idempotency slice proves exactly-one Idempotency-Key admission, digest-only key/request/response storage, terminal-only ALLOW/DENY/ESCALATE result replay, semantic reconstruction from authoritative rows, PostgreSQL tenant-row-lock serialization, and same-process-only SQLite replay safety for the same native agent-create route. The aggregate G102 contract still lacks complete all-collections cursor pagination, durable idempotency for other mutating routes, and async export jobs."
       ],
       "forbidden_side_effect_negative_tests": [
-        "Duplicate, oversized, or malformed requests cannot create duplicate mutations."
+        "Duplicate, oversized, malformed, unversioned, missing-key, ambiguous-key, same-key/different-digest, tampered replay-result, missing historical trust, and failed-before-terminal-result requests cannot create duplicate mutations or silently bypass the versioned API contract; for the native agent-create route, missing providers, same issuer/attestor trust material, DENY, ESCALATE, tampered native receipt/event/consumption/idempotency evidence, wrong-environment policy, and legacy production posture execute or commit zero forbidden business side effects."
       ],
       "validation_commands": [
         "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q",
+        "cd packages/acgs-control-plane && uv run pytest tests/test_receipt_cursor_pagination.py -q",
+        "cd packages/acgs-control-plane && uv run pytest tests/test_openapi_drift.py -q",
+        "cd packages/acgs-control-plane && uv run pytest tests/test_v1_api_contract.py tests/test_openapi_drift.py tests/test_startup_preflight.py tests/integration/test_production_posture.py -q",
+        "cd packages/acgs-control-plane && uv run ruff check .",
+        "cd packages/acgs-control-plane && uv run ruff format --check .",
+        "cd packages/acgs-control-plane && uv run mypy src/",
+        "uv pip compile --python-version 3.11 --python-platform x86_64-manylinux_2_28 --exclude-newer 2026-07-10T00:00:00Z --generate-hashes requirements/saas-beta/cp-test.in --output-file requirements/saas-beta/cp-test.lock",
+        "git diff --check",
+        "cd packages/acgs-control-plane && uv run pytest tests/test_scope_attachment.py -q",
+        "cd packages/acgs-control-plane && uv run pytest tests/test_native_agent_transaction_route.py tests/test_native_receipt_ledger.py tests/test_exports.py tests/test_receipts_dashboard.py tests/test_v1_api_contract.py tests/integration/test_production_posture.py -q",
+        "cd packages/acgs-control-plane && uv run pytest tests/test_agent_create_idempotency.py -q",
+        "cd packages/acgs-control-plane && ACP_TEST_POSTGRES_URL=<ephemeral PG17 URL> ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE=1 uv run --extra postgres python -m pytest tests/test_postgresql_migrations.py tests/test_postgresql_migration_cli.py tests/test_postgresql_rolling_upgrade.py tests/test_postgresql_migration_recovery.py --import-mode=importlib -q",
+        "cd packages/acgs-control-plane && uv run mypy src/acgs_control_plane tests/test_native_agent_transaction_route.py tests/test_agent_create_idempotency.py tests/test_exports.py tests/test_scope_attachment.py tests/test_v1_api_contract.py tests/integration/test_production_posture.py"
+      ],
+      "evidence_artifact": "Aggregate G102 remains partial/current-local: G102A/G102B/G102C/G102D are merged independently reviewed leaves; #369 merged scope-attachment precursor covers project/environment attachment; #370 merged one-route native transaction spine covers native agent.register ALLOW/DENY/ESCALATE receipt/executor/event/outbox/export semantics for one route; #371 merged route-scoped idempotency/outbox covers agent.register terminal replay and PostgreSQL tenant-row-lock serialization; #391 open clean evidence-isolation/replay branch at 2194ae43308d01fbbd0819ebad7d31ac2a10636c adds current-local replay/idempotency evidence on top of beta/p2-idempotency-002-retry. The accepted aggregate still lacks complete all-collections cursor pagination, durable idempotency for other mutating routes, async export jobs, production provider wiring, complete tenant isolation, direct receipt project/environment columns, policy signing/distribution, external exactly-once delivery, out-of-band trusted public-key distribution for exports, async export/recovery/rolling-upgrade evidence, and full native cutover from the legacy unsigned route aliases.",
+      "branch": "beta/p1-g102-durable-idempotency",
+      "worktree": "saas-beta/p1-g101-tool-provenance",
+      "pr": 371,
+      "status": "in_progress",
+      "implementation_state": "partial",
+      "evidence_state": "local_verified",
+      "blocker": "Aggregate G102 is not complete: complete all-collections cursor pagination beyond the receipt route, durable idempotency for mutating routes beyond native agent.register, async export jobs, production provider wiring, complete tenant isolation, policy signing/distribution, external exactly-once delivery, and full native cutover from legacy unsigned route aliases remain missing.",
+      "next_safe_action": "Use merged G101/G102A-D and #369/#370/#371 as completed/partial foundations, then complete the remaining aggregate API pagination, cross-route durable idempotency, async export, provider wiring, policy signing/distribution, and native cutover work before marking G102 complete.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G102A",
+      "phase": 1,
+      "title": "Bounded request admission and redacted error contract",
+      "buyer_user_outcome": "API consumers receive locally verified bounded request admission and redacted error behavior without claiming the full G102 API contract is complete.",
+      "repo_owner": "packages/acgs-control-plane",
+      "dependencies": [
+        "G101"
+      ],
+      "consumers": [
+        "G102"
+      ],
+      "likely_interfaces_files": [
+        "packages/acgs-control-plane/README.md",
+        "packages/acgs-control-plane/src/acgs_control_plane/api_contract.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/config.py",
+        "packages/acgs-control-plane/tests/test_api_contract.py"
+      ],
+      "risk_class": "yellow",
+      "positive_tests": [
+        "PR #357 on branch beta/p1-g102-request-admission at commit 4d60fb4a0a16be06a2a9957dea91dc2bf429c57d recorded focused bounded request-admission and redacted-error contract evidence at 14 passed, full control-plane package evidence at 228 passed and 32 skipped, Ruff and mypy pass, independent security/code approve/verifier pass, and hosted Python 3.11/3.12 pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "The local G102A evidence cannot promote aggregate G102 to completed; G102B separately covers receipt-route cursor pagination, G102C separately covers the current-v0 OpenAPI drift sentinel, G102D separately covers additive legacy-v0 /v1 aliases, PR #371 separately covers durable idempotency for native agent-create only, and complete all-collections cursor pagination, durable idempotency for other mutating routes, and async export jobs remain missing."
+      ],
+      "validation_commands": [
+        "cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q",
+        "cd packages/acgs-control-plane && uv run pytest -q",
+        "cd packages/acgs-control-plane && uv run ruff check .",
+        "cd packages/acgs-control-plane && uv run ruff format --check .",
+        "cd packages/acgs-control-plane && uv run mypy src/",
+        "gh pr view 357 --repo acgs-ai/ACGS --json number,state,isDraft,mergedAt,url,headRefName,baseRefName,headRefOid",
         "git diff --check"
       ],
-      "evidence_artifact": "Versioned OpenAPI and contract-test artifact",
-      "branch": null,
-      "worktree": null,
-      "pr": null,
-      "status": "planned",
-      "implementation_state": "missing",
-      "evidence_state": "unverified",
+      "evidence_artifact": "PR #357 merged into current master with hosted codex-review, postgresql-migrations, Python 3.11/3.12, and SaaS beta required checks passing; bounded request-admission/redacted-error slice is accepted as independently reviewed evidence while aggregate G102 remains partial. Head ee42e4ee103162ffb3173b45c8f53c30f7222975; merge 007d0fde3056119b2a297936276920cd7bb44cd9; PR #357.",
+      "branch": "beta/p1-g102-request-admission",
+      "worktree": "saas-beta/p1-g101-tool-provenance",
+      "pr": 357,
+      "status": "completed",
+      "implementation_state": "built",
+      "evidence_state": "independently_reviewed",
       "blocker": null,
-      "next_safe_action": "Survey and freeze the versioned api and error contract contract before implementation.",
+      "next_safe_action": "Use this slice as completed dependency evidence; keep the remaining aggregate G102 and downstream tenant/trust/policy/fleet gaps explicit.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G102B",
+      "phase": 1,
+      "title": "Bounded opaque receipt cursor pagination",
+      "buyer_user_outcome": "Receipt explorers can page receipt evidence with bounded, opaque, tenant-bound cursors without treating that slice as complete API pagination.",
+      "repo_owner": "packages/acgs-control-plane",
+      "dependencies": [
+        "G101"
+      ],
+      "consumers": [
+        "G102"
+      ],
+      "likely_interfaces_files": [
+        "packages/acgs-control-plane/README.md",
+        "packages/acgs-control-plane/pyproject.toml",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/config.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/governance.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/pagination.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/schemas.py",
+        "packages/acgs-control-plane/tests/test_receipt_cursor_pagination.py",
+        "requirements/saas-beta/cp-test.in",
+        "requirements/saas-beta/cp-test.lock"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "PR #359 on branch beta/p1-g102b-receipt-cursors at commit 262c7bd8f408cef81333ae53591113960d78a32a records focused receipt cursor pagination evidence at 32 passed, full control-plane package evidence at 260 passed and 32 skipped, Ruff pass, mypy pass, deterministic generated CP lock evidence, Python 3.11 hash-locked offline import pass, independent security/code approve/verifier pass, and hosted Python 3.11/3.12 pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Unsigned, tampered, expired, wrong-tenant, wrong-resource, duplicate-parameter, filter-mismatched, or stale-key cursors are rejected with redacted invalid_cursor errors after auth/RBAC; receipt-only cursor evidence cannot promote aggregate G102, all-collections pagination, durable idempotency, async export jobs, PostgreSQL/schema change, capacity claims, G102C OpenAPI drift sentinel evidence, or G102D /v1 alias evidence."
+      ],
+      "validation_commands": [
+        "cd packages/acgs-control-plane && uv run pytest tests/test_receipt_cursor_pagination.py -q",
+        "cd packages/acgs-control-plane && uv run pytest -q",
+        "cd packages/acgs-control-plane && uv run ruff check .",
+        "cd packages/acgs-control-plane && uv run ruff format --check .",
+        "cd packages/acgs-control-plane && uv run mypy src/",
+        "uv run --no-project --python 3.11 python scripts/evidence/render_lock_inputs.py --config requirements/saas-beta/locks.toml",
+        "uv pip compile --python-version 3.11 --python-platform x86_64-manylinux_2_28 --exclude-newer 2026-07-10T00:00:00Z --generate-hashes requirements/saas-beta/cp-test.in --output-file requirements/saas-beta/cp-test.lock",
+        "gh pr view 359 --repo acgs-ai/ACGS --json number,state,isDraft,mergedAt,url,headRefName,baseRefName,headRefOid",
+        "git diff --check"
+      ],
+      "evidence_artifact": "PR #359 merged into current master with hosted codex-review, postgresql-migrations, Python 3.11/3.12, and SaaS beta required checks passing; receipt-route cursor pagination slice is accepted as independently reviewed evidence while all-collections pagination remains an aggregate G102 gap. Head a649a0a3b9ed1e2e91360a5ffb8b4f1d4143cd82; merge f51133e7504262695b7a4d426c1a24cacffe88aa; PR #359.",
+      "branch": "beta/p1-g102b-receipt-cursors",
+      "worktree": "saas-beta/p1-g101-tool-provenance",
+      "pr": 359,
+      "status": "completed",
+      "implementation_state": "built",
+      "evidence_state": "independently_reviewed",
+      "blocker": null,
+      "next_safe_action": "Use this slice as completed dependency evidence; keep the remaining aggregate G102 and downstream tenant/trust/policy/fleet gaps explicit.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G102C",
+      "phase": 1,
+      "title": "Current-v0 OpenAPI drift sentinel",
+      "buyer_user_outcome": "API consumers get a reviewed contract drift sentinel for the current v0 control-plane surface without claiming the future /v1 API is implemented.",
+      "repo_owner": "packages/acgs-control-plane",
+      "dependencies": [
+        "G101"
+      ],
+      "consumers": [
+        "G102"
+      ],
+      "likely_interfaces_files": [
+        "OpenAPI contract",
+        "packages/acgs-control-plane/tests/test_openapi_drift.py"
+      ],
+      "risk_class": "yellow",
+      "positive_tests": [
+        "PR #361 on branch beta/p1-g102c-openapi-drift at commit a6faf49a7b5f947b592f4be8372a85b173251090 records focused current-v0 OpenAPI drift sentinel evidence at 5 passed, full control-plane package evidence at 265 passed and 32 skipped, Ruff pass, package-local mypy pass, independent review finding repaired then APPROVE, verifier PASS, and hosted Python 3.11/3.12 pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "The sentinel proves app.openapi() is deterministic and side-effect-free against the SQLite DB and audit directory snapshot, rejects secret/path leakage, records no false idempotency/async-export/all-collections cursor capability, and mutation probes fail for receipt limit/cursor parameter drift plus ExportSummary and ReceiptListResponse component drift; this cannot promote aggregate G102, G102D /v1 alias evidence, runtime behavior, schema migration, production readiness, or beta completion."
+      ],
+      "validation_commands": [
+        "cd packages/acgs-control-plane && uv run pytest tests/test_openapi_drift.py -q",
+        "cd packages/acgs-control-plane && uv run pytest -q",
+        "cd packages/acgs-control-plane && uv run ruff check .",
+        "cd packages/acgs-control-plane && uv run ruff format --check .",
+        "cd packages/acgs-control-plane && uv run mypy src/",
+        "gh pr view 361 --repo acgs-ai/ACGS --json number,state,isDraft,mergedAt,url,headRefName,baseRefName,headRefOid",
+        "git diff --check"
+      ],
+      "evidence_artifact": "PR #361 merged into current master with hosted codex-review, postgresql-migrations, Python 3.11/3.12, and SaaS beta required checks passing; current-v0 OpenAPI drift sentinel slice is accepted as independently reviewed evidence while runtime/API aggregate gaps remain. Head a6faf49a7b5f947b592f4be8372a85b173251090; merge 2abc3d4eca0deffb46c469cb54bdda380196c2a3; PR #361.",
+      "branch": "beta/p1-g102c-openapi-drift",
+      "worktree": "saas-beta/p1-g101-tool-provenance",
+      "pr": 361,
+      "status": "completed",
+      "implementation_state": "built",
+      "evidence_state": "independently_reviewed",
+      "blocker": null,
+      "next_safe_action": "Use this slice as completed dependency evidence; keep the remaining aggregate G102 and downstream tenant/trust/policy/fleet gaps explicit.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G102D",
+      "phase": 1,
+      "title": "Additive legacy-v0 /v1 API aliases",
+      "buyer_user_outcome": "API consumers can call a typed /v1 root and additive /v1/orgs aliases while v0 remains unchanged and production posture still fails closed on legacy unsigned writes.",
+      "repo_owner": "packages/acgs-control-plane",
+      "dependencies": [
+        "G101"
+      ],
+      "consumers": [
+        "G102"
+      ],
+      "likely_interfaces_files": [
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/governance.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/schemas.py",
+        "packages/acgs-control-plane/tests/integration/test_production_posture.py",
+        "packages/acgs-control-plane/tests/test_openapi_drift.py",
+        "packages/acgs-control-plane/tests/test_startup_preflight.py",
+        "packages/acgs-control-plane/tests/test_v1_api_contract.py"
+      ],
+      "risk_class": "yellow",
+      "positive_tests": [
+        "PR #363 on branch beta/p1-g102d-v1-api-contract at commit 047ddcf89530dc488ab6a2f4dd3bc00fe0211c5d records focused v1/OpenAPI/startup/production-posture evidence at 42 passed, full control-plane package evidence at 272 passed and 32 skipped, Ruff pass, package-local mypy pass, independent code and security APPROVE, verifier PASS, and hosted Python 3.11/3.12 pass.",
+        "The implementation adds typed GET /v1 metadata and programmatic /v1/orgs aliases over existing legacy-v0 APIRoutes with explicit stable v1 operation IDs while preserving v0 behavior."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Real-router tests prove unauthenticated, cross-tenant, malformed, oversized, policy DENY, and policy ESCALATE v1 requests preserve redacted response/request-ID semantics, ignore spoofed inbound X-Request-ID, persist only governed refusal receipts where applicable, and execute zero forbidden business side effects.",
+        "Production posture records 14 LEGACY_UNSIGNED_WRITE blockers for v0 plus v1 writes and still refuses before engine/session construction; this cannot promote signed production governance, database schema, migration, generated client, production readiness, beta completion, complete all-collections pagination, durable idempotency, or async export jobs."
+      ],
+      "validation_commands": [
+        "cd packages/acgs-control-plane && uv run pytest tests/test_v1_api_contract.py tests/test_openapi_drift.py tests/test_startup_preflight.py tests/integration/test_production_posture.py -q",
+        "cd packages/acgs-control-plane && uv run pytest tests -q",
+        "cd packages/acgs-control-plane && uv run ruff check .",
+        "cd packages/acgs-control-plane && uv run ruff format --check .",
+        "cd packages/acgs-control-plane && uv run mypy src/acgs_control_plane",
+        "gh pr view 363 --repo acgs-ai/ACGS --json number,state,isDraft,mergedAt,url,headRefName,baseRefName,headRefOid",
+        "git diff --check"
+      ],
+      "evidence_artifact": "PR #363 merged into current master with hosted codex-review, postgresql-migrations, Python 3.11/3.12, and SaaS beta required checks passing; additive legacy-v0 /v1 alias slice is accepted as independently reviewed evidence while generated client, full pagination, durable idempotency, and async export jobs remain aggregate G102 gaps. Head 047ddcf89530dc488ab6a2f4dd3bc00fe0211c5d; merge 4da060934ebc454760b2bb2981d3278f1a6afa6e; PR #363.",
+      "branch": "beta/p1-g102d-v1-api-contract",
+      "worktree": "saas-beta/p1-g101-tool-provenance",
+      "pr": 363,
+      "status": "completed",
+      "implementation_state": "built",
+      "evidence_state": "independently_reviewed",
+      "blocker": null,
+      "next_safe_action": "Use this slice as completed dependency evidence; keep the remaining aggregate G102 and downstream tenant/trust/policy/fleet gaps explicit.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
@@ -680,15 +1282,15 @@
         "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
         "git diff --check"
       ],
-      "evidence_artifact": "Tenant-boundary adversarial test report",
-      "branch": null,
+      "evidence_artifact": "PR #369 merged scope-attachment precursor covers project/environment attachment for agents and policy bundles, but not complete tenant isolation. Current evidence head 6d312620cefacde0130cbda43d9e851064403fea; status is partial/local-verified only, not completed buyer-outcome evidence.",
+      "branch": "beta/p0-g102e4-scope-attachment",
       "worktree": null,
-      "pr": null,
-      "status": "planned",
-      "implementation_state": "missing",
-      "evidence_state": "unverified",
-      "blocker": null,
-      "next_safe_action": "After G101 and G102 are completed, survey and freeze the tenant-scoped repository and PostgreSQL database-isolation contract—including tenant context, composite constraints, RLS, tenant-bound schema/search_path, and role hardening—before implementation.",
+      "pr": 369,
+      "status": "blocked",
+      "implementation_state": "partial",
+      "evidence_state": "local_verified",
+      "blocker": "G103 remains incomplete until adversarial tenant isolation covers tenant-scoped repositories, composite constraints, PostgreSQL RLS/search_path/role hardening, workers, exports, caches/logs/metrics/support tooling, and cross-tenant inference denial.",
+      "next_safe_action": "Complete the named missing dependency and buyer-outcome clauses with integration/negative tests before promotion.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
@@ -769,15 +1371,15 @@
         "uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q",
         "git diff --check"
       ],
-      "evidence_artifact": "Canonical mutation membrane proof",
-      "branch": null,
+      "evidence_artifact": "PR #370 merged one-route native transaction spine covers agent.register, and open clean PR #398 mutation-inventory slice adds current-local mutation inventory evidence on top of PR #395. Current evidence head a2299d510d792dd04646204653e405e0485204a6; status is partial/local-verified only, not completed buyer-outcome evidence.",
+      "branch": "beta/p3-mutations-002",
       "worktree": null,
-      "pr": null,
-      "status": "planned",
-      "implementation_state": "missing",
-      "evidence_state": "unverified",
-      "blocker": null,
-      "next_safe_action": "Survey and freeze the signed canonical governance path and trust registry contract before implementation.",
+      "pr": 398,
+      "status": "blocked",
+      "implementation_state": "partial",
+      "evidence_state": "local_verified",
+      "blocker": "G105 remains incomplete until all managed mutations, trust registry/provider wiring, signed canonical DecisionReceipt governance, validator separation, rotation/revocation, expiry, single-use, and forbidden-side-effect rollback semantics are covered beyond one route and open PR #398 is accepted.",
+      "next_safe_action": "Complete the named missing dependency and buyer-outcome clauses with integration/negative tests before promotion.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
@@ -811,15 +1413,15 @@
         "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
         "git diff --check"
       ],
-      "evidence_artifact": "Failure-atomicity and readiness report",
-      "branch": null,
+      "evidence_artifact": "PR #371 merged route-scoped idempotency/outbox for agent.register; open clean PR #391 adds current-local replay/idempotency evidence at head 2194ae43308d01fbbd0819ebad7d31ac2a10636c. Current evidence head 2194ae43308d01fbbd0819ebad7d31ac2a10636c; status is partial/local-verified only, not completed buyer-outcome evidence.",
+      "branch": "beta/p2-evidence-isolation-002b",
       "worktree": null,
-      "pr": null,
-      "status": "planned",
-      "implementation_state": "missing",
-      "evidence_state": "unverified",
-      "blocker": null,
-      "next_safe_action": "Survey and freeze the transactional outbox and dependency readiness contract before implementation.",
+      "pr": 391,
+      "status": "blocked",
+      "implementation_state": "partial",
+      "evidence_state": "local_verified",
+      "blocker": "G106 remains incomplete until transactional outbox, dependency-aware readiness, reconciliation, retries, worker restart, failure atomicity, and multi-route/multi-instance replay behavior are proven for the whole control plane.",
+      "next_safe_action": "Complete the named missing dependency and buyer-outcome clauses with integration/negative tests before promotion.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
@@ -855,15 +1457,15 @@
         "uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q",
         "git diff --check"
       ],
-      "evidence_artifact": "Gate enrollment conformance artifact",
-      "branch": null,
+      "evidence_artifact": "Open clean PR #393 bootstrap/registration slice provides current-local gate enrollment evidence on top of PR #391. Current evidence head a1567e340b8d8b821f853892df40c7e4f5112027; status is partial/local-verified only, not completed buyer-outcome evidence.",
+      "branch": "beta/p2-vertical-gate-003",
       "worktree": null,
-      "pr": null,
-      "status": "planned",
-      "implementation_state": "missing",
-      "evidence_state": "unverified",
-      "blocker": null,
-      "next_safe_action": "Survey and freeze the environment-bound gate enrollment contract before implementation.",
+      "pr": 393,
+      "status": "blocked",
+      "implementation_state": "partial",
+      "evidence_state": "local_verified",
+      "blocker": "G201 remains incomplete until G106 is complete and bootstrap single-use, durable environment-bound identity, rotation, revocation, heartbeat, capability reporting, health, and proven-wired enrollment are accepted. Local G016 scheduler blocking does not add a canonical G305 dependency.",
+      "next_safe_action": "Complete the named missing dependency and buyer-outcome clauses with integration/negative tests before promotion.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
@@ -898,15 +1500,15 @@
         "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
         "git diff --check"
       ],
-      "evidence_artifact": "Signed policy lifecycle test report",
-      "branch": null,
+      "evidence_artifact": "Open clean PR #395 signed publish/activate exactly-one-head slice provides current-local signed policy lifecycle evidence on top of PR #393. Current evidence head ca7ab32b3c75de901f4687d308458e4cbe8c06d1; status is partial/local-verified only, not completed buyer-outcome evidence.",
+      "branch": "beta/p3-policy-001",
       "worktree": null,
-      "pr": null,
-      "status": "planned",
-      "implementation_state": "missing",
-      "evidence_state": "unverified",
-      "blocker": null,
-      "next_safe_action": "Survey and freeze the signed policy lifecycle and exactly-one-active invariant contract before implementation.",
+      "pr": 395,
+      "status": "blocked",
+      "implementation_state": "partial",
+      "evidence_state": "local_verified",
+      "blocker": "G202 remains incomplete until G105 and G201 complete and signed bundles, draft/review/active/stale/superseded/revoked lifecycle, tenant/environment binding, exact-one-active DB invariant, locked activation, diff, simulation, staged rollout, rollback, compatibility metadata, and sync/degraded-mode interactions are accepted.",
+      "next_safe_action": "Complete the named missing dependency and buyer-outcome clauses with integration/negative tests before promotion.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
@@ -1291,15 +1893,15 @@
         "uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q",
         "git diff --check"
       ],
-      "evidence_artifact": "Approval race and forbidden-side-effect proof",
-      "branch": null,
-      "worktree": null,
-      "pr": null,
-      "status": "planned",
-      "implementation_state": "missing",
-      "evidence_state": "unverified",
-      "blocker": null,
-      "next_safe_action": "Survey and freeze the separated approval and exactly-once resume contract before implementation.",
+      "evidence_artifact": "Current-local PR #413 branch beta/p3-approval-003-reconciled at live head 88377db825c522748e1e1ef1ea7db5b86d141106 covers only the fixed-quorum-1 agent.register approval/resume slice; PR checks are green (codex-review, p2-idempotency-evidence-gate, postgresql-migrations, Python 3.11, Python 3.12; [code]smith skipped), local independent code/security reviews approved the final regression diff, and the branch remains open/unmerged on top of PR #398. The authoritative G015 one-shot proof ran at c8518859818916d772fb939ea567b6c22fe0ed54, exited status 2, cp-pytest exited 1, reported 7 failed, 817 passed, 84 skipped, and preserved bundle /tmp/acgs-g015-final8-verifier.jjPX9bQvza/tmp/.acgs-quota-artifact-recovery-a873d40facc4f5fae260b70d27c90ae3.bundle with sha256 ccc9f6ffb9fa459852932691302bcda6f58fc3e5cf66e5605389994b5363abd1 and size 1008763134 bytes. That proof was consumed; later CI/local repair is non-authoritative only. Cancel, full approval lifecycle, quorum beyond fixed 1, and complete G405 console approval UX remain missing.",
+      "branch": "beta/p3-approval-003-reconciled",
+      "worktree": "saas-beta/p3-approval-003-ci-review",
+      "pr": 413,
+      "status": "blocked",
+      "implementation_state": "partial",
+      "evidence_state": "local_verified",
+      "blocker": "PR #413 is open/unmerged atop PR #398; authoritative G015 proof failed and was consumed at c8518859818916d772fb939ea567b6c22fe0ed54; cancel/full approval lifecycle, quorum beyond fixed 1, G405 console UX, and formal dependencies G105/G202/G301 remain incomplete. A distinct dependency-correct retry/evidence goal with a new one-shot identity at stable exact ancestry is required; never rerun the consumed proof.",
+      "next_safe_action": "Create a distinct replacement retry/evidence node for P3-APPROVAL-003, from stable exact ancestry after dependencies are accepted, with a new one-shot proof identity; do not map this partial approval slice to enrollment completion or rerun the consumed proof.",
       "mandatory": true,
       "completion_scope": "non_external"
     },

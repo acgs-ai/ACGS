@@ -1,0 +1,234 @@
+{
+  "carriers": [
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/planted.md'",
+      "canonical_changed": false,
+      "carrier": "create",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "overwrite",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "append",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "truncate",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "unlink",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/README.md' -> '/tmp/cspa3-e59509353b61/canon/files/README.md.moved'",
+      "canonical_changed": false,
+      "carrier": "rename_source",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "FileNotFoundError: [Errno 2] No such file or directory: '/tmp/cspa3-e59509353b61/ws/payload.md' -> '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "rename_destination",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/ws/payload.md' -> '/tmp/cspa3-e59509353b61/canon/files/linked.md'",
+      "canonical_changed": false,
+      "carrier": "hardlink",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/ws/payload.md' -> '/tmp/cspa3-e59509353b61/canon/files/.attacker-link'",
+      "canonical_changed": false,
+      "carrier": "symlink_replacement",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 1] Operation not permitted: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "chmod",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 1] Operation not permitted: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "exec_bit_transition",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 1] Operation not permitted: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "chown",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 1] Operation not permitted: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "utime",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "xattr",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "OSError: setfacl: /tmp/cspa3-e59509353b61/canon/files/README.md: Operation not permitted",
+      "canonical_changed": false,
+      "carrier": "acl_change",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/planted-dir'",
+      "canonical_changed": false,
+      "carrier": "directory_entry_mutation",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/README.md.tmp'",
+      "canonical_changed": false,
+      "carrier": "atomic_replace",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/.staged'",
+      "canonical_changed": false,
+      "carrier": "temp_file_then_rename",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": null,
+      "canonical_changed": false,
+      "carrier": "shell_redirection",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": null,
+      "canonical_changed": false,
+      "carrier": "subprocess",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": "PermissionError: [Errno 13] Permission denied: '/tmp/cspa3-e59509353b61/canon/files/README.md'",
+      "canonical_changed": false,
+      "carrier": "mmap_write",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": null,
+      "canonical_changed": false,
+      "carrier": "git_checkout",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": null,
+      "canonical_changed": false,
+      "carrier": "git_reset_hard",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": null,
+      "canonical_changed": false,
+      "carrier": "git_restore",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    },
+    {
+      "attack_error": null,
+      "canonical_changed": false,
+      "carrier": "git_worktree_add",
+      "control_changed_mirror": true,
+      "control_error": null,
+      "verdict": "DENIED_BY_DAC"
+    }
+  ],
+  "environment": {
+    "agent_uid": 1000,
+    "broker_uid": 940,
+    "code_owner_uid": 940,
+    "decision_uid": 941,
+    "identity_model": {
+      "directories_safe_because": "the agent cannot create one; see the directory_entry_mutation carrier",
+      "excluded": [
+        "directories",
+        "owner",
+        "timestamps",
+        "non-exec permission bits",
+        "xattrs"
+      ],
+      "included": [
+        "file content",
+        "executable bit"
+      ]
+    },
+    "image": "acgs-p1-remote-377935-downstream:latest",
+    "roles": {
+      "PROVISIONING_AUTHORITY": "root via rootful docker socket (one-time in deployment)",
+      "RUNTIME_AGENT_AUTHORITY": "uid 1000 on the host",
+      "RUNTIME_BROKER_AUTHORITY": "uid 940 / 941",
+      "launcher_in_runtime_trust_path": true,
+      "why": "the agent holds the Docker socket that keeps this container alive, so the launcher is not absent from the runtime trust path and this deployment does not demonstrate closure"
+    },
+    "runtime_dir_mode": "0o771",
+    "store_owner_uid": 940
+  }
+}

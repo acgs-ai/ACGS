@@ -11,6 +11,26 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
+
+def _uninitialized_submodule_prefixes() -> tuple[str, ...]:
+    """Path prefixes of declared submodules absent from this checkout.
+
+    Paths under a submodule declared in ``.gitmodules`` whose working tree is
+    not initialized (no ``<path>/.git``) cannot be verified here, e.g. the
+    credential-gated ``packages/acgs-control-plane`` on public lanes. Their
+    contents are enforced by the lanes that do initialize them; everything
+    else stays strictly checked, and an initialized submodule is checked in
+    full.
+    """
+    gitmodules = ROOT / ".gitmodules"
+    if not gitmodules.is_file():
+        return ()
+    declared = re.findall(
+        r"(?m)^\s*path\s*=\s*(\S+)", gitmodules.read_text(encoding="utf-8")
+    )
+    return tuple(f"{p}/" for p in declared if not (ROOT / p / ".git").exists())
+
+
 REQUIRED_DOCS = [
     "README.md",
     "AGENTS.md",
@@ -73,8 +93,13 @@ def test_required_docs_exist_and_carry_core_invariant() -> None:
 
 def test_readme_opening_and_non_claims() -> None:
     text = _read("README.md")
+    # Brand boundary: ACGS is the project, gove-zone is the enforcement kernel
+    # inside it. The lead sentence must keep both halves — dropping the kernel
+    # clause is what widens the kernel's guarantees to the whole monorepo.
     assert text.startswith(
-        "ACGS / gove-zone is a vendor-neutral, receipt-gated governance layer for AI-agent side effects."
+        "ACGS is a governed agent infrastructure project. Its core enforcement "
+        "kernel is gove-zone, a vendor-neutral, receipt-gated governance layer "
+        "for AI-agent side effects."
     )
     for phrase in (
         "not production-certified",
@@ -109,6 +134,53 @@ def test_neutrality_wording_stays_claim_safe() -> None:
     # Neutrality copy must point readers at the tier/claim evidence, not just assert.
     for rel in ("README.md", "docs/introduction.md"):
         assert "integration_matrix.md" in _read(rel).lower(), rel
+
+
+def _claim_ledger_rows() -> list[list[str]]:
+    """Data rows of the claim-ledger table, as trimmed cell lists."""
+    rows: list[list[str]] = []
+    for line in _read("docs/CLAIMS.md").splitlines():
+        if not line.startswith("| "):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) < 6 or cells[0] == "Claim" or set(cells[0]) <= {"-"}:
+            continue  # header / separator
+        rows.append(cells)
+    return rows
+
+
+def test_claim_ledger_evidence_exists() -> None:
+    """No dangling citations: evidence a claim names must exist in the tree.
+
+    Mirrors ``test_on_master_evidence_files_exist`` in ``test_adversary_model.py``.
+    A claim whose cited test or example does not exist is an overclaim, and the
+    ledger is the file that is supposed to stop overclaiming. Rows with status
+    ``not claimed`` / ``roadmap`` cite no evidence and are skipped.
+    """
+    test_files = {p.name for p in ROOT.rglob("test_*.py")}
+    test_defs = "\n".join(
+        p.read_text(encoding="utf-8", errors="ignore")
+        for p in (ROOT / "packages" / "gove-zone" / "tests").rglob("test_*.py")
+    )
+    missing: list[str] = []
+    for cells in _claim_ledger_rows():
+        claim, status, evidence, eatest = cells[0], cells[1], cells[2], cells[3]
+        if status in {"not claimed", "roadmap"}:
+            continue
+        cited = f"{evidence} {eatest}"
+        label = claim[:60]
+        for name in set(re.findall(r"`(test_[A-Za-z0-9_]+)`", cited)):
+            # A citation may name a test module or a single test function.
+            if f"{name}.py" not in test_files and f"def {name}(" not in test_defs:
+                missing.append(f"{label} -> {name}")
+        for rel in set(re.findall(r"`((?:packages|examples|docs)/[\w./-]+)`", cited)):
+            if not (ROOT / rel).exists() and not rel.startswith(
+                _uninitialized_submodule_prefixes()
+            ):
+                missing.append(f"{label} -> {rel}")
+    assert not missing, "claim ledger cites evidence not present in the tree:\n  " + "\n  ".join(
+        missing
+    )
 
 
 def test_claim_ledger_has_explicit_non_claims() -> None:

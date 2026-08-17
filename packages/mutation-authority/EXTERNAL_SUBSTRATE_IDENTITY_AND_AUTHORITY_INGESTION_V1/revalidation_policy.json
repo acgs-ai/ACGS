@@ -1,0 +1,7 @@
+{
+  "schema": "acgs_revalidation_policy/v1",
+  "max_age_days": null,
+  "minimum_epoch": 0,
+  "require_freshness_fields": false,
+  "_comment": "Freshness constraints are an operator decision recorded here, not invented by software. Setting max_age_days / minimum_epoch demotes governed-ACTIVE records to REQUIRES_REVIEW (never deletes evidence) until revalidated."
+}

@@ -16,7 +16,10 @@ on:
       - 'schemas/evidence/**'
       - 'scripts/evidence/**'
       - 'tests/saas_beta/**'
-      - 'packages/acgs-control-plane/pyproject.toml'
+      # acgs-control-plane is a private submodule: parent-side changes are
+      # gitlink bumps (bare path) or .gitmodules edits, not in-tree files.
+      - 'packages/acgs-control-plane'
+      - '.gitmodules'
       - 'packages/gove-zone/pyproject.toml'
       - 'pyproject.toml'
       - 'uv.lock'
@@ -42,6 +45,24 @@ jobs:
         with:
           persist-credentials: false
           submodules: false
+
+      # acgs-control-plane is a private submodule; this job builds its venv,
+      # so a missing/underscoped SUBMODULE_TOKEN must fail loudly.
+      - name: Init control-plane submodule (hard requirement)
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          # Ephemeral global gitconfig so the token never lands in a real
+          # ~/.gitconfig (see python-clinicalguard.yml for rationale).
+          export GIT_CONFIG_GLOBAL="${RUNNER_TEMP}/submodule-gitconfig"
+          if [ -z "${SUBMODULE_TOKEN}" ]; then
+            echo "::error::SUBMODULE_TOKEN is required: acgs-control-plane is a private submodule and this job builds its environment." >&2
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git submodule sync -- packages/acgs-control-plane
+          git submodule update --init --recursive -- packages/acgs-control-plane
 
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
         with:
@@ -125,8 +146,45 @@ jobs:
             --reject-unassigned-runtime-paths \
             --output "$node_evidence/environment-identities.json"
 
+      - name: Install bubblewrap prerequisite
+        # test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_sockets
+        # proves the clean-sibling harness cannot write the host, inherit fds, escape via
+        # double-fork, or open sockets. It can only prove that if bwrap can actually
+        # unshare. Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor,
+        # so bwrap is present at /usr/bin/bwrap but dies as "containment runner
+        # unavailable" — the containment assertion would be untestable, not satisfied.
+        # This grants userns to bwrap alone on the ephemeral runner, mirroring the
+        # prerequisite the p2-idempotency-evidence-gate job already uses in
+        # .github/workflows/python-acgs-control-plane.yml.
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+          if ! command -v apparmor_parser >/dev/null 2>&1; then
+            sudo apt-get install --yes apparmor
+          fi
+          test "$(command -v bwrap)" = /usr/bin/bwrap
+          bwrap --version
+          sudo tee /etc/apparmor.d/acgs-ci-bwrap >/dev/null <<'APPARMOR'
+          abi <abi/4.0>,
+          include <tunables/global>
+
+          profile acgs-ci-bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          APPARMOR
+          sudo apparmor_parser -r /etc/apparmor.d/acgs-ci-bwrap
+          bwrap \
+            --unshare-all --unshare-user --die-with-parent --new-session --disable-userns \
+            --proc /proc --dev /dev --tmpfs /tmp --tmpfs /run \
+            --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind-try /lib /lib \
+            --ro-bind-try /lib64 /lib64 --clearenv \
+            --setenv PATH /usr/bin:/bin \
+            /bin/sh -c 'test -r /proc/self/status'
+
       - name: Run environment-independent P0 evidence contracts
-        # Five tests require actual outer capture/UI or the exact static host
+        # Six tests require actual outer capture/UI or the exact static host
         # context. Those remain in the authorized exact-proof lane.
         env:
           UV_OFFLINE: '1'
@@ -137,7 +195,7 @@ jobs:
         run: |
           .venv-evidence/bin/python -m pytest -q \
             tests/saas_beta/test_evidence_bootstrap.py \
-            -k "not test_real_transcript_to_generate_run_rejects_secret_contexts_without_run_or_echo and not test_actual_p0_capture_reaggregates_generates_and_reaches_final_run_validation and not test_actual_p6_evid_ui_capture_aggregate_generate_and_final_validation and not test_clean_sibling_hash_locked_bootstraps_and_round_trip and not test_clean_sibling_rejects_loader_and_git_authority_before_mutation"
+            -k "not test_real_transcript_to_generate_run_rejects_secret_contexts_without_run_or_echo and not test_actual_p0_capture_reaggregates_generates_and_reaches_final_run_validation and not test_actual_p6_evid_ui_capture_aggregate_generate_and_final_validation and not test_clean_sibling_hash_locked_bootstraps_and_round_trip and not test_clean_sibling_rejects_loader_and_git_authority_before_mutation and not test_p1_clean_sibling_rejects_wrong_reviewed_parent_before_mutation"
 
   exact-proof:
     # The standard same-repo conjunct is retained because this file also has a

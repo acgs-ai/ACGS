@@ -25,6 +25,7 @@ PYTHON_PACKAGES := \
 	packages/acgs-lite \
 	packages/Acgs-Swarm \
 	packages/gove-zone \
+	packages/acgs-canary \
 	packages/agent-bus-analyzer \
 	packages/research-engine \
 	acgs_governance_eval_mvp \
@@ -46,7 +47,7 @@ UV ?= uv
 .PHONY: help all install build test lint typecheck verify clean openapi platform-readiness release-evidence verify-js-node24 production-blocker-evidence production-launch-preflight \
         build-js test-js lint-js typecheck-js \
         build-py test-py lint-py typecheck-py lint-docs \
-        submodule-status verify-fresh test-fail-closed bench-gate
+        submodule-status verify-fresh test-fail-closed bench-gate review
 
 help:
 	@echo "govern-zone monorepo"
@@ -56,7 +57,8 @@ help:
 	@echo "  make test          Run all tests"
 	@echo "  make lint          Lint everything"
 	@echo "  make typecheck     Type-check everything"
-	@echo "  make verify        lint + typecheck + test"
+	@echo "  make verify        Full gate: lint + typecheck + test (needs submodules + all stacks)"
+	@echo "  make review        Reviewer proof: bare-clone-safe core (no submodules/tokens)"
 	@echo "  make openapi       Export analyzer OpenAPI for the console"
 	@echo "  make platform-readiness  Local platform/deploy-readiness audit"
 	@echo "  make release-evidence    Write local release-readiness evidence bundle"
@@ -106,15 +108,17 @@ build-py:
 test-py:
 	@set -e; \
 	$(MAKE) -C packages/acgs-lite test; \
-	for pkg in packages/Acgs-Swarm packages/gove-zone packages/agent-bus-analyzer packages/research-engine acgs_governance_eval_mvp acgs-cft-governance-pack; do \
+	for pkg in packages/Acgs-Swarm packages/gove-zone packages/acgs-canary packages/agent-bus-analyzer packages/research-engine acgs_governance_eval_mvp acgs-cft-governance-pack; do \
 	  echo "==> test $$pkg"; \
 	  (cd $$pkg && $(UV) run python -m pytest --import-mode=importlib) || exit $$?; \
-	done
+	done; \
+	echo "==> test packages/mutation-authority"; \
+	(cd packages/mutation-authority && $(UV) run --with cryptography --with jsonschema python -m pytest tests integration_tests EXTERNAL_SUBSTRATE_IDENTITY_AND_AUTHORITY_INGESTION_V1/attack_suite --import-mode=importlib) || exit $$?
 
 lint-py:
 	@set -e; \
-	$(UV) run ruff check packages/gove-zone packages/agent-bus-analyzer packages/research-engine acgs_governance_eval_mvp acgs-cft-governance-pack; \
-	$(UV) run ruff format --check packages/gove-zone packages/agent-bus-analyzer packages/research-engine acgs_governance_eval_mvp acgs-cft-governance-pack; \
+	$(UV) run ruff check packages/gove-zone packages/acgs-canary packages/agent-bus-analyzer packages/research-engine acgs_governance_eval_mvp acgs-cft-governance-pack; \
+	$(UV) run ruff format --check packages/gove-zone packages/acgs-canary packages/agent-bus-analyzer packages/research-engine acgs_governance_eval_mvp acgs-cft-governance-pack; \
 	$(MAKE) -C packages/acgs-lite lint; \
 	(cd packages/Acgs-Swarm && $(UV) run ruff check src/)
 
@@ -182,6 +186,21 @@ lint-docs:
 # (each EXAMPLE_SCRIPTS demo is executed and must exit 0 with status:"pass").
 test-docs:
 	$(UV) run python -m pytest tests/docs --import-mode=importlib -q
+
+# Reviewer verification — the single command a new reviewer runs. Bare-clone-safe:
+# no submodules, no private tokens, no optional-extra flags required (the
+# in-package uv env resolves gove-zone's own dependencies). This is the canonical
+# reviewer path documented in README.md and docs/REPRODUCIBILITY.md. The full
+# CI/maintainer gate remains `make verify` (adds JS, typecheck, submodule-bound
+# packages, fail-closed coverage, and the benchmark budget gate).
+review:
+	@echo "==> [1/3] documentation + examples smoke"
+	$(UV) run python -m pytest tests/docs --import-mode=importlib -q
+	@echo "==> [2/3] gove-zone enforcement-kernel test suite"
+	cd packages/gove-zone && $(UV) run python -m pytest --import-mode=importlib -q
+	@echo "==> [3/3] receipt-gated invariant smoke"
+	@tmp=$$(mktemp -d); $(UV) run --package gove-zone gove-zone smoke --audit "$$tmp/review-smoke-audit.jsonl"
+	@echo "==> review OK — core receipt-gated invariant proven on this clone"
 
 platform-readiness:
 	$(UV) run python scripts/platform_readiness_report.py

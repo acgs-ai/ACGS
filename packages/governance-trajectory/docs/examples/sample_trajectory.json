@@ -1,0 +1,221 @@
+{
+  "schema_version": "governance_trajectory/v2",
+  "trajectory_id": "f91157f59536ce6471bf10c94539a771370e039b48bd12eb8fc198485dadccfa",
+  "provenance": {
+    "raw_ref": {
+      "uri": "raw/70/70e65dbde173aaff149cb048fb4b1cebd377eb9946b8faccc83cb388fd3ce996.jsonl",
+      "sha256": "70e65dbde173aaff149cb048fb4b1cebd377eb9946b8faccc83cb388fd3ce996",
+      "byte_len": 3320,
+      "record_count": 9
+    },
+    "captured_at": "2026-08-06T00:00:00Z",
+    "collector_version": "0.1.0",
+    "source": "claude-code",
+    "registry_ref": {
+      "entry_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "prev_entry_sha256": null
+    }
+  },
+  "environment": {
+    "session_id": "sess-0001",
+    "model": "claude-opus-4-8",
+    "claude_code_version": "2.1.170",
+    "entrypoint": "cli",
+    "cwd": "/repo",
+    "host": null,
+    "git": {
+      "branch": "master",
+      "head_sha": "1111111111111111111111111111111111111111",
+      "dirty": false,
+      "remote": "origin"
+    }
+  },
+  "human_intent": {
+    "prompts": [
+      {
+        "uuid": "u1",
+        "ts": "2026-08-06T10:00:00Z",
+        "text": "Fix the auth token expiry check."
+      }
+    ]
+  },
+  "trajectory": {
+    "nodes": [
+      {
+        "uuid": "u1",
+        "parent_uuid": null,
+        "seq": 0,
+        "type": "user",
+        "role": "user",
+        "is_sidechain": false,
+        "content_kind": "text",
+        "raw_line": 0,
+        "block_index": 0,
+        "digest": "3bc2ba61b224ea1c1f2a0701be4375037d2e9dfbb27a4c08f44aaf3a57b865c9",
+        "ts": "2026-08-06T10:00:00Z"
+      },
+      {
+        "uuid": "a1",
+        "parent_uuid": "u1",
+        "seq": 1,
+        "type": "assistant",
+        "role": "assistant",
+        "is_sidechain": false,
+        "content_kind": "thinking",
+        "raw_line": 1,
+        "block_index": 0,
+        "digest": "a38daa4311ec9d0ba3d271b1393e870325f5d8bc3708932bcc514a1eebb43a38",
+        "ts": "2026-08-06T10:00:01Z"
+      },
+      {
+        "uuid": "a2",
+        "parent_uuid": "a1",
+        "seq": 2,
+        "type": "tool_use",
+        "role": "assistant",
+        "is_sidechain": false,
+        "content_kind": "tool_use",
+        "raw_line": 2,
+        "block_index": 0,
+        "digest": "0110ec93f8a66fe09aa80ef6afa8d26b870a3b381e79af151b7eb7542b422527",
+        "ts": "2026-08-06T10:00:02Z"
+      },
+      {
+        "uuid": "r1",
+        "parent_uuid": "a2",
+        "seq": 3,
+        "type": "tool_result",
+        "role": "user",
+        "is_sidechain": false,
+        "content_kind": "tool_result",
+        "raw_line": 3,
+        "block_index": 0,
+        "digest": "7ea7343774537744e9a09970a67477618d31c7496ea4ca76e44e115dc328fc72",
+        "ts": "2026-08-06T10:00:03Z"
+      },
+      {
+        "uuid": "a3",
+        "parent_uuid": "r1",
+        "seq": 4,
+        "type": "assistant",
+        "role": "assistant",
+        "is_sidechain": false,
+        "content_kind": "text",
+        "raw_line": 4,
+        "block_index": 0,
+        "digest": "6a49424b201993e1d8f2353ed8ab212cd77484eb7998b0a4103e70a6ab128e0c",
+        "ts": "2026-08-06T10:00:04Z"
+      },
+      {
+        "uuid": "s1",
+        "parent_uuid": "a3",
+        "seq": 5,
+        "type": "hook",
+        "role": null,
+        "is_sidechain": false,
+        "content_kind": null,
+        "raw_line": 5,
+        "block_index": null,
+        "digest": "0050fdbfa732800d0fb102c1f5738e67e2e888735f423df13e9998abf0c8a6f3",
+        "ts": "2026-08-06T10:00:05Z"
+      },
+      {
+        "uuid": "at1",
+        "parent_uuid": "a3",
+        "seq": 6,
+        "type": "attachment",
+        "role": null,
+        "is_sidechain": false,
+        "content_kind": null,
+        "raw_line": 6,
+        "block_index": null,
+        "digest": "b42f5210b2c6da10cf5b58ff2fcdd2cc5c51c89886c763bc0040325e7546fca7",
+        "ts": "2026-08-06T10:00:06Z"
+      }
+    ],
+    "edges": [
+      {
+        "parent_uuid": "u1",
+        "child_uuid": "a1",
+        "kind": "reply"
+      },
+      {
+        "parent_uuid": "a1",
+        "child_uuid": "a2",
+        "kind": "tool_call"
+      },
+      {
+        "parent_uuid": "a2",
+        "child_uuid": "r1",
+        "kind": "tool_return"
+      },
+      {
+        "parent_uuid": "r1",
+        "child_uuid": "a3",
+        "kind": "reply"
+      },
+      {
+        "parent_uuid": "a3",
+        "child_uuid": "s1",
+        "kind": "reply"
+      },
+      {
+        "parent_uuid": "a3",
+        "child_uuid": "at1",
+        "kind": "reply"
+      }
+    ],
+    "root_uuids": [
+      "u1"
+    ],
+    "leaf_uuid": "a3"
+  },
+  "tool_events": [
+    {
+      "use_uuid": "a2",
+      "tool_use_id": "toolu_A1",
+      "name": "Bash",
+      "caller": null,
+      "input_ref": {
+        "raw_line": 2,
+        "block_index": 0,
+        "digest": "0110ec93f8a66fe09aa80ef6afa8d26b870a3b381e79af151b7eb7542b422527"
+      },
+      "result_ref": {
+        "raw_line": 3,
+        "block_index": 0,
+        "digest": "7ea7343774537744e9a09970a67477618d31c7496ea4ca76e44e115dc328fc72"
+      },
+      "is_error": false,
+      "ts_call": "2026-08-06T10:00:02Z",
+      "ts_return": "2026-08-06T10:00:03Z",
+      "subagent": false
+    }
+  ],
+  "hook_events": [
+    {
+      "uuid": "s1",
+      "subtype": "PreToolUse",
+      "hook_names": [
+        "scope-gate"
+      ],
+      "hook_errors": [],
+      "prevented_continuation": false,
+      "stop_reason": null,
+      "tool_use_id": "toolu_A1",
+      "ts": "2026-08-06T10:00:05Z"
+    }
+  ],
+  "code_changes": null,
+  "derived": {
+    "scores": null,
+    "labels": null,
+    "tier": null,
+    "outcome": null
+  },
+  "integrity": {
+    "normalized_sha256": "527659570b0dcb09c92e981a2b10060d30a95291cc9fd99ddf110ef477020104",
+    "status": "complete",
+    "reasons": []
+  }
+}

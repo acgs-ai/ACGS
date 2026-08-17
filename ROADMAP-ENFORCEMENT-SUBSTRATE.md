@@ -14,7 +14,7 @@
 > document may be claimed publicly until its named gate passes. The per-track
 > claim-discipline notes map to the **`Status` + `Safe public wording`** ledger in
 > `docs/CLAIMS.md` (status values: `implemented / tested / partial / roadmap / not
-> claimed`). Current honest claims (alpha, `gove-zone` `0.1.0a1`, tamper-*evident* not
+> claimed`). Current honest claims (beta, `gove-zone` `1.0.0rc1`, tamper-*evident* not
 > trustless, tested not verified) stand unchanged until superseded by a passed gate.
 
 ---
@@ -497,7 +497,7 @@ of the work).
 *This blurb is written to pass its own Part VI publication gates — present tense only for
 what is on `master`; roadmap aspirations are explicitly future-tense.*
 
-> ACGS / gove-zone is a **fail-closed reference monitor** for autonomous side effects: a
+> ACGS is a **fail-closed reference monitor** for autonomous side effects: a
 > deterministic authority boundary that emits a cryptographic Decision Receipt and makes
 > executors fail closed without one. (The Anderson *verifiable* property is a roadmap target
 > via the formal track — currently tested, not proven.) It applies the Clark-Wilson integrity

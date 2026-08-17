@@ -5,7 +5,7 @@ This hub is docs-first. Validation checks that the expected files exist, solutio
 Run:
 
 ```bash
-make -C /home/martin/ai-governance-research validate
+make -C packages/ai-governance-research validate
 ```
 
 Use `validation/docs-quality-checklist.md` for human review.

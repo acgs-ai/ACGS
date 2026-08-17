@@ -297,6 +297,7 @@ def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[Checklis
 
         root_proj = tomllib.loads((repo_root / "pyproject.toml").read_text())
         expected = {
+            "packages/acgs-canary",
             "packages/acgs-lite",
             "packages/Acgs-Swarm",
             "packages/clinicalguard",

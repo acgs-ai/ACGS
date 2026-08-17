@@ -26,7 +26,7 @@ and self-auditing.
 | Surface | Layer | Maturity signal | CI gate | Audit verdict |
 |---|---|---|---|---|
 | `packages/gove-zone/` | **Kernel** (policy, receipts, audit, signing, executor, adapters) | 41 modules / ~13.2k LOC, 67 test files / 634 tests, 0 TODO, 90% cov floor | ruff + mypy strict + pytest (3.11/3.12) | Keep — platform core |
-| `packages/acgs-lite/` (submodule) | Shared governance lib | PyPI v2.10.0, py≥3.10 floor | lint+pytest (3.10–3.12), PAT-gated | Keep — published base of swarm/clinical spine |
+| `packages/acgs-lite/` (submodule) | Shared governance lib | PyPI v2.10.1, py≥3.10 floor | lint+pytest (3.10–3.12), PAT-gated | Keep — published base of swarm/clinical spine |
 | `packages/Acgs-Swarm/` (submodule) | Research (swarm) | depends acgs-lite≥2.8.1 | lint+pytest, PAT-gated | Keep as research |
 | `packages/clinicalguard/` (submodule, private) | Domain agent (clinical) | private; CI soft-fails w/o PAT | best-effort | Keep; fix soft-fail gate |
 | `acgs_governance_eval_mvp/` | **Eval** | 102 .py / 14.2k LOC, 36 test files | doubly gated (eval.yml + python-eval-mvp.yml) | Keep as core eval engine |

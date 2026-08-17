@@ -38,14 +38,21 @@ from typing import TYPE_CHECKING, Any, NewType
 
 if TYPE_CHECKING:
     from gove_zone.revocation import RevocationList
+    from gove_zone.trust import ReceiptTrustRegistry
 
 from gove_zone.errors import (
     PRODUCTION_NO_VERIFIER_MSG,
     ProductionProfileError,
+    ReceiptRejectionReason,
     ReceiptValidationError,
 )
-from gove_zone.receipt import DecisionReceipt
+from gove_zone.receipt import (
+    DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
+    DecisionReceipt,
+    validate_receipt_clock_skew_seconds,
+)
 from gove_zone.signing import ReceiptSigner
+from gove_zone.trust import DECISION_RECEIPT_PURPOSE, RECEIPT_V2
 
 # An execution boundary is an opaque label for *where* an approved action may
 # run (e.g. "local-sandbox", "tenant-A/prod-egress"). It is a string today;
@@ -159,13 +166,39 @@ class AuditEvent:
     def from_receipt_and_event(cls, receipt: DecisionReceipt, event: dict[str, Any]) -> AuditEvent:
         """Join a receipt with its persisted chain *event* into one view.
 
-        The chain record carries the cryptographic anchor (``event_hash``,
-        ``previous_hash``); the receipt carries the governance linkage
-        (``tenant_id``, ``request_id``, ``receipt_id``, ``policy_bundle_id``).
-        Together they form the complete audit evidence for one decision.
+        The chain record carries the claimed cryptographic anchor
+        (``event_hash``, ``previous_hash``); the receipt carries the
+        governance linkage (``tenant_id``, ``request_id``, ``receipt_id``,
+        ``policy_bundle_id``). This method binds the receipt to a matching
+        event id and claimed ``event_hash`` only. Full audit-chain self-
+        verification stays with ``ChainHashAuditStore.verify_chain``.
         """
+        event_id = event.get("event_id")
+        if not isinstance(event_id, str) or not event_id:
+            raise ReceiptValidationError(
+                "audit event missing event_id",
+                reason_code=ReceiptRejectionReason.MISSING_REQUIRED_FIELD,
+            )
+        if event_id != receipt.receipt_id:
+            raise ReceiptValidationError(
+                f"Audit event id mismatch: expected {receipt.receipt_id}, got {event_id}",
+                reason_code=ReceiptRejectionReason.AUDIT_HASH_MISMATCH,
+            )
+
+        event_hash = event.get("event_hash")
+        if not isinstance(event_hash, str) or not event_hash:
+            raise ReceiptValidationError(
+                "audit event missing event_hash",
+                reason_code=ReceiptRejectionReason.MISSING_REQUIRED_FIELD,
+            )
+        if event_hash != receipt.audit_event_hash:
+            raise ReceiptValidationError(
+                f"Audit hash mismatch: expected {receipt.audit_event_hash}, got {event_hash}",
+                reason_code=ReceiptRejectionReason.AUDIT_HASH_MISMATCH,
+            )
+
         return cls(
-            event_id=str(event.get("event_id", receipt.receipt_id)),
+            event_id=event_id,
             request_id=receipt.request_id,
             receipt_id=receipt.receipt_id,
             tenant_id=receipt.tenant_id,
@@ -175,7 +208,7 @@ class AuditEvent:
             policy_bundle_id=receipt.policy_bundle_id,
             timestamp=str(event.get("timestamp_iso", receipt.timestamp)),
             previous_hash=str(event.get("previous_hash", receipt.previous_audit_hash)),
-            event_hash=str(event.get("event_hash", receipt.audit_event_hash)),
+            event_hash=event_hash,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -231,12 +264,17 @@ class ReceiptVerifier:
         expected_actor: str,
         expected_policy_bundle_id: str | None = None,
         expected_policy_hash: str | None = None,
+        expected_project_id: str | None = None,
+        expected_environment_id: str | None = None,
         expected_authority: str | None = None,
         expected_validator_role: str | None = None,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = True,
         require_expiry: bool = False,
         revoked_keys: RevocationList | None = None,
+        trust_registry: ReceiptTrustRegistry | None = None,
+        trust_purpose: str = DECISION_RECEIPT_PURPOSE,
+        max_clock_skew_seconds: int = DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
     ) -> None:
         if not expected_actor or not expected_actor.strip():
             raise ReceiptValidationError(
@@ -247,11 +285,16 @@ class ReceiptVerifier:
         self.expected_actor = expected_actor
         self.expected_policy_bundle_id = expected_policy_bundle_id
         self.expected_policy_hash = expected_policy_hash
+        self.expected_project_id = expected_project_id
+        self.expected_environment_id = expected_environment_id
         self.expected_authority = expected_authority
         self.expected_validator_role = expected_validator_role
         self.verifier = verifier
         self.require_signature = require_signature
         self.require_expiry = require_expiry
+        self.trust_registry = trust_registry
+        self.trust_purpose = trust_purpose
+        self.max_clock_skew_seconds = validate_receipt_clock_skew_seconds(max_clock_skew_seconds)
         # Revocation config is construction-only (never a per-call arg on
         # verify): a per-call empty/weaker list could silently disable a
         # security control, the same foot-gun authz/ledger avoid.
@@ -266,6 +309,7 @@ class ReceiptVerifier:
         expected_audit_hash: str | None = None,
         expected_actor: str | None = None,
         now_iso: str | None = None,
+        max_clock_skew_seconds: int | None = None,
     ) -> None:
         """Raise :class:`ReceiptValidationError` unless *receipt* authorizes the action.
 
@@ -279,18 +323,30 @@ class ReceiptVerifier:
         """
         if receipt is None:
             raise ReceiptValidationError("No receipt provided for governed execution")
-        if self.require_signature and self.verifier is None:
+        is_v2 = receipt.receipt_schema_version == RECEIPT_V2
+        if (
+            self.require_signature
+            and self.verifier is None
+            and not (is_v2 and self.trust_registry is not None)
+        ):
             raise ProductionProfileError(PRODUCTION_NO_VERIFIER_MSG)
         effective_actor = expected_actor if expected_actor is not None else self.expected_actor
         if not effective_actor or not effective_actor.strip():
             raise ReceiptValidationError(
                 "expected_actor is required for governed verification (fail-closed)"
             )
+        effective_skew = validate_receipt_clock_skew_seconds(
+            max_clock_skew_seconds
+            if max_clock_skew_seconds is not None
+            else self.max_clock_skew_seconds
+        )
         receipt.verify(
             expected_tenant_id=self.expected_tenant_id,
             expected_execution_boundary=self.expected_execution_boundary,
             expected_policy_bundle_id=self.expected_policy_bundle_id,
             expected_policy_hash=self.expected_policy_hash,
+            expected_project_id=self.expected_project_id,
+            expected_environment_id=self.expected_environment_id,
             expected_authority=self.expected_authority,
             expected_validator_role=self.expected_validator_role,
             expected_action=expected_action,
@@ -301,7 +357,10 @@ class ReceiptVerifier:
             require_signature=self.require_signature,
             require_expiry=self.require_expiry,
             revoked_keys=self.revoked_keys,
+            trust_registry=self.trust_registry,
+            trust_purpose=self.trust_purpose,
             now_iso=now_iso,
+            max_clock_skew_seconds=effective_skew,
         )
 
     def is_valid(
@@ -313,6 +372,7 @@ class ReceiptVerifier:
         expected_audit_hash: str | None = None,
         expected_actor: str | None = None,
         now_iso: str | None = None,
+        max_clock_skew_seconds: int | None = None,
     ) -> bool:
         """Boolean form of :meth:`verify` — never raises, returns False on any failure."""
         try:
@@ -323,6 +383,7 @@ class ReceiptVerifier:
                 expected_audit_hash=expected_audit_hash,
                 expected_actor=expected_actor,
                 now_iso=now_iso,
+                max_clock_skew_seconds=max_clock_skew_seconds,
             )
             return True
         except ReceiptValidationError:

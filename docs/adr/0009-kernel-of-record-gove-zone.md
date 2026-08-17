@@ -12,7 +12,7 @@ parallel as draft-ADR per the program plan)
 
 ## Relates to
 
-- `docs/superpowers/plans/2026-07-10-kernel-unification-program.md` — the
+- `docs/internal/superpowers/plans/2026-07-10-kernel-unification-program.md` — the
   kernel unification program this ADR is Task 0 of; later phases (1–5) cite
   this decision and are scoped as separate plans.
 - ADR-0003 (monorepo topology and submodules) — governs how
@@ -30,7 +30,7 @@ implementations under one brand:
   `requires-python = ">=3.10"`, with a constitution engine, ~20 framework
   adapters, and a lifecycle server. This is the only one of the two with
   external distribution and downstream consumers (Acgs-Swarm, clinicalguard).
-- **gove-zone** — in-tree at 0.1.0a1, zero runtime dependencies, stdlib
+- **gove-zone** — in-tree at 1.0.0rc1, zero runtime dependencies, stdlib
   kernel with an optional `cryptography` extra for Ed25519 signing.
 
 The two share zero code. They also do not share a receipt format, and the
@@ -178,7 +178,7 @@ Consolidating on a single kernel of record removes this permanent ambiguity.
 
 ## References
 
-- `docs/superpowers/plans/2026-07-10-kernel-unification-program.md` — full
+- `docs/internal/superpowers/plans/2026-07-10-kernel-unification-program.md` — full
   program plan, Global Constraints section, and Task 0–5 breakdown.
 - ADR-0003 — monorepo topology and submodule strategy (governs
   `packages/acgs-lite` commit discipline, unaffected by this decision).

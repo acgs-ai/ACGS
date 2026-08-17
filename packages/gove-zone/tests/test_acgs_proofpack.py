@@ -100,6 +100,21 @@ def _edit_json(path: Path, mutate: Any) -> None:
     path.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _upgrade_receipt_doc_to_v2(doc: dict[str, Any]) -> None:
+    """Rewrite a v1 receipt dict as a hash-intact scoped-trust v2 receipt."""
+    from gove_zone.receipt import DecisionReceipt
+
+    doc.update(
+        {
+            "receipt_schema_version": "gove-zone/decision-receipt/v2",
+            "project_id": "proj-1",
+            "environment_id": "env-1",
+            "trust_epoch": 1,
+        }
+    )
+    doc["receipt_hash"] = DecisionReceipt.from_dict(doc).compute_hash()
+
+
 # --- 1. byte-golden generation -------------------------------------------------
 
 
@@ -489,6 +504,40 @@ def test_generate_refuses_tampered_receipt_input(tmp_path: Path) -> None:
     bad.write_text(json.dumps(doc), encoding="utf-8")
     with pytest.raises(PackGenerationError, match="binding is broken"):
         generate_proof_pack(tmp_path / "pack", receipt_path=bad, audit_path=INPUTS / "audit.jsonl")
+
+
+def test_generate_refuses_scoped_trust_v2_receipt(tmp_path: Path) -> None:
+    """No pack verification path accepts scoped-trust inputs (an expected
+    tenant/project/environment scope and a trust registry), so a pack minted
+    around a receipt v2 could never verify offline. Generation fails closed;
+    the receipt is hash-intact, so the refusal must name the unsupported
+    schema, not the hash binding."""
+    doc = json.loads((INPUTS / "receipts" / "r1.json").read_text(encoding="utf-8"))
+    _upgrade_receipt_doc_to_v2(doc)
+    v2_receipt = tmp_path / "receipt-v2.json"
+    v2_receipt.write_text(json.dumps(doc, sort_keys=True) + "\n", encoding="utf-8")
+    with pytest.raises(PackGenerationError, match="scoped-trust"):
+        generate_proof_pack(
+            tmp_path / "pack", receipt_path=v2_receipt, audit_path=INPUTS / "audit.jsonl"
+        )
+
+
+def test_hand_minted_pack_with_v2_receipt_fails_closed(tmp_path: Path) -> None:
+    """Pack minting is key-free, so generation's refusal cannot stop a hand-
+    minted pack carrying a receipt v2. Verification must still reject it:
+    verify_pack exposes no scoped-trust inputs, so the receipt's mandatory
+    v2 checks can never be satisfied. Modeled as the strongest editor, who
+    recomputes the receipt hash, the evidence receipt section, and every
+    artifact digest."""
+    pack = _copy_golden(tmp_path)
+    _edit_json(pack / RECEIPT_FILE, _upgrade_receipt_doc_to_v2)
+    new_hash = json.loads((pack / RECEIPT_FILE).read_text(encoding="utf-8"))["receipt_hash"]
+    _edit_json(pack / EVIDENCE_FILE, lambda e: e["receipt"].update(receipt_hash=new_hash))
+    _rehash_evidence(pack)
+
+    result = verify_pack(pack, now_iso=NOW_ISO)
+    assert not result.valid
+    assert result.reasons, "a v2-receipt pack must carry an explicit rejection reason"
 
 
 def test_generate_refuses_broken_chain(tmp_path: Path) -> None:

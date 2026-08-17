@@ -1,7 +1,7 @@
 # Undeniable evidence path
 
 The flagship gove-zone demo: a single runnable script that walks the full
-chain of custody from a blocked action to tamper-proof evidence.
+chain of custody from a blocked action to tamper-evident evidence.
 
     No valid Decision Receipt, no side effect.
 
@@ -66,7 +66,7 @@ needs the `crypto` extra).
 
 ## Honest scope
 
-Status: foundational / Alpha (`0.1.0a1`). The Ed25519 keypair is generated
+Status: foundational / Beta (`1.0.0rc1`). The Ed25519 keypair is generated
 inside the process — correct and self-contained for a pedagogical example, but
 obviously not real key custody. This is **local alpha proof of the invariant**,
 **not** a production, compliance, or regulator-ready certification. See the

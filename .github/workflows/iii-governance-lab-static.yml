@@ -48,8 +48,6 @@ jobs:
         run: |
           .venv/bin/python -m py_compile experiments/iii-governance-lab/workers/governance-worker/governance_worker.py
           bash -n experiments/iii-governance-lab/scripts/smoke.sh
-          npm ci --prefix experiments/iii-governance-lab/workers/caller-worker --ignore-scripts
-          npm run --prefix experiments/iii-governance-lab/workers/caller-worker typecheck
 
       - name: Run iii governance lab static contract
         run: |

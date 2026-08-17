@@ -1,0 +1,346 @@
+{
+ "authority_exclusivity_proven": false,
+ "closure_gates": {
+  "all_required_surfaces_covered": true,
+  "every_inventory_host_measured": true,
+  "no_operator_evidence_pending": false,
+  "no_root_equivalent_path": false,
+  "no_unknown_path": false,
+  "privilege_graph_closed": false,
+  "readiness_gate_cleared": false,
+  "verifier_verdict_is_exclusive": false
+ },
+ "counts": {
+  "blocking": 20,
+  "non_root_equivalent": 37,
+  "not_present": 0,
+  "requires_operator_evidence": 18,
+  "root_equivalent": 2,
+  "total": 57,
+  "unknown": 0
+ },
+ "exclusivity": {
+  "authority_equivalent_paths": [],
+  "every_inventory_host_measured": true,
+  "exclusivity_requires": "root_equivalent_paths == [] and unknown_privilege_paths == [] and requires_operator_evidence_paths == [] and every inventory measured in a host-representative context",
+  "failed_conditions": [
+   "06",
+   "07",
+   "12",
+   "17",
+   "19"
+  ],
+  "graph_closure_holds": false,
+  "inventory_admissibility": {
+   "PRIVILEGE_TOPOLOGY": true,
+   "ROOT_EQUIVALENCE_REGISTRY": true
+  },
+  "inventory_credential_digests": {
+   "PRIVILEGE_TOPOLOGY": "63cc804c8dd4d4fbef0907e0698e944cefeb926b1578165570ea66166731226e",
+   "ROOT_EQUIVALENCE_REGISTRY": "63cc804c8dd4d4fbef0907e0698e944cefeb926b1578165570ea66166731226e"
+  },
+  "precedence": [
+   "BLOCKED_ROOT_EQUIVALENCE",
+   "BLOCKED_AUTHORITY_EQUIVALENCE",
+   "BLOCKED_PRIVILEGE_UNCERTAIN",
+   "VERIFIED_EXCLUSIVE_AUTHORITY"
+  ],
+  "reasons": [
+   "root-equivalent paths measured: ['container_runtimes:docker_rootful_socket', 'docker_rootful', 'groups:membership_docker']"
+  ],
+  "requires_operator_evidence_paths": [
+   "container_runtimes:libvirt_ro_socket",
+   "container_runtimes:libvirt_socket",
+   "groups:membership_wheel",
+   "polkit:dbus_system_bus",
+   "polkit:pkexec",
+   "setuid:/opt/1Password/chrome-sandbox",
+   "setuid:/usr/bin/chfn",
+   "setuid:/usr/bin/chsh",
+   "setuid:/usr/bin/gpasswd",
+   "setuid:/usr/bin/pkexec",
+   "setuid:/usr/bin/su",
+   "setuid:/usr/bin/sudo",
+   "setuid:/usr/bin/userhelper",
+   "setuid:/usr/bin/vmware-user-suid-wrapper",
+   "setuid:/usr/libexec/dbus-1/dbus-daemon-launch-helper",
+   "setuid:/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper",
+   "sudo:sudo",
+   "systemd:systemd_run"
+  ],
+  "root_equivalent_paths": [
+   "container_runtimes:docker_rootful_socket",
+   "docker_rootful",
+   "groups:membership_docker"
+  ],
+  "specific_reason": "BLOCKED_ROOT_EQUIVALENCE_DOCKER",
+  "surfaces_covered": [
+   "container_runtimes",
+   "filecaps",
+   "groups",
+   "polkit",
+   "setuid",
+   "sudo",
+   "systemd"
+  ],
+  "surfaces_missing": [],
+  "surfaces_required": [
+   "container_runtimes",
+   "filecaps",
+   "groups",
+   "polkit",
+   "setuid",
+   "sudo",
+   "systemd"
+  ],
+  "unknown_privilege_paths": [
+   "sudo_polkit_interactive"
+  ],
+  "unresolved_privilege_paths": [
+   "container_runtimes:libvirt_ro_socket",
+   "container_runtimes:libvirt_socket",
+   "groups:membership_wheel",
+   "polkit:dbus_system_bus",
+   "polkit:pkexec",
+   "setuid:/opt/1Password/chrome-sandbox",
+   "setuid:/usr/bin/chfn",
+   "setuid:/usr/bin/chsh",
+   "setuid:/usr/bin/gpasswd",
+   "setuid:/usr/bin/pkexec",
+   "setuid:/usr/bin/su",
+   "setuid:/usr/bin/sudo",
+   "setuid:/usr/bin/userhelper",
+   "setuid:/usr/bin/vmware-user-suid-wrapper",
+   "setuid:/usr/libexec/dbus-1/dbus-daemon-launch-helper",
+   "setuid:/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper",
+   "sudo:sudo",
+   "sudo_polkit_interactive",
+   "systemd:systemd_run"
+  ],
+  "verdict": "BLOCKED_ROOT_EQUIVALENCE"
+ },
+ "exclusivity_requires": "root_equivalent_paths == [] and unknown_privilege_paths == [] and requires_operator_evidence_paths == [] and every inventory measured in a host-representative context",
+ "inputs": {
+  "CUTOVER_GATE.json": {
+   "bytes": 8287,
+   "mtime": 1786450025,
+   "present": true,
+   "sha256": "6b7dd91ac0a3957d5cdbbaac9649cccd1f1d6245cf2c525fcbbcb934468277bc"
+  },
+  "PREFLIGHT_AUDIT.json": {
+   "bytes": 5522,
+   "mtime": 1786449989,
+   "present": true,
+   "sha256": "d474008e3165e625a6626d85c329fd9e7d91e4f973c2df99748e3c5bedfeffd5"
+  },
+  "PRIVILEGE_GRAPH.json": {
+   "bytes": 4647,
+   "mtime": 1786449754,
+   "present": true,
+   "sha256": "020caf79669eb2cabbb0a36906d20776624cb9e818f8c2d8b290fbc1520a6bae"
+  },
+  "PRIVILEGE_TOPOLOGY.json": {
+   "bytes": 73942,
+   "mtime": 1786449474,
+   "present": true,
+   "sha256": "ef0f09e327fad62d1d2651d6a4fb7ba544fe47aca1c4c3c45bf29411989a1369"
+  },
+  "PRIVILEGE_TOPOLOGY_FINAL.json": {
+   "bytes": 86182,
+   "mtime": 1786449877,
+   "present": true,
+   "sha256": "f7ab728ba8b5f9c92989aa4563953150144f7cbdbc06a0e3fe3b5697eedc4435"
+  },
+  "ROOT_EQUIVALENCE_REGISTRY.json": {
+   "bytes": 13435,
+   "mtime": 1786449474,
+   "present": true,
+   "sha256": "8160ac2c7cd3672041083b18c9898ad3b8d80db4573f80fd82e5c17aa269d74a"
+  },
+  "verification_result.json": {
+   "bytes": 21989,
+   "mtime": 1786446414,
+   "present": true,
+   "sha256": "4310a3c5dce5c2f613fb880b9e4f6f1829b3c89c80096b430dfa4551123663f2"
+  }
+ },
+ "mutations_performed": [],
+ "note": "no verdict in this file was chosen by hand; each is computed by exclusivity_model from the bound inputs above. Re-running this program against the same inputs reproduces it exactly.",
+ "operator_worklist": [
+  {
+   "action": "remove this mechanism; it is measured root-equivalent",
+   "classification": "ROOT_EQUIVALENT",
+   "path": "container_runtimes:docker_rootful_socket",
+   "priority": 1,
+   "privilege_effect": "the daemon runs as uid 0 and executes container specifications chosen by whoever reaches the socket, including bind mounts of / with label=disable"
+  },
+  {
+   "action": "remove this mechanism; it is measured root-equivalent",
+   "classification": "ROOT_EQUIVALENT",
+   "path": "groups:membership_docker",
+   "priority": 1,
+   "privilege_effect": "member of 'docker': controls a rootful container daemon"
+  },
+  {
+   "action": "operator reads /etc/libvirt/libvirtd.conf (auth_unix_rw, unix_sock_group) and confirms this identity is in no group the libvirt polkit rules grant",
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
+   "path": "container_runtimes:libvirt_ro_socket",
+   "priority": 2,
+   "privilege_effect": "an authorised libvirt session can attach host block devices to a guest, which is root-equivalent; the socket is world-connectable by design and decides nothing"
+  },
+  {
+   "action": "operator reads /etc/libvirt/libvirtd.conf (auth_unix_rw, unix_sock_group) and confirms this identity is in no group the libvirt polkit rules grant",
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
+   "path": "container_runtimes:libvirt_socket",
+   "priority": 2,
+   "privilege_effect": "an authorised libvirt session can attach host block devices to a guest, which is root-equivalent; the socket is world-connectable by design and decides nothing"
+  },
+  {
+   "action": "operator removes this identity from `wheel` (`gpasswd -d agent-user wheel`) after confirming no other admin identity depends on it",
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
+   "path": "groups:membership_wheel",
+   "priority": 2,
+   "privilege_effect": "membership of the polkit administrator group and, on RPM-family hosts, the conventional sudoers group: it is the identity that authenticates privileged actions, not a mechanism of its own"
+  },
+  {
+   "action": "operator enumerates the local polkit rules and confirms no rule grants this identity a privileged system-bus action without authentication",
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
+   "path": "polkit:dbus_system_bus",
+   "priority": 2,
+   "privilege_effect": "the system bus carries privileged RPCs (StartTransientUnit among them); reachability is by design and authority is decided per RPC by polkit"
+  },
+  {
+   "action": "operator reads /etc/polkit-1/rules.d/* for a rule returning YES on this action, and removes this identity from the admin group",
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
+   "path": "polkit:pkexec",
+   "priority": 2,
+   "privilege_effect": "runs an arbitrary program as another user, including root"
+  },
+  {
+   "action": "operator determines who set the setuid bit and whether the vendor intends this binary to run as root; if not, `chmod u-s` it",
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the bytes match the package but the package declares mode 100755 while the disk carries setuid: the privilege was granted after packaging and no vendor statement bounds it",
+   "path": "setuid:/opt/1Password/chrome-sandbox",
+   "priority": 2,
+   "privilege_effect": "creates a user/PID namespace for a browser renderer and execs only the target passed by its own zygote; it does not take a caller-chosen command"
+  },
+  {
+   "action": "operator establishes provenance for this binary (vendor manifest, checksum, or a package whose digest the agent can read) or removes the setuid bit",
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "no verified provenance for these bytes (integrity=FILE_UNREADABLE_BY_AGENT), so the design bound cannot be attributed to the binary actually on disk",
+   "path": "setuid:/usr/bin/chfn",
+   "priority": 2,
+   "privilege_effect": "edits the invoking user's own account record after PAM authentication; it takes no caller-chosen command and writes no caller-chosen path"
+  },
+  {
+   "action": "operator establishes provenance for this binary (vendor manifest, checksum, or a package whose digest the agent can read) or removes the setuid bit",
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "no verified provenance for these bytes (integrity=FILE_UNREADABLE_BY_AGENT), so the design bound cannot be attributed to the binary actually on disk",
+   "path": "setuid:/usr/bin/chsh",
+   "priority": 2,
+   "privilege_effect": "edits the invoking user's own account record after PAM authentication; it takes no caller-chosen command and writes no caller-chosen path"
+  },
+  {
+   "action": "operator reads /etc/gshadow and confirms this identity administers no group (an empty admin field on every privileged group)",
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the administrator list lives in /etc/gshadow, which is 0000 root and unreadable by the agent",
+   "path": "setuid:/usr/bin/gpasswd",
+   "priority": 2,
+   "privilege_effect": "administers group membership; root-equivalent exactly when the agent administers a privileged group, because adding itself to `docker` or `wheel` re-opens a closed path"
+  },
+  {
+   "action": "operator runs `sudo -l -U agent-user`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the gate is the authorisation policy, which is unreadable by the agent (/etc/sudoers is 0440 root, /etc/polkit-1/rules.d is 0700 root)",
+   "path": "setuid:/usr/bin/pkexec",
+   "priority": 2,
+   "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor"
+  },
+  {
+   "action": "operator runs `sudo -l -U agent-user`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the gate is the authorisation policy, which is unreadable by the agent (/etc/sudoers is 0440 root, /etc/polkit-1/rules.d is 0700 root)",
+   "path": "setuid:/usr/bin/su",
+   "priority": 2,
+   "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor"
+  },
+  {
+   "action": "operator runs `sudo -l -U agent-user`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the gate is the authorisation policy, which is unreadable by the agent (/etc/sudoers is 0440 root, /etc/polkit-1/rules.d is 0700 root)",
+   "path": "setuid:/usr/bin/sudo",
+   "priority": 2,
+   "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor"
+  },
+  {
+   "action": "operator runs `sudo -l -U agent-user`, reads /etc/sudoers, /etc/sudoers.d/* and /etc/polkit-1/rules.d/*, and removes any entry granting this identity a root command",
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the gate is the authorisation policy, which is unreadable by the agent (/etc/sudoers is 0440 root, /etc/polkit-1/rules.d is 0700 root)",
+   "path": "setuid:/usr/bin/userhelper",
+   "priority": 2,
+   "privilege_effect": "arbitrary command execution as uid 0, gated on an authentication factor"
+  },
+  {
+   "action": "operator determines whether caller-controlled input can reach a privileged effect (arbitrary exec, arbitrary write, namespace or device manipulation, credential change); if not needed, remove the setuid bit",
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "no discriminator is defined for this binary, and an unclassified setuid-root binary is treated as unresolved, never as safe",
+   "path": "setuid:/usr/bin/vmware-user-suid-wrapper",
+   "priority": 2,
+   "privilege_effect": "setuid-root binary with no measured bound"
+  },
+  {
+   "action": "operator establishes provenance for this binary (vendor manifest, checksum, or a package whose digest the agent can read) or removes the setuid bit",
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "no verified provenance for these bytes (integrity=FILE_UNREADABLE_BY_AGENT), so the design bound cannot be attributed to the binary actually on disk; and neither D-Bus system-service directory is agent-writable",
+   "path": "setuid:/usr/libexec/dbus-1/dbus-daemon-launch-helper",
+   "priority": 2,
+   "privilege_effect": "launches a system service as the user named in its .service file"
+  },
+  {
+   "action": "operator determines whether caller-controlled input can reach a privileged effect (arbitrary exec, arbitrary write, namespace or device manipulation, credential change); if not needed, remove the setuid bit",
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "no discriminator is defined for this binary, and an unclassified setuid-root binary is treated as unresolved, never as safe",
+   "path": "setuid:/usr/libexec/spice-gtk-x86_64/spice-client-glib-usb-acl-helper",
+   "priority": 2,
+   "privilege_effect": "setuid-root binary with no measured bound"
+  },
+  {
+   "action": "operator runs `sudo -l -U agent-user` and reads /etc/sudoers plus /etc/sudoers.d/*; any root-capable entry for this identity must be removed",
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "`sudo -n -l` distinguishes *no entry* ('not allowed to run sudo') from *an entry behind a password* ('a password is required'). It cannot reveal which commands the entry grants, and /etc/sudoers is 0440 root",
+   "path": "sudo:sudo",
+   "priority": 2,
+   "privilege_effect": "arbitrary command execution as uid 0 if the policy grants it"
+  },
+  {
+   "action": "operator confirms no polkit rule grants this identity org.freedesktop.systemd1.manage-units without authentication",
+   "classification": "REQUIRES_OPERATOR_EVIDENCE",
+   "discriminator": "the readable half of the policy is measured below; the deciding half, /etc/polkit-1/rules.d, is 0700 root and can return polkit.Result.YES (no password) for this action",
+   "path": "systemd:systemd_run",
+   "priority": 2,
+   "privilege_effect": "starts a transient unit under the system manager, which runs as root by default"
+  }
+ ],
+ "read_only": true,
+ "readiness_gate_blocking": [
+  "no_root_equivalent_mechanism",
+  "no_unresolved_escalation_mechanism",
+  "no_root_equivalent_path_in_topology",
+  "agent_not_in_docker_group",
+  "rootful_daemon_unreachable",
+  "sudo_resolved",
+  "authority_principal_reserved",
+  "store_code_ipc_owned_by_authority",
+  "services_run_under_authority_uid"
+ ],
+ "readiness_gate_verdict": "BLOCKED_ROOT_EQUIVALENCE",
+ "specific_reason": "BLOCKED_ROOT_EQUIVALENCE_DOCKER",
+ "verdict": "BLOCKED_ROOT_EQUIVALENCE",
+ "verifier_evidence_digest": "ab4ae6bcb450971214b4e4e6a34be75147653826400ccd09c5e3786415e1c9ac",
+ "verifier_verdict": "BLOCKED_ROOT_EQUIVALENCE"
+}

@@ -3,39 +3,39 @@
   "files": {
     "README.md": {
       "bytes": 4603,
-      "sha256": "fe2554520eb603ac65c16a0f058643e12e964fbd1b634391f4d91ef9f9da2d8c"
+      "sha256": "118ad00b192303003379df8783a9549e64ad51a3b3b6ba5b46907ff4c8d6b0db"
     },
     "frameworks/eu-ai-act-article-12.md": {
       "bytes": 6309,
-      "sha256": "ec308987da81808f23118f7def21d098d45b3f8608f811acafb827a11d1f0cfe"
+      "sha256": "b12fa4cd155a85501cdef3fe03c97ba32302f5c4995ab4c51bd7047c99394fc6"
     },
     "frameworks/iso-42001.md": {
       "bytes": 5487,
-      "sha256": "57db3ce68443e1166a6d2c6b690aac7e32b9d99f278c85910bddcbeaa4ce9337"
+      "sha256": "18c7e0413e7bbce0cdf9a978b0dc6b0be5da342d94570c3363d506c5cbcb6970"
     },
     "frameworks/soc2.md": {
       "bytes": 6636,
-      "sha256": "dedd4d654032f7832aa803adc49711a6e6fc85fd174f4abdfce2e4d511531a52"
+      "sha256": "5bdf64f1ad894e1fbe3dfabed45a537054f5d395a2882d5c6496a8a718d90366"
     },
     "runtime-evidence/proofpack/audit-chain.json": {
-      "bytes": 1944,
-      "sha256": "177f1286efab2e6036f70e57c492fe8fbb6af9c0622b5f5a9eb246178d6f8191"
+      "bytes": 2042,
+      "sha256": "01ea8eb52831f0b1799bca3065e3b53bba6f2da1ffb342e96151ac81b0c861fe"
     },
     "runtime-evidence/proofpack/decision-receipt.json": {
-      "bytes": 1279,
-      "sha256": "f14e1d6077acbe97e5c2d69cb4e0bb1dcd3dbd69bb42a82233f6d12798a84c29"
+      "bytes": 1375,
+      "sha256": "328ef6d1b7dd19568a350ce12f2c90da3fccf555c25616e04b0fedf3f32d3657"
     },
     "runtime-evidence/proofpack/evidence.json": {
-      "bytes": 1856,
-      "sha256": "28eda7bb3d6ac0ca0c98e28767c47da47b9a69bbb2184acd1aa1fedc2f00093a"
+      "bytes": 1954,
+      "sha256": "f25bb263e7b38ef4e7ebb1c9488a2a6e5cfb73dfe5a9ada13837ee63972ea885"
     },
     "runtime-evidence/proofpack/replay-report.json": {
-      "bytes": 502,
-      "sha256": "9720a70fa308d814701aa1428754eae4ba0d6dbd9220a4fd9059d064d64b6c3c"
+      "bytes": 504,
+      "sha256": "7ffe1524bf2a439f2895fc33704b79a0806fe63b8e38547a30db0c4425c8984e"
     },
     "runtime-evidence/proofpack/verification-summary.md": {
-      "bytes": 4519,
-      "sha256": "45c64400a7fc26a97e228b302659359114d3df721a51d7c053feef9afd0a1af6"
+      "bytes": 6090,
+      "sha256": "44daccf38fd965cd6e2e9bc1d32443c3c0a2374939418f19346cb0a17c2af958"
     }
   },
   "frameworks": [
@@ -50,11 +50,11 @@
   "runtime_evidence": {
     "actor": "compliance-officer",
     "audit_event_count": 2,
-    "audit_last_hash": "f60fc833e4e04366f8f1532942add50682ec7da2b597a8f7d1c51e960d2c3959",
+    "audit_last_hash": "1ca1c6a38e600fee802e2d2fdd402efe479ca09c778f6576d093c7b7c294c688",
     "decision": "allow",
     "proofpack_rel": "runtime-evidence/proofpack",
     "proposed_action": "runtime.file.write",
-    "receipt_id": "ev_91173c10c1094a6c",
+    "receipt_id": "ev_2d7706aca68740c4",
     "replay_status": "verified",
     "signature_algorithm": "none",
     "signed": false

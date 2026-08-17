@@ -28,6 +28,10 @@ on:
     paths:
       - 'examples/**'
       - 'tests/docs/**'
+      # tests/docs/test_skill_frontmatter.py validates these trees. Without them in
+      # the filter the gate would not run on the one change it exists to catch.
+      - '.agents/skills/**'
+      - '.claude/skills/**'
       - 'compliance/**'
       - 'evidence/**'
       - 'docs/**'
@@ -44,6 +48,10 @@ on:
     paths:
       - 'examples/**'
       - 'tests/docs/**'
+      # tests/docs/test_skill_frontmatter.py validates these trees. Without them in
+      # the filter the gate would not run on the one change it exists to catch.
+      - '.agents/skills/**'
+      - '.claude/skills/**'
       - 'compliance/**'
       - 'evidence/**'
       - 'docs/**'
@@ -76,6 +84,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: false
+          # tests/docs/test_saas_current_state_survey.py verifies the G006
+          # survey's source_ref_provenance with `git cat-file -e <commit>:<path>`.
+          # The default depth-1 checkout has none of those commits (the
+          # program_record_parent commit is only reachable from beta/* branches),
+          # so fetch full history for all refs.
+          fetch-depth: 0
 
       - name: Init Acgs-Swarm submodule (public — no token)
         run: git submodule update --init -- packages/Acgs-Swarm

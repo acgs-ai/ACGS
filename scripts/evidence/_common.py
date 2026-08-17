@@ -40,6 +40,7 @@ TRANSCRIPT_RECORD_KEYS = {
     "finished_at_utc",
     "selectors",
 }
+NODE_AWARE_TRANSCRIPT_RECORD_KEYS = TRANSCRIPT_RECORD_KEYS | {"cwd_scope"}
 REVIEWED_P0_TRANSCRIPT = (
     (
         "root:EVID-gate",
@@ -152,6 +153,274 @@ REVIEWED_P0_TRANSCRIPT = (
         ),
     ),
 )
+P1_MIGRATION_SELECTORS = (
+    "tests/integration/test_migrations_postgres.py::test_empty_and_existing_alpha_upgrade_head",
+    "tests/integration/test_migrations_postgres.py::test_declared_reversible_round_trip",
+    "tests/integration/test_migrations_postgres.py::test_mixed_version_rolling_compatibility",
+    "tests/integration/test_migrations_postgres.py::test_large_table_online_migration_budget",
+    "tests/integration/test_migrations_postgres.py::test_irreversible_restore_rehearsal",
+    "tests/integration/test_migrations_postgres.py::test_failed_migration_no_later_state",
+)
+P1_SCOPE_SELECTORS = (
+    "tests/test_project_environment_scope.py::"
+    "test_environment_cannot_reference_a_project_from_another_org",
+    "tests/test_project_environment_scope.py::test_orm_models_use_the_same_composite_parent_join",
+    "tests/test_project_environment_scope.py::"
+    "test_public_api_exposes_no_project_or_environment_mutation_routes",
+    "tests/test_repositories.py::test_prospective_scope_ids_persist_exactly_without_commit",
+    "tests/test_repositories.py::test_cross_tenant_reads_are_non_enumerating",
+    "tests/test_repositories.py::test_cross_tenant_updates_and_deletes_mutate_zero_rows",
+    "tests/test_repositories.py::test_prospective_id_conflicts_fail_atomically",
+    "tests/integration/test_production_posture.py::"
+    "test_tenant_bootstrap_and_register_contract_stub_no_mutation",
+)
+P1_LEDGER_SELECTORS = (
+    "tests/test_managed_mutation_uow.py::"
+    "test_allow_mutation_commits_consumption_receipt_event_and_outbox_atomically",
+    "tests/test_managed_mutation_uow.py::"
+    "test_injected_failure_before_commit_rolls_back_consumption_receipt_event_outbox_and_side_effect",
+    "tests/test_managed_mutation_uow.py::"
+    "test_deny_and_escalate_do_not_consume_or_execute_or_persist_success",
+    "tests/test_managed_mutation_uow.py::"
+    "test_wrong_scope_receipt_rejected_by_database_tenant_environment_constraints",
+    "tests/test_managed_mutation_uow.py::"
+    "test_concurrent_receipt_consumption_has_single_committed_winner",
+    "tests/test_managed_mutation_uow.py::test_outbox_rows_appear_only_after_sql_commit",
+)
+P1_TRUST_CP_SELECTORS = (
+    "tests/test_trust_receipt_v2.py::"
+    "test_receipt_v2_scoped_trust_roots_bind_tenant_scope_and_trust_epoch",
+    "tests/test_trust_receipt_v2.py::"
+    "test_active_retired_and_revoked_trust_rotation_preserves_history_and_blocks_new_or_revoked",
+    "tests/test_trust_receipt_v2.py::"
+    "test_trust_readiness_report_requires_active_root_and_rotation_window",
+    "tests/test_trust_receipt_v2.py::"
+    "test_wrong_scope_missing_trust_and_replay_reject_without_side_effect",
+)
+P1_TRUST_GZ_SELECTORS = (
+    "packages/gove-zone/tests/test_trust_receipt_v2.py::"
+    "test_receipt_v2_scoped_trust_verification_requires_scope_binding",
+    "packages/gove-zone/tests/test_trust_receipt_v2.py::"
+    "test_active_retired_revoked_runtime_rotation_verifies_historical_retired_and_denies_revoked",
+    "packages/gove-zone/tests/test_trust_receipt_v2.py::"
+    "test_trust_readiness_runtime_reports_missing_or_expired_roots",
+    "packages/gove-zone/tests/test_trust_receipt_v2.py::"
+    "test_wrong_scope_missing_trust_and_replay_runtime_do_not_execute",
+)
+P2_TENANT_BOOTSTRAP_CP_SELECTORS = (
+    "tests/integration/test_tenant_bootstrap_vertical.py::"
+    "test_real_api_postgres_bootstrap_allow_atomic",
+    "tests/integration/test_tenant_bootstrap_vertical.py::"
+    "test_real_api_postgres_bootstrap_refusal_matrix",
+    "tests/integration/test_tenant_bootstrap_vertical.py::"
+    "test_100_request_multiprocess_bootstrap_once",
+)
+P2_TENANT_BOOTSTRAP_ROOT_SELECTOR = (
+    "tests/saas_beta/test_cross_plane_contracts.py::test_tenant_bootstrap_receipt_contract"
+)
+P2_REGISTER_CP_SELECTORS = (
+    "tests/test_agent_registration_managed_route.py::"
+    "test_agent_register_route_executes_through_managed_receipt_v2_spine",
+    "tests/test_agent_registration_managed_route.py::"
+    "test_agent_register_route_refusal_matrix_has_zero_managed_side_effects",
+    "tests/test_agent_registration_managed_route.py::"
+    "test_agent_register_route_scope_and_policy_are_server_owned",
+)
+P2_REGISTER_GZ_SELECTORS = (
+    "packages/gove-zone/tests/test_authz_enforcement.py::"
+    "test_enforce_allows_registered_principal_through_dispatcher",
+    "packages/gove-zone/tests/test_authz_enforcement.py::"
+    "test_enforce_denies_unregistered_actor_through_dispatcher",
+    "packages/gove-zone/tests/test_mcp_binding.py::"
+    "test_unregistered_tool_cannot_run_and_is_not_audited",
+    "packages/gove-zone/tests/test_mcp_binding.py::"
+    "test_runtime_registered_tool_is_gated_with_zero_binding_changes",
+)
+P2_IDEMPOTENCY_CP_SELECTORS = (
+    "tests/integration/test_agent_registration_idempotency_postgres.py::"
+    "test_identical_key_and_canonical_request_converges_to_one_terminal_result",
+    "tests/integration/test_agent_registration_idempotency_postgres.py::"
+    "test_same_key_different_canonical_request_conflicts_without_additional_side_effects",
+    "tests/integration/test_agent_registration_idempotency_postgres.py::"
+    "test_exact_receipt_replay_is_typed_and_nonduplicating",
+    "tests/integration/test_agent_registration_idempotency_postgres.py::"
+    "test_100_request_multiprocess_has_at_most_one_authorized_execution",
+)
+REVIEWED_P1_MIGRATION_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:5],
+    (
+        "packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate",
+        ("./scripts/run_postgres_gate.sh", *P1_MIGRATION_SELECTORS),
+    ),
+)
+REVIEWED_P1_SCOPE_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:5],
+    (
+        "packages/acgs-control-plane:P1-SCOPE-002-scope-posture-gate",
+        (
+            ".venv/bin/pytest",
+            "-q",
+            *P1_SCOPE_SELECTORS,
+        ),
+    ),
+)
+REVIEWED_P1_LEDGER_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:5],
+    (
+        "packages/acgs-control-plane:P1-LEDGER-003-managed-mutation-uow-gate",
+        (
+            ".venv/bin/pytest",
+            "-q",
+            *P1_LEDGER_SELECTORS,
+        ),
+    ),
+)
+REVIEWED_P1_TRUST_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:9],
+    (
+        "packages/acgs-control-plane:P1-TRUST-004-trust-control-plane-gate",
+        (
+            ".venv/bin/pytest",
+            "-q",
+            *P1_TRUST_CP_SELECTORS,
+        ),
+    ),
+    (
+        "packages/gove-zone:P1-TRUST-004-trust-runtime-gate",
+        (
+            "uv",
+            "run",
+            "--active",
+            "--no-sync",
+            "--python",
+            "3.11",
+            "--package",
+            "gove-zone",
+            "python",
+            "-m",
+            "pytest",
+            *P1_TRUST_GZ_SELECTORS,
+            "--import-mode=importlib",
+            "-q",
+        ),
+    ),
+)
+REVIEWED_P2_TENANT_BOOTSTRAP_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:9],
+    (
+        "packages/acgs-control-plane:P2-TENANT-BOOTSTRAP-000-postgres-bootstrap-gate",
+        ("./scripts/run_postgres_gate.sh", *P2_TENANT_BOOTSTRAP_CP_SELECTORS),
+    ),
+    (
+        "root:P2-TENANT-BOOTSTRAP-000-cross-plane-contract",
+        (
+            "packages/acgs-control-plane/.venv/bin/python",
+            "-m",
+            "pytest",
+            "-q",
+            P2_TENANT_BOOTSTRAP_ROOT_SELECTOR,
+        ),
+    ),
+)
+REVIEWED_P2_REGISTER_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:9],
+    (
+        "packages/acgs-control-plane:P2-REGISTER-001-agent-registration-gate",
+        (
+            ".venv/bin/pytest",
+            "-q",
+            *P2_REGISTER_CP_SELECTORS,
+        ),
+    ),
+    (
+        "packages/gove-zone:P2-REGISTER-001-runtime-registration-gate",
+        (
+            "uv",
+            "run",
+            "--active",
+            "--no-sync",
+            "--python",
+            "3.11",
+            "--package",
+            "gove-zone",
+            "python",
+            "-m",
+            "pytest",
+            *P2_REGISTER_GZ_SELECTORS,
+            "--import-mode=importlib",
+            "-q",
+        ),
+    ),
+)
+REVIEWED_P2_IDEMPOTENCY_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:5],
+    (
+        "packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate",
+        ("./scripts/run_postgres_gate.sh", *P2_IDEMPOTENCY_CP_SELECTORS),
+    ),
+)
+REVIEWED_TRANSCRIPTS_BY_NODE = {
+    "P0-EVIDENCE-000": REVIEWED_P0_TRANSCRIPT,
+    "P1-MIGRATION-001": REVIEWED_P1_MIGRATION_TRANSCRIPT,
+    "P1-SCOPE-002": REVIEWED_P1_SCOPE_TRANSCRIPT,
+    "P1-LEDGER-003": REVIEWED_P1_LEDGER_TRANSCRIPT,
+    "P1-TRUST-004": REVIEWED_P1_TRUST_TRANSCRIPT,
+    "P2-TENANT-BOOTSTRAP-000": REVIEWED_P2_TENANT_BOOTSTRAP_TRANSCRIPT,
+    "P2-REGISTER-001": REVIEWED_P2_REGISTER_TRANSCRIPT,
+    "P2-IDEMPOTENCY-002": REVIEWED_P2_IDEMPOTENCY_TRANSCRIPT,
+}
+REVIEWED_CWD_SCOPES_BY_NODE = {
+    "P1-MIGRATION-001": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
+    "P1-SCOPE-002": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
+    "P1-LEDGER-003": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
+    "P1-TRUST-004": (
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "CP",
+        "REPO_ROOT",
+    ),
+    "P2-TENANT-BOOTSTRAP-000": (
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "CP",
+        "REPO_ROOT",
+    ),
+    "P2-REGISTER-001": (
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "CP",
+        "REPO_ROOT",
+    ),
+    "P2-IDEMPOTENCY-002": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
+}
 REVIEWED_COMMAND_SELECTORS = {argv: selector for selector, argv in REVIEWED_P0_TRANSCRIPT}
 ALLOWED_ASSIGNMENTS = {
     "EVID",
@@ -199,6 +468,15 @@ REVIEWED_RUN_METADATA_BY_NODE = {
         "external": (),
     }
     for node_id in EXPECTED_BOOTSTRAP_MAP
+}
+REVIEWED_RUN_METADATA_BY_NODE["P2-IDEMPOTENCY-002"] = {
+    "process_schedule": (
+        "single-process-evidence-and-package-gates",
+        "postgres-100-request-multiprocess-agent-registration-idempotency",
+    ),
+    "clock_source": "system-utc",
+    "skipped": (),
+    "external": (),
 }
 ATTESTATION_ROLES = frozenset({"reviewer", "verifier", "claims-reviewer"})
 PUBLIC_DESCRIPTOR_FIELDS = frozenset(
@@ -420,7 +698,16 @@ def parse_canonical_positive_decimal(value: Any, *, label: str) -> int:
     return int(value)
 
 
-def _reviewed_gate(argv: Any) -> tuple[list[str], str]:
+def _reviewed_transcript(node_id: str | None) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    if node_id is None:
+        return REVIEWED_P0_TRANSCRIPT
+    transcript = REVIEWED_TRANSCRIPTS_BY_NODE.get(node_id)
+    if transcript is None:
+        fail("node lacks reviewed transcript corpus", phase="B6")
+    return transcript
+
+
+def _reviewed_gate(argv: Any, *, expected_node: str | None = None) -> tuple[list[str], str]:
     """Classify one exact, reviewed transcript command; deny every extension."""
 
     if (
@@ -435,9 +722,19 @@ def _reviewed_gate(argv: Any) -> tuple[list[str], str]:
         )
     ):
         fail("command argv is outside the reviewed closed contract", phase="B6")
-    selector = REVIEWED_COMMAND_SELECTORS.get(tuple(argv))
-    if selector is None:
-        fail("command argv is outside the reviewed closed contract", phase="B6")
+    if expected_node is None:
+        selector = REVIEWED_COMMAND_SELECTORS.get(tuple(argv))
+        if selector is None:
+            fail("command argv is outside the reviewed closed contract", phase="B6")
+    else:
+        matches = [
+            selector
+            for selector, reviewed_argv in _reviewed_transcript(expected_node)
+            if reviewed_argv == tuple(argv)
+        ]
+        if len(matches) != 1:
+            fail("command argv is outside the reviewed node contract", phase="B6")
+        selector = matches[0]
     return argv, selector
 
 
@@ -447,12 +744,17 @@ def validate_safe_argv(argv: Any) -> list[str]:
     return _reviewed_gate(argv)[0]
 
 
-def validate_transcript_record(value: Any) -> dict[str, Any]:
+def validate_transcript_record(value: Any, *, expected_node: str | None = None) -> dict[str, Any]:
     """Validate the full immutable command record before any persistence or use."""
 
-    if not isinstance(value, dict) or set(value) != TRANSCRIPT_RECORD_KEYS:
+    required_keys = (
+        NODE_AWARE_TRANSCRIPT_RECORD_KEYS
+        if expected_node in REVIEWED_CWD_SCOPES_BY_NODE
+        else TRANSCRIPT_RECORD_KEYS
+    )
+    if not isinstance(value, dict) or set(value) != required_keys:
         fail("command record is outside the reviewed closed contract", phase="B6")
-    argv, selector = _reviewed_gate(value.get("argv"))
+    argv, selector = _reviewed_gate(value.get("argv"), expected_node=expected_node)
     if type(value.get("exit_code")) is not int or value["exit_code"] != 0:
         fail("command record is outside the reviewed closed contract", phase="B6")
     if any(
@@ -471,20 +773,57 @@ def validate_transcript_record(value: Any) -> dict[str, Any]:
             fail("command record is outside the reviewed closed contract", phase="B6")
     if timestamps[1] < timestamps[0] or value.get("selectors") != [selector]:
         fail("command record is outside the reviewed closed contract", phase="B6")
+    if expected_node in REVIEWED_CWD_SCOPES_BY_NODE:
+        observed = tuple(value["argv"])
+        expected_scopes = {
+            reviewed_argv: cwd_scope
+            for (_, reviewed_argv), cwd_scope in zip(
+                _reviewed_transcript(expected_node),
+                REVIEWED_CWD_SCOPES_BY_NODE[expected_node],
+                strict=True,
+            )
+        }
+        if value.get("cwd_scope") != expected_scopes.get(observed):
+            fail("command cwd differs from the reviewed node contract", phase="B6")
     value["argv"] = argv
     return value
+
+
+def validate_transcript_sequence(commands: Any, *, expected_node: str) -> None:
+    """Require the exact reviewed command/cwd corpus for one node."""
+
+    if not isinstance(commands, list):
+        fail("transcript differs from the reviewed ordered command corpus", phase="B6")
+    expected = _reviewed_transcript(expected_node)
+    expected_cwd_scopes = REVIEWED_CWD_SCOPES_BY_NODE.get(expected_node)
+    observed: list[tuple[str, tuple[str, ...], str | None]] = []
+    for command in commands:
+        validated = validate_transcript_record(command, expected_node=expected_node)
+        observed.append(
+            (
+                validated["selectors"][0],
+                tuple(validated["argv"]),
+                validated.get("cwd_scope"),
+            )
+        )
+    expected_observed = tuple(
+        (
+            selector,
+            argv,
+            None if expected_cwd_scopes is None else expected_cwd_scopes[index],
+        )
+        for index, (selector, argv) in enumerate(expected)
+    )
+    if tuple(observed) != expected_observed:
+        fail("transcript differs from the reviewed ordered command corpus", phase="B6")
 
 
 def validate_p0_transcript_sequence(commands: Any) -> None:
     """Require EVID, product gates, and the P0 root selector in exact order."""
 
-    if not isinstance(commands, list):
-        fail("P0 transcript differs from the reviewed ordered command corpus", phase="B6")
-    observed: list[tuple[str, tuple[str, ...]]] = []
-    for command in commands:
-        validated = validate_transcript_record(command)
-        observed.append((validated["selectors"][0], tuple(validated["argv"])))
-    if tuple(observed) != REVIEWED_P0_TRANSCRIPT:
+    try:
+        validate_transcript_sequence(commands, expected_node="P0-EVIDENCE-000")
+    except EvidenceError:
         fail("P0 transcript differs from the reviewed ordered command corpus", phase="B6")
 
 
@@ -497,13 +836,19 @@ def validate_secret_free_run(value: Any, *, expected_node: str | None = None) ->
         or not value["commands"]
     ):
         fail("run command metadata is outside the closed safe structure", phase="B6")
+    node_id = expected_node if expected_node is not None else value.get("node_id")
+    node_for_record = (
+        node_id if isinstance(node_id, str) and node_id in REVIEWED_TRANSCRIPTS_BY_NODE else None
+    )
     for command in value["commands"]:
-        validate_transcript_record(command)
+        validate_transcript_record(
+            command,
+            expected_node=node_for_record,
+        )
     if expected_node is not None and value.get("node_id") != expected_node:
         fail("run node identity differs from its evidence path", phase="B6")
-    if expected_node == "P0-EVIDENCE-000" or value.get("node_id") == "P0-EVIDENCE-000":
-        validate_p0_transcript_sequence(value["commands"])
-    node_id = expected_node if expected_node is not None else value.get("node_id")
+    if isinstance(node_id, str) and node_id in REVIEWED_TRANSCRIPTS_BY_NODE:
+        validate_transcript_sequence(value["commands"], expected_node=node_id)
     reviewed = REVIEWED_RUN_METADATA_BY_NODE.get(node_id)
     determinism = value.get("determinism")
     clock = value.get("clock")
@@ -519,12 +864,26 @@ def validate_secret_free_run(value: Any, *, expected_node: str | None = None) ->
         or value.get("external") != list(reviewed["external"])
     ):
         fail("run metadata is outside the reviewed closed node contract", phase="B6")
+    if node_id in {
+        "P1-MIGRATION-001",
+        "P1-SCOPE-002",
+        "P1-LEDGER-003",
+        "P1-TRUST-004",
+        "P2-TENANT-BOOTSTRAP-000",
+        "P2-REGISTER-001",
+        "P2-IDEMPOTENCY-002",
+    } and (determinism.get("seed") != 20260710 or determinism.get("python_hash_seed") != "0"):
+        if str(node_id).startswith("P1-"):
+            fail("P1 run determinism differs from the reviewed node contract", phase="B6")
+        fail("run determinism differs from the reviewed node contract", phase="B6")
 
 
-def append_safe_transcript_record(path: Path, record: Mapping[str, Any]) -> None:
+def append_safe_transcript_record(
+    path: Path, record: Mapping[str, Any], *, expected_node: str | None = None
+) -> None:
     """Validate a command record before its first byte can enter evidence."""
 
-    validated = validate_transcript_record(dict(record))
+    validated = validate_transcript_record(dict(record), expected_node=expected_node)
     payload = (
         json.dumps(validated, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n"
     ).encode("utf-8")

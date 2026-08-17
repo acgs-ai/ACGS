@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useCompileDraft, usePromoteCompile, useReplayCompile } from '../../api/hooks'
 import type { PolicyChangeKind } from '../../api/types'
+import { track } from '../../surfaces/console/telemetry'
 import {
   CONSTITUTION_HASH,
   ConsoleError,
@@ -31,6 +32,7 @@ export function Compile() {
     proposedHash: data.proposedHash,
   }
   const replay = () => {
+    track('constitution_replay_started')
     replayCompile.mutate(actionRequest, {
       onSuccess: (apiReceipt) => {
         setReplayComplete(true)
@@ -49,6 +51,7 @@ export function Compile() {
   const promote = () => {
     promoteCompile.mutate(actionRequest, {
       onSuccess: (apiReceipt) => {
+        track('constitution_promoted')
         setReceipt(apiReceipt)
       },
       onError: () => {
@@ -61,6 +64,7 @@ export function Compile() {
     })
   }
   const discard = () => {
+    track('constitution_compile_discarded')
     setReplayComplete(false)
     setReceipt({
       title: 'Local compile state cleared',

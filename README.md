@@ -1,8 +1,27 @@
-ACGS / gove-zone is a vendor-neutral, receipt-gated governance layer for AI-agent side effects.
+ACGS is a governed agent infrastructure project. Its core enforcement kernel is gove-zone, a vendor-neutral, receipt-gated governance layer for AI-agent side effects.
 
 # ACGS
 
-**Receipt-gated runtime governance for AI-agent side effects.**
+**Runtime governance for autonomous agents. Alpha.**
+
+ACGS's core enforcement kernel, gove-zone, is a fail-closed admission layer
+between an agent's proposed tool call and its execution. ACGS enforces
+fail-closed execution through explicit admission, policy evaluation, evidence
+capture, and receipt validation before side effects occur, and supports
+fail-closed principal authorization when enabled. Fail any of them and the side
+effect does not occur.
+
+The model should propose; the runtime should govern.
+
+**Status:** ACGS the platform is Alpha (`0.1.0`). The gove-zone enforcement
+kernel is a separate line at `1.0.0rc1` with a Beta package classifier — a
+package-maturity statement about the kernel, not about the platform. Neither is
+a production, certification, or assurance claim. The enforcement path is
+implemented and testable. Formal verification is a roadmap item, not a result.
+Receipt signing is configured by
+deployment profile: production profiles require signed receipts, development
+profiles may allow unsigned operation. See [SECURITY.md](SECURITY.md) for the
+current threat-model scope.
 
 [![gove-zone: 1.0.0rc1](https://img.shields.io/badge/gove--zone-1.0.0rc1-blueviolet.svg)](packages/gove-zone/CHANGELOG.md)
 ![python: 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)
@@ -17,6 +36,25 @@ data, communications, or money. It evaluates policy, issues a project-defined
 Decision Receipt that binds the actor, action, exact arguments, tenant, and
 policy evidence, and lets a governed executor proceed only when that receipt
 verifies.
+
+### Enforcement boundary
+
+**"Wired through ACGS" means a side effect that is registered as a tool and
+dispatched through the gate.** For those paths, admission is fail-closed: a
+missing, tampered, expired, or mismatched receipt, a policy-evaluation failure,
+or an audit-write failure all deny, and ambiguity resolves to deny.
+
+Wiring is the integrator's responsibility, and it is the boundary. ACGS runs
+in-process by default, and an in-process library cannot prevent code in the same
+process from bypassing it — an unregistered call, an agent holding a shell tool,
+or a compromised host are outside what the kernel can mediate. That is a
+placement fact, not a defect. A static wiring check does run in CI, but it
+covers the shipped examples only — nothing detects an ungoverned path added
+outside that set.
+
+See [docs/ENFORCEMENT-BOUNDARY.md](docs/ENFORCEMENT-BOUNDARY.md) for what is
+enforced, what is not, the trust preconditions, and the per-adversary coverage
+matrix.
 
 ACGS complements agent frameworks, MCP, IAM, sandboxes, content guardrails,
 and SIEM. It does not replace them. The ACGS monorepo contains several
@@ -53,7 +91,30 @@ invalid receipt fails closed at the governed executor. When a shared
 ## Verify the invariant locally
 
 Prerequisites: Python 3.11+, [`uv`](https://docs.astral.sh/uv/), and a POSIX
-shell such as Bash for the commands below. Run from the repository root:
+shell such as Bash. This runs on a plain clone — no submodules or private tokens
+required.
+
+The one-command reviewer path:
+
+```bash
+make review
+```
+
+`make review` runs the documentation smoke suite, the full `gove-zone`
+enforcement-kernel test suite, and the receipt-gated invariant smoke, and prints
+`review OK` when the core invariant is proven. The full multi-package CI gate is
+`make verify` (adds JS, typecheck, submodule-bound packages, and coverage/budget
+gates; it needs submodules and all stacks present). `make verify` is a superset
+of `make review`'s checks.
+
+The separate constitutional hash verification
+(`scripts/verify_constitutional_hashes.py`) requires the complete source tree,
+including required submodule contents, and fails closed on a bare clone. The
+core governance kernel remains independently reproducible without optional
+research references — the `make review` path above needs no submodules. See
+[`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md).
+
+Or run the underlying steps directly from the repository root:
 
 ```bash
 tmp="$(mktemp -d)"
@@ -62,6 +123,15 @@ uv run --package gove-zone gove-zone smoke \
 uv run --extra crypto --package gove-zone python \
   packages/gove-zone/examples/receipt-gated-execution/demo.py
 uv run --package gove-zone python examples/tamper_demo/demo.py
+```
+
+The console package also ships a dependency-free local buyer-evidence gallery
+for reviewer handoff. It is local buyer-evidence only, not hosted Storybook
+proof, production deployment proof, legal review, or external assurance.
+
+```bash
+pnpm -F acgi-ai run evidence:build
+pnpm -F acgi-ai run test:buyer-evidence
 ```
 
 Expected result: the allowed action executes; denied, missing, tampered, and
@@ -159,6 +229,7 @@ The complete workspace registry and package boundaries are documented in
 |---|---|
 | Prove the core invariant | [`START_HERE`](docs/START_HERE.md) → [`PROOF_PATH`](docs/PROOF_PATH.md) |
 | Integrate an execution gate | [`INTEGRATION_GUIDE`](docs/INTEGRATION_GUIDE.md) → [`INTEGRATION_MATRIX`](docs/INTEGRATION_MATRIX.md) |
+| Map the layered governance stack | [`governance-stack-index`](docs/governance-stack-index.md) |
 | Review the receipt contract | [`DECISION_RECEIPT_SPEC`](docs/DECISION_RECEIPT_SPEC.md) |
 | Review security and limitations | [`SECURITY_MODEL`](docs/SECURITY_MODEL.md) → [`CLAIMS`](docs/CLAIMS.md) |
 | Understand package stability | [`API_STABILITY`](packages/gove-zone/docs/API_STABILITY.md) → [`CHANGELOG`](packages/gove-zone/CHANGELOG.md) |
@@ -177,8 +248,10 @@ make lint-docs
 For `gove-zone` package changes:
 
 ```bash
-uv run --package gove-zone python -m pytest \
-  packages/gove-zone/tests --import-mode=importlib -q
+# Run from inside the package so uv resolves gove-zone's own dependencies
+# (crypto/yaml/mcp). The root `uv run --package gove-zone …` form needs
+# `--extra crypto --extra yaml --extra mcp` added or 15 optional-dep tests fail.
+cd packages/gove-zone && uv run python -m pytest --import-mode=importlib -q
 cd packages/gove-zone && bash scripts/release_check.sh
 ```
 

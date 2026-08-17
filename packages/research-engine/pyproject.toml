@@ -1,10 +1,13 @@
 [project]
-name = "delve"
+# name: the PyPI distribution name. `delve` was already taken on PyPI by an
+# unrelated PyTorch layer-saturation tool, so this line is the supply-chain fix.
+# The import package remains `delve` (see [tool.hatch.build.targets.wheel]).
+name = "acgs-research-engine"
 version = "0.1.0"
 description = "A self-deepening research engine: fan-out research, persistent citation-backed knowledge graph, adversarial verification, loop-until-dry."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 authors = [{ name = "Martin" }]
 dependencies = []
 

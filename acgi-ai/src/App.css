@@ -101,21 +101,25 @@
   text-underline-offset: 4px;
 }
 
+/* Nav CTA matches the primary control shape: raised dark pill with a hairline
+ * ring, not a solid white block. */
 .m-nav-cta {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   white-space: nowrap;
-  padding: 10px 18px;
-  background: var(--ink);
-  color: var(--paper);
+  padding: 10px 20px;
+  background: var(--gz-surface-3);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent);
   font-size: 14px;
   font-weight: 500;
   letter-spacing: -0.005em;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
 }
 .m-nav-cta:hover {
-  background: var(--ink-2);
+  background: color-mix(in srgb, var(--ink) 12%, var(--paper));
 }
 
 /* F-A1b — hamburger toggle. Hidden at desktop; shown only at <=720
@@ -146,15 +150,22 @@
   align-items: start;
 }
 
+/* Eyebrow reads as a pill badge in the editorial-dark register: hairline ring,
+ * barely-there fill, sentence case. Colors come from the register tokens, so it
+ * follows whichever register it renders inside. */
 .m-eyebrow {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
+  gap: 8px;
+  padding: 6px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--ink-3);
   font-variant-numeric: tabular-nums;
 }
 
@@ -175,24 +186,48 @@
   margin-top: 32px;
   color: var(--ink);
   max-width: 18ch;
-  /* Keep the italic-rust word from orphaning on its own line as the
+  /* Keep the italic word from orphaning on its own line as the
      viewport flexes between the 56px and 96px clamp endpoints. Same
      reasoning as F6 on .login-h1. */
   text-wrap: balance;
+  /* Vertical ink→muted gradient fill. `color` above stays as the fallback: any
+     engine without background-clip:text renders solid --ink instead of
+     invisible text. Stops are token-derived so the gradient follows the
+     register. */
+  background-image: linear-gradient(
+    180deg,
+    var(--ink) 12%,
+    color-mix(in srgb, var(--ink) 56%, var(--paper)) 96%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
+/* Forced-colors / high-contrast: a transparent text fill would erase the
+ * headline, so drop the gradient and restore system colors. */
+@media (forced-colors: active) {
+  .m-hero h1 {
+    background-image: none;
+    -webkit-text-fill-color: currentcolor;
+    color: CanvasText;
+  }
+}
+
+/* The italic word inherits the headline gradient rather than carrying the
+ * accent: this register keeps the hero achromatic and spends crimson only on
+ * signal marks (asterism, status tags, fail_closed). */
 .m-hero h1 em {
   font-style: italic;
-  color: var(--accent);
 }
 
 .m-hero-lede {
-  font-family: var(--font-serif);
-  font-size: 20px;
-  line-height: 1.55;
+  font-family: var(--font-sans);
+  font-size: 16.5px;
+  line-height: 1.6;
   color: var(--ink-3);
-  max-width: 56ch;
-  margin-top: 28px;
+  max-width: 52ch;
+  margin-top: 26px;
 }
 
 .m-hero-actions {
@@ -243,6 +278,40 @@
 .btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* -------------------------------------------------------------------------
+ * Editorial-dark control shape. Scoped to `.marketing` so the console keeps
+ * the square-cornered control set.
+ *
+ * The default `.btn-primary` (background: --ink) would render a full-white pill
+ * on near-black — far too loud for this register. It becomes a raised dark
+ * surface with a hairline ring and a top inner highlight, and the secondary
+ * action drops to bare text. All values are token-derived via color-mix.
+ * ------------------------------------------------------------------------- */
+.marketing .btn {
+  border-radius: var(--radius-pill);
+  font-size: 14px;
+  padding: 12px 24px;
+}
+.marketing .btn-primary {
+  /* --gz-surface-3 is the raised/hover surface (#1a1a1a here). --paper-3 would
+   * be #0d0d0d, effectively invisible against the #080808 ground. */
+  background: var(--gz-surface-3);
+  color: var(--ink);
+  border-color: var(--line);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent);
+}
+.marketing .btn-primary:hover {
+  background: color-mix(in srgb, var(--ink) 12%, var(--paper));
+}
+.marketing .btn-secondary {
+  border-color: transparent;
+  color: var(--ink-3);
+}
+.marketing .btn-secondary:hover {
+  background: transparent;
+  color: var(--ink);
 }
 .btn-rust {
   background: var(--accent);
@@ -5533,21 +5602,26 @@
 /* ─────────────────────────────────────────────────────────────────────────
  * §5.1.A AI Agent Governance Hub
  * ───────────────────────────────────────────────────────────────────────── */
+/* Hub-hero secondary action. In the editorial-dark register it drops to bare
+ * text beside the primary pill (§2.7), matching .btn-secondary — a second
+ * outlined box next to the pill reads as two competing primaries. Padding and
+ * min-height stay so the 46px hit target is preserved. */
 .m-hub-hero .m-hero-actions > a:not(.btn) {
   display: inline-flex;
   align-items: center;
   min-height: 46px;
   padding: 12px 20px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  color: var(--ink);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  color: var(--ink-3);
   font-family: var(--font-sans);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 500;
 }
 
 .m-hub-hero .m-hero-actions > a:not(.btn):hover {
-  background: var(--paper-2);
+  background: transparent;
+  color: var(--ink);
 }
 
 .m-hub-cockpit .m-code pre {
@@ -8309,5 +8383,441 @@
   .m-swarm-maturity,
   .m-swarm-lite {
     margin-top: 52px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Governed-action flow, failure-to-boundary readings, and the operating
+   sequence. Drafting-plate idiom: paper grounds, hairline rules, mono numerals
+   in gold ink, rust reserved for the interaction accent (DESIGN.md §2.2).
+   No hex literals here — every colour resolves through a token in index.css.
+   --------------------------------------------------------------------------- */
+
+/* Hero proof pillars ------------------------------------------------------ */
+
+.m-hero-proof-bar {
+  list-style: none;
+  padding: var(--space-lg) 0 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-lg);
+  margin-top: var(--space-2xl);
+  border-top: 1px solid var(--line-softer);
+}
+
+.m-proof-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.m-proof-text {
+  display: block;
+  min-width: 0;
+}
+
+/* Plate numeral, not an icon badge — keeps the triptych inside the drafting
+   idiom instead of the icon-in-a-circle feature grid the design contract bans. */
+.m-proof-no {
+  flex: 0 0 auto;
+  padding-top: 1px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  color: var(--gold-ink);
+}
+
+.m-proof-title {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.m-proof-sub {
+  display: block;
+  margin-top: 3px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* Governed-action flow ---------------------------------------------------- */
+
+.m-flow-diagram {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.92fr);
+  gap: var(--space-3xl);
+  margin-top: var(--space-2xl);
+  align-items: start;
+}
+
+.m-flow-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.m-flow-step {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 16px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line-softer);
+  position: relative;
+}
+
+.m-flow-step:first-child {
+  padding-top: 0;
+}
+
+.m-flow-step:last-child {
+  border-bottom: 0;
+}
+
+/* The receipt hop is the one the whole page exists to argue for, so it carries
+   the rust rule rather than a fill — the accent stays a line, not a block. */
+.m-flow-step.is-highlight {
+  border-left: 2px solid var(--rust);
+  padding-left: 16px;
+  margin-left: -18px;
+}
+
+.m-step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gold-ink);
+}
+
+.m-flow-step.is-highlight .m-step-badge {
+  border-color: var(--rust);
+  color: var(--rust);
+}
+
+.m-flow-step h3 {
+  margin: 4px 0 6px;
+  font-family: var(--font-display);
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.m-flow-step p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+/* Specimen receipt -------------------------------------------------------- */
+
+.m-receipt-specimen {
+  margin: 0;
+  background: var(--paper-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.m-specimen-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px 8px 14px;
+  border-bottom: 1px solid var(--line-softer);
+  background: var(--paper-3);
+}
+
+.m-specimen-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* 44px minimum hit area (DESIGN.md touch-target rule) achieved with padding
+   rather than a fixed height, so the control still sits inside the 8px bar. */
+.m-specimen-copy {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 14px;
+  background: transparent;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.m-specimen-copy:hover,
+.m-specimen-copy:focus-visible {
+  border-color: var(--rust);
+  color: var(--rust);
+}
+
+.m-specimen-pre {
+  margin: 0;
+  padding: 16px 18px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--ink-2);
+  white-space: pre;
+}
+
+.m-specimen-note {
+  margin: 0;
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--line-softer);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* Failure signal -> boundary -> safer mode -------------------------------- */
+
+.m-boundaries-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-lg);
+  margin-top: var(--space-2xl);
+}
+
+.m-boundary-card {
+  display: flex;
+  flex-direction: column;
+  padding: 22px 22px 24px;
+  background: var(--paper-2);
+  border: 1px solid var(--line-softer);
+}
+
+.m-boundary-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line-softer);
+}
+
+.m-boundary-category {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* --boundary-ink is specified against --boundary (see index.css); pairing it
+   with the dark card ground drops it to ~2:1, so the pill carries its own
+   parchment background the way every other boundary chip on the site does. */
+.m-boundary-badge {
+  margin-left: auto;
+  padding: 2px 8px;
+  background: var(--boundary);
+  border: 1px solid var(--boundary-line);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--boundary-ink);
+  white-space: nowrap;
+}
+
+.m-boundary-card h3 {
+  margin: 14px 0 16px;
+  font-family: var(--font-display);
+  font-size: 19px;
+  line-height: 1.25;
+}
+
+.m-boundary-flow {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* The three readings are a descent, so each block is marked by the weight of
+   its left rule rather than by an arrow glyph a screen reader has to skip. */
+.m-boundary-block {
+  padding-left: 12px;
+  border-left: 2px solid var(--line-soft);
+}
+
+.m-boundary-block.is-failure {
+  border-left-color: var(--risk-hi);
+}
+
+.m-boundary-block.is-boundary {
+  border-left-color: var(--gold);
+}
+
+.m-boundary-block.is-safer {
+  border-left-color: var(--allow);
+}
+
+.m-boundary-block dt {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.m-boundary-block dd {
+  margin: 5px 0 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+/* Five-stage operating sequence ------------------------------------------- */
+
+.m-stage-grid {
+  list-style: none;
+  margin: var(--space-2xl) 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.m-stage-card {
+  display: flex;
+  flex-direction: column;
+  padding: 20px 18px 22px;
+  border-right: 1px solid var(--line-softer);
+}
+
+.m-stage-card:last-child {
+  border-right: 0;
+}
+
+.m-stage-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.m-stage-no {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gold-ink);
+}
+
+.m-stage-card h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+}
+
+.m-stage-question {
+  margin: 10px 0 8px;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+.m-stage-card p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.m-stage-artifact {
+  margin-top: auto;
+  padding-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.m-stage-artifact span {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.m-stage-artifact strong {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
+/* Responsive -------------------------------------------------------------- */
+
+@media (max-width: 1100px) {
+  .m-flow-diagram {
+    grid-template-columns: 1fr;
+  }
+  .m-stage-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .m-stage-card {
+    border-bottom: 1px solid var(--line-softer);
+  }
+  .m-stage-card:nth-child(2n) {
+    border-right: 0;
+  }
+}
+
+@media (max-width: 900px) {
+  .m-boundaries-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .m-hero-proof-bar {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .m-stage-grid {
+    grid-template-columns: 1fr;
+  }
+  .m-stage-card {
+    border-right: 0;
+  }
+  .m-flow-step.is-highlight {
+    margin-left: 0;
+    padding-left: 12px;
+  }
+  .m-specimen-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .m-specimen-copy {
+    width: 100%;
   }
 }

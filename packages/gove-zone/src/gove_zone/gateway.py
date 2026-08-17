@@ -1,9 +1,8 @@
 """Universal Agent Gateway — one strong gate, many agent-framework surfaces.
 
-Every agent framework surface (MCP, OpenAI function calling, LangGraph,
-Claude Code hooks, REST) is a thin *projection* onto a single governed
-chokepoint, :meth:`UniversalGateway.invoke`, which drives the full
-Policy → Receipt → Executor chain:
+Execution-owning framework surfaces (MCP, OpenAI function calling, LangGraph,
+REST) are thin *projections* onto :meth:`UniversalGateway.invoke`, which drives
+the full Policy → Receipt → Executor chain:
 
 1. **Policy** — :meth:`~gove_zone.kernel.Kernel.evaluate_and_record` evaluates
    the call under the fail-closed watchdog and appends exactly one decision to
@@ -40,16 +39,17 @@ introspects closures or object internals can reach the raw function without
 tripping it. The cryptographic closure remains the signed receipt gate plus
 offline verification of the audit chain and consumption ledger.
 
-Scope note: the Claude Code hook surface is decision + receipt only — the
+The Claude Code hook is deliberately different: it is a policy-decision, audit,
+and receipt-minting mediation surface, not a projection onto ``invoke``. The
 side effect there is executed by the host runtime, which must honor the
 returned deny. That matches the :mod:`gove_zone.integration` gate-mode story;
 it cannot be receipt-gated at the executor because the gateway does not run
 the tool. Every other surface executes through the receipt gate.
 
-Escalation resume (human approval → resumed execution) is deliberately not
-implemented here; park/approve/resume lives in
-:class:`gove_zone.adapters.mcp_gateway.GovernedGateway`. This gateway returns
-the ESCALATE envelope and stops.
+Escalation park/approve/resume is implemented at :meth:`UniversalGateway.invoke`
+via reserved tools ``gove.approve`` / ``gove.resume``. The MCP adapter
+(:class:`gove_zone.adapters.mcp_gateway.GovernedGateway`) owns the same loop
+for the stdio proxy; this gateway is the strong-gate projection.
 
 Zero runtime dependencies, matching the package: the MCP / OpenAI / REST
 surfaces operate on plain dicts; the LangGraph surface lazily imports
@@ -69,15 +69,25 @@ from pathlib import Path
 from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
+from gove_zone.capture import (
+    CaptureConfig,
+    CaptureError,
+    CaptureMode,
+    CaptureRecord,
+    capture_observation,
+    capture_record_for_decision,
+)
 from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.decision import Decision, DecisionRecord
 from gove_zone.errors import (
     AuditError,
     GoveZoneError,
     ProductionProfileError,
+    ReceiptAlreadyUsedError,
     ReceiptValidationError,
     UnknownToolError,
 )
+from gove_zone.escalation import PendingApproval, approve_escalation
 from gove_zone.executor import execute_with_receipt
 from gove_zone.integration import tool_calls_from_hook_payload
 from gove_zone.kernel import Kernel
@@ -86,14 +96,22 @@ from gove_zone.profile import GovernanceProfile
 from gove_zone.receipt import DecisionReceipt, Validator
 from gove_zone.rejection import HUMAN_APPROVAL, REVISE_AND_RETRY, rejection_dict
 from gove_zone.tool import ToolCall, normalize_path_context
+from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustRegistry
 
 __all__ = [
     "BypassAttemptError",
     "GatewayResult",
+    "MCP_APPROVE_TOOL",
+    "MCP_HUMAN_LOOP_TOOLS",
+    "MCP_RESUME_TOOL",
     "SealedTool",
     "UniversalGateway",
     "http_json_tool",
 ]
+
+MCP_APPROVE_TOOL = "gove.approve"
+MCP_RESUME_TOOL = "gove.resume"
+MCP_HUMAN_LOOP_TOOLS = frozenset({MCP_APPROVE_TOOL, MCP_RESUME_TOOL})
 
 #: matched_rules marker stamped on the synthesized DENY for a bypass attempt.
 BYPASS_RULE = "BYPASS_ATTEMPT"
@@ -104,6 +122,8 @@ BYPASS_RULE = "BYPASS_ATTEMPT"
 _SYNTHETIC_POLICY_VERSION = "gateway/synthesized/v1"
 
 _ACTOR_ALLOWLIST_RULE = "ACTOR_NOT_ALLOWED"
+HUMAN_LOOP_REFUSED_RULE = "HUMAN_LOOP_REFUSED"
+CAPACITY_REJECTED_RULE = "CAPACITY_REJECTED"
 
 #: One-shot execution grant bound to a specific SealedTool *instance*. Set by
 #: ``invoke`` immediately around the executor gate; consumed by that sealed
@@ -197,9 +217,11 @@ class GatewayResult:
 
     - ``"executed"`` — receipt verified, ledger burned, tool ran; ``result``
       and ``receipt`` are set.
+    - ``"approved"`` — a parked ESCALATE was approved via ``gove.approve``;
+      ``receipt`` is the approval receipt; the original tool did **not** run.
     - ``"denied"`` / ``"escalated"`` — policy refused; ``envelope`` carries the
       machine-readable rejection (:func:`gove_zone.rejection.rejection_dict`).
-      Nothing executed.
+      Nothing executed. An ``"escalated"`` result is parked and resumable.
     - ``"error"`` — fail-closed refusal (audit append failed, receipt gate
       refused, tool raised). ``error_class`` conveys the class name only; the
       leak posture matches :mod:`gove_zone.mcp` (no exception text that could
@@ -229,6 +251,9 @@ class GatewayResult:
             "audit_hash": self.audit_hash,
             "policy_hash": self.receipt.policy_hash,
             "signature_algorithm": self.receipt.signature_algorithm,
+            # Schema version, so a transport surface can tell a scoped (v2)
+            # authorization from an unscoped (v1) one without the receipt body.
+            "receipt_schema_version": self.receipt.receipt_schema_version,
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -262,9 +287,32 @@ class UniversalGateway:
     evaluation. ``None`` (default) delegates actor authorization entirely to
     the policy / authz layers.
 
+    ``approver_actors`` are the only principals that may call ``gove.approve``.
+    Empty (default) leaves MCP approve unavailable. The set must be disjoint
+    from ``allowed_actors`` when that allowlist is set, so a proposing agent
+    cannot also be configured as its own approver.
+
+    ``max_pending`` / ``max_pending_per_principal`` bound parked escalations.
+    Capacity is freed only by a successful resume, never by a clock. Exceeding
+    either cap is an audited DENY and the new escalation is not parked.
+
     The single-use consumption ledger is always on: every executed receipt is
     burned, so one decision authorizes at most one side effect through this
     gateway even when the profile is not strict.
+
+    **Scoped trust (receipt-v2).** Supplying ``project_id`` + ``environment_id``
+    + ``trust_epoch`` + ``trust_registry`` puts every surface of this gateway on
+    the scoped receipt-v2 contract: receipts are minted with
+    :meth:`~gove_zone.receipt.DecisionReceipt.from_record_v2` and the gate
+    resolves the signing key through the registry for the full
+    tenant/project/environment/purpose scope before any side effect (see
+    :mod:`gove_zone.trust`). Scoped mode is all-or-nothing and fail-closed at
+    construction: a partial scope, a missing ``trust_registry``, a profile with
+    no ``signer``, or no ``receipt_ttl_seconds`` raises ``ValueError`` rather
+    than silently downgrading to unscoped v1 receipts. There is no bypass flag —
+    ``trust_registry`` is threaded into the gate unconditionally, so a v2
+    receipt presented to an unscoped gateway is refused by
+    :func:`~gove_zone.executor.execute_with_receipt`.
     """
 
     def __init__(
@@ -282,6 +330,15 @@ class UniversalGateway:
         ledger_path: str | Path | None = None,
         receipt_ttl_seconds: float | None = None,
         allowed_actors: frozenset[str] | set[str] | None = None,
+        capture_config: CaptureConfig | None = None,
+        project_id: str = "",
+        environment_id: str = "",
+        trust_epoch: int | None = None,
+        trust_registry: ReceiptTrustRegistry | None = None,
+        trust_purpose: str = DECISION_RECEIPT_PURPOSE,
+        approver_actors: frozenset[str] | set[str] | None = None,
+        max_pending: int = 256,
+        max_pending_per_principal: int = 64,
     ) -> None:
         self.tenant_id = tenant_id
         self.execution_boundary = execution_boundary
@@ -292,6 +349,29 @@ class UniversalGateway:
         self.policy_bundle_id = policy_bundle_id or policy.version
         self.receipt_ttl_seconds = receipt_ttl_seconds
         self.allowed_actors = frozenset(allowed_actors) if allowed_actors is not None else None
+        self.capture_config = capture_config
+        self.project_id = project_id
+        self.environment_id = environment_id
+        self.trust_epoch = trust_epoch
+        self.trust_registry = trust_registry
+        self.trust_purpose = trust_purpose
+        self.scoped_trust = self._resolve_scoped_trust()
+        self.approver_actors = frozenset(approver_actors or ())
+        if self.allowed_actors is not None:
+            clash = sorted(self.allowed_actors & self.approver_actors)
+            if clash:
+                raise ValueError(
+                    "approver_actors collide with allowed_actors "
+                    f"{clash}; a proposing actor must not be able to self-approve"
+                )
+        if max_pending <= 0 or max_pending_per_principal <= 0:
+            raise ValueError(
+                "escalation capacity caps must be positive: "
+                f"max_pending={max_pending}, "
+                f"max_pending_per_principal={max_pending_per_principal}"
+            )
+        self.max_pending = max_pending
+        self.max_pending_per_principal = max_pending_per_principal
 
         if profile.require_expiry and receipt_ttl_seconds is None:
             # Fail loud at construction instead of rejecting 100% of calls at
@@ -302,6 +382,15 @@ class UniversalGateway:
                 "(require_expiry=True) but receipt_ttl_seconds is None; every "
                 "minted receipt would be rejected at the gate — supply "
                 "receipt_ttl_seconds"
+            )
+        if (
+            profile.is_production
+            and capture_config is not None
+            and capture_config.mode in (CaptureMode.BEST_EFFORT, CaptureMode.DISABLED)
+        ):
+            raise ValueError(
+                "production profile rejects BEST_EFFORT and DISABLED runtime capture modes; "
+                "use REQUIRED capture or omit capture_config for legacy compatibility"
             )
 
         resolved_audit = Path(audit_path or Path(".gove-zone") / "gateway-audit.jsonl")
@@ -330,6 +419,48 @@ class UniversalGateway:
         self._openai_specs: dict[str, dict[str, Any]] = {}
         self._kernels: dict[str, Kernel] = {}
         self._bypass_attempts: list[dict[str, Any]] = []
+        self._pending: dict[str, PendingApproval] = {}
+        self._approvals: dict[str, tuple[DecisionReceipt, str]] = {}
+
+    def _resolve_scoped_trust(self) -> bool:
+        """Decide (and validate) whether this gateway runs the v2 scoped contract.
+
+        Fail loud at construction rather than at every call, matching the
+        ``require_expiry`` precedent above: a gateway configured for a scope it
+        cannot satisfy would mint receipts that are refused 100% of the time —
+        or, worse, quietly fall back to unscoped v1. Scoped trust is
+        all-or-nothing: naming any part of the scope commits to all of it.
+        """
+        requested = (
+            bool(self.project_id)
+            or bool(self.environment_id)
+            or self.trust_epoch is not None
+            or self.trust_registry is not None
+        )
+        if not requested:
+            return False
+
+        missing: list[str] = []
+        if not self.project_id or not self.project_id.strip():
+            missing.append("project_id")
+        if not self.environment_id or not self.environment_id.strip():
+            missing.append("environment_id")
+        if type(self.trust_epoch) is not int or self.trust_epoch <= 0:
+            missing.append("trust_epoch (a positive integer)")
+        if self.trust_registry is None:
+            missing.append("trust_registry")
+        if self.profile.signer is None:
+            missing.append("a profile signer (receipt v2 must carry a trusted signature)")
+        if self.receipt_ttl_seconds is None:
+            missing.append("receipt_ttl_seconds (receipt v2 requires expires_at)")
+        if not isinstance(self.trust_purpose, str) or not self.trust_purpose.strip():
+            missing.append("trust_purpose")
+        if missing:
+            raise ValueError(
+                "scoped receipt-v2 trust is all-or-nothing and fail-closed; this "
+                "gateway names a scoped-trust setting but is missing: " + ", ".join(missing)
+            )
+        return True
 
     # -- registry ----------------------------------------------------------- #
 
@@ -345,6 +476,11 @@ class UniversalGateway:
         """
         if not name or not name.strip():
             raise ValueError("tool name is required")
+        if name in MCP_HUMAN_LOOP_TOOLS:
+            raise ValueError(
+                f"tool {name!r} is reserved for the human-approval loop and "
+                "cannot be registered as an executable tool"
+            )
         if name in self._tools:
             raise ValueError(f"tool {name!r} is already registered with this gateway")
         sealed = SealedTool(name, fn, self)
@@ -388,6 +524,8 @@ class UniversalGateway:
         """
         if not actor or not actor.strip():
             raise ValueError("actor is required for governed invocation (fail-closed)")
+        if tool in MCP_HUMAN_LOOP_TOOLS:
+            return self._human_loop_invoke(actor, tool, dict(args or {}))
         if tool not in self._tools:
             raise UnknownToolError(tool)
 
@@ -438,13 +576,28 @@ class UniversalGateway:
                 ),
             )
         if record.decision is Decision.ESCALATE:
+            capacity = self._enforce_pending_capacity(call, actor, tool)
+            if capacity is not None:
+                return capacity
+            pending = PendingApproval(record, audit_hash, dict(call.args))
+            self._pending[record.event_id] = pending
             return GatewayResult(
                 status="escalated",
                 tool=tool,
                 actor=actor,
                 audit_hash=audit_hash,
                 envelope=rejection_dict(
-                    record, audit_hash, resumable=False, resolution=HUMAN_APPROVAL
+                    record,
+                    audit_hash,
+                    resumable=True,
+                    resolution=HUMAN_APPROVAL,
+                    approval={
+                        "via": "approve_escalation",
+                        "event_id": record.event_id,
+                        "how_to_approve": (
+                            "tools/call gove.approve {event_id} as an approver_actors principal"
+                        ),
+                    },
                 ),
             )
         if record.decision is Decision.TRANSFORM and record.transformed_args is None:
@@ -463,20 +616,18 @@ class UniversalGateway:
             else dict(call.args)
         )
 
-        receipt = DecisionReceipt.from_record(
-            record,
-            audit_hash=audit_hash,
-            previous_audit_hash=previous_audit_hash,
-            tenant_id=self.tenant_id,
-            execution_boundary=self.execution_boundary,
-            policy_bundle_id=self.policy_bundle_id,
-            policy_hash=self.policy.version,
-            request_id=record.decision_request_hash or record.event_id,
-            validator=self.validator,
-            authority=self.authority,
-            expires_at=self._receipt_expires_at(),
-            signer=self.profile.signer,
-        )
+        try:
+            self._capture_before_receipt(record, audit_hash)
+        except CaptureError as exc:
+            return GatewayResult(
+                status="error",
+                tool=tool,
+                actor=actor,
+                audit_hash=audit_hash,
+                error_class=type(exc).__name__,
+            )
+
+        receipt = self._mint_receipt(record, audit_hash, previous_audit_hash)
 
         grant = _GateGrant(self._tools[tool])
         token = _ACTIVE_GRANT.set(grant)
@@ -529,6 +680,269 @@ class UniversalGateway:
             receipt=receipt,
         )
 
+    def _capture_before_receipt(self, record: DecisionRecord, audit_hash: str) -> None:
+        """Persist configured D2 capture evidence before minting a receipt.
+
+        Capture is intentionally an issuer-path precondition only. It does not
+        feed the executor and it does not alter the DecisionReceipt schema.
+        """
+
+        config = self.capture_config
+        if config is None:
+            return
+        if config.mode is CaptureMode.DISABLED:
+            return
+        capture = self._capture_record(record, audit_hash, outcome="captured")
+        if config.mode is CaptureMode.REQUIRED:
+            if config.store is None or config.observation_sink is None:
+                raise CaptureError("required capture mode is missing a store or observation sink")
+            try:
+                ack = config.store.append(capture)
+                ack.validate_for(capture)
+                config.observation_sink.append(capture_observation("capture_persisted", capture))
+            except CaptureError as exc:
+                self._emit_capture_failed_observation(capture, exc)
+                raise
+            except Exception as exc:  # noqa: BLE001 - any required-capture failure blocks
+                self._emit_capture_failed_observation(capture, exc)
+                raise CaptureError("required capture failed") from exc
+            return
+
+        try:
+            if config.store is None:
+                raise CaptureError("best-effort capture mode has no store")
+            ack = config.store.append(capture)
+            ack.validate_for(capture)
+            if config.observation_sink is not None:
+                config.observation_sink.append(capture_observation("capture_persisted", capture))
+        except Exception as exc:  # noqa: BLE001 - best-effort must not authorize by silence
+            failed = self._capture_record(
+                record,
+                audit_hash,
+                outcome="capture_failed",
+                reason="best-effort-capture-failed",
+            )
+            if config.observation_sink is not None:
+                try:
+                    config.observation_sink.append(
+                        capture_observation(
+                            "capture_failed", failed, error_class=type(exc).__name__
+                        )
+                    )
+                except Exception:
+                    # Local/dev best-effort mode is explicitly non-authoritative:
+                    # a failed observation must not be upgraded into a capture
+                    # success claim, but it also must not block execution.
+                    return
+
+    def _emit_capture_failed_observation(self, capture: CaptureRecord, exc: Exception) -> None:
+        config = self.capture_config
+        if config is None or config.observation_sink is None:
+            return
+        failed = capture_record_for_decision(
+            tenant_id=capture.tenant_id,
+            event_id=capture.event_id,
+            audit_event_hash=capture.audit_event_hash,
+            policy_bundle_id=capture.policy_bundle_id,
+            policy_version=capture.policy_version,
+            policy_hash=capture.policy_hash,
+            evaluator_version=capture.evaluator_version,
+            projection_version=capture.projection_version,
+            decision_time=capture.decision_time,
+            field_status=capture.field_status,
+            privacy_outcome=capture.privacy_outcome,
+            capture_outcome="capture_failed",
+            capture_reason="required-capture-failed",
+        )
+        try:
+            config.observation_sink.append(
+                capture_observation("capture_failed", failed, error_class=type(exc).__name__)
+            )
+        except Exception:
+            # REQUIRED still blocks issuance. The secondary observation failure
+            # must not hide the original capture failure or permit a receipt.
+            return
+
+    def _capture_record(
+        self,
+        record: DecisionRecord,
+        audit_hash: str,
+        *,
+        outcome: str,
+        reason: str = "captured-after-audit-before-receipt",
+    ) -> CaptureRecord:
+        config = self.capture_config
+        if config is None:
+            raise CaptureError("capture is not configured")
+        return capture_record_for_decision(
+            tenant_id=self.tenant_id,
+            event_id=record.event_id,
+            audit_event_hash=audit_hash,
+            policy_bundle_id=self.policy_bundle_id,
+            policy_version=record.policy_version,
+            policy_hash=self.policy.version,
+            evaluator_version=config.evaluator_version,
+            projection_version=config.projection_version,
+            decision_time=record.timestamp_iso,
+            field_status=config.field_status,
+            privacy_outcome=config.privacy_outcome,
+            capture_outcome=outcome,
+            capture_reason=reason,
+        )
+
+    def _human_loop_invoke(self, actor: str, tool: str, args: dict[str, Any]) -> GatewayResult:
+        event_id = args.get("event_id")
+        if set(args) != {"event_id"} or not isinstance(event_id, str) or not event_id.strip():
+            return self._human_loop_denied(
+                actor, tool, "invalid reserved-tool arguments", code="invalid_args"
+            )
+        if tool == MCP_APPROVE_TOOL:
+            return self._approve_pending(actor, event_id)
+        return self._resume_pending(actor, event_id)
+
+    def _approve_pending(self, actor: str, event_id: str) -> GatewayResult:
+        if actor not in self.approver_actors:
+            return self._human_loop_denied(
+                actor, MCP_APPROVE_TOOL, "caller is not a mapped approver", code="not_approver"
+            )
+        pending = self._pending.get(event_id)
+        if pending is None:
+            return self._human_loop_denied(
+                actor, MCP_APPROVE_TOOL, "unknown pending event", code="unknown_pending"
+            )
+        if actor == pending.record.actor:
+            return self._human_loop_denied(
+                actor, MCP_APPROVE_TOOL, "self-approval is forbidden", code="self_approval"
+            )
+        if self.scoped_trust:
+            # approve_escalation mints v1 via from_record. A scoped gateway
+            # must not silently resume that receipt under weaker trust.
+            return self._human_loop_denied(
+                actor,
+                MCP_APPROVE_TOOL,
+                "scoped receipt-v2 approval minting is not available",
+                code="scoped_v1_forbidden",
+            )
+        try:
+            receipt = approve_escalation(
+                pending,
+                validator=Validator(validator_id=actor, role="approver"),
+                authority=self.authority,
+                tenant_id=self.tenant_id,
+                execution_boundary=self.execution_boundary,
+                policy_bundle_id=self.policy_bundle_id,
+                policy_hash=self.policy.version,
+                audit=self._audit,
+                expires_at=self._receipt_expires_at(),
+                signer=self.profile.signer,
+            )
+        except (ReceiptValidationError, GoveZoneError):
+            return self._human_loop_denied(
+                actor, MCP_APPROVE_TOOL, "approval refused", code="approval_refused"
+            )
+        self._approvals[event_id] = (receipt, receipt.audit_event_hash)
+        return GatewayResult(
+            status="approved",
+            tool=MCP_APPROVE_TOOL,
+            actor=actor,
+            audit_hash=receipt.audit_event_hash,
+            receipt=receipt,
+            envelope={"event_id": event_id, "executed": False},
+        )
+
+    def _resume_pending(self, actor: str, event_id: str) -> GatewayResult:
+        pending = self._pending.get(event_id)
+        if pending is None:
+            return self._human_loop_denied(
+                actor, MCP_RESUME_TOOL, "unknown pending event", code="unknown_pending"
+            )
+        if actor != pending.record.actor:
+            return self._human_loop_denied(
+                actor,
+                MCP_RESUME_TOOL,
+                "only the proposing actor may resume",
+                code="not_proposer",
+            )
+        captured = self._approvals.get(event_id)
+        if captured is None:
+            return self._human_loop_denied(
+                actor, MCP_RESUME_TOOL, "pending is not approved", code="not_approved"
+            )
+        receipt, approval_hash = captured
+        # Resume is a real execution. Capture uses the parked ESCALATE record
+        # (issuer-path evidence) before the sealed receipt gate runs.
+        try:
+            self._capture_before_receipt(pending.record, approval_hash)
+        except CaptureError as exc:
+            return GatewayResult(
+                status="error",
+                tool=MCP_RESUME_TOOL,
+                actor=actor,
+                error_class=type(exc).__name__,
+            )
+        sealed = self._tools.get(pending.record.tool)
+        if sealed is None:
+            return GatewayResult(
+                status="error",
+                tool=MCP_RESUME_TOOL,
+                actor=actor,
+                error_class="UnknownToolError",
+            )
+        grant = _GateGrant(sealed)
+        token = _ACTIVE_GRANT.set(grant)
+        try:
+            result = execute_with_receipt(
+                tool_fn=sealed,
+                args=dict(pending.args),
+                receipt=receipt,
+                expected_tenant_id=self.tenant_id,
+                expected_execution_boundary=self.execution_boundary,
+                expected_action=pending.record.tool,
+                expected_actor=pending.record.actor,
+                expected_audit_hash=approval_hash,
+                policy=self.policy,
+                **self._gate_kwargs(),
+            )
+        except ProductionProfileError:
+            raise
+        except ReceiptAlreadyUsedError as exc:
+            self._evict_pending(event_id)
+            return GatewayResult(
+                status="error",
+                tool=MCP_RESUME_TOOL,
+                actor=actor,
+                error_class=type(exc).__name__,
+            )
+        except ReceiptValidationError as exc:
+            return GatewayResult(
+                status="error",
+                tool=MCP_RESUME_TOOL,
+                actor=actor,
+                error_class=type(exc).__name__,
+            )
+        except BypassAttemptError:
+            self._evict_pending(event_id)
+            raise
+        except Exception as exc:  # noqa: BLE001 — tool fn raised after ledger burn
+            self._evict_pending(event_id)
+            return GatewayResult(
+                status="error",
+                tool=MCP_RESUME_TOOL,
+                actor=actor,
+                error_class=type(exc).__name__,
+            )
+        finally:
+            _ACTIVE_GRANT.reset(token)
+        self._evict_pending(event_id)
+        return GatewayResult(
+            status="executed",
+            tool=pending.record.tool,
+            actor=actor,
+            audit_hash=receipt.audit_event_hash,
+            result=result,
+            receipt=receipt,
+        )
+
     # -- bypass detection ---------------------------------------------------- #
 
     def bypass_attempts(self) -> tuple[dict[str, Any], ...]:
@@ -556,6 +970,75 @@ class UniversalGateway:
                 "audit_hash": audit_hash,
                 "timestamp_iso": datetime.now(UTC).isoformat(),
             }
+        )
+
+    def _evict_pending(self, event_id: str) -> None:
+        self._pending.pop(event_id, None)
+        self._approvals.pop(event_id, None)
+
+    def _human_loop_denied(self, actor: str, tool: str, reason: str, *, code: str) -> GatewayResult:
+        """Audited fail-closed refusal for a reserved approve/resume call."""
+        call = ToolCall(name=tool, args={}, actor=actor)
+        try:
+            record, audit_hash = self._append_synthesized_deny(
+                call,
+                rule=f"{HUMAN_LOOP_REFUSED_RULE}:{code}",
+                reason=reason,
+            )
+        except AuditError:
+            return GatewayResult(
+                status="denied",
+                tool=tool,
+                actor=actor,
+                envelope={"decision": "deny", "reason": reason, "audit_hash": None},
+            )
+        return GatewayResult(
+            status="denied",
+            tool=tool,
+            actor=actor,
+            audit_hash=audit_hash,
+            envelope=rejection_dict(
+                record, audit_hash, resumable=False, resolution=REVISE_AND_RETRY
+            ),
+        )
+
+    def _enforce_pending_capacity(
+        self, call: ToolCall, actor: str, tool: str
+    ) -> GatewayResult | None:
+        """Refuse a new park when the global or per-principal cap is full."""
+        global_full = len(self._pending) >= self.max_pending
+        principal_pending = sum(
+            1 for pending in self._pending.values() if pending.record.actor == actor
+        )
+        principal_full = principal_pending >= self.max_pending_per_principal
+        if not (global_full or principal_full):
+            return None
+        scope = "pending" if global_full else "principal"
+        try:
+            record, audit_hash = self._append_synthesized_deny(
+                call,
+                rule=f"{CAPACITY_REJECTED_RULE}:{scope}",
+                reason="escalation capacity exhausted; call refused",
+            )
+        except AuditError:
+            return GatewayResult(
+                status="denied",
+                tool=tool,
+                actor=actor,
+                envelope={
+                    "decision": "deny",
+                    "reason": "escalation capacity exhausted; call refused",
+                    "audit_hash": None,
+                },
+            )
+        return GatewayResult(
+            status="denied",
+            tool=tool,
+            actor=actor,
+            audit_hash=audit_hash,
+            envelope=rejection_dict(
+                record, audit_hash, resumable=False, resolution=REVISE_AND_RETRY
+            ),
         )
 
     def _append_synthesized_deny(
@@ -592,6 +1075,36 @@ class UniversalGateway:
             return ""
         return (datetime.now(UTC) + timedelta(seconds=self.receipt_ttl_seconds)).isoformat()
 
+    def _mint_receipt(
+        self, record: DecisionRecord, audit_hash: str, previous_audit_hash: str
+    ) -> DecisionReceipt:
+        """Mint the receipt for one decision — v2 under scoped trust, else v1."""
+        common: dict[str, Any] = {
+            "audit_hash": audit_hash,
+            "previous_audit_hash": previous_audit_hash,
+            "tenant_id": self.tenant_id,
+            "execution_boundary": self.execution_boundary,
+            "policy_bundle_id": self.policy_bundle_id,
+            "policy_hash": self.policy.version,
+            "request_id": record.decision_request_hash or record.event_id,
+            "validator": self.validator,
+            "authority": self.authority,
+            "expires_at": self._receipt_expires_at(),
+        }
+        if not self.scoped_trust:
+            return DecisionReceipt.from_record(record, signer=self.profile.signer, **common)
+        signer = self.profile.signer
+        if signer is None or self.trust_epoch is None:  # pragma: no cover - guarded at __init__
+            raise ValueError("scoped receipt-v2 minting requires a signer and a trust epoch")
+        return DecisionReceipt.from_record_v2(
+            record,
+            project_id=self.project_id,
+            environment_id=self.environment_id,
+            trust_epoch=self.trust_epoch,
+            signer=signer,
+            **common,
+        )
+
     def _gate_kwargs(self) -> dict[str, Any]:
         # The strict profile's as_gate_kwargs() already emits
         # consumption_ledger; __init__ guarantees self._ledger IS that ledger,
@@ -599,13 +1112,22 @@ class UniversalGateway:
         # adapters.mcp_gateway._gate_kwargs).
         kwargs = dict(self.profile.as_gate_kwargs())
         kwargs["consumption_ledger"] = self._ledger
+        # Threaded unconditionally (``None`` when unscoped) so the executor's
+        # fail-closed v2 branch is load-bearing on this path: a receipt-v2
+        # presented to a gateway with no registry is refused, never executed.
+        kwargs["trust_registry"] = self.trust_registry
+        if self.scoped_trust:
+            kwargs["trust_purpose"] = self.trust_purpose
+            kwargs["expected_project_id"] = self.project_id
+            kwargs["expected_environment_id"] = self.environment_id
         return kwargs
 
     # -- MCP surface ---------------------------------------------------------- #
 
     def mcp_tools_list(self) -> dict[str, Any]:
-        """MCP ``tools/list`` result: exactly the sealed registry."""
-        return {"tools": [{"name": name} for name in self.tool_names()]}
+        """MCP ``tools/list``: reserved human-loop tools plus the sealed registry."""
+        reserved = [{"name": MCP_APPROVE_TOOL}, {"name": MCP_RESUME_TOOL}]
+        return {"tools": reserved + [{"name": name} for name in self.tool_names()]}
 
     def handle_mcp_call(self, request: Mapping[str, Any], *, actor: str) -> dict[str, Any]:
         """Route one MCP ``tools/call`` request (full JSON-RPC or bare params)
@@ -640,6 +1162,27 @@ class UniversalGateway:
         except UnknownToolError:
             return _mcp_error(f"tool not registered: {name!r}")
 
+        if outcome.status == "approved":
+            event_id = ""
+            if isinstance(outcome.envelope, Mapping):
+                event_id = str(outcome.envelope.get("event_id") or "")
+            return {
+                "isError": False,
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"gove-zone APPROVED {event_id}; not executed",
+                    }
+                ],
+                "_meta": {
+                    "gove_zone": {
+                        "decision": "allow",
+                        "executed": False,
+                        "escalation_event_id": event_id,
+                        **outcome.receipt_anchors(),
+                    }
+                },
+            }
         if outcome.executed:
             return {
                 "isError": False,
@@ -649,6 +1192,9 @@ class UniversalGateway:
         meta: dict[str, Any] = {"decision": outcome.status}
         if outcome.envelope is not None:
             meta["envelope"] = outcome.envelope
+            approval = outcome.envelope.get("approval")
+            if isinstance(approval, Mapping) and approval.get("event_id"):
+                meta["escalation_event_id"] = approval["event_id"]
         if outcome.error_class:
             meta["error_class"] = outcome.error_class
         return {
@@ -791,9 +1337,13 @@ class UniversalGateway:
         *,
         actor: str,
         action_kind: str = "PreToolUse",
+        call_factory: Callable[..., Sequence[ToolCall]] | None = None,
     ) -> dict[str, Any]:
-        """Decide one Claude Code hook event (Policy → Receipt; the host runtime
-        is the executor leg and must honor the returned decision).
+        """Decide one Claude Code hook event (Policy → Receipt only).
+
+        The host runtime owns any later side effect and must honor the returned
+        decision. This method does not call ``execute_with_receipt`` and must not
+        be described as receipt-gated side-effect execution.
 
         Batch-aware, deny-wins: multi-call payloads (OpenAI Responses /
         ``tool_calls`` batches, per :func:`gove_zone.integration.
@@ -808,28 +1358,80 @@ class UniversalGateway:
 
         Fail-closed: an unrecordable decision (audit failure) or any
         governance error returns ``"deny"``.
+
+        ``call_factory`` (optional) replaces the default payload → ``ToolCall``
+        normalization with a caller-supplied one, called as
+        ``factory(payload, action_kind=..., actor=...)``. It exists so a surface
+        can classify the proposed call *structurally* before policy evaluation —
+        :func:`gove_zone.execution.execution_tool_calls_from_hook_payload` maps a
+        shell invocation onto its ``env.*`` execution surface this way. The
+        factory only chooses how the proposed action is *named and described*;
+        every decision, audit append, and receipt still runs through the same
+        kernel below. It cannot choose or replace the gateway actor: a mismatch
+        denies the entire batch before evaluation, audit, or receipt minting.
+        ``None`` (the default) keeps the existing behavior exactly.
         """
         if not actor or not actor.strip():
             raise ValueError("actor is required for hook governance (fail-closed)")
-        calls = tool_calls_from_hook_payload(dict(payload), action_kind=action_kind, actor=actor)
+        factory = call_factory if call_factory is not None else tool_calls_from_hook_payload
+        try:
+            calls = tuple(factory(dict(payload), action_kind=action_kind, actor=actor))
+        except Exception as exc:  # noqa: BLE001 - a crashing normalizer must fail closed
+            # A factory that raises on a malformed or unsupported payload is a
+            # governance failure, not a caller contract error: direct
+            # integrations rely on this method's documented fail-closed
+            # response shape, so the crash must become a deny, not an escaped
+            # exception that drops the response contract.
+            return _hook_response(
+                action_kind, "deny", f"call normalization failed: {type(exc).__name__}"
+            )
+        if not all(isinstance(call, ToolCall) for call in calls):
+            # Result validation is part of the same boundary: a factory
+            # returning a non-ToolCall would otherwise crash the actor-binding
+            # check below and escape the response contract the same way.
+            return _hook_response(action_kind, "deny", "call factory returned a non-ToolCall")
         if not calls:
             return _hook_response(action_kind, "deny", "no governable call in hook payload")
+        if any(call.actor != actor for call in calls):
+            return _hook_response(action_kind, "deny", "call factory actor mismatch")
 
         if self.allowed_actors is not None and actor not in self.allowed_actors:
-            return _hook_response(
-                action_kind, "deny", f"actor {actor!r} is not in the gateway actor allowlist"
-            )
+            reason = f"actor {actor!r} is not in the gateway actor allowlist"
+            # `invoke` records this condition through `_append_synthesized_deny`;
+            # the hook surface must too, or repeated unauthorized-principal
+            # attempts would be invisible to chain verification and incident
+            # review. One record per proposed call keeps the "every call is
+            # audited individually" contract; an unrecordable deny still
+            # denies (the refusal never depends on the append succeeding).
+            for call in calls:
+                try:
+                    self._append_synthesized_deny(call, rule=_ACTOR_ALLOWLIST_RULE, reason=reason)
+                except AuditError:
+                    break
+            return _hook_response(action_kind, "deny", reason)
 
         decided: list[tuple[Any, str, str]] = []  # (record, audit_hash, previous_audit_hash)
         for call in calls:
-            previous_audit_hash = self._audit.last_hash()
+            # Source previous_audit_hash from the append result, NOT a separate
+            # pre-read: ``append`` computes ``previous_hash`` under the store's
+            # exclusive lock against the real in-chain predecessor, so the
+            # receipt's chain-linkage claim stays accurate even when another
+            # writer advances the head between decisions (a lock-free
+            # ``last_hash()`` pre-read could be superseded before the locked
+            # write and record a stale anchor).
             try:
-                record, audit_hash = self._kernel_for(actor).evaluate_and_record(call)
+                audited = self._kernel_for(actor).evaluate_and_append(call)
             except GoveZoneError as exc:
                 return _hook_response(
                     action_kind, "deny", f"governance decision unavailable: {type(exc).__name__}"
                 )
-            decided.append((record, audit_hash, previous_audit_hash))
+            decided.append(
+                (
+                    audited.record,
+                    audited.audit_hash,
+                    str(audited.append_result.get("previous_hash", "")),
+                )
+            )
 
         denied = [record for record, _, _ in decided if record.decision is Decision.DENY]
         if denied:
@@ -847,22 +1449,19 @@ class UniversalGateway:
                 record.reason or f"{record.decision.value} requires human review",
             )
 
+        for record, audit_hash, _previous_audit_hash in decided:
+            try:
+                self._capture_before_receipt(record, audit_hash)
+            except CaptureError as exc:
+                return _hook_response(
+                    action_kind,
+                    "deny",
+                    f"runtime capture unavailable: {type(exc).__name__}",
+                )
+
         anchors: list[dict[str, Any]] = []
         for record, audit_hash, previous_audit_hash in decided:
-            receipt = DecisionReceipt.from_record(
-                record,
-                audit_hash=audit_hash,
-                previous_audit_hash=previous_audit_hash,
-                tenant_id=self.tenant_id,
-                execution_boundary=self.execution_boundary,
-                policy_bundle_id=self.policy_bundle_id,
-                policy_hash=self.policy.version,
-                request_id=record.decision_request_hash or record.event_id,
-                validator=self.validator,
-                authority=self.authority,
-                expires_at=self._receipt_expires_at(),
-                signer=self.profile.signer,
-            )
+            receipt = self._mint_receipt(record, audit_hash, previous_audit_hash)
             anchors.append(
                 {
                     "tool": record.tool,
@@ -870,6 +1469,7 @@ class UniversalGateway:
                     "audit_hash": audit_hash,
                     "policy_hash": self.policy.version,
                     "signature_algorithm": receipt.signature_algorithm,
+                    "receipt_schema_version": receipt.receipt_schema_version,
                 }
             )
         response = _hook_response(action_kind, "allow", "allowed by policy")
@@ -912,7 +1512,13 @@ class UniversalGateway:
         except UnknownToolError:
             return {"status": 404, "body": {"error": f"tool not registered: {tool}"}}
 
-        status_map = {"executed": 200, "denied": 403, "escalated": 202, "error": 500}
+        status_map = {
+            "executed": 200,
+            "approved": 200,
+            "denied": 403,
+            "escalated": 202,
+            "error": 500,
+        }
         return {
             "status": status_map.get(outcome.status, 500),
             "body": outcome.to_dict(),

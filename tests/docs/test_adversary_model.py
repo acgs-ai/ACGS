@@ -29,8 +29,12 @@ SECURITY_MODEL = ROOT / "docs" / "SECURITY_MODEL.md"
 # review found the original eight missing the complete-mediation keystone.
 EXPECTED_ADVERSARIES = {f"ADV{i}" for i in range(1, 15)}
 
-# The per-mechanism threat table enumerates exactly these 18 named threats. The
-# reconciliation must map every one of them to >=1 adversary.
+# The per-mechanism threat table enumerates exactly these 25 named threats. The
+# reconciliation must map every one of them to >=1 adversary. "Exactly" is
+# enforced in both directions: a dropped row and an *added* row both fail. The
+# one-directional (subset) form let four composition rows land in the threat
+# table with no reconciliation entry, which is precisely the table-vs-adversary
+# drift this section exists to prevent.
 EXPECTED_THREATS = {
     "Missing receipt",
     "Malformed receipt",
@@ -45,11 +49,18 @@ EXPECTED_THREATS = {
     "Consumption-ledger tampering",
     "Unsigned dev mode misuse",
     "Policy-bundle substitution",
+    "Native control-plane transaction drift",
     "MCP/tool-gateway misuse",
     "Executor bypass",
     "Policy evaluation failure",
     "Policy timeout/hang",
     "Audit append failure",
+    "Step reorder",
+    "Predecessor substitution",
+    "Cross-workflow / cross-plan step lifting",
+    "Cross-level collusion (plan/step)",
+    "Scoped trust-purpose confusion",
+    "Non-ALLOW provenance masking",
 }
 
 # Directories an [on-master] adversary row may cite test evidence from.
@@ -158,18 +169,31 @@ def test_on_master_evidence_files_exist() -> None:
     )
 
 
-def test_all_eighteen_named_threats_present() -> None:
-    """The per-mechanism threat table still enumerates the 18 canonical threats."""
-    threat_section = _section(_read(), "## Threat table")
-    found = {t for t in EXPECTED_THREATS if f"| {t} |" in threat_section}
+def _threat_table_names() -> set[str]:
+    """Every row label in the per-mechanism threat table, as written."""
+    names: set[str] = set()
+    for line in _section(_read(), "## Threat table").splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = _cells(line)
+        if not cells or cells[0] in {"Threat", ""} or set(cells[0]) <= {"-"}:
+            continue  # header / separator
+        names.add(cells[0])
+    return names
+
+
+def test_threat_table_matches_the_canonical_threat_set() -> None:
+    """The threat table enumerates the canonical threats -- no more, no less."""
+    found = _threat_table_names()
     assert found == EXPECTED_THREATS, (
-        "threat table drifted from the 18 canonical threats; missing: "
-        f"{sorted(EXPECTED_THREATS - found)}"
+        "threat table drifted from the canonical threat set; "
+        f"missing: {sorted(EXPECTED_THREATS - found)}; "
+        f"unexpected: {sorted(found - EXPECTED_THREATS)}"
     )
 
 
 def test_reconciliation_maps_every_threat_to_valid_adversaries() -> None:
-    """Each of the 18 threats is mapped to >=1 adversary in ADV1..ADV14."""
+    """Every canonical threat is mapped to >=1 adversary in ADV1..ADV14."""
     recon = _section(_read(), "### Reconciliation — each named threat maps to ≥1 adversary")
 
     mapped: dict[str, set[str]] = {}
@@ -180,13 +204,15 @@ def test_reconciliation_maps_every_threat_to_valid_adversaries() -> None:
         if len(cells) < 2 or cells[0] in {"Named threat", ""} or set(cells[0]) <= {"-"}:
             continue  # header / separator
         threat = cells[0]
-        if threat not in EXPECTED_THREATS:
-            continue
         advs = set(re.findall(r"ADV\d+", " ".join(cells[1:])))
         mapped[threat] = advs
 
+    # Both directions: a threat with no reconciliation row, and a reconciliation
+    # row naming a threat the table does not carry, are each drift.
     unmapped = sorted(EXPECTED_THREATS - set(mapped))
     assert not unmapped, f"threats missing from the reconciliation table: {unmapped}"
+    unknown = sorted(set(mapped) - EXPECTED_THREATS)
+    assert not unknown, f"reconciliation maps threats absent from the threat table: {unknown}"
 
     for threat, advs in mapped.items():
         assert advs, f"threat {threat!r} maps to no adversary"

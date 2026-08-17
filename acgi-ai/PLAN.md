@@ -536,7 +536,7 @@ considered" is documentation only.
 - `acgi-ai/DEPLOY.md` — deployment + CSP + headers (20.9K, settled)
 - `acgi-ai/CLAUDE.md` — agent contract / project guide
 - `acgi-ai/src/api/types.ts` — API contract source of truth (on WIP branch)
-- `/home/martin/Downloads/govern-zone/ACGS/DESIGN.md` — canonical design source
+- `DESIGN.md` — canonical design-token source
 - Constitutional hash (brand furniture): `608508a9bd224290`
 
 ---

@@ -2,25 +2,42 @@ name: Codex Code Review
 
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+    types: [opened, synchronize, ready_for_review, reopened, labeled, unlabeled]
 
+# `codex-review` is a REQUIRED status check on master. It must therefore always run and
+# always report a real conclusion.
+#
+# GitHub satisfies a required check on `success`, `skipped`, OR `neutral`, and documents that
+# "a job that is skipped will report its status as 'Success'. It will not prevent a pull
+# request from merging, even if it is a required check." A job-level `if:` on a required job
+# is therefore a silent bypass of that gate, not a way to opt out of it.
+#
+# This workflow previously carried two such bypasses:
+#   1. a job-level `if:` on author_association, so any pull request from outside the
+#      OWNER/MEMBER/COLLABORATOR set skipped the job and satisfied the gate with no review;
+#   2. an empty OPENAI_API_KEY, which skipped every reviewing step and left the job green —
+#      this one fired for collaborators too, e.g. if the secret were rotated out or unset.
+#
+# The gate now fails closed instead. When the review genuinely cannot run (fork pull requests
+# do not receive secrets), a maintainer must make that call explicitly by applying the
+# `codex-review-waived` label, which leaves an auditable record on the pull request.
 jobs:
   codex-review:
-    if: github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
       issues: write
       pull-requests: write
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      # Fork pull requests do not receive repository secrets, so the review cannot run for
+      # them regardless of author_association. Both conditions are evaluated explicitly
+      # below rather than skipping the job.
+      IS_INTERNAL: ${{ github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' }}
+      IS_WAIVED: ${{ contains(github.event.pull_request.labels.*.name, 'codex-review-waived') }}
     steps:
-      - name: Note missing OpenAI API key
-        if: ${{ env.OPENAI_API_KEY == '' }}
-        run: echo "::notice title=Codex review skipped::OPENAI_API_KEY secret is not configured."
-
       - name: Checkout repository
-        if: ${{ env.OPENAI_API_KEY != '' }}
+        if: ${{ env.OPENAI_API_KEY != '' && env.IS_INTERNAL == 'true' }}
         uses: actions/checkout@v5
         with:
           ref: refs/pull/${{ github.event.pull_request.number }}/merge
@@ -28,7 +45,7 @@ jobs:
           fetch-depth: 1
 
       - name: Pre-fetch base and head refs
-        if: ${{ env.OPENAI_API_KEY != '' }}
+        if: ${{ env.OPENAI_API_KEY != '' && env.IS_INTERNAL == 'true' }}
         env:
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -37,18 +54,27 @@ jobs:
             "$PR_BASE_REF" \
             "+refs/pull/$PR_NUMBER/head"
 
+      # `continue-on-error` keeps a failed review step from turning the job red on its
+      # own: the "Gate on review outcome" step below is the sole decider of this required
+      # check (it reads `steps.codex-review.outcome`, which records the real result even
+      # with `continue-on-error`), so an unwaived failure still fails the gate.
       - name: Run Codex Code Review
-        if: ${{ env.OPENAI_API_KEY != '' }}
+        if: ${{ env.OPENAI_API_KEY != '' && env.IS_INTERNAL == 'true' }}
         id: codex-review
+        continue-on-error: true
         uses: openai/codex-action@v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .github/codex/prompts/review.md
           output-file: codex-review-output.md
-          sandbox: read-only
+          # `read-only` forces the legacy read-only sandbox (equivalent to
+          # `sandbox: read-only`) without the default `drop-sudo` strategy, whose
+          # "verify sudo removed" assertion fails deterministically on Blacksmith
+          # runners because sudo is not granted via the mechanisms it strips.
+          safety-strategy: read-only
 
       - name: Post Codex feedback
-        if: ${{ env.OPENAI_API_KEY != '' && steps.codex-review.outputs.final-message != '' }}
+        if: ${{ env.OPENAI_API_KEY != '' && env.IS_INTERNAL == 'true' && steps.codex-review.outputs.final-message != '' }}
         uses: actions/github-script@v7
         env:
           CODEX_FINAL_MESSAGE: ${{ steps.codex-review.outputs.final-message }}
@@ -61,3 +87,38 @@ jobs:
               issue_number: context.payload.pull_request.number,
               body: process.env.CODEX_FINAL_MESSAGE,
             });
+
+      # Decides the required check. Runs unconditionally so the gate can never be satisfied
+      # by a skip; the only green paths are "the review ran" and "a maintainer waived it".
+      - name: Gate on review outcome
+        if: ${{ always() }}
+        env:
+          REVIEW_OUTCOME: ${{ steps.codex-review.outcome }}
+          AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+        run: |
+          set -euo pipefail
+
+          if [ "$REVIEW_OUTCOME" = "success" ]; then
+            echo "Codex review ran and completed."
+            exit 0
+          fi
+
+          if [ "$IS_WAIVED" = "true" ]; then
+            echo "::warning title=Codex review waived::A maintainer applied the 'codex-review-waived' label, so this required check passes without a Codex review. The waiver is recorded in the pull request's label history."
+            exit 0
+          fi
+
+          if [ "$IS_INTERNAL" != "true" ]; then
+            reason="the author's association is '$AUTHOR_ASSOCIATION', and fork pull requests do not receive repository secrets, so the review cannot run"
+          elif [ -z "$OPENAI_API_KEY" ]; then
+            reason="the OPENAI_API_KEY secret is not configured or is empty"
+          else
+            reason="the review step did not complete (outcome: '$REVIEW_OUTCOME')"
+          fi
+
+          echo "::error title=Codex review did not run::This required check fails closed because $reason."
+          echo "Reason: $reason."
+          echo
+          echo "A maintainer must review these changes by hand, then apply the"
+          echo "'codex-review-waived' label to record that decision and unblock the merge."
+          exit 1

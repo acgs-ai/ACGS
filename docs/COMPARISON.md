@@ -3,7 +3,7 @@
 > **Core invariant: No valid Decision Receipt, no side effect.**
 
 
-ACGS / gove-zone is not trying to replace the surrounding ecosystem. It fills a narrower gap: side-effect authorization with verifiable receipts.
+gove-zone is not trying to replace the surrounding ecosystem. It fills a narrower gap: side-effect authorization with verifiable receipts.
 
 | System | What it does | What ACGS adds | Non-attack summary |
 |---|---|---|---|
@@ -132,7 +132,7 @@ The evidenced difference is *resolution and artifact*: it is a coarse per-*tool*
 toggle, not evaluation of the specific action **plus arguments** against a policy
 bundle; it has no fail-closed default (MCP can't be globally disabled from the
 console); and it produces no signed, portable decision receipt a relying party can
-verify before accepting the action. ACGS / gove-zone's narrower bet is exactly
+verify before accepting the action. gove-zone's narrower bet is exactly
 that finer-grained, fail-closed, receipt-emitting gate at the `tools/call`
 boundary — which is also a natural composition seam: the same Mattermost Agents
 MCP surface is a candidate reference integration for the gate (see
@@ -192,7 +192,7 @@ authorized-credential call to a destructive endpoint on an allowed host — the
 proxy dutifully injects the token and forwards the request — and the record left
 behind is OpenTelemetry-style **observability** (operator-trusted, mutable), not a
 signed, sealed, per-decision artifact a relying party *outside* the runtime can
-verify *before* accepting the action. ACGS / gove-zone's narrower bet sits exactly
+verify *before* accepting the action. gove-zone's narrower bet sits exactly
 at that boundary: evaluate the action-and-arguments, fail closed without a valid
 Decision Receipt, and emit an independently verifiable artifact. The composition
 is concrete rather than hand-wavy — flue's `outboundByHost` callback is a natural

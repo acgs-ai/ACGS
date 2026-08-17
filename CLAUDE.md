@@ -8,7 +8,7 @@ Multi-package monorepo: regulated-AI governance platform. Python (uv workspace) 
 |---|---|---|
 | `acgi-ai/` | Frontend — marketing + console; deploys to GCP Cloud Run via WIF | React 19, Vite, Tailwind 4, Biome, pnpm |
 | `packages/gove-zone/` | Governance kernel — fail-closed policy → decision receipt → executor gate → hash-chained audit; zero runtime deps by design | Python 3.11+, ruff, mypy-strict |
-| `packages/acgs-lite/` | Published library on PyPI (v2.10.0) — *nested git repo* | Python 3.10+, FastAPI, Pydantic, ruff, mypy |
+| `packages/acgs-lite/` | Published library on PyPI (v2.10.1) — *nested git repo* | Python 3.10+, FastAPI, Pydantic, ruff, mypy |
 | `packages/Acgs-Swarm/` | Constitutional swarm research — *nested git repo* | Python 3.11+, numpy, cryptography, optional torch |
 | `packages/clinicalguard/` | Clinical-domain governance agent — *nested git repo* | Python 3.11+, ruff, pytest |
 | `packages/ACGS-agency-agents/` | Agency-agents integration — *nested git repo*; may be an empty checkout locally | Python |

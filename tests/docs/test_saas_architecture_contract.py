@@ -1,11 +1,41 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SAAS = ROOT / "docs" / "saas"
 ADR = ROOT / "docs" / "adr"
+
+
+def _uninitialized_submodule_prefixes() -> tuple[str, ...]:
+    """Path prefixes of declared submodules absent from this checkout.
+
+    Paths under a submodule declared in ``.gitmodules`` whose working tree is
+    not initialized (no ``<path>/.git``) cannot be verified here, e.g. the
+    credential-gated ``packages/acgs-control-plane`` on public lanes. Their
+    contents are enforced by the lanes that do initialize them; everything
+    else stays strictly checked, and an initialized submodule is checked in
+    full.
+    """
+    gitmodules = ROOT / ".gitmodules"
+    if not gitmodules.is_file():
+        return ()
+    declared = re.findall(
+        r"(?m)^\s*path\s*=\s*(\S+)", gitmodules.read_text(encoding="utf-8")
+    )
+    return tuple(f"{p}/" for p in declared if not (ROOT / p / ".git").exists())
+
+
+def _assert_repo_files_exist(paths: set[str]) -> None:
+    skip = _uninitialized_submodule_prefixes()
+    missing = [
+        path
+        for path in sorted(paths)
+        if not (ROOT / path).is_file() and not path.startswith(skip)
+    ]
+    assert missing == []
 
 
 def _text(path: Path) -> str:
@@ -14,6 +44,24 @@ def _text(path: Path) -> str:
 
 def _normalized(path: Path) -> str:
     return " ".join(_text(path).split())
+
+
+def _node_text(node: dict[str, object]) -> str:
+    parts: list[str] = []
+    for key in (
+        "likely_interfaces_files",
+        "positive_tests",
+        "forbidden_side_effect_negative_tests",
+        "validation_commands",
+    ):
+        value = node.get(key)
+        if isinstance(value, list):
+            parts.extend(str(item) for item in value)
+    for key in ("evidence_artifact", "blocker", "next_safe_action"):
+        value = node.get(key)
+        if value:
+            parts.append(str(value))
+    return " ".join(parts)
 
 
 def test_g008_contracts_are_target_only_and_grounded_in_g006_g007() -> None:
@@ -47,8 +95,7 @@ def test_g008_contracts_are_target_only_and_grounded_in_g006_g007() -> None:
     assert "Authentication secrets, credentials, access tokens, private keys" in architecture
     assert "durably persists a pre-effect issuance/audit-anchor record" in architecture
     assert (
-        "Audit append/anchor verification, receipt validation, canonicalization, or"
-        in architecture
+        "Audit append/anchor verification, receipt validation, canonicalization, or" in architecture
     )
     assert "canonicalization algorithm/version and canonical argument digest" in architecture
     assert (
@@ -109,17 +156,14 @@ def test_migration_policy_requires_safe_evolution_and_preserves_verifiability() 
     assert "explicit, reviewed Alembic migration history" in policy
     assert "backup before execution" in policy
     assert all(
-        stage in policy
-        for stage in ("Expand.", "Migrate/backfill.", "Validate.", "Contract.")
+        stage in policy for stage in ("Expand.", "Migrate/backfill.", "Validate.", "Contract.")
     )
     assert "Backfills do not manufacture signatures, native assurance" in policy
     assert (
-        "Original schema/version/canonical bytes/digest/signature/bindings remain "
-        "verifiable"
+        "Original schema/version/canonical bytes/digest/signature/bindings remain verifiable"
     ) in policy
     assert (
-        "Reclassifying, countersigning, importing, or exporting it as native "
-        "authorization evidence"
+        "Reclassifying, countersigning, importing, or exporting it as native authorization evidence"
     ) in policy
     assert "clean-install migration from empty supported PostgreSQL" in policy
     assert "backup/PITR/restore drill" in policy
@@ -215,8 +259,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "current_local | G006, G007, G008 |"
     ) in matrix
     assert (
-        "owner-only provider, legal, licensing, spend, and deployment decisions "
-        "remain proposed"
+        "owner-only provider, legal, licensing, spend, and deployment decisions remain proposed"
     ) in matrix
 
     g101 = next(node for node in dag["nodes"] if node["id"] == "G101")
@@ -224,82 +267,392 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         g101["status"],
         g101["implementation_state"],
         g101["evidence_state"],
-    ) == ("in_progress", "partial", "local_verified")
-    assert g101["branch"] == "beta/p1-g101-postgres-advisory-lock"
-    assert g101["worktree"] == "saas-beta/p1-g101-postgres-advisory-lock"
-    assert g101["pr"] == 324
+    ) == ("completed", "built", "independently_reviewed")
+    assert g101["branch"] == "beta/p1-g101-tool-provenance"
+    assert g101["worktree"] == "saas-beta/p1-g101-tool-provenance"
+    assert g101["pr"] == 355
     assert {
+        "packages/acgs-control-plane/pyproject.toml",
+        "packages/acgs-control-plane/src/acgs_control_plane/db.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/models.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/alembic.ini",
+        "packages/acgs-control-plane/src/acgs_control_plane/migrations/env.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0001_legacy_v0.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0002_project_environment.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migration_cli.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migration_recovery.py",
         "packages/acgs-control-plane/tests/test_migrations.py",
         "packages/acgs-control-plane/tests/test_project_environment_scope.py",
         "packages/acgs-control-plane/tests/test_postgresql_migrations.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migration_cli.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migration_recovery.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migration_recovery_bytea.py",
+        "packages/acgs-control-plane/tests/test_postgresql_rolling_upgrade.py",
+        ".github/workflows/python-acgs-control-plane.yml",
     } <= set(g101["likely_interfaces_files"])
-    assert "PostgreSQL 17.10-bookworm" in " ".join(g101["positive_tests"])
-    assert "four disposable PostgreSQL 17.10-bookworm tests" in g101["evidence_artifact"]
-    assert "G103 tenant database isolation" in g101["evidence_artifact"]
-    for gap in (
+    positive_tests = " ".join(g101["positive_tests"])
+    for evidence in (
+        "PostgreSQL 17.10-bookworm",
+        "advisory-lock contention",
+        "raw Alembic command denial",
+        "startup exact-schema classification",
+        "CLI forward-only acknowledgement",
+        "rolling-upgrade compatibility",
+        "migration recovery tool provenance",
+    ):
+        assert evidence in positive_tests
+    for evidence in (
+        "#354/#355 merged migration/recovery foundation",
+        "#369 scope-attachment precursor",
+        "current master",
+        "hosted PostgreSQL/codex-review/test checks passing",
+        "83afdbd7d5b8ae2c9f043fa13488cda739ac1e2b",
+        "67f7e3062e9b3745f3a44d16c3c660b6884b670a",
+        "not production DR/PITR/object/witness recovery",
+    ):
+        assert evidence in g101["evidence_artifact"]
+    assert g101["blocker"] is None
+    for retired_gap in (
         "#308 startup integration",
         "CI-backed PostgreSQL migration",
         "multi-instance migration",
         "migration backup/restore",
         "forward-only rollback",
+        "EXT-GITHUB-BILLING",
     ):
-        assert gap in g101["blocker"]
-    for tenant_isolation_gap in ("RLS", "schema/search-path", "role hardening"):
-        assert tenant_isolation_gap not in g101["blocker"]
-    assert "G103 after G101 and G102 complete" in g101["blocker"]
-    assert "draft PR" in g101["next_safe_action"]
-    assert "G103 owns tenant database isolation after G101 and G102 complete" in g101["next_safe_action"]
+        assert retired_gap not in g101["evidence_artifact"]
+    assert "Use this slice as completed dependency evidence" in g101["next_safe_action"]
+    assert "remaining aggregate G102" in g101["next_safe_action"]
 
     assert (
         "| AM-005 | Tenant-scoped managed control-plane foundation | partial | "
-        "current_local | G101, G102, G103, G104, G105, G106 |"
+        "current_local | G101, G102, G102A, G102B, G102C, G102D, G103, G104, G105, G106 |"
     ) in matrix
     am_005 = next(line for line in matrix.splitlines() if line.startswith("| AM-005 |"))
-    for gap in (
+    for evidence in (
+        "G101 and slices G102A-D are completed/built/independently reviewed",
+        "merged PRs #354/#355/#357/#359/#361/#363",
+        "hosted checks green",
+        "Aggregate G102 remains in_progress/partial/current-local",
+        "complete all-collections cursor pagination",
+        "durable idempotency beyond native `agent.register`",
+        "async export jobs",
+        "production provider wiring",
+        "complete tenant isolation",
+        "policy signing/distribution",
+        "external exactly-once delivery",
+        "full native cutover from legacy unsigned route aliases",
+        "PR #369 provides partial project/environment scope attachment",
+        "PR #370 provides a partial signed native agent-create transaction spine",
+        "PR #371 provides partial route-scoped idempotency/outbox evidence",
+        "G104 service credential/browser BFF work remains missing",
+    ):
+        assert evidence in am_005
+    for retired_gap in (
         "#308 startup integration",
-        "G103-owned",
-        "tenant context",
-        "composite constraints",
-        "RLS",
-        "schema/search-path",
         "CI-backed PostgreSQL",
         "multi-instance",
         "backup/restore",
         "forward-only rollback",
         "API/policy/backfill",
+        "EXT-GITHUB-BILLING",
+        "unmerged #353/#354/#355/#357/#359/#361/#363 draft stack",
+        "hosted PostgreSQL migration/codex-review check-start failures",
     ):
-        assert gap in am_005
-    assert "this is not completed Phase-1 acceptance" in matrix
+        assert retired_gap not in am_005
+    assert "No row declares beta code-complete or production-ready" in matrix
+    assert "Production launch remains a separate human-authorized decision" in matrix
 
-    for downstream_node_id in ("G102", "G103"):
-        downstream_node = next(
-            node for node in dag["nodes"] if node["id"] == downstream_node_id
-        )
+    g102 = next(node for node in dag["nodes"] if node["id"] == "G102")
+    assert g102["dependencies"] == ["G101", "G102A", "G102B", "G102C", "G102D"]
+    assert (
+        g102["status"],
+        g102["implementation_state"],
+        g102["evidence_state"],
+    ) == ("in_progress", "partial", "local_verified")
+    assert "EXT-GITHUB-BILLING" not in g102["blocker"]
+    for missing_contract in (
+        "complete all-collections cursor pagination",
+        "durable idempotency for mutating routes beyond native agent.register",
+        "async export jobs",
+        "policy signing/distribution",
+        "external exactly-once delivery",
+        "full native cutover from legacy unsigned route aliases",
+    ):
+        assert missing_contract in g102["blocker"]
+    assert "OpenAPI drift verification remain missing" not in g102["blocker"]
+    actual_g102a_files = {
+        "packages/acgs-control-plane/README.md",
+        "packages/acgs-control-plane/src/acgs_control_plane/api_contract.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/config.py",
+        "packages/acgs-control-plane/tests/test_api_contract.py",
+    }
+    assert actual_g102a_files <= set(g102["likely_interfaces_files"])
+    _assert_repo_files_exist(actual_g102a_files)
+    assert (
+        "cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q"
+        in g102["validation_commands"]
+    )
+    actual_g102b_files = {
+        "packages/acgs-control-plane/README.md",
+        "packages/acgs-control-plane/pyproject.toml",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/config.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/governance.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/pagination.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/schemas.py",
+        "packages/acgs-control-plane/tests/test_receipt_cursor_pagination.py",
+        "requirements/saas-beta/cp-test.in",
+        "requirements/saas-beta/cp-test.lock",
+    }
+    assert actual_g102b_files <= set(g102["likely_interfaces_files"])
+    _assert_repo_files_exist(actual_g102b_files)
+    assert (
+        "cd packages/acgs-control-plane && uv run pytest tests/test_receipt_cursor_pagination.py -q"
+        in g102["validation_commands"]
+    )
+    actual_g102c_files = {
+        "packages/acgs-control-plane/tests/test_openapi_drift.py",
+    }
+    assert actual_g102c_files <= set(g102["likely_interfaces_files"])
+    _assert_repo_files_exist(actual_g102c_files)
+    assert (
+        "cd packages/acgs-control-plane && uv run pytest tests/test_openapi_drift.py -q"
+        in g102["validation_commands"]
+    )
+    actual_g102d_files = {
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/governance.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/schemas.py",
+        "packages/acgs-control-plane/tests/integration/test_production_posture.py",
+        "packages/acgs-control-plane/tests/test_openapi_drift.py",
+        "packages/acgs-control-plane/tests/test_startup_preflight.py",
+        "packages/acgs-control-plane/tests/test_v1_api_contract.py",
+    }
+    assert actual_g102d_files <= set(g102["likely_interfaces_files"])
+    _assert_repo_files_exist(actual_g102d_files)
+    assert (
+        "cd packages/acgs-control-plane && uv run pytest tests/test_v1_api_contract.py "
+        "tests/test_openapi_drift.py tests/test_startup_preflight.py "
+        "tests/integration/test_production_posture.py -q" in g102["validation_commands"]
+    )
+
+    g102a = next(node for node in dag["nodes"] if node["id"] == "G102A")
+    assert g102a["title"] == "Bounded request admission and redacted error contract"
+    assert set(g102a["dependencies"]) == {"G101"}
+    assert g102a["consumers"] == ["G102"]
+    assert (
+        g102a["status"],
+        g102a["implementation_state"],
+        g102a["evidence_state"],
+    ) == ("completed", "built", "independently_reviewed")
+    assert g102a["branch"] == "beta/p1-g102-request-admission"
+    assert g102a["worktree"] == "saas-beta/p1-g101-tool-provenance"
+    assert g102a["pr"] == 357
+    assert actual_g102a_files <= set(g102a["likely_interfaces_files"])
+    combined_g102a = _node_text(g102a)
+    for evidence in (
+        "4d60fb4a0a16be06a2a9957dea91dc2bf429c57d",
+        "bounded request-admission and redacted-error contract evidence",
+        "evidence at 14 passed",
+        "full control-plane package evidence at 228 passed and 32 skipped",
+        "Ruff and mypy pass",
+        "independent security/code approve/verifier pass",
+        "hosted Python 3.11/3.12 pass",
+        "PR #357 merged into current master",
+        "hosted codex-review",
+        "postgresql-migrations",
+        "G102B separately covers receipt-route cursor pagination",
+        "G102C separately covers the current-v0 OpenAPI drift sentinel",
+        "G102D separately covers additive legacy-v0 /v1 aliases",
+        "complete all-collections cursor pagination",
+        "async export jobs",
+    ):
+        assert evidence in combined_g102a
+    assert "OpenAPI drift acceptance evidence" not in combined_g102a
+    assert "OpenAPI drift gates are completed" not in combined_g102a
+    assert "until /v1, cursor pagination," not in combined_g102a
+    assert "lacks /v1 root, cursor pagination," not in combined_g102a
+    assert "partial until /v1 root, cursor pagination," not in combined_g102a
+    assert (
+        "cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q"
+        in combined_g102a
+    )
+    assert "tests/test_request_admission.py" not in combined_g102a
+    assert "tests/test_api_program_reconcile.py" not in combined_g102a
+
+    g102b = next(node for node in dag["nodes"] if node["id"] == "G102B")
+    assert g102b["title"] == "Bounded opaque receipt cursor pagination"
+    assert set(g102b["dependencies"]) == {"G101"}
+    assert g102b["consumers"] == ["G102"]
+    assert (
+        g102b["status"],
+        g102b["implementation_state"],
+        g102b["evidence_state"],
+    ) == ("completed", "built", "independently_reviewed")
+    assert g102b["branch"] == "beta/p1-g102b-receipt-cursors"
+    assert g102b["worktree"] == "saas-beta/p1-g101-tool-provenance"
+    assert g102b["pr"] == 359
+    assert actual_g102b_files <= set(g102b["likely_interfaces_files"])
+    combined_g102b = _node_text(g102b)
+    for evidence in (
+        "262c7bd8f408cef81333ae53591113960d78a32a",
+        "receipt cursor pagination evidence at 32 passed",
+        "full control-plane package evidence at 260 passed and 32 skipped",
+        "Ruff pass",
+        "mypy pass",
+        "deterministic generated CP lock",
+        "Python 3.11 hash-locked offline import pass",
+        "independent security/code approve/verifier pass",
+        "hosted Python 3.11/3.12 pass",
+        "PR #359 merged into current master",
+        "hosted codex-review",
+        "postgresql-migrations",
+        "all-collections pagination remains an aggregate G102 gap",
+        "PostgreSQL/schema change",
+    ):
+        assert evidence in combined_g102b
+    for forbidden_promotion in (
+        "aggregate G102",
+        "all-collections pagination",
+        "G102D /v1 alias evidence",
+        "durable idempotency",
+        "async export jobs",
+        "PostgreSQL/schema change",
+        "capacity claims",
+        "G102C OpenAPI drift sentinel evidence",
+    ):
+        assert forbidden_promotion in combined_g102b
+
+    g102c = next(node for node in dag["nodes"] if node["id"] == "G102C")
+    assert g102c["title"] == "Current-v0 OpenAPI drift sentinel"
+    assert set(g102c["dependencies"]) == {"G101"}
+    assert g102c["consumers"] == ["G102"]
+    assert (
+        g102c["status"],
+        g102c["implementation_state"],
+        g102c["evidence_state"],
+    ) == ("completed", "built", "independently_reviewed")
+    assert g102c["branch"] == "beta/p1-g102c-openapi-drift"
+    assert g102c["worktree"] == "saas-beta/p1-g101-tool-provenance"
+    assert g102c["pr"] == 361
+    assert actual_g102c_files <= set(g102c["likely_interfaces_files"])
+    combined_g102c = _node_text(g102c)
+    for evidence in (
+        "a6faf49a7b5f947b592f4be8372a85b173251090",
+        "current-v0 OpenAPI drift sentinel evidence at 5 passed",
+        "full control-plane package evidence at 265 passed and 32 skipped",
+        "Ruff pass",
+        "package-local mypy pass",
+        "independent review finding repaired then APPROVE",
+        "verifier PASS",
+        "hosted Python 3.11/3.12 pass",
+        "PR #361 merged into current master",
+        "hosted codex-review",
+        "postgresql-migrations",
+        "runtime/API aggregate gaps remain",
+    ):
+        assert evidence in combined_g102c
+    for forbidden_promotion in (
+        "runtime behavior",
+        "schema migration",
+        "production readiness",
+        "beta completion",
+        "G102D /v1 alias",
+        "async-export",
+        "all-collections cursor capability",
+    ):
+        assert forbidden_promotion in combined_g102c
+
+    g102d = next(node for node in dag["nodes"] if node["id"] == "G102D")
+    assert g102d["title"] == "Additive legacy-v0 /v1 API aliases"
+    assert set(g102d["dependencies"]) == {"G101"}
+    assert g102d["consumers"] == ["G102"]
+    assert (
+        g102d["status"],
+        g102d["implementation_state"],
+        g102d["evidence_state"],
+    ) == ("completed", "built", "independently_reviewed")
+    assert g102d["branch"] == "beta/p1-g102d-v1-api-contract"
+    assert g102d["worktree"] == "saas-beta/p1-g101-tool-provenance"
+    assert g102d["pr"] == 363
+    assert actual_g102d_files <= set(g102d["likely_interfaces_files"])
+    combined_g102d = _node_text(g102d)
+    for evidence in (
+        "047ddcf89530dc488ab6a2f4dd3bc00fe0211c5d",
+        "focused v1/OpenAPI/startup/production-posture evidence at 42 passed",
+        "full control-plane package evidence at 272 passed and 32 skipped",
+        "Ruff pass",
+        "package-local mypy pass",
+        "independent code and security APPROVE",
+        "verifier PASS",
+        "hosted Python 3.11/3.12 pass",
+        "PR #363 merged into current master",
+        "hosted codex-review",
+        "postgresql-migrations",
+        "additive legacy-v0 /v1 alias slice",
+        "typed GET /v1 metadata",
+        "preserving v0 behavior",
+        "14 LEGACY_UNSIGNED_WRITE blockers",
+    ):
+        assert evidence in combined_g102d
+    for forbidden_promotion in (
+        "signed production governance",
+        "database schema",
+        "migration",
+        "generated client",
+        "production readiness",
+        "beta completion",
+        "complete all-collections pagination",
+        "durable idempotency",
+        "async export job",
+    ):
+        assert forbidden_promotion in combined_g102d
+
+    for completed_leaf_id in ("G102A", "G102B", "G102C", "G102D"):
+        completed_leaf = next(node for node in dag["nodes"] if node["id"] == completed_leaf_id)
+        completed_leaf_text = _node_text(completed_leaf)
+        assert "Hosted PostgreSQL migrations and codex-review did not start" not in completed_leaf_text
+        assert "hosted PostgreSQL migration, and codex-review evidence remain missing" not in completed_leaf_text
+        assert "hosted PostgreSQL migration/codex-review evidence remain missing" not in completed_leaf_text
+
+    for downstream_node_id in ("G103",):
+        downstream_node = next(node for node in dag["nodes"] if node["id"] == downstream_node_id)
         assert (
             downstream_node["status"],
             downstream_node["implementation_state"],
             downstream_node["evidence_state"],
-        ) == ("planned", "missing", "unverified")
+        ) == ("blocked", "partial", "local_verified")
 
     g103 = next(node for node in dag["nodes"] if node["id"] == "G103")
     assert g103["dependencies"] == ["G101", "G102"]
-    g103_isolation_contract = " ".join(
-        [
-            *g103["likely_interfaces_files"],
-            *g103["positive_tests"],
-            g103["next_safe_action"],
-        ]
-    )
+    assert g103["pr"] == 369
+    g103_isolation_contract = _node_text(g103)
     for requirement in (
+        "scope-attachment precursor",
+        "project/environment attachment",
+        "not complete tenant isolation",
         "tenant context",
         "composite constraints",
         "RLS",
         "schema/search_path",
         "role hardening",
-        "After G101 and G102 are completed",
-        "before implementation",
+        "workers",
+        "exports",
+        "caches/logs/metrics/support tooling",
+        "cross-tenant inference denial",
+        "Complete the named missing dependency",
     ):
         assert requirement in g103_isolation_contract
+
+    g603 = next(node for node in dag["nodes"] if node["id"] == "G603")
+    assert (
+        g603["status"],
+        g603["implementation_state"],
+        g603["evidence_state"],
+    ) == ("planned", "missing", "unverified")
+    assert "backup, PITR, object, witness, and migration rollback" in " ".join(
+        [*g603["likely_interfaces_files"], *g603["positive_tests"], g603["evidence_artifact"]]
+    )

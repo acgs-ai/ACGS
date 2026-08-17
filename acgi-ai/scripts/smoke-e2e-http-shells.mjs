@@ -28,6 +28,7 @@ export const CONSOLE_SIDEBAR_ROUTES = [
   '/console/audit',
   '/console/audit/rcpt-608508a9-8b38',
   '/console/bus',
+  '/console/process',
   '/console/settings',
   '/console/tenants',
   '/console/account',
@@ -64,6 +65,11 @@ const server = spawn(
       CHOKIDAR_USEPOLLING: process.env.CHOKIDAR_USEPOLLING ?? '1',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
+    // Own process group: `pnpm run dev:mock` execs a shell that execs vite, so
+    // signalling the direct child only reaches the wrapper. Grandchildren that
+    // survive keep the inherited stdout/stderr write-ends open, which keeps
+    // this process's pipe handles referenced and stops node from ever exiting.
+    detached: true,
   },
 )
 
@@ -77,11 +83,39 @@ server.on('exit', (code) => {
   exitCode = code
 })
 
+function signalGroup(signal) {
+  try {
+    // Negative pid signals the whole process group (see `detached` above).
+    process.kill(-server.pid, signal)
+  } catch {
+    try {
+      server.kill(signal)
+    } catch {
+      // Already reaped.
+    }
+  }
+}
+
+async function waitForExit(maxMs) {
+  const deadline = Date.now() + maxMs
+  while (!exited && Date.now() < deadline) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100))
+  }
+}
+
 async function shutdown() {
   if (!exited) {
-    server.kill('SIGTERM')
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 250))
+    signalGroup('SIGTERM')
+    await waitForExit(2000)
+    if (!exited) {
+      signalGroup('SIGKILL')
+      await waitForExit(2000)
+    }
   }
+  // Drop our ends of the inherited pipes: a grandchild that outlived the kill
+  // would otherwise keep these handles referenced and hang the event loop.
+  server.stdout?.destroy()
+  server.stderr?.destroy()
 }
 
 process.on('SIGINT', async () => {

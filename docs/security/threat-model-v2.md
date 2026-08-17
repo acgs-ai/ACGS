@@ -9,11 +9,13 @@ current code enforces, what it does not, and where an attacker wins today.
   This branch does **not** contain `consumption.py` / `ReceiptConsumptionLedger`; the
   replay gap (§3) is live here and closed on `master`. Every "current defense" below is
   cited from the source *in this worktree*, not from `master`.
-- **⚠️ Reality-check (2026-07-08, master @ `7799b9a`).** This document was written against
+- **⚠️ Reality-check (2026-07-08, master @ `7799b9a`; partially refreshed by this
+  implementation branch).** This document was written against
   the feature branch. A subsequent verification against `master` found that **several of
   these findings are already closed upstream** — including the §6 Critical (adapter
-  bypass), the §1(b)/§6 `ReceiptVerifier` default, and the §2a PQL fail-open — and the §7
-  audit anchor is added (though unwired). Read [§9](#9-divergence-from-master) for the full
+  bypass) and the §1(b)/§6 `ReceiptVerifier` default — and the §7 audit anchor is added
+  (though unwired). This branch also implements the specific §2a empty/unknown-source PQL
+  compiler fail-closed defense. Read [§9](#9-divergence-from-master) for the full
   per-finding master status **before acting on any item here.** The genuinely
   master-open items are §4(d) authority-at-gate and §2c bundle-id.
 - **Supersedes:** the threat table in [`docs/SECURITY_MODEL.md`](../SECURITY_MODEL.md),
@@ -65,23 +67,32 @@ Severity uses: **Critical** (default config → unauthorized side effect), **Hig
 
 ### 1. Receipt forgery
 
-**Attack scenario.** `receipt_hash` is a keyless SHA-256 over the canonical receipt
-dict (`receipt.py:241-245`, `compute_hash` pops only `receipt_hash`/`signature`). An
-adversary who can construct a `DecisionReceipt` sets `decision=ALLOW` with any
-actor/action/args, calls `compute_hash()` themselves, stamps the result into
-`receipt_hash`, and the receipt "verifies" — because in **unsigned mode** verification
-only recomputes that same keyless hash (`receipt.py:386-393`).
+**Attack scenario.** `receipt_hash` is a keyless SHA-256 over a hand-enumerated payload
+built by `_hash_payload` (`receipt.py:332-374`). An adversary who can construct a
+`DecisionReceipt` sets `decision=ALLOW` with any actor/action/args, calls
+`compute_hash()` themselves, stamps the result into `receipt_hash`, and the receipt
+"verifies" — because in **unsigned mode** verification only recomputes that same keyless
+hash and compares (`receipt.py:663`).
 
-**Current defense.** Every security-relevant field *is* bound into the hash — actor,
+**Current defense.** The fields this section depends on are bound into the hash — actor,
 `proposed_action`, `argument_hash`, `tenant_id`, `execution_boundary`, `policy_hash`,
 `authority`, `decision`, `expires_at`, and the signature metadata
 `signature_algorithm`/`signing_key_id` (anti-downgrade) — so tampering is caught
-(`receipt.py:164-199`, `receipt.py:386-393`). The residual (a hash is *recomputable*)
-is closed **only when signing is engaged**: Ed25519 signs `receipt_hash` with a private
-key and the gate verifies with the matching public key (`signing.py:1-27`,
-`receipt.py:418-433`). `execute_with_receipt` / `GovernedExecutor` default to the secure
-posture — `require_signature=True` and a hard `ProductionProfileError` if no verifier is
-configured (`executor.py:38,63-64`).
+(`receipt.py:332-374`, compared at `receipt.py:663`).
+
+The payload is enumerated by hand rather than derived from the dataclass, so "every
+field is bound" is **not** an accurate statement of the mechanism: `receipt_hash` and
+`signature` are excluded by construction, and the four receipt-v2 scoped-trust fields
+are excluded on v1 (where they are validated empty — `receipt.py:255`, `:679`). See
+[DECISION_RECEIPT_SPEC.md § Hash behavior](../DECISION_RECEIPT_SPEC.md#hash-behavior)
+for the exact payload and the drift guards that fail when a newly added field is
+silently left unbound.
+
+The residual (a hash is *recomputable*) is closed **only when signing is engaged**:
+Ed25519 signs `receipt_hash` with a private key and the gate verifies with the matching
+public key (`signing.py:76-91`). `execute_with_receipt` / `GovernedExecutor` default to
+the secure posture — `require_signature=True` and a hard `ProductionProfileError` if no
+verifier is configured (`executor.py:38,63-64`).
 Covered: `test_receipt_signing.py::test_forged_recomputed_receipt_rejected_without_private_key`.
 
 **Missing control.** (a) Unsigned mode has *no* adversarial tripwire proving a
@@ -106,24 +117,28 @@ the docs forbid).
 
 ### 2. Policy bypass
 
-Three distinct bypasses. **2a is High** because it needs no integrator error.
+Three distinct bypasses. §2a was historically High because it needed no integrator error;
+this implementation closes that specific compiler omission without changing §2b/§2c.
 
-**2a — PQL/GPA compiler silent fail-open (High).**
+**2a — PQL/GPA compiler silent fail-open (High, implementation-scoped fix).**
 *Attack scenario.* A Celonis/Signavio governance feed is empty, mistyped
 (`source["type"]` misspelled), or has a renamed `limits`/`insights` key. The upstream
-data-quality fault silently yields a policy that permits everything.
-*Current defense.* `compile_pql_to_ruleset` silently skips unrecognized `source_type`
-(`pql_compiler.py:213-218`) and, when the rule set is empty, injects a placeholder
-`{"effect":"deny","tools":["gpa.invalid.tool"]}` *only* to satisfy `RuleSetPolicy`'s
-"≥1 rule" constructor guard (`pql_compiler.py:224-233`, `policy.py:425-427`). That
-phantom rule denies a tool that is never called, so the compiled bundle is functionally
-`AllowAllPolicy` while *looking* like a populated governance bundle.
-*Missing control.* No error/exception when a vendor feed yields zero real rules; no test
-exercises an empty feed with a real `ToolCall`. `IngestionAdapterError`/`TranspilationError`
-exist (`pql_compiler.py:17-26`) but are never raised on emptiness.
-*Recommended implementation.* Raise on an empty `rules_payload` instead of injecting the
-no-op placeholder; log/raise on unrecognized `source_type`.
-*Test requirement.* `tests/adversary/test_pql_silent_fail_open.py::test_empty_vendor_feed_compiles_to_allow_all_KNOWN_GAP` (OPEN).
+data-quality fault must not silently yield a policy that permits everything.
+*Current defense.* `compile_pql_to_ruleset` rejects missing/unknown source types and each
+declared Celonis/Signavio source that compiles to zero rules with `IngestionAdapterError`
+(`pql_compiler.py:213-226`). When `graph_spec` is explicitly supplied, the graph must
+transpile to at least one rule or `TranspilationError` is raised (`pql_compiler.py:228-232`).
+Aggregate zero-rule compilation still raises `StaticVerificationError`
+(`pql_compiler.py:234-235`) instead of injecting a no-op `gpa.invalid.tool` placeholder.
+Valid graph-only compilation remains supported when the graph contributes at least one real
+rule.
+*Missing control.* The specific empty/unknown-source silent-fail-open is closed by this
+implementation. Source authenticity, freshness, and vendor-side data completeness remain
+integrator-owned inputs to the compiler.
+*Recommended implementation.* Fail closed on missing/unknown source type and zero compiled
+governance rules.
+*Test requirement.* Covered by
+`tests/adversary/test_pql_silent_fail_open.py`.
 
 **2b — RuleSetPolicy allow-by-default as sole policy (Medium).**
 *Attack scenario.* A call matching zero rules in a `RuleSetPolicy` bundle (new tool, path
@@ -349,9 +364,9 @@ already closed upstream:
 |---|---|---|---|
 | 6 | **Adapter bypass (Critical)** | **CLOSED** | `ManagedAgent.__init__` requires an explicit `policy: Policy` — no `AllowAllPolicy` default (`agent.py:32,39-41`); + B13 `authz_enforce`/`principal_registry` fail-closed principal authz (`kernel.py:70,83-86`); + a dispatcher-level `test_framework_adapters.py`; + a fail-closed negative test (`test_managed_agent.py`, `pytest.raises(TypeError)` on no-policy). Residual (by design, not the Critical): adapters use `Kernel.dispatch` (local unsigned primitive), not `execute_with_receipt` — self-asserted actor unless `authz_enforce=True` is opted in. |
 | 1/6 | **`ReceiptVerifier` default `require_signature=False`** | **CLOSED** | `ReceiptVerifier` now defaults `require_signature=True` and raises without a verifier (`contracts.py:235,278`) — consistent with `execute_with_receipt`. The §8 doc-vs-code inconsistency is gone. |
-| 2a | **PQL fail-open** | **CLOSED** | the `gpa-default-safe` empty-feed placeholder is absent on master. |
+| 2a | **PQL empty/unknown-source fail-open** | **BRANCH FIX** | this implementation rejects missing/unknown source type, per-source zero-rule results, explicit empty graph results, and aggregate zero-rule compilation; merge/CI status is outside this document. |
 | 3 | **Standalone replay** | **CLOSED** | `master` ships `consumption.py` / `ReceiptConsumptionLedger` (single-use at the standalone gate); this branch has it only as a stale `.pyc`. |
-| 7 | **Audit full-rewrite** | **PARTIAL** | `verify_chain(expected_count, expected_last_hash)` external-anchor hook added (`audit.py`), but **no shipped call site passes an anchor**, so every production path is still keyless — a self-consistent rewrite still verifies. |
+| 7 | **Audit full-rewrite** | **PARTIAL** | `verify_chain(expected_count, expected_last_hash)` external-anchor hook added (`audit.py`), but **no call site inside `packages/gove-zone/src/` passes an anchor**, so the library's own default path is keyless and a self-consistent rewrite still verifies there. Repository-wide the anchor *is* exercised: `acgs-control-plane` persists it transactionally and passes it back (`governance.py:756-758`, `app.py:1731`, `:1792`, `migration_recovery.py:738`). |
 | 4d | **Authority not gate-enforced** | **OPEN** | `expected_authority`/`expected_validator_role` are still not threaded through `execute_with_receipt`/`GovernedExecutor.execute`/`resume_with_receipt` (`executor.py:37,40` exposes only `expected_policy_bundle_id`/`require_signature`). |
 | 2c | **Bundle-id unpinned** | **OPEN (Low)** | `expected_policy_bundle_id` defaults `None`; no auto-binding analog to `policy_hash`. |
 | 2b | **RuleSetPolicy allow-by-default** | **OPEN by design** | documented deny/escalate-list architecture; not a bug. |
@@ -360,7 +375,8 @@ already closed upstream:
 audit-anchor-unwired (Medium, architectural). The adversary tests are written to *flip*
 (xfail→xpass, or a KNOWN_GAP assertion inverts) when a defense lands, so they are the
 mechanical signal for "gap closed" — but a port to master must **drop/adapt** the
-master-closed cases (PQL fail-open, `ReceiptVerifier`-default forgery) to avoid dead tests.
+master-closed cases (`ReceiptVerifier`-default forgery) and branch-fixed cases (§2a PQL
+empty/unknown-source fail-open) to avoid dead tests.
 
 ---
 
@@ -377,7 +393,7 @@ in `packages/gove-zone/tests/` (existing) or `tests/adversary/` (this work).
 | I4 Single-authorization | replay, policy | `test_standalone_receipt_replay.py`; `test_workflow_receipt_chain.py::test_replayed_step_rejected_tool_not_called` | intra-workflow DEFENDED; standalone OPEN |
 | I5 MACI role separation | privesc | `test_maci_role_separation.py::test_issuance_refuses_self_validation`, `::test_gate_refuses_forged_self_validated_receipt` | DEFENDED |
 | I6 Tamper-evident audit | audit | `test_audit_chain.py` (single-field); **`test_audit_full_chain_rewrite.py`** | single-edit DEFENDED; full-rewrite OPEN |
-| I7 Fail-closed evaluation | policy | `test_fail_closed.py`, `test_fail_closed_gaps.py`; **`test_ruleset_default_allow.py`**, **`test_pql_silent_fail_open.py`** | exception/timeout DEFENDED; allow-by-default + PQL fail-open OPEN |
+| I7 Fail-closed evaluation | policy | `test_fail_closed.py`, `test_fail_closed_gaps.py`; **`test_ruleset_default_allow.py`**, **`test_pql_silent_fail_open.py`** | exception/timeout DEFENDED; PQL empty/unknown-source fail-open branch-fixed; bare `RuleSetPolicy` allow-by-default remains §2b |
 
 Every invariant has ≥1 adversarial test. Every OPEN gap above has a live reproducing test
 (a KNOWN_GAP/KNOWN_LIMITATION assertion of current reality) so it cannot be silently
@@ -389,9 +405,8 @@ claimed as defended, and the taxonomy is enforced by
 1. **Adapter bypass (§6, Critical).** Remove `AllowAllPolicy` default; route adapters
    through the cryptographic gate. Highest-leverage: it makes the default "governed" agent
    actually governed.
-2. **PQL fail-open (§2a, High).** Raise on empty compiled rule sets.
-3. **Replay (§3, High here).** Land / rebase the `ReceiptConsumptionLedger`.
-4. **Audit anchoring (§7, High).** External head anchor + checkpoint compare.
-5. **Authority at the gate (§4d, Medium).** Plumb `expected_authority`/`expected_validator_role`.
-6. **Gate default parity (§1/§6, Medium).** Align `ReceiptVerifier` with the secure default.
-7. **Bundle-id + ruleset foot-guns (§2b/§2c, Medium).** Tests landed; add lint/pin defaults.
+2. **Replay (§3, High here).** Land / rebase the `ReceiptConsumptionLedger`.
+3. **Audit anchoring (§7, High).** External head anchor + checkpoint compare.
+4. **Authority at the gate (§4d, Medium).** Plumb `expected_authority`/`expected_validator_role`.
+5. **Gate default parity (§1/§6, Medium).** Align `ReceiptVerifier` with the secure default.
+6. **Bundle-id + ruleset foot-guns (§2b/§2c, Medium).** Tests landed; add lint/pin defaults.

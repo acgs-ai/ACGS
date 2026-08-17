@@ -8,25 +8,25 @@
   },
   "artifacts": {
     "audit-chain.json": {
-      "bytes": 1944,
-      "sha256": "177f1286efab2e6036f70e57c492fe8fbb6af9c0622b5f5a9eb246178d6f8191"
+      "bytes": 2042,
+      "sha256": "01ea8eb52831f0b1799bca3065e3b53bba6f2da1ffb342e96151ac81b0c861fe"
     },
     "decision-receipt.json": {
-      "bytes": 1279,
-      "sha256": "f14e1d6077acbe97e5c2d69cb4e0bb1dcd3dbd69bb42a82233f6d12798a84c29"
+      "bytes": 1375,
+      "sha256": "328ef6d1b7dd19568a350ce12f2c90da3fccf555c25616e04b0fedf3f32d3657"
     },
     "replay-report.json": {
-      "bytes": 502,
-      "sha256": "9720a70fa308d814701aa1428754eae4ba0d6dbd9220a4fd9059d064d64b6c3c"
+      "bytes": 504,
+      "sha256": "7ffe1524bf2a439f2895fc33704b79a0806fe63b8e38547a30db0c4425c8984e"
     },
     "verification-summary.md": {
-      "bytes": 4519,
-      "sha256": "45c64400a7fc26a97e228b302659359114d3df721a51d7c053feef9afd0a1af6"
+      "bytes": 6090,
+      "sha256": "44daccf38fd965cd6e2e9bc1d32443c3c0a2374939418f19346cb0a17c2af958"
     }
   },
   "audit": {
     "event_count": 2,
-    "last_hash": "f60fc833e4e04366f8f1532942add50682ec7da2b597a8f7d1c51e960d2c3959"
+    "last_hash": "1ca1c6a38e600fee802e2d2fdd402efe479ca09c778f6576d093c7b7c294c688"
   },
   "generated_at": "2026-01-01T00:00:00+00:00",
   "generated_with": "acgs proofpack generate (gove_zone.proofpack)",
@@ -40,16 +40,16 @@
   "how_to_verify": "acgs proofpack verify <pack-dir> [--verifier-key <pubkey>]",
   "policy": {
     "bundle_id": "compliance-ruleset/v1",
-    "hash": "ruleset/compliance-ruleset/v1/be02ba386af91111",
-    "version": "ruleset/compliance-ruleset/v1/be02ba386af91111"
+    "hash": "ruleset/compliance-ruleset/v1/be02ba386af91111ba8e2f4a3a74eb60f67761c17dabdf62de3935b1c5b6bfe7",
+    "version": "ruleset/compliance-ruleset/v1/be02ba386af91111ba8e2f4a3a74eb60f67761c17dabdf62de3935b1c5b6bfe7"
   },
   "receipt": {
-    "audit_event_hash": "f3260c70dfb9402b402950db41adbe0895b36bfd085d73a2e5aba128dc6ca430",
-    "receipt_hash": "8f7153b5d58d00bbe077ceca455c94a1f2c3b75ced5a64eb1054c8eae62f8671",
-    "receipt_id": "ev_91173c10c1094a6c",
+    "audit_event_hash": "6d29756f47d8b222f7a8fa8bb6b304c0ee6c6d6c6cefc8a958a9e73fdd56a45d",
+    "receipt_hash": "99d917166be1bf340920baf54f7e26cf02f61daf5b01c87e33606cd6aff9da3b",
+    "receipt_id": "ev_2d7706aca68740c4",
     "request_id": "req-1",
     "signature_algorithm": "none",
     "signing_key_id": ""
   },
-  "schema_version": "acgs/proof-pack/v1"
+  "schema_version": "acgs/proof-pack/v1.1"
 }

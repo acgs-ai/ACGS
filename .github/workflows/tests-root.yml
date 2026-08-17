@@ -11,13 +11,14 @@
 # workspace `pyproject.toml` could therefore merge on a stale-green gate.
 #
 # Scope (deliberate — see EXCLUSIONS in the run step): this gate runs only the
-# environment-independent invariant guards (82 tests, green on master). The
+# environment-independent invariant guards (411 tests on this branch). The
 # SaaS-beta evidence proof requires its locked, three-environment bootstrap and
 # is gated by the automatic hosted contract lane in
 # `saas-beta-p0-evidence.yml`; its exact proof remains authorized/manual. It is
 # not a generic root test. The five release-evidence / readiness tests use the dedicated
-# `readiness-evidence.yml` workflow (+ its hosted twin); the package-floor /
-# mypy-scope tests need initialized submodules and remain a follow-up.
+# `readiness-evidence.yml` workflow (+ its hosted twin); the package-floor
+# tests hard-require initialized submodules and stay excluded here (the swarm
+# mypy-gate test self-skips when the submodule is absent and is not excluded).
 
 name: tests-root
 
@@ -26,6 +27,7 @@ on:
     branches: [master]
     paths:
       - 'tests/**'
+      - 'tools/kg/**'
       - 'scripts/**'
       - '.github/workflows/**'
       - '.claude/settings.json'
@@ -34,10 +36,17 @@ on:
       - 'Makefile'
       - 'docs/PLAN-MONOREPO.md'
       - 'docs/constitutional-hashes.lock'
+      # The claim-safety gate validates these two documents directly
+      # (test_repository_documents_currently_pass); a docs-only edit to either
+      # must trigger this workflow or the gate is stale-green for the exact
+      # change it guards.
+      - 'docs/governance-stack-index.md'
+      - 'docs/integration-readiness-task-map.md'
   push:
     branches: [master]
     paths:
       - 'tests/**'
+      - 'tools/kg/**'
       - 'scripts/**'
       - '.github/workflows/**'
       - '.claude/settings.json'
@@ -46,6 +55,8 @@ on:
       - 'Makefile'
       - 'docs/PLAN-MONOREPO.md'
       - 'docs/constitutional-hashes.lock'
+      - 'docs/governance-stack-index.md'
+      - 'docs/integration-readiness-task-map.md'
 
 concurrency:
   group: tests-root-${{ github.ref }}
@@ -72,9 +83,17 @@ jobs:
 
       - name: Run root governance-invariant guards
         # `--no-project` skips the workspace sync (no submodule members to
-        # resolve); `--with` supplies the only deps these tests need — pytest
-        # plus pyyaml (the guards parse workflow/policy YAML). tests/conftest.py
-        # puts scripts/ on sys.path so `import hardening_report` etc. resolve.
+        # resolve); `--with` supplies the only deps these tests need — pytest,
+        # pyyaml (the guards parse workflow/policy YAML), and cryptography.
+        # tests/conftest.py puts scripts/ on sys.path so `import
+        # hardening_report` etc. resolve.
+        #
+        # cryptography is REQUIRED, not optional: the key-custody, external-
+        # transition, governance-manifest and submodule-integrity guards verify
+        # Ed25519 signatures, and they are written to FAIL (not skip) when the
+        # backend is absent — an unverifiable signature is a failed verdict, not
+        # an untested one. Without it this gate reports 58 failures that say
+        # nothing about the code under test.
         #
         # EXCLUSIONS — tests gated elsewhere or deferred:
         #   tests/docs/**                      -> already covered by tests-docs.yml
@@ -84,10 +103,19 @@ jobs:
         #   test_release_evidence_bundle       -> covered by readiness-evidence.yml
         #   test_production_blocker_evidence   -> covered by readiness-evidence.yml
         #   test_production_launch_preflight   -> covered by readiness-evidence.yml
-        #   *_floor_* / *mypy* scope tests     -> need initialized submodules (follow-up)
+        #   *_floor_* / typecheck-scope tests  -> read submodule pyproject.toml files,
+        #                                         and submodules are intentionally not
+        #                                         initialized in this gate; run locally
+        #                                         with initialized submodules instead.
+        #                                         (The swarm mypy-gate test now skips
+        #                                         itself when the submodule is absent.)
+        #
+        # The --with deps are pinned: this gate runs --no-project (not lock-governed),
+        # so unpinned specs re-resolve fresh on every run — a reproducibility and
+        # supply-chain hole for the crypto backend that decides signature verdicts.
         run: |
           uv python install 3.11
-          uv run --no-project --python 3.11 --with pytest --with pyyaml \
+          uv run --no-project --python 3.11 --with pytest==9.1.1 --with pyyaml==6.0.3 --with cryptography==50.0.0 \
             python -m pytest tests/ \
             --ignore=tests/docs \
             --ignore=tests/saas_beta \
@@ -96,5 +124,5 @@ jobs:
             --ignore=tests/test_release_evidence_bundle.py \
             --ignore=tests/test_production_blocker_evidence.py \
             --ignore=tests/test_production_launch_preflight.py \
-            -k "not test_acgs_lite_published_floor_unchanged and not test_acgs_swarm_floor_drives_workspace_floor and not test_acgs_swarm_has_strict_core_mypy_gate and not test_typecheck_py_uses_configured_mypy_scope" \
+            -k "not test_acgs_lite_published_floor_unchanged and not test_acgs_swarm_floor_drives_workspace_floor and not test_typecheck_py_uses_configured_mypy_scope" \
             -v --import-mode=importlib

@@ -1,8 +1,12 @@
 # ACGS documentation index
 
-ACGS / gove-zone is a vendor-neutral, receipt-gated governance layer for AI-agent side effects. It sits at the executor boundary below any agent framework, enforces policy before execution, emits a verifiable Decision Receipt, and makes executors fail closed without a valid receipt.
+ACGS is a governed agent infrastructure project. Its core enforcement kernel is `gove-zone` (`packages/gove-zone`): a vendor-neutral, receipt-gated governance layer for AI-agent side effects. The kernel sits at the executor boundary below any agent framework, enforces policy before execution, emits a verifiable Decision Receipt, and makes executors fail closed without a valid receipt.
+
+Other packages in this repository — the control plane, adapters, evaluation and policy tooling — are separate components with their own maturity levels. They are not part of the enforcement boundary and do not inherit the kernel's guarantees.
 
 Core invariant: **No valid Decision Receipt, no side effect.**
+
+This file is the canonical documentation index. There is deliberately no separate `docs/INDEX.md` — a second index would drift against this one.
 
 ## Best entry points
 
@@ -35,6 +39,8 @@ Core invariant: **No valid Decision Receipt, no side effect.**
 - [SaaS beta API and data contract](saas/API_AND_DATA_CONTRACT.md) — future /v1, BFF, scope, and provenance contract
 - [SaaS beta migration and compatibility policy](saas/MIGRATION_VERSIONING_COMPATIBILITY_POLICY.md) — future Alembic, recovery, and artifact-compatibility requirements
 - [Proposed SaaS build-vs-buy ADR packet](adr/saas-identity-oidc-saml-scim-build-vs-buy.md) — owner/counsel-gated identity, key, retention, witness, billing, and licensing decisions
+- [VERSIONING](VERSIONING.md) — per-package version sources of truth; the `gove-zone` kernel line (`1.0.0rc1`/Beta) and the ACGS artifact line (`0.1.0`/alpha) are intentionally different levels
+- [DOC_REFERENCE_POLICY](DOC_REFERENCE_POLICY.md) — how one document may cite another; cite by stable anchor, never by line number
 - [GLOSSARY](GLOSSARY.md)
 - [REVIEW_CHECKLIST](REVIEW_CHECKLIST.md)
 - [ADOPTION_GUIDE](ADOPTION_GUIDE.md)

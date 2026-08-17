@@ -442,3 +442,134 @@ export type BusDefectList = {
   kind: 'defect-list'
   items: BusDefect[]
 }
+
+// Process Evidence View — analytical projections over the receipt-gated
+// audit chain (agent-bus-analyzer process-intelligence API, snake_case wire
+// contract). Every payload is analytical only: `executable_authority` is
+// pinned false by the backend and nothing here mints or implies a receipt.
+
+export type ProcessSourceChainStatus = 'verified' | 'unverified' | 'not_applicable'
+
+export type ProcessSummary = {
+  tenant_id: string
+  process_id: string
+  process_name: string | null
+  event_count: number
+  case_count: number
+  started_at: string
+  completed_at: string
+  evidence_coverage: number
+  source_chain_status: ProcessSourceChainStatus
+  snapshot_id: string
+  service_version: 'process-service-1.0'
+  analytical_only: true
+  executable_authority: false
+}
+
+export type ProcessList = {
+  items: ProcessSummary[]
+  total: number
+  offset: number
+  limit: number
+}
+
+export type ProcessActivity = {
+  activity: string
+  count: number
+}
+
+export type ProcessDirectlyFollows = {
+  source: string
+  target: string
+  count: number
+  average_duration_seconds: number | null
+  p50_duration_seconds: number | null
+  p95_duration_seconds: number | null
+  excluded_duration_count: number
+}
+
+export type ProcessDetail = {
+  summary: ProcessSummary
+  algorithm_version: string
+  activities: ProcessActivity[]
+  directly_follows: ProcessDirectlyFollows[]
+  incomplete_case_count: number
+  excluded_case_ids: string[]
+}
+
+export type ProcessVariant = {
+  signature: string[]
+  case_ids: string[]
+  count: number
+  frequency: number
+  average_duration_seconds: number
+  incomplete_case_count: number
+}
+
+export type ProcessVariantList = {
+  tenant_id: string
+  process_id: string
+  snapshot_id: string
+  algorithm_version: string
+  items: ProcessVariant[]
+  total: number
+  offset: number
+  limit: number
+}
+
+export type ProcessConformanceOutcome = 'ALLOW' | 'DENY' | 'INVESTIGATE'
+
+export type ProcessProofStatus =
+  | 'verified'
+  | 'non_production'
+  | 'asserted'
+  | 'failed'
+  | 'incomplete'
+  | 'unavailable'
+  | 'hash_only'
+
+export type ProcessEvidenceReference = {
+  reference_type:
+    | 'receipt_id'
+    | 'receipt_hash'
+    | 'audit_event_id'
+    | 'audit_event_hash'
+    | 'evidence_bundle_id'
+  reference_id: string
+}
+
+export type ProcessConformanceFinding = {
+  tenant_id: string
+  case_id: string
+  event_id: string
+  event_normalization_hash: string
+  outcome: ProcessConformanceOutcome
+  proof_status: ProcessProofStatus
+  reproducibility: 'verified' | 'failed' | 'unknown' | 'not_required'
+  receipt_verifier_succeeded: boolean
+  verifier_name: string | null
+  verifier_signature_required: boolean
+  verifier_expiry_required: boolean
+  production_profile_verified: boolean
+  reasons: string[]
+  verifier_reason_codes: string[]
+  evidence_references: (ProcessEvidenceReference | string)[]
+  algorithm_version: 'conformance-1.0'
+  analytical_only: true
+  executable_authority: false
+}
+
+export type ProcessComplianceReport = {
+  tenant_id: string
+  process_id: string
+  snapshot_id: string
+  findings: ProcessConformanceFinding[]
+  relevant_event_count: number
+  allow_count: number
+  deny_count: number
+  investigate_count: number
+  compliance_score: number | null
+  verification_posture: 'not_applicable' | 'non_authoritative' | 'production_verified' | 'mixed'
+  analytical_only: true
+  executable_authority: false
+}

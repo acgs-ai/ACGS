@@ -45,6 +45,22 @@ function scanSourceForCspHazards() {
     return ['.tsx', '.jsx'].includes(extname(file))
   })
 
+  // Anti-wizard-re-run guard (docs/POSTHOG_CONSOLE_TELEMETRY_DESIGN.md §6):
+  // no PostHog (or any analytics vendor) SDK import anywhere under src/ —
+  // ALL of src/, .ts included, because Login.tsx and shared modules sit
+  // outside src/{surfaces,routes}/console/**. The only sanctioned analytics
+  // path is the first-party emitter posting to same-origin /api/telemetry.
+  const allSourceFiles = walk(resolve(root, 'src'), (file) =>
+    ['.ts', '.tsx', '.js', '.jsx'].includes(extname(file)),
+  )
+  for (const file of allSourceFiles) {
+    const source = readFileSync(file, 'utf8')
+    check(
+      !/(?:\bfrom|\bimport\s*\(|\bimport|\brequire\s*\()\s*['"](?:@posthog\/|posthog)/m.test(source),
+      `${rel(file)} must not import a PostHog SDK — the console analytics path is the first-party emitter only (docs/POSTHOG_CONSOLE_TELEMETRY_DESIGN.md).`,
+    )
+  }
+
   for (const file of sourceFiles) {
     const source = readFileSync(file, 'utf8')
     check(!/style\s*=\s*\{\s*\{/.test(source), `${rel(file)} must not use JSX style={{...}}.`)

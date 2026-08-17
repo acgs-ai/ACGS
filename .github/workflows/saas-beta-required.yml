@@ -1,0 +1,252 @@
+# Required GitHub-hosted SaaS-beta PR gate.
+#
+# This workflow intentionally has no path filters: every pull request targeting
+# master must prove the same local contract on GitHub-hosted infrastructure.
+# Branch protection/ruleset enforcement is external to this workflow and is
+# currently absent until a repository administrator configures the check.
+
+name: saas-beta-required
+
+on:
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: saas-beta-required-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  required:
+    name: SaaS beta required gate
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+          submodules: false
+
+      # acgs-control-plane is a private submodule (proprietary extraction).
+      # This gate is required on every PR, so a missing/underscoped
+      # SUBMODULE_TOKEN must fail loudly here, not soft-skip: the gate's
+      # whole job is to run the control-plane suites.
+      - name: Init control-plane submodule (hard requirement)
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          # Ephemeral global gitconfig so the token never lands in a real
+          # ~/.gitconfig (see python-clinicalguard.yml for rationale).
+          export GIT_CONFIG_GLOBAL="${RUNNER_TEMP}/submodule-gitconfig"
+          if [ -z "${SUBMODULE_TOKEN}" ]; then
+            echo "::error::SUBMODULE_TOKEN is required: acgs-control-plane is a private submodule and this gate must run its tests." >&2
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git submodule sync -- packages/acgs-control-plane
+          git submodule update --init --recursive -- packages/acgs-control-plane
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+        with:
+          version: 0.11.19
+          enable-cache: false
+
+      - name: Authenticate and pin uv
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          expected=a00d3a24514fc0403fc232c9c99bf5e542657c38f4ed941e0611731e4cff268b
+          source_uv="$(command -v uv)"
+          actual="$(sha256sum "$source_uv" | awk '{print $1}')"
+          [[ "$actual" == "$expected" ]]
+          sudo install -D -m 0755 "$source_uv" /home/martin/.local/bin/uv
+          [[ ! -L /home/martin/.local/bin/uv ]]
+          [[ "$(sha256sum /home/martin/.local/bin/uv | awk '{print $1}')" == "$expected" ]]
+          printf 'UV_BIN=/home/martin/.local/bin/uv\n' >>"$GITHUB_ENV"
+          printf '%s\n' /home/martin/.local/bin >>"$GITHUB_PATH"
+
+      - name: Recreate hash-locked Python environments
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          "$UV_BIN" python install 3.11
+          "$UV_BIN" venv --python 3.11 .venv-evidence
+          "$UV_BIN" pip sync --python .venv-evidence/bin/python --require-hashes \
+            requirements/saas-beta/evidence-test.lock
+
+          "$UV_BIN" venv --python 3.11 packages/acgs-control-plane/.venv
+          "$UV_BIN" pip sync --python packages/acgs-control-plane/.venv/bin/python \
+            --require-hashes requirements/saas-beta/cp-test.lock
+
+          "$UV_BIN" venv --python 3.11 packages/gove-zone/.venv-beta
+          "$UV_BIN" pip sync --python packages/gove-zone/.venv-beta/bin/python \
+            --require-hashes requirements/saas-beta/gz-test.lock
+
+          export UV_OFFLINE=1 UV_NO_INDEX=1 UV_NO_CACHE=1
+          "$UV_BIN" pip install --python packages/acgs-control-plane/.venv/bin/python \
+            --offline --no-index --no-cache --no-build-isolation --no-deps \
+            --editable packages/gove-zone --editable packages/acgs-control-plane
+          "$UV_BIN" pip install --python packages/gove-zone/.venv-beta/bin/python \
+            --offline --no-index --no-cache --no-build-isolation --no-deps \
+            --editable packages/gove-zone
+
+      - name: Capture SaaS-beta evidence identities
+        env:
+          ACGS_EVIDENCE_ROOT: ${{ runner.temp }}/acgs-evidence
+          UV_OFFLINE: '1'
+          UV_NO_INDEX: '1'
+          UV_NO_CACHE: '1'
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          node_evidence="$ACGS_EVIDENCE_ROOT/P0-EVIDENCE-000"
+          install -d -m 0700 "$ACGS_EVIDENCE_ROOT" "$node_evidence"
+          .venv-evidence/bin/python scripts/evidence/verify_environment.py \
+            --code EVID \
+            --lock requirements/saas-beta/evidence-test.lock \
+            --expected-interpreter "$PWD/.venv-evidence/bin/python" \
+            --expected-python 3.11 \
+            --expected-uv 0.11.19 \
+            --expected-uv-executable "$UV_BIN" \
+            --require-module-root "$PWD/.venv-evidence" \
+            --require 'rfc8785==0.1.4' \
+            --require 'cryptography>=42' \
+            --require jsonschema \
+            --require pytest \
+            --output "$node_evidence/environment-EVID.json"
+          .venv-evidence/bin/python scripts/evidence/capture_environment.py \
+            --code CP \
+            --interpreter "$PWD/packages/acgs-control-plane/.venv/bin/python" \
+            --lock requirements/saas-beta/cp-test.lock \
+            --require-editables 0.6 \
+            --output "$node_evidence/environment-CP.json"
+          .venv-evidence/bin/python scripts/evidence/capture_environment.py \
+            --code GZ \
+            --interpreter "$PWD/packages/gove-zone/.venv-beta/bin/python" \
+            --lock requirements/saas-beta/gz-test.lock \
+            --require-editables 0.6 \
+            --output "$node_evidence/environment-GZ.json"
+          .venv-evidence/bin/python scripts/evidence/validate_environment_identities.py \
+            --node P0-EVIDENCE-000 \
+            --assignment-map requirements/saas-beta/bootstrap-by-scope.json \
+            --assignment EVID+CP+GZ \
+            --identity-dir "$node_evidence" \
+            --require-fresh-bootstrap-records \
+            --reject-missing \
+            --reject-extra \
+            --reject-unassigned-runtime-paths \
+            --output "$node_evidence/environment-identities.json"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.18.0
+
+      - name: Install exact pnpm
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4+sha512.b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0 --activate
+          [[ "$(pnpm --version)" == "9.15.4" ]]
+
+      - name: Install console dependencies
+        working-directory: acgi-ai
+        run: pnpm install --frozen-lockfile --ignore-workspace
+
+      - name: Install bubblewrap prerequisite
+        # Same requirement as the hosted-contract job in saas-beta-p0-evidence.yml:
+        # test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_sockets
+        # can only prove containment if bwrap can actually unshare, and Ubuntu 24.04
+        # restricts unprivileged user namespaces through AppArmor. Without this the
+        # test fails "containment runner unavailable" — untestable, not satisfied.
+        # The AppArmor profile load is gated on the AppArmor securityfs interface
+        # being present: Blacksmith runner VMs boot without the AppArmor LSM active,
+        # so its userns restriction cannot apply there and apparmor_parser has no
+        # kernel interface to load into. The bwrap unshare smoke test below is the
+        # authoritative check either way and still hard-fails if userns is blocked.
+        # Scoped to /usr/bin/bwrap alone on the ephemeral runner. Adds no credential
+        # surface and no outbound mutation, so it stays inside the side-effect contract
+        # asserted by test_saas_beta_required_gate_has_no_privileged_or_external_side_effect_surface.
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+          test "$(command -v bwrap)" = /usr/bin/bwrap
+          bwrap --version
+          if [ -d /sys/kernel/security/apparmor ]; then
+            if ! command -v apparmor_parser >/dev/null 2>&1; then
+              sudo apt-get install --yes apparmor
+            fi
+            sudo tee /etc/apparmor.d/acgs-ci-bwrap >/dev/null <<'APPARMOR'
+          abi <abi/4.0>,
+          include <tunables/global>
+
+          profile acgs-ci-bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          APPARMOR
+            sudo apparmor_parser -r /etc/apparmor.d/acgs-ci-bwrap
+          else
+            echo "AppArmor securityfs absent; skipping profile load (userns restriction cannot apply)"
+          fi
+          bwrap \
+            --unshare-all --unshare-user --die-with-parent --new-session --disable-userns \
+            --proc /proc --dev /dev --tmpfs /tmp --tmpfs /run \
+            --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind-try /lib /lib \
+            --ro-bind-try /lib64 /lib64 --clearenv \
+            --setenv PATH /usr/bin:/bin \
+            /bin/sh -c 'test -r /proc/self/status'
+
+      - name: Run SaaS-beta evidence tests
+        env:
+          ACGS_EVIDENCE_ROOT: ${{ runner.temp }}/acgs-evidence
+          UV_OFFLINE: '1'
+          UV_NO_INDEX: '1'
+          UV_NO_CACHE: '1'
+          RUFF_NO_CACHE: 'true'
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          .venv-evidence/bin/python -m pytest -q \
+            tests/saas_beta/test_ci_gate_contract.py \
+            tests/saas_beta/test_evidence_bootstrap.py \
+            -k "not test_real_transcript_to_generate_run_rejects_secret_contexts_without_run_or_echo and not test_actual_p0_capture_reaggregates_generates_and_reaches_final_run_validation and not test_actual_p6_evid_ui_capture_aggregate_generate_and_final_validation and not test_clean_sibling_hash_locked_bootstraps_and_round_trip and not test_clean_sibling_rejects_loader_and_git_authority_before_mutation and not test_p1_clean_sibling_rejects_wrong_reviewed_parent_before_mutation"
+
+      - name: Run control-plane tests
+        env:
+          UV_OFFLINE: '1'
+          UV_NO_INDEX: '1'
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          packages/acgs-control-plane/.venv/bin/python -m pytest -q \
+            packages/acgs-control-plane/tests --import-mode=importlib
+
+      - name: Run gove-zone tests
+        env:
+          UV_OFFLINE: '1'
+          UV_NO_INDEX: '1'
+          UV_NO_CACHE: '1'
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          packages/gove-zone/.venv-beta/bin/python -m pytest -q \
+            packages/gove-zone/tests --import-mode=importlib
+
+      - name: Console lint
+        working-directory: acgi-ai
+        run: pnpm run lint
+
+      - name: Console build
+        working-directory: acgi-ai
+        run: pnpm run build
+
+      - name: Console readiness
+        working-directory: acgi-ai
+        run: pnpm run test:all
+
+      - name: Console unit tests
+        working-directory: acgi-ai
+        run: pnpm test:unit
+
+      - name: Assert tracked worktree clean
+        run: |
+          git diff --exit-code -- .
+          git diff --cached --exit-code -- .

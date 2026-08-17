@@ -12,6 +12,7 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.30",
     "enhanced-agent-bus",
+    "gove-zone[crypto]>=0.1.0a1",
 ]
 
 [dependency-groups]
@@ -30,6 +31,12 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_bus_analyzer"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/agent_bus_analyzer/process_mining/resources/process-event.schema.json" = "agent_bus_analyzer/process_mining/resources/process-event.schema.json"
+
+[tool.uv.sources]
+gove-zone = { workspace = true }
 
 [tool.ruff]
 line-length = 100
