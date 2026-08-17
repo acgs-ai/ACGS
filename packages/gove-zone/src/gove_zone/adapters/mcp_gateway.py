@@ -808,9 +808,7 @@ class GovernedGateway:
         event_id = self._event_id_arg(arguments)
         if event_id is None:
             actor = (
-                self._resolve_approver(session)
-                or self._resolve_principal(session)
-                or "<unmapped>"
+                self._resolve_approver(session) or self._resolve_principal(session) or "<unmapped>"
             )
             return self._human_loop_denied_result(
                 name,

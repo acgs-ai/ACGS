@@ -197,7 +197,14 @@ def test_tool_decorator_registers_and_names_are_sorted(gateway: UniversalGateway
 
     assert isinstance(zeta, SealedTool)
     assert gateway.tool_names() == ("alpha", "zeta")
-    assert gateway.mcp_tools_list() == {"tools": [{"name": "alpha"}, {"name": "zeta"}]}
+    assert gateway.mcp_tools_list() == {
+        "tools": [
+            {"name": "gove.approve"},
+            {"name": "gove.resume"},
+            {"name": "alpha"},
+            {"name": "zeta"},
+        ]
+    }
 
 
 def test_openai_tools_spec_maps_annotations_to_json_types(gateway: UniversalGateway) -> None:

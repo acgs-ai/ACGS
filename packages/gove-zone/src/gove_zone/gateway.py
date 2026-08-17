@@ -953,9 +953,7 @@ class UniversalGateway:
             }
         )
 
-    def _human_loop_denied(
-        self, actor: str, tool: str, reason: str, *, code: str
-    ) -> GatewayResult:
+    def _human_loop_denied(self, actor: str, tool: str, reason: str, *, code: str) -> GatewayResult:
         """Audited fail-closed refusal for a reserved approve/resume call."""
         call = ToolCall(name=tool, args={}, actor=actor)
         try:
