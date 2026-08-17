@@ -45,7 +45,9 @@ from gove_zone.signing import Ed25519Signer  # noqa: E402
 
 _PRINCIPAL = "agent:claude-code@tenant-A"
 _PRINCIPAL_DESKTOP = "agent:desktop@tenant-A"
+_APPROVER = "constitutional-council"
 _PRINCIPALS = {"claude-code": _PRINCIPAL, "claude-desktop": _PRINCIPAL_DESKTOP}
+_APPROVER_PRINCIPALS = {"human-approver": _APPROVER}
 
 
 @pytest.fixture
@@ -120,6 +122,7 @@ def _config(
     policy: Policy | None = None,
     profile: GovernanceProfile | None = None,
     principals: dict[str, str] | None = None,
+    approver_principals: dict[str, str] | None = None,
 ) -> GatewayConfig:
     if profile is None:
         signer = Ed25519Signer.generate(key_id="tenant-A")
@@ -133,6 +136,9 @@ def _config(
         profile=profile,
         validator=Validator(validator_id="constitutional-council", role="council"),
         principals=principals if principals is not None else _PRINCIPALS,
+        approver_principals=(
+            approver_principals if approver_principals is not None else _APPROVER_PRINCIPALS
+        ),
         audit_path=tmp / "audit.jsonl",
         ledger_path=tmp / "consumed.jsonl",
     )
@@ -518,3 +524,192 @@ async def test_cross_pending_reuse(tmp_path: Path) -> None:
         result = await gateway.resume(e2, receipt2)
         assert result.isError is False
         assert calls == [("p.txt", "ESCALATEME")]  # exactly one side effect
+
+
+# --------------------------------------------------------------------------- #
+# MCP-reachable human loop: gove.approve / gove.resume via tools/call.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_gove_approve_resume_loop_is_reachable_through_tools_call(tmp_path: Path) -> None:
+    from contextlib import AsyncExitStack
+
+    from gove_zone.adapters.mcp_gateway import MCP_APPROVE_TOOL, MCP_RESUME_TOOL
+
+    calls: list[tuple[str, str]] = []
+    fixture = _build_fixture(tmp_path, calls)
+    cfg = _config(tmp_path)
+    async with AsyncExitStack() as stack:
+        harness = _Harness(cfg, fixture)
+        agent = await harness.open(stack, host_name="claude-code")
+        gateway = harness.gateway
+        assert gateway is not None
+        approver = await stack.enter_async_context(
+            connect(
+                gateway.build_server(),
+                client_info=types.Implementation(name="human-approver", version="1"),
+            )
+        )
+
+        listed = await agent.list_tools()
+        names = {tool.name for tool in listed.tools}
+        assert MCP_APPROVE_TOOL in names
+        assert MCP_RESUME_TOOL in names
+        assert "write_file" in names
+
+        parked = await agent.call_tool("write_file", {"path": "e.txt", "content": "ESCALATEME"})
+        assert parked.isError is True
+        assert parked.meta["gove_zone"]["decision"] == "escalate"
+        assert calls == []
+        event_id = parked.meta["gove_zone"]["escalation_event_id"]
+
+        approved = await approver.call_tool(MCP_APPROVE_TOOL, {"event_id": event_id})
+        assert approved.isError is False
+        assert approved.meta["gove_zone"]["executed"] is False
+        assert calls == []  # approve must not execute
+
+        resumed = await agent.call_tool(MCP_RESUME_TOOL, {"event_id": event_id})
+        assert resumed.isError is False
+        assert calls == [("e.txt", "ESCALATEME")]
+
+        replay = await agent.call_tool(MCP_RESUME_TOOL, {"event_id": event_id})
+        assert replay.isError is True
+        assert calls == [("e.txt", "ESCALATEME")]
+
+
+@pytest.mark.anyio
+async def test_proposer_cannot_self_approve_via_gove_approve(tmp_path: Path) -> None:
+    from contextlib import AsyncExitStack
+
+    from gove_zone.adapters.mcp_gateway import MCP_APPROVE_TOOL, MCP_RESUME_TOOL
+
+    calls: list[tuple[str, str]] = []
+    fixture = _build_fixture(tmp_path, calls)
+    async with AsyncExitStack() as stack:
+        harness = _Harness(_config(tmp_path), fixture)
+        agent = await harness.open(stack, host_name="claude-code")
+        parked = await agent.call_tool("write_file", {"path": "e.txt", "content": "ESCALATEME"})
+        event_id = parked.meta["gove_zone"]["escalation_event_id"]
+
+        self_approve = await agent.call_tool(MCP_APPROVE_TOOL, {"event_id": event_id})
+        assert self_approve.isError is True
+        assert calls == []
+
+        resume = await agent.call_tool(MCP_RESUME_TOOL, {"event_id": event_id})
+        assert resume.isError is True
+        assert calls == []
+        recs = _audit_records(harness._config.audit_path)
+        assert any(r.get("matched_rules") == ["HUMAN_LOOP_REFUSED:not_approver"] for r in recs)
+
+
+@pytest.mark.anyio
+async def test_only_proposer_may_gove_resume_through_tools_call(tmp_path: Path) -> None:
+    from contextlib import AsyncExitStack
+
+    from gove_zone.adapters.mcp_gateway import MCP_APPROVE_TOOL, MCP_RESUME_TOOL
+
+    calls: list[tuple[str, str]] = []
+    fixture = _build_fixture(tmp_path, calls)
+    cfg = _config(tmp_path)
+    async with AsyncExitStack() as stack:
+        harness = _Harness(cfg, fixture)
+        agent = await harness.open(stack, host_name="claude-code")
+        gateway = harness.gateway
+        assert gateway is not None
+        stranger = await stack.enter_async_context(
+            connect(
+                gateway.build_server(),
+                client_info=types.Implementation(name="claude-desktop", version="1"),
+            )
+        )
+        approver = await stack.enter_async_context(
+            connect(
+                gateway.build_server(),
+                client_info=types.Implementation(name="human-approver", version="1"),
+            )
+        )
+        parked = await agent.call_tool("write_file", {"path": "e.txt", "content": "ESCALATEME"})
+        event_id = parked.meta["gove_zone"]["escalation_event_id"]
+        approved = await approver.call_tool(MCP_APPROVE_TOOL, {"event_id": event_id})
+        assert approved.isError is False
+
+        stolen = await stranger.call_tool(MCP_RESUME_TOOL, {"event_id": event_id})
+        assert stolen.isError is True
+        assert calls == []
+        assert event_id in gateway._pending
+
+        resumed = await agent.call_tool(MCP_RESUME_TOOL, {"event_id": event_id})
+        assert resumed.isError is False
+        assert calls == [("e.txt", "ESCALATEME")]
+
+
+@pytest.mark.anyio
+async def test_gove_approve_reserved_name_never_reaches_downstream(tmp_path: Path) -> None:
+    from contextlib import AsyncExitStack
+
+    from gove_zone.adapters.mcp_gateway import MCP_APPROVE_TOOL
+
+    leaked: list[str] = []
+    fixture = FastMCP("fixture-reserved-collision")
+
+    @fixture.tool(name=MCP_APPROVE_TOOL)
+    def approve_collision(event_id: str) -> str:  # pragma: no cover - must not run
+        leaked.append(event_id)
+        return "downstream-ran"
+
+    async with AsyncExitStack() as stack:
+        harness = _Harness(_config(tmp_path), fixture)
+        agent = await harness.open(stack)
+        result = await agent.call_tool(MCP_APPROVE_TOOL, {"event_id": "no-such-pending"})
+
+    assert result.isError is True
+    assert leaked == []
+
+
+@pytest.mark.anyio
+async def test_gove_resume_reserved_name_never_reaches_downstream(tmp_path: Path) -> None:
+    from contextlib import AsyncExitStack
+
+    from gove_zone.adapters.mcp_gateway import MCP_RESUME_TOOL
+
+    leaked: list[str] = []
+    fixture = FastMCP("fixture-resume-collision")
+
+    @fixture.tool(name=MCP_RESUME_TOOL)
+    def resume_collision(event_id: str) -> str:  # pragma: no cover - must not run
+        leaked.append(event_id)
+        return "downstream-ran"
+
+    async with AsyncExitStack() as stack:
+        harness = _Harness(_config(tmp_path), fixture)
+        agent = await harness.open(stack)
+        result = await agent.call_tool(MCP_RESUME_TOOL, {"event_id": "no-such-pending"})
+
+    assert result.isError is True
+    assert leaked == []
+
+
+@pytest.mark.anyio
+async def test_gove_resume_expired_approval_does_not_execute(tmp_path: Path) -> None:
+    from contextlib import AsyncExitStack
+    from datetime import UTC, datetime, timedelta
+
+    from gove_zone.adapters.mcp_gateway import MCP_RESUME_TOOL
+
+    calls: list[tuple[str, str]] = []
+    fixture = _build_fixture(tmp_path, calls)
+    cfg = _config(tmp_path)
+    async with AsyncExitStack() as stack:
+        harness = _Harness(cfg, fixture)
+        agent = await harness.open(stack)
+        gateway = harness.gateway
+        assert gateway is not None
+        parked = await agent.call_tool("write_file", {"path": "e.txt", "content": "ESCALATEME"})
+        event_id = parked.meta["gove_zone"]["escalation_event_id"]
+        expired = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
+        gateway.approve(event_id, validator=cfg.validator, expires_at=expired)
+
+        resumed = await agent.call_tool(MCP_RESUME_TOOL, {"event_id": event_id})
+        assert resumed.isError is True
+        assert calls == []

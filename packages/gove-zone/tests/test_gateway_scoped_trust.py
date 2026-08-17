@@ -209,6 +209,44 @@ def test_rest_call_rejects_v2_receipt_minted_before_the_trust_epoch(tmp_path: Pa
 # -- other surfaces share the same chokepoint ---------------------------------- #
 
 
+def test_scoped_gateway_refuses_to_mint_v1_approval(tmp_path: Path) -> None:
+    """A scoped gateway must not approve via v1 from_record and then resume."""
+    from gove_zone.gateway import MCP_APPROVE_TOOL
+
+    signer = Ed25519Signer.generate(key_id="scoped-approve-key")
+    policy = RuleSetPolicy(
+        policy_id="scoped-escalate",
+        rules=(
+            PolicyRule(
+                rule_id="escalate-deploy",
+                effect=Decision.ESCALATE,
+                tools=frozenset({"deploy"}),
+                reason="needs human",
+            ),
+        ),
+    )
+    gateway = make_gateway(tmp_path, signer=signer, registry=trust_registry(signer), policy=policy)
+    gateway.approver_actors = frozenset({"human-approver"})
+    calls: list[Any] = []
+    gateway.register_tool("deploy", lambda **kwargs: calls.append(dict(kwargs)))
+
+    parked = gateway.handle_mcp_call({"name": "deploy", "arguments": {"env": "prod"}}, actor=ACTOR)
+    assert parked["_meta"]["gove_zone"]["decision"] == "escalated"
+    event_id = parked["_meta"]["gove_zone"]["escalation_event_id"]
+
+    approved = gateway.handle_mcp_call(
+        {"name": MCP_APPROVE_TOOL, "arguments": {"event_id": event_id}},
+        actor="human-approver",
+    )
+    assert approved["isError"] is True
+    assert approved["_meta"]["gove_zone"]["envelope"]["matched_rules"] == [
+        "HUMAN_LOOP_REFUSED:scoped_v1_forbidden"
+    ]
+    assert calls == []
+    assert event_id in gateway._pending
+    assert event_id not in gateway._approvals
+
+
 def test_mcp_call_under_scoped_trust_executes_and_reports_v2(tmp_path: Path) -> None:
     signer = Ed25519Signer.generate(key_id="mcp-scoped-key")
     gateway = make_gateway(tmp_path, signer=signer, registry=trust_registry(signer))
