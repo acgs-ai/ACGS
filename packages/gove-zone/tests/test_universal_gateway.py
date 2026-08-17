@@ -596,6 +596,63 @@ def test_constructor_rejects_nonpositive_pending_caps(tmp_path: Path) -> None:
         make_gateway(tmp_path, max_pending=0)
 
 
+def test_per_principal_capacity_rejects_before_global(tmp_path: Path) -> None:
+    from gove_zone.gateway import CAPACITY_REJECTED_RULE
+
+    gateway = make_gateway(
+        tmp_path,
+        approver_actors=frozenset({"human-approver"}),
+        max_pending=10,
+        max_pending_per_principal=2,
+    )
+    calls: list[Any] = []
+    gateway.register_tool("deploy", lambda **kwargs: calls.append(kwargs))
+    gateway.handle_mcp_call({"name": "deploy", "arguments": {"env": "a"}}, actor="agent-a")
+    gateway.handle_mcp_call({"name": "deploy", "arguments": {"env": "b"}}, actor="agent-a")
+    overflow = gateway.handle_mcp_call(
+        {"name": "deploy", "arguments": {"env": "c"}}, actor="agent-a"
+    )
+    assert overflow["_meta"]["gove_zone"]["decision"] == "denied"
+    assert overflow["_meta"]["gove_zone"]["envelope"]["matched_rules"] == [
+        f"{CAPACITY_REJECTED_RULE}:principal"
+    ]
+    assert len(gateway._pending) == 2
+    assert calls == []
+
+
+def test_post_burn_tool_failure_frees_pending_slot(tmp_path: Path) -> None:
+    from gove_zone.gateway import MCP_APPROVE_TOOL, MCP_RESUME_TOOL
+
+    gateway = make_gateway(tmp_path, approver_actors=frozenset({"human-approver"}))
+
+    def boom(**kwargs: Any) -> None:
+        raise RuntimeError("downstream exploded")
+
+    gateway.register_tool("deploy", boom)
+    parked = gateway.handle_mcp_call(
+        {"name": "deploy", "arguments": {"env": "prod"}}, actor="agent-a"
+    )
+    event_id = parked["_meta"]["gove_zone"]["escalation_event_id"]
+    approved = gateway.handle_mcp_call(
+        {"name": MCP_APPROVE_TOOL, "arguments": {"event_id": event_id}},
+        actor="human-approver",
+    )
+    assert approved["isError"] is False
+    failed = gateway.handle_mcp_call(
+        {"name": MCP_RESUME_TOOL, "arguments": {"event_id": event_id}},
+        actor="agent-a",
+    )
+    assert failed["isError"] is True
+    assert failed["_meta"]["gove_zone"]["error_class"] == "RuntimeError"
+    assert event_id not in gateway._pending
+    replay = gateway.handle_mcp_call(
+        {"name": MCP_RESUME_TOOL, "arguments": {"event_id": event_id}},
+        actor="agent-a",
+    )
+    assert replay["isError"] is True
+    assert event_id not in gateway._pending
+
+
 def test_openai_tool_specs_from_signatures(tmp_path: Path) -> None:
     gateway = make_gateway(tmp_path)
 

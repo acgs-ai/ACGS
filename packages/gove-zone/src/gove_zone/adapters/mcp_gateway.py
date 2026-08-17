@@ -291,6 +291,11 @@ def load_gateway_config(path: str | Path) -> GatewayConfig:
         downstream=dict(downstream),
         max_pending=int(escalation.get("max_pending", 256)),
         max_pending_per_principal=int(escalation.get("max_pending_per_principal", 64)),
+        receipt_ttl_seconds=(
+            float(gov["receipt_ttl_seconds"])
+            if gov.get("receipt_ttl_seconds") is not None
+            else None
+        ),
     )
 
 
@@ -741,23 +746,28 @@ class GovernedGateway:
 
         executor.register(pending.record.tool, _forward)
 
-        downstream_result: mcp_types.CallToolResult = await anyio.to_thread.run_sync(
-            lambda: resume_with_receipt(
-                executor,
-                pending,
-                receipt,
-                expected_audit_hash=approval_hash,
+        try:
+            downstream_result: mcp_types.CallToolResult = await anyio.to_thread.run_sync(
+                lambda: resume_with_receipt(
+                    executor,
+                    pending,
+                    receipt,
+                    expected_audit_hash=approval_hash,
+                )
             )
-        )
-        # Success path only (reached after resume_with_receipt returns, i.e. the
-        # approval receipt has been verified AND burned in the single-use ledger):
-        # evict the now-consumed pending and its captured approval. This bounds
-        # the write-only growth of _pending / _approvals and makes a replayed
-        # event_id short-circuit with KeyError above, before it can reach the
-        # gate. A pre-burn ReceiptValidationError (the ``captured is None`` guard
-        # or any gate refusal) raises before this line, so a legitimate retry of
-        # an unconsumed pending is preserved.
-        del self._pending[event_id]
+        except ReceiptAlreadyUsedError:
+            self._pending.pop(event_id, None)
+            self._approvals.pop(event_id, None)
+            raise
+        except ReceiptValidationError:
+            # Verify failed before burn — keep the pending for a legitimate retry.
+            raise
+        except Exception:
+            # Downstream/tool raised after the ledger burn. Free the slot.
+            self._pending.pop(event_id, None)
+            self._approvals.pop(event_id, None)
+            raise
+        self._pending.pop(event_id, None)
         self._approvals.pop(event_id, None)
         return self._wrap_allow_result(downstream_result, pending.record, receipt.audit_event_hash)
 
@@ -1023,10 +1033,7 @@ class GovernedGateway:
             approval={
                 "via": "approve_escalation",
                 "event_id": record.event_id,
-                "how_to_approve": (
-                    "tools/call gove.approve {event_id} from an approver "
-                    "session, or gove-zone approve-escalation --pending <descriptor>"
-                ),
+                "how_to_approve": ("tools/call gove.approve {event_id} from an approver session"),
             },
         )
         return types.CallToolResult(

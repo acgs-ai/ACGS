@@ -83,6 +83,7 @@ from gove_zone.errors import (
     AuditError,
     GoveZoneError,
     ProductionProfileError,
+    ReceiptAlreadyUsedError,
     ReceiptValidationError,
     UnknownToolError,
 )
@@ -813,6 +814,15 @@ class UniversalGateway:
             return self._human_loop_denied(
                 actor, MCP_APPROVE_TOOL, "self-approval is forbidden", code="self_approval"
             )
+        if self.scoped_trust:
+            # approve_escalation mints v1 via from_record. A scoped gateway
+            # must not silently resume that receipt under weaker trust.
+            return self._human_loop_denied(
+                actor,
+                MCP_APPROVE_TOOL,
+                "scoped receipt-v2 approval minting is not available",
+                code="scoped_v1_forbidden",
+            )
         try:
             receipt = approve_escalation(
                 pending,
@@ -895,6 +905,14 @@ class UniversalGateway:
             )
         except ProductionProfileError:
             raise
+        except ReceiptAlreadyUsedError as exc:
+            self._evict_pending(event_id)
+            return GatewayResult(
+                status="error",
+                tool=MCP_RESUME_TOOL,
+                actor=actor,
+                error_class=type(exc).__name__,
+            )
         except ReceiptValidationError as exc:
             return GatewayResult(
                 status="error",
@@ -903,8 +921,10 @@ class UniversalGateway:
                 error_class=type(exc).__name__,
             )
         except BypassAttemptError:
+            self._evict_pending(event_id)
             raise
-        except Exception as exc:  # noqa: BLE001 — tool fn raised mid-execution
+        except Exception as exc:  # noqa: BLE001 — tool fn raised after ledger burn
+            self._evict_pending(event_id)
             return GatewayResult(
                 status="error",
                 tool=MCP_RESUME_TOOL,
@@ -913,8 +933,7 @@ class UniversalGateway:
             )
         finally:
             _ACTIVE_GRANT.reset(token)
-        del self._pending[event_id]
-        self._approvals.pop(event_id, None)
+        self._evict_pending(event_id)
         return GatewayResult(
             status="executed",
             tool=pending.record.tool,
@@ -952,6 +971,10 @@ class UniversalGateway:
                 "timestamp_iso": datetime.now(UTC).isoformat(),
             }
         )
+
+    def _evict_pending(self, event_id: str) -> None:
+        self._pending.pop(event_id, None)
+        self._approvals.pop(event_id, None)
 
     def _human_loop_denied(self, actor: str, tool: str, reason: str, *, code: str) -> GatewayResult:
         """Audited fail-closed refusal for a reserved approve/resume call."""
@@ -1489,7 +1512,13 @@ class UniversalGateway:
         except UnknownToolError:
             return {"status": 404, "body": {"error": f"tool not registered: {tool}"}}
 
-        status_map = {"executed": 200, "denied": 403, "escalated": 202, "error": 500}
+        status_map = {
+            "executed": 200,
+            "approved": 200,
+            "denied": 403,
+            "escalated": 202,
+            "error": 500,
+        }
         return {
             "status": status_map.get(outcome.status, 500),
             "body": outcome.to_dict(),

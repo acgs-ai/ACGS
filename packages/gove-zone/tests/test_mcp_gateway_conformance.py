@@ -599,6 +599,49 @@ async def test_proposer_cannot_self_approve_via_gove_approve(tmp_path: Path) -> 
         resume = await agent.call_tool(MCP_RESUME_TOOL, {"event_id": event_id})
         assert resume.isError is True
         assert calls == []
+        recs = _audit_records(harness._config.audit_path)
+        assert any(r.get("matched_rules") == ["HUMAN_LOOP_REFUSED:not_approver"] for r in recs)
+
+
+@pytest.mark.anyio
+async def test_only_proposer_may_gove_resume_through_tools_call(tmp_path: Path) -> None:
+    from contextlib import AsyncExitStack
+
+    from gove_zone.adapters.mcp_gateway import MCP_APPROVE_TOOL, MCP_RESUME_TOOL
+
+    calls: list[tuple[str, str]] = []
+    fixture = _build_fixture(tmp_path, calls)
+    cfg = _config(tmp_path)
+    async with AsyncExitStack() as stack:
+        harness = _Harness(cfg, fixture)
+        agent = await harness.open(stack, host_name="claude-code")
+        gateway = harness.gateway
+        assert gateway is not None
+        stranger = await stack.enter_async_context(
+            connect(
+                gateway.build_server(),
+                client_info=types.Implementation(name="claude-desktop", version="1"),
+            )
+        )
+        approver = await stack.enter_async_context(
+            connect(
+                gateway.build_server(),
+                client_info=types.Implementation(name="human-approver", version="1"),
+            )
+        )
+        parked = await agent.call_tool("write_file", {"path": "e.txt", "content": "ESCALATEME"})
+        event_id = parked.meta["gove_zone"]["escalation_event_id"]
+        approved = await approver.call_tool(MCP_APPROVE_TOOL, {"event_id": event_id})
+        assert approved.isError is False
+
+        stolen = await stranger.call_tool(MCP_RESUME_TOOL, {"event_id": event_id})
+        assert stolen.isError is True
+        assert calls == []
+        assert event_id in gateway._pending
+
+        resumed = await agent.call_tool(MCP_RESUME_TOOL, {"event_id": event_id})
+        assert resumed.isError is False
+        assert calls == [("e.txt", "ESCALATEME")]
 
 
 @pytest.mark.anyio
@@ -619,6 +662,29 @@ async def test_gove_approve_reserved_name_never_reaches_downstream(tmp_path: Pat
         harness = _Harness(_config(tmp_path), fixture)
         agent = await harness.open(stack)
         result = await agent.call_tool(MCP_APPROVE_TOOL, {"event_id": "no-such-pending"})
+
+    assert result.isError is True
+    assert leaked == []
+
+
+@pytest.mark.anyio
+async def test_gove_resume_reserved_name_never_reaches_downstream(tmp_path: Path) -> None:
+    from contextlib import AsyncExitStack
+
+    from gove_zone.adapters.mcp_gateway import MCP_RESUME_TOOL
+
+    leaked: list[str] = []
+    fixture = FastMCP("fixture-resume-collision")
+
+    @fixture.tool(name=MCP_RESUME_TOOL)
+    def resume_collision(event_id: str) -> str:  # pragma: no cover - must not run
+        leaked.append(event_id)
+        return "downstream-ran"
+
+    async with AsyncExitStack() as stack:
+        harness = _Harness(_config(tmp_path), fixture)
+        agent = await harness.open(stack)
+        result = await agent.call_tool(MCP_RESUME_TOOL, {"event_id": "no-such-pending"})
 
     assert result.isError is True
     assert leaked == []
