@@ -18,6 +18,7 @@
     "gen:api": "openapi-typescript contracts/bus.openapi.json -o src/api/bus.generated.ts && biome format --write src/api/bus.generated.ts",
     "lint": "biome check src index.html package.json vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.json biome.json",
     "format": "biome format --write src index.html package.json vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.json biome.json",
+    "typecheck": "tsc -b",
     "test:security": "node scripts/check-security-invariants.mjs",
     "test:mvp": "node scripts/check-gove-zone-mvp.mjs",
     "test:font-manifest": "node scripts/check-font-manifest.mjs",

@@ -119,6 +119,159 @@ const audiences = [
   },
 ]
 
+// Hero proof pillars. Each states an operational property the kernel actually
+// implements locally; none of them claims external assurance.
+const heroProofPillars = [
+  {
+    title: 'Pre-execution gate',
+    body: 'Policy is evaluated before the tool call runs, not after the log is written.',
+  },
+  {
+    title: 'Fail-closed invariant',
+    body: 'No valid Decision Receipt, no side effect.',
+  },
+  {
+    title: 'Tamper-evident proof',
+    body: 'Hash-chained JSONL audit trail with an opt-in Ed25519 signing mode.',
+  },
+]
+
+// The five hops a governed action takes between agent reasoning and the real
+// side effect. This is the narrative form of the gove-zone execution path.
+const governedFlowSteps = [
+  {
+    step: '1',
+    title: 'Task and authority',
+    body: 'The agent receives the task with an explicit actor, tenant partition, and scoped permissions.',
+  },
+  {
+    step: '2',
+    title: 'Risk classification',
+    body: 'The intended call and its arguments are read for blast radius, egress, and reversibility.',
+  },
+  {
+    step: '3',
+    title: 'Policy gate',
+    body: 'The compiled policy bundle is evaluated against the request. Missing criteria deny rather than default.',
+  },
+  {
+    step: '4',
+    title: 'Decision receipt',
+    body: 'A receipt is emitted carrying the verdict — allow, escalate to a human hold, or deny.',
+    highlight: true,
+  },
+  {
+    step: '5',
+    title: 'Bounded side effect',
+    body: 'The executor re-checks the receipt and its actor binding before any downstream mutation runs.',
+  },
+]
+
+// Illustrative specimen only. The values below are hand-written to show the
+// SHAPE of a receipt on a public page — they are not an emitted receipt, the
+// hashes correspond to nothing, and the signature field is deliberately
+// non-functional. Claim-safety: never present a fabricated artifact as real
+// evidence. The authoritative field list is docs/DECISION_RECEIPT_SPEC.md.
+const SPECIMEN_RECEIPT = `{
+  "receipt_id": "rcpt-<uuid>",
+  "actor": "treasury-agent@example.internal",
+  "action": "execute_wire_transfer",
+  "resource": "ledger://disbursements/corporate",
+  "decision": "ESCALATE",
+  "rationale": "Disbursement exceeds the autonomous threshold. Held for a second human key.",
+  "policy_bundle_hash": "<sha256 of the compiled bundle>",
+  "prev_audit_hash": "<sha256 of the previous audit line>",
+  "signature": "<ed25519 signature — omitted in this specimen>",
+  "enforcement": "gove-zone · fail-closed"
+}`
+
+// Three concrete failure-signal -> boundary -> safer-mode readings. These are
+// the compressed form of the fuller failureModes catalogue below, chosen
+// because each one names a boundary the kernel enforces structurally.
+const failureBoundaries = [
+  {
+    id: 'tool-overreach',
+    number: '01',
+    category: 'Capability overreach',
+    title: 'Tool-use overreach and shell escalation',
+    failureSignal:
+      'An agent reasoning loop escalates from document search into unconstrained shell execution, filesystem mutation, or arbitrary downloads.',
+    boundary:
+      'Capability-scoped workspace and an explicit tool allowlist. An unpermitted side effect is refused at the gate rather than logged after the fact.',
+    saferMode: 'Bounded read-only workspace with advisory and bounded capability tiers.',
+    badge: 'Refused at the gate',
+  },
+  {
+    id: 'data-exposure',
+    number: '02',
+    category: 'Privacy and boundary crossing',
+    title: 'Credential and private-data exposure',
+    failureSignal:
+      'A support or research agent reaches into internal records and tries to carry unredacted personal data or secrets across a tenant seam.',
+    boundary:
+      'Tenant partition enforcement plus a minimum-necessary disclosure rule applied before the read, not after the response is drafted.',
+    saferMode: 'Brokered secrets the model never sees, with redaction on the disclosure path.',
+    badge: 'Redaction required',
+  },
+  {
+    id: 'unauthorized-mutation',
+    number: '03',
+    category: 'Authority and privilege',
+    title: 'Production mutation without verified authority',
+    failureSignal:
+      'An autonomous agent moves money, deploys to a live cluster, or executes a contract with no second human signature anywhere in the path.',
+    boundary:
+      'A dual-key hold with separated roles: the actor that proposes cannot be the actor that approves or the actor that executes.',
+    saferMode: 'Hold state that no downstream executor can clear without the second key.',
+    badge: 'Held for co-sign',
+  },
+]
+
+// The repeatable operating sequence, stated as the question each stage answers
+// and the artifact it leaves behind.
+const operatingSequence = [
+  {
+    step: '01',
+    name: 'Classify',
+    question: 'What authority and risk does this action carry?',
+    explanation:
+      'Every request is classified before execution: scope, actor identity, asset sensitivity, reversibility, and blast radius.',
+    artifact: 'Authority scope and risk class',
+  },
+  {
+    step: '02',
+    name: 'Gate',
+    question: 'Does the planned call satisfy the compiled policy?',
+    explanation:
+      'The policy engine tests explicit rules against the request. Missing criteria deny; ambiguity does not resolve to allow.',
+    artifact: 'Pre-execution policy verdict',
+  },
+  {
+    step: '03',
+    name: 'Observe',
+    question: 'Is the agent still inside its bounded window?',
+    explanation:
+      'Tool invocations, memory writes, and network egress are recorded into a hash-linked stream as they happen.',
+    artifact: 'Hash-chained event trail',
+  },
+  {
+    step: '04',
+    name: 'Review',
+    question: 'Does this need a second human key?',
+    explanation:
+      'Work above the autonomous threshold enters a hold. A human reviewer inspects the staged receipt before it can clear.',
+    artifact: 'Human release hold',
+  },
+  {
+    step: '05',
+    name: 'Prove',
+    question: 'Can the decision be replayed and checked independently?',
+    explanation:
+      'Each allowed side effect carries its receipt. Replay re-derives the decision and verifies previous-hash linkage and actor binding.',
+    artifact: 'Replayable receipt chain',
+  },
+]
+
 const riskSignals: RiskSignal[] = [
   {
     key: 'tools',
@@ -1072,11 +1225,180 @@ Guidance for users and agents before real-world action.`}
   )
 }
 
+// Deliberately icon-free. An icon-in-a-box triptych is the generic SaaS feature
+// grid CLAUDE.md rules out, and three lucide glyphs cost real bytes on a
+// surface with a tight gzip budget. The plate numeral carries the rhythm.
+function HeroProofBar() {
+  return (
+    <ul className="m-hero-proof-bar" aria-label="Core operating properties">
+      {heroProofPillars.map((pillar, index) => (
+        <li className="m-proof-item" key={pillar.title}>
+          <span className="m-proof-no" aria-hidden>
+            {String(index + 1).padStart(2, '0')}
+          </span>
+          <span className="m-proof-text">
+            <span className="m-proof-title">{pillar.title}</span>
+            <span className="m-proof-sub">{pillar.body}</span>
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function GovernedActionFlow() {
+  const [copied, setCopied] = useState(false)
+
+  // Clear the "Copied" flag on a timer, and cancel that timer if the component
+  // unmounts first so no setState fires after teardown.
+  useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(false), 2000)
+    return () => window.clearTimeout(timer)
+  }, [copied])
+
+  const copySpecimen = () => {
+    // Clipboard access is unavailable over plain http and in some embedded
+    // views; fail quietly rather than throwing into the render path.
+    navigator.clipboard
+      ?.writeText(SPECIMEN_RECEIPT)
+      .then(() => setCopied(true))
+      .catch(() => setCopied(false))
+  }
+
+  return (
+    <section id="governed-flow" aria-labelledby="governed-flow-h">
+      <div className="m-sec-head">
+        <span className="num">I · How a governed action runs</span>
+        <h2 id="governed-flow-h">
+          A membrane between reasoning and <em>execution</em>.
+        </h2>
+      </div>
+      <p className="m-product-definition">
+        Most agent stacks let the model call the tool and then try to reconstruct what happened from
+        logs. The governed path puts the decision first: the call is classified, tested against
+        policy, and receipted before the side effect is allowed to run.
+      </p>
+
+      <div className="m-flow-diagram">
+        <ol className="m-flow-steps" aria-label="Governed action sequence">
+          {governedFlowSteps.map((step) => (
+            <li className={`m-flow-step${step.highlight ? ' is-highlight' : ''}`} key={step.step}>
+              <span className="m-step-badge" aria-hidden>
+                {step.step}
+              </span>
+              <div>
+                <h3>{step.title}</h3>
+                <p>{step.body}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+
+        <figure className="m-receipt-specimen">
+          <figcaption className="m-specimen-bar">
+            <span className="m-specimen-meta">
+              Specimen receipt · illustrative values, not an emitted receipt
+            </span>
+            <button
+              type="button"
+              className="m-specimen-copy"
+              onClick={copySpecimen}
+              aria-label="Copy the specimen receipt as JSON"
+            >
+              {copied ? 'Copied' : 'Copy JSON'}
+            </button>
+          </figcaption>
+          <pre className="m-specimen-pre">
+            <code>{SPECIMEN_RECEIPT}</code>
+          </pre>
+          <p className="m-specimen-note">
+            The field names are the real receipt shape; the values are placeholders. Hashes and the
+            signature here correspond to nothing and will not verify. The rule the shape exists to
+            serve: no valid Decision Receipt, no side effect.
+          </p>
+        </figure>
+      </div>
+    </section>
+  )
+}
+
+function FailureBoundaryCards() {
+  return (
+    <section id="failure-boundaries" aria-labelledby="failure-boundaries-h">
+      <div className="m-sec-head">
+        <span className="num">III · Signal, boundary, safer mode</span>
+        <h2 id="failure-boundaries-h">
+          Three failures that became <em>gates</em>.
+        </h2>
+      </div>
+      <div className="m-boundaries-grid">
+        {failureBoundaries.map((item) => (
+          <article className="m-boundary-card" key={item.id}>
+            <div className="m-boundary-top">
+              <span className="folio-no">№ {item.number}</span>
+              <span className="m-boundary-category">{item.category}</span>
+              <span className="m-boundary-badge">{item.badge}</span>
+            </div>
+            <h3>{item.title}</h3>
+            <dl className="m-boundary-flow">
+              <div className="m-boundary-block is-failure">
+                <dt>Failure signal</dt>
+                <dd>{item.failureSignal}</dd>
+              </div>
+              <div className="m-boundary-block is-boundary">
+                <dt>Governance boundary</dt>
+                <dd>{item.boundary}</dd>
+              </div>
+              <div className="m-boundary-block is-safer">
+                <dt>Safer operating mode</dt>
+                <dd>{item.saferMode}</dd>
+              </div>
+            </dl>
+          </article>
+        ))}
+      </div>
+      <p className="m-section-link">
+        <NavigationLink href="/failure-modes">Read all nineteen failure modes</NavigationLink>
+      </p>
+    </section>
+  )
+}
+
+function OperatingSequence() {
+  return (
+    <section id="operating-sequence" aria-labelledby="operating-sequence-h">
+      <div className="m-sec-head">
+        <span className="num">V · The operating sequence</span>
+        <h2 id="operating-sequence-h">
+          Classify, gate, observe, review, <em>prove</em>.
+        </h2>
+      </div>
+      <ol className="m-stage-grid" aria-label="Five-stage governance sequence">
+        {operatingSequence.map((stage) => (
+          <li className="m-stage-card" key={stage.step}>
+            <div className="m-stage-head">
+              <span className="m-stage-no">{stage.step}</span>
+              <h3>{stage.name}</h3>
+            </div>
+            <p className="m-stage-question">{stage.question}</p>
+            <p>{stage.explanation}</p>
+            <p className="m-stage-artifact">
+              <span>Leaves behind</span>
+              <strong>{stage.artifact}</strong>
+            </p>
+          </li>
+        ))}
+      </ol>
+    </section>
+  )
+}
+
 function PlatformBlueprint() {
   return (
     <section id="workbench" aria-labelledby="workbench-h">
       <div className="m-sec-head">
-        <span className="num">III · ACGS platform blueprint</span>
+        <span className="num">VI · ACGS platform blueprint</span>
         <h2 id="workbench-h">
           Visualized <em>work</em>, not another wall of settings.
         </h2>
@@ -1365,7 +1687,7 @@ export function GovernanceInterview() {
   return (
     <section className="m-hub-interview" id="interview" aria-labelledby="interview-h">
       <div className="m-sec-head">
-        <span className="num">III · Governance interview</span>
+        <span className="num">VII · Governance interview</span>
         <h2 id="interview-h">
           Classify the task before the agent <em>acts</em>.
         </h2>
@@ -1663,7 +1985,7 @@ function AgentReadablePanel() {
   return (
     <section className="m-agent-readable" id="agent-readable" aria-labelledby="agent-readable-h">
       <div className="m-sec-head">
-        <span className="num">VI · Agent-readable governance</span>
+        <span className="num">X · Agent-readable governance</span>
         <h2 id="agent-readable-h">
           A page your agent can <em>inspect</em> before acting.
         </h2>
@@ -1725,6 +2047,7 @@ export function Marketing() {
             </a>
             <NavigationLink href="/agent-readable">Let Your Agent Inspect This Hub</NavigationLink>
           </div>
+          <HeroProofBar />
         </div>
 
         <aside className="m-hero-aside m-hub-cockpit">
@@ -1756,6 +2079,12 @@ export function Marketing() {
         {ASTERISM} {ASTERISM} {ASTERISM}
       </div>
 
+      <GovernedActionFlow />
+
+      <div className="m-break" aria-hidden>
+        {ASTERISM} {ASTERISM} {ASTERISM}
+      </div>
+
       <section id="boundaries" aria-labelledby="boundaries-h">
         <p className="m-product-definition">
           This is not a generic AI directory, benchmark, or hype site. It is a boundary-setting
@@ -1763,7 +2092,7 @@ export function Marketing() {
           legal work, user data, publishing, or irreversible side effects enter the path.
         </p>
         <div className="m-sec-head">
-          <span className="num">I · Mistakes became boundaries</span>
+          <span className="num">II · Mistakes became boundaries</span>
           <h2 id="boundaries-h">
             Failure became the <em>map</em>.
           </h2>
@@ -1783,9 +2112,15 @@ export function Marketing() {
         {ASTERISM} {ASTERISM} {ASTERISM}
       </div>
 
+      <FailureBoundaryCards />
+
+      <div className="m-break" aria-hidden>
+        {ASTERISM} {ASTERISM} {ASTERISM}
+      </div>
+
       <section id="why-agents-fail" aria-labelledby="why-agents-fail-h">
         <div className="m-sec-head">
-          <span className="num">II · Why agents fail in real work</span>
+          <span className="num">IV · Why agents fail in real work</span>
           <h2 id="why-agents-fail-h">
             Demos hide the <em>boundary</em> problem.
           </h2>
@@ -1819,6 +2154,12 @@ export function Marketing() {
         {ASTERISM} {ASTERISM} {ASTERISM}
       </div>
 
+      <OperatingSequence />
+
+      <div className="m-break" aria-hidden>
+        {ASTERISM} {ASTERISM} {ASTERISM}
+      </div>
+
       <PlatformBlueprint />
 
       <GovernanceInterview />
@@ -1829,7 +2170,7 @@ export function Marketing() {
 
       <section id="failure-modes" aria-labelledby="failure-modes-h">
         <div className="m-sec-head">
-          <span className="num">IV · Failure mode catalogue</span>
+          <span className="num">VIII · Failure mode catalogue</span>
           <h2 id="failure-modes-h">
             Learn what not to <em>repeat</em>.
           </h2>
@@ -1846,7 +2187,7 @@ export function Marketing() {
 
       <section id="patterns" aria-labelledby="patterns-h">
         <div className="m-sec-head">
-          <span className="num">V · Governance patterns</span>
+          <span className="num">IX · Governance patterns</span>
           <h2 id="patterns-h">
             Choose the safer operating <em>mode</em>.
           </h2>
@@ -1865,7 +2206,7 @@ export function Marketing() {
 
       <section id="audiences" aria-labelledby="audiences-h">
         <div className="m-sec-head">
-          <span className="num">VII · For builders, teams, and agents</span>
+          <span className="num">XI · For builders, teams, and agents</span>
           <h2 id="audiences-h">
             Practical governance for people who are already <em>building</em>.
           </h2>
@@ -1887,7 +2228,7 @@ export function Marketing() {
 
       <section className="m-disclaimer" aria-labelledby="disclaimer-h">
         <div className="m-sec-head">
-          <span className="num">VIII · Clear claim boundary</span>
+          <span className="num">XII · Clear claim boundary</span>
           <h2 id="disclaimer-h">
             Guidance, not <em>certification</em>.
           </h2>
