@@ -32,6 +32,7 @@ reconciliation still required; this is not a compliance certification.
 | `policy_version` | yes | Policy version string. |
 | `policy_hash` | yes | Policy content/version hash binding. |
 | `decision` | yes | `allow`, `deny`, `transform`, or `escalate`. Only `allow` and approved `transform` can execute. |
+| `action_tier` | no | Policy-routing tier: `explore` or `commit`. `commit` is the strict default; unknown/missing coerces to `commit`. Bound into `receipt_hash`. Legacy receipts without it default to `commit`. |
 | `matched_rules` | yes | Rule ids or policy reasons that fired. |
 | `constraints` | yes | Free-form decision constraints. |
 | `transformations` | yes | Approved transformed args as `{field, value}` entries. Empty for non-transform. |
@@ -131,6 +132,16 @@ Evidence:
 `packages/acgs-control-plane/tests/test_exports.py`, PR #370 commit
 `feaabd96ccb68a076f39cc46fe5a7d906e0a9a5f`, and PR #371 commit
 `e0f514f2963987f72827d33ada891abc08677f03`.
+
+## Action tier
+
+`action_tier` separates information-gathering (`explore`) actions from goal-executing (`commit`) actions. It is a *policy-routing* dimension — it changes which rules match, never whether the receipt gate applies. Every tier still requires a valid receipt, `expected_actor`, and an audit append; `DENY`/`ESCALATE` stay non-executable for all tiers.
+
+The declared tier travels as untrusted input on the call (`state["action_tier"]`). A tool-tier registry is authoritative: the effective tier is `min(declared, registered)` with `commit` as the strict top value, so a tool the registry marks commit-only can never be evaluated under `explore` regardless of what the caller declares. No registry, or an unregistered tool, means `commit`. The registry is content-addressed and folds into the policy version/hash.
+
+`action_tier` is additive on the wire: it is emitted, and folded into `receipt_hash`, **only when it is not the strict `commit` default**. A commit-tier receipt therefore serializes and hashes byte-identically to one issued before the field existed, and `from_dict` rehydrates a missing key as `commit`. Any explore receipt is hash-bound, and a post-issuance tier swap fails verification in both directions — `commit → explore` adds a key the stored hash never covered, `explore → commit` drops one it did. The same fold applies to the `action_tier` / `declared_action_tier` fields on audit events, so a pre-tiering audit chain is unchanged. The verifier rejects unknown tier strings, and refuses an `explore` receipt outright unless a tool-tier registry is supplied at the gate *and* marks the action explore-capable — no registry means no explore leniency, so the executor-side check can only ever be stricter than the policy-side evaluation, never more lenient. The registry is manual/declarative in v1: it is not semantic detection of whether a tool has side effects; operators must register side-effecting tools as `commit` (which is already the default).
+
+Evidence: `decision.py` (`ActionTier`), `tier.py` (`ToolTierRegistry`), `policy.py` (rule `tiers` criterion), `receipt.py`, `tests/test_action_tiering.py`.
 
 ## Expiry
 

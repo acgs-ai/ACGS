@@ -21,10 +21,12 @@ from types import MappingProxyType
 from typing import Any, cast
 
 from gove_zone.decision import (
+    ActionTier,
     Decision,
     DecisionRecord,
     canonical_json,
 )
+from gove_zone.tier import ToolTierRegistry, effective_action_tier
 from gove_zone.tool import ToolCall, normalize_path_context
 
 
@@ -418,6 +420,27 @@ def _path_prefix(value: Any) -> tuple[str, ...]:
     return normalize_path_context(value)
 
 
+def _tier_set(value: Any) -> frozenset[ActionTier]:
+    """Parse a rule's optional ``tiers`` criterion into a frozenset.
+
+    ``None``/absent → empty set (matches every tier, preserving pre-tiering
+    semantics). Unknown tier strings are a hard error — a bundle typo must fail
+    loudly rather than silently match nothing.
+    """
+    if value is None:
+        return frozenset()
+    raw = value if _is_sequence(value) else (value,)
+    tiers: set[ActionTier] = set()
+    for item in raw:
+        try:
+            tiers.add(item if isinstance(item, ActionTier) else ActionTier(str(item)))
+        except ValueError as exc:
+            raise ValueError(
+                f"unknown action tier {item!r}; expected one of {[t.value for t in ActionTier]}"
+            ) from exc
+    return frozenset(tiers)
+
+
 def _rule_effect(value: Any) -> Decision:
     try:
         decision = value if isinstance(value, Decision) else Decision(str(value).lower())
@@ -462,6 +485,7 @@ class PolicyRule:
     allowed_actors: frozenset[str] = dataclasses.field(default_factory=frozenset)
     allowed_trust_tiers: frozenset[str] = dataclasses.field(default_factory=frozenset)
     trust_tier_key: str = "trust_tier"
+    tiers: frozenset[ActionTier] = dataclasses.field(default_factory=frozenset)
     reason: str = ""
 
     def __post_init__(self) -> None:
@@ -525,6 +549,7 @@ class PolicyRule:
                 _string_tuple(allow.get("trust_tiers"), field_name="allow.trust_tiers")
             ),
             trust_tier_key=str(raw.get("trust_tier_key", "trust_tier")),
+            tiers=_tier_set(raw.get("tiers")),
             reason=str(raw.get("reason", "")),
         )
 
@@ -545,6 +570,11 @@ class PolicyRule:
             payload["args_bound_to"] = {
                 k: self.args_bound_to[k] for k in sorted(self.args_bound_to)
             }
+        # C7: only fold the tier criterion into the version hash when a rule
+        # actually uses it, so pre-tiering bundles keep their original hash
+        # (mirrors to_dict). A tier-scoped rule shifts the hash by design.
+        if self.tiers:
+            payload["tiers"] = sorted(t.value for t in self.tiers)
         return payload
 
     def to_dict(self) -> dict[str, Any]:
@@ -575,11 +605,13 @@ class PolicyRule:
 
         if self.trust_tier_key != "trust_tier":
             payload["trust_tier_key"] = self.trust_tier_key
+        if self.tiers:
+            payload["tiers"] = sorted(t.value for t in self.tiers)
         if self.reason:
             payload["reason"] = self.reason
         return payload
 
-    def matches(self, call: ToolCall) -> bool:
+    def matches(self, call: ToolCall, *, effective_tier: ActionTier | None = None) -> bool:
         if self.tools and call.name not in self.tools:
             return False
         if self.path_prefix and not _path_has_prefix(call.path, self.path_prefix):
@@ -589,6 +621,14 @@ class PolicyRule:
                 return False
         for key, expected in self.state_contains.items():
             if not _state_contains(call.state.get(key), expected):
+                return False
+        if self.tiers:
+            # An empty ``tiers`` set matches every tier (pre-tiering semantics).
+            # ``effective_tier`` is the registry-resolved tier the RuleSetPolicy
+            # computes. A direct caller that omits it gets the strict default
+            # (COMMIT) — never explore leniency without an explicit resolution.
+            tier = effective_tier if effective_tier is not None else ActionTier.COMMIT
+            if tier not in self.tiers:
                 return False
         if self.args_bound_to:
             for arg_key, state_key in self.args_bound_to.items():
@@ -620,7 +660,13 @@ class RuleSetPolicy(_SealedPolicy):
     later denial by accident.
     """
 
-    def __init__(self, *, policy_id: str, rules: Sequence[PolicyRule]) -> None:
+    def __init__(
+        self,
+        *,
+        policy_id: str,
+        rules: Sequence[PolicyRule],
+        tier_registry: ToolTierRegistry | None = None,
+    ) -> None:
         if not rules:
             raise ValueError("RuleSetPolicy requires at least one rule")
         self._policy_id = str(policy_id).strip() or "ruleset/v0"
@@ -629,6 +675,7 @@ class RuleSetPolicy(_SealedPolicy):
             if not isinstance(rule, PolicyRule):
                 raise TypeError("RuleSetPolicy rules must be PolicyRule instances")
         self._rules = rule_tuple
+        self._tier_registry = tier_registry
         self._version = self._compute_version()
         self._seal()
 
@@ -643,7 +690,13 @@ class RuleSetPolicy(_SealedPolicy):
             if not isinstance(raw_rule, Mapping):
                 raise ValueError("each policy rule must be a mapping")
             rules.append(PolicyRule.from_dict(raw_rule))
-        return cls(policy_id=policy_id, rules=tuple(rules))
+        raw_tiers = raw.get("tool_tiers")
+        tier_registry = (
+            ToolTierRegistry.from_dict(cast(Mapping[str, Any], raw_tiers))
+            if raw_tiers is not None
+            else None
+        )
+        return cls(policy_id=policy_id, rules=tuple(rules), tier_registry=tier_registry)
 
     @classmethod
     def from_json(cls, text: str) -> RuleSetPolicy:
@@ -657,14 +710,17 @@ class RuleSetPolicy(_SealedPolicy):
         return cls.from_json(Path(path).read_text(encoding="utf-8"))
 
     def _compute_version(self) -> str:
-        digest = hashlib.sha256(
-            canonical_json(
-                {
-                    "id": self._policy_id,
-                    "rules": [rule.version_payload() for rule in self._rules],
-                }
-            ).encode()
-        ).hexdigest()
+        payload: dict[str, Any] = {
+            "id": self._policy_id,
+            "rules": [rule.version_payload() for rule in self._rules],
+        }
+        # Fold the tool-tier registry into the version ONLY when configured, so
+        # a changed registry changes the bundle version (a receipt bound to the
+        # bundle is bound to the registry too) while pre-tiering bundles keep
+        # their existing content-addressed version unchanged.
+        if self._tier_registry is not None:
+            payload["tool_tiers"] = self._tier_registry.version_hash()
+        digest = hashlib.sha256(canonical_json(payload).encode()).hexdigest()
         return _content_addressed_version(f"ruleset/{self._policy_id}/", digest)
 
     @property
@@ -680,10 +736,16 @@ class RuleSetPolicy(_SealedPolicy):
         return self._rules
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "id": self._policy_id,
             "rules": [rule.to_dict() for rule in self._rules],
         }
+        if self._tier_registry is not None:
+            payload["tool_tiers"] = {
+                name: self._tier_registry.tiers[name].value
+                for name in sorted(self._tier_registry.tiers)
+            }
+        return payload
 
     def to_json(self) -> str:
         return (
@@ -700,9 +762,17 @@ class RuleSetPolicy(_SealedPolicy):
         Path(path).write_text(self.to_json(), encoding="utf-8")
 
     def evaluate(self, call: ToolCall) -> DecisionRecord:
+        # Effective tier is registry-resolved (min(declared, registered) with
+        # COMMIT as the strict default). The declared tier is untrusted; the
+        # registry is authoritative — a commit-only tool can never be evaluated
+        # under explore regardless of declaration (C5). Both tiers are stamped
+        # onto every returned record for audit telemetry (C4/§3.6).
+        effective = effective_action_tier(call, self._tier_registry)
+        declared = ActionTier.coerce(call.state.get("action_tier")).value
+
         exemptions: list[str] = []
         for rule in self._rules:
-            if not rule.matches(call):
+            if not rule.matches(call, effective_tier=effective):
                 continue
             exemption = rule.exemption_match(call)
             if exemption:
@@ -716,6 +786,8 @@ class RuleSetPolicy(_SealedPolicy):
                 event_id=new_event_id(),
                 matched_rules=(rule.rule_id,),
                 reason=rule.reason or f"matched rule {rule.rule_id}",
+                action_tier=effective.value,
+                declared_action_tier=declared,
             )
 
         return DecisionRecord(
@@ -726,6 +798,8 @@ class RuleSetPolicy(_SealedPolicy):
             event_id=new_event_id(),
             matched_rules=tuple(exemptions),
             reason=("matched rule exemption(s)" if exemptions else "no rules matched"),
+            action_tier=effective.value,
+            declared_action_tier=declared,
         )
 
 

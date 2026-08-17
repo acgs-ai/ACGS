@@ -46,6 +46,7 @@ from gove_zone.dag import (
     verify_dag_replay,
 )
 from gove_zone.decision import (
+    ActionTier,
     Decision,
     DecisionRecord,
     canonical_json,
@@ -181,6 +182,7 @@ from gove_zone.tenant import (
     TransformPolicy,
     evaluate_tenant_action,
 )
+from gove_zone.tier import ToolTierRegistry, effective_action_tier
 from gove_zone.tool import ToolCall, ToolRegistry, normalize_path_context
 from gove_zone.trust import (
     DECISION_RECEIPT_PURPOSE,
@@ -246,11 +248,14 @@ __all__ = [
     "RevocationListError",
     "authz_enforce_from_env",
     "CompositePolicy",
+    "ActionTier",
     "ConsumptionLedgerError",
     "Credential",
     "CredentialType",
     "Decision",
     "DecisionRecord",
+    "ToolTierRegistry",
+    "effective_action_tier",
     "DecisionReceipt",
     "DECISION_RECEIPT_PURPOSE",
     "DeniedError",
