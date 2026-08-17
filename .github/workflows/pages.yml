@@ -62,8 +62,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Deliberate: private submodules (packages/acgs-control-plane) are
-          # unreadable here and were never part of the rendered site.
+          # Deliberate: the remaining private submodules are unreadable here
+          # and were never part of the rendered site. (acgs-control-plane is
+          # now vendored in-tree, and `packages/` is excluded in _config.yml.)
           submodules: false
 
       - uses: actions/configure-pages@v5

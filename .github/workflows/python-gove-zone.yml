@@ -50,21 +50,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Clear stale content from the uninitialized control-plane gitlink
-        # packages/acgs-control-plane is a private submodule (#429) that this
-        # lane deliberately never initializes, yet it is a uv workspace member.
-        # uv tolerates an EMPTY member directory (uninitialized submodule) but
-        # hard-fails when the directory is non-empty without a pyproject.toml.
-        # On persistent self-hosted runners the directory keeps pre-extraction
-        # leftovers that checkout's clean skips (git clean does not descend
-        # into gitlink paths), which broke workspace resolution here. Reset it
-        # to the empty uninitialized state; never touch a real checkout.
-        working-directory: ${{ github.workspace }}
-        run: |
-          if [ -d packages/acgs-control-plane ] && [ ! -f packages/acgs-control-plane/pyproject.toml ]; then
-            rm -rf packages/acgs-control-plane
-            mkdir packages/acgs-control-plane
-          fi
+      # The "clear stale control-plane gitlink content" reset that used to sit
+      # here is gone: packages/acgs-control-plane is vendored in-tree, so the
+      # uv workspace member always has a pyproject.toml and the empty-directory
+      # workaround no longer applies.
 
       - uses: astral-sh/setup-uv@v3
         with:
@@ -209,15 +198,8 @@ jobs:
         working-directory: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
-      - name: Clear stale content from the uninitialized control-plane gitlink
-        # Same reset as the `test` job above: uv workspace resolution (used by
-        # `uv build --package gove-zone` in the smoke script) requires the
-        # uninitialized private submodule directory to be empty.
-        run: |
-          if [ -d packages/acgs-control-plane ] && [ ! -f packages/acgs-control-plane/pyproject.toml ]; then
-            rm -rf packages/acgs-control-plane
-            mkdir packages/acgs-control-plane
-          fi
+      # Same as the `test` job above: no control-plane gitlink reset is needed
+      # now that the package is vendored in-tree.
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
