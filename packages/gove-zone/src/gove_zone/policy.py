@@ -458,6 +458,7 @@ class PolicyRule:
     tools: frozenset[str] = dataclasses.field(default_factory=frozenset)
     state_equals: Mapping[str, Any] = dataclasses.field(default_factory=dict)
     state_contains: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+    args_bound_to: Mapping[str, str] = dataclasses.field(default_factory=dict)
     allowed_actors: frozenset[str] = dataclasses.field(default_factory=frozenset)
     allowed_trust_tiers: frozenset[str] = dataclasses.field(default_factory=frozenset)
     trust_tier_key: str = "trust_tier"
@@ -518,6 +519,7 @@ class PolicyRule:
                 raw.get("state_contains"),
                 field_name="state_contains",
             ),
+            args_bound_to=_mapping_dict(raw.get("args_bound_to"), field_name="args_bound_to"),
             allowed_actors=frozenset(_string_tuple(allow.get("actors"), field_name="allow.actors")),
             allowed_trust_tiers=frozenset(
                 _string_tuple(allow.get("trust_tiers"), field_name="allow.trust_tiers")
@@ -527,7 +529,7 @@ class PolicyRule:
         )
 
     def version_payload(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "id": self.rule_id,
             "effect": self.effect.value,
             "path_prefix": list(self.path_prefix),
@@ -539,6 +541,11 @@ class PolicyRule:
             "trust_tier_key": self.trust_tier_key,
             "reason": self.reason,
         }
+        if self.args_bound_to:
+            payload["args_bound_to"] = {
+                k: self.args_bound_to[k] for k in sorted(self.args_bound_to)
+            }
+        return payload
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -553,6 +560,10 @@ class PolicyRule:
             payload["state_equals"] = _thaw_policy_json(self.state_equals)
         if self.state_contains:
             payload["state_contains"] = _thaw_policy_json(self.state_contains)
+        if self.args_bound_to:
+            payload["args_bound_to"] = {
+                k: self.args_bound_to[k] for k in sorted(self.args_bound_to)
+            }
 
         allow: dict[str, list[str]] = {}
         if self.allowed_actors:
@@ -579,6 +590,15 @@ class PolicyRule:
         for key, expected in self.state_contains.items():
             if not _state_contains(call.state.get(key), expected):
                 return False
+        if self.args_bound_to:
+            for arg_key, state_key in self.args_bound_to.items():
+                if state_key not in call.state or call.args.get(arg_key) != call.state.get(
+                    state_key
+                ):
+                    # a binding is violated or the trusted state is missing -> rule fires (deny)
+                    break
+            else:
+                return False  # every binding satisfied -> rule does NOT fire
         return True
 
     def exemption_match(self, call: ToolCall) -> str | None:
