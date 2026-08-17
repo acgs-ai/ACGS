@@ -14,11 +14,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
-from gove_zone.decision import DecisionRecord, sha256_json
+from gove_zone.decision import ActionTier, DecisionRecord, sha256_json
 from gove_zone.signing import ReceiptSigner
 
 if TYPE_CHECKING:
     from gove_zone.revocation import RevocationList
+    from gove_zone.tier import ToolTierRegistry
     from gove_zone.trust import ReceiptTrustRegistry
 
 
@@ -175,6 +176,7 @@ class DecisionReceipt:
     validator_id: str = ""
     validator_role: str = ""
     argument_hash: str = ""
+    action_tier: str = "commit"
     receipt_hash: str = ""
     signature_algorithm: str = "none"
     signing_key_id: str = ""
@@ -231,6 +233,12 @@ class DecisionReceipt:
             "receipt_hash": self.receipt_hash,
             "signature": self.signature,
         }
+        # Mirrors _hash_payload: the strict `commit` default is omitted from the
+        # wire form too, so a receipt that predates the field serializes byte
+        # for byte as it always did. from_dict rehydrates a missing key as
+        # `commit`, so nothing is lost.
+        if self.action_tier != ActionTier.COMMIT.value:
+            payload["action_tier"] = self.action_tier
         if self.receipt_schema_version:
             payload["receipt_schema_version"] = self.receipt_schema_version
             payload["project_id"] = self.project_id
@@ -313,6 +321,7 @@ class DecisionReceipt:
             validator_id=d.get("validator_id", ""),
             validator_role=d.get("validator_role", ""),
             argument_hash=d.get("argument_hash", ""),
+            action_tier=d.get("action_tier", "commit"),
             previous_audit_hash=d["previous_audit_hash"],
             audit_event_hash=d["audit_event_hash"],
             receipt_hash=d.get("receipt_hash", ""),
@@ -366,6 +375,17 @@ class DecisionReceipt:
             "signature_algorithm": self.signature_algorithm,
             "signing_key_id": self.signing_key_id,
         }
+        # C6/C7: the action tier is bound into receipt_hash, but folded in ONLY
+        # when it is not the strict default. `commit` is what every receipt
+        # minted before the field existed means, so omitting it there keeps
+        # those receipts' hashes byte-identical (no wire break, frozen golden
+        # vectors still hold) while any explore receipt is hash-bound.
+        # Tampering is caught in both directions: commit -> explore adds a key
+        # the stored hash never covered, explore -> commit drops one it did.
+        # NOTE: this payload is hand-enumerated and is NOT derived from
+        # to_dict(), so a new receipt field is only hash-bound once added here.
+        if self.action_tier != ActionTier.COMMIT.value:
+            payload["action_tier"] = self.action_tier
         if self.receipt_schema_version:
             payload["receipt_schema_version"] = self.receipt_schema_version
             payload["project_id"] = self.project_id
@@ -457,6 +477,7 @@ class DecisionReceipt:
             validator_id=validator.validator_id,
             validator_role=validator.role,
             argument_hash=record.argument_hash,
+            action_tier=ActionTier.coerce(record.action_tier).value,
             previous_audit_hash=previous_audit_hash,
             audit_event_hash=audit_hash,
             signature_algorithm=signer.algorithm if signer is not None else "none",
@@ -572,6 +593,7 @@ class DecisionReceipt:
         trust_purpose: str = "decision-receipt",
         now_iso: str | None = None,
         max_clock_skew_seconds: int = DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
+        tool_tier_registry: ToolTierRegistry | None = None,
     ) -> None:
         """Low-level receipt verification primitive.
 
@@ -910,6 +932,38 @@ class DecisionReceipt:
                 f"Unknown decision: {self.decision}",
                 reason_code=ReceiptRejectionReason.UNKNOWN_DECISION,
             ) from err
+
+        # 3a. Action tier must be a known value. action_tier is bound into
+        # receipt_hash (check 2), so a tampered tier is already caught above; this
+        # rejects a receipt that was minted with a garbage tier string. Fail-closed.
+        try:
+            ActionTier(self.action_tier)
+        except ValueError as err:
+            raise ReceiptValidationError(
+                f"Unknown action tier: {self.action_tier}",
+                reason_code=ReceiptRejectionReason.UNKNOWN_ACTION_TIER,
+            ) from err
+
+        # 3b. Executor-side tier enforcement (belt-and-suspenders vs. the
+        # policy-side check). A receipt claiming the explore tier is only honoured
+        # when a tool-tier registry is supplied AND that registry marks the action
+        # explore-capable. No registry means no explore leniency — the declared
+        # tier can never downgrade a side-effecting tool (C5). The registry is
+        # authoritative; the receipt is untrusted about its own tier leniency.
+        if self.action_tier == ActionTier.EXPLORE.value:
+            if tool_tier_registry is None:
+                raise ReceiptValidationError(
+                    "an explore-tier receipt requires a tool tier registry at the gate; "
+                    "none was supplied, so the explore tier cannot be honoured",
+                    reason_code=ReceiptRejectionReason.ACTION_TIER_DOWNGRADE,
+                )
+            resolved_tier = tool_tier_registry.resolve(self.proposed_action, ActionTier.EXPLORE)
+            if resolved_tier is not ActionTier.EXPLORE:
+                raise ReceiptValidationError(
+                    f"action tier downgrade refused: {self.proposed_action!r} is "
+                    f"commit-only but the receipt claims the explore tier",
+                    reason_code=ReceiptRejectionReason.ACTION_TIER_DOWNGRADE,
+                )
 
         # 5. Wrong tenant
         if expected_tenant_id is not None and self.tenant_id != expected_tenant_id:

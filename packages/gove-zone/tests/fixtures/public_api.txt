@@ -1,6 +1,7 @@
 # Public API surface of gove_zone (semver-frozen).
 # Regenerate ONLY for an intentional surface change:
 #   uv run --package gove-zone python -c 'import gove_zone; print("\n".join(sorted(gove_zone.__all__)))' >> this file (below the header)
+ActionTier
 AllowAllPolicy
 AuditChainError
 AuditError
@@ -104,6 +105,7 @@ TenantPolicyBinding
 TenantPolicyStore
 ToolCall
 ToolRegistry
+ToolTierRegistry
 TransformPolicy
 TrustConfigurationError
 TrustReadinessIssue
@@ -129,6 +131,7 @@ canonical_json
 classify_command
 declared_package_manager
 discover_alternatives
+effective_action_tier
 emit_receipt_for_hook
 emit_receipts_for_hook
 evaluate_policy_scenarios

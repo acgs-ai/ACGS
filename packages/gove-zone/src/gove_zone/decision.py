@@ -24,6 +24,37 @@ class Decision(StrEnum):
     ESCALATE = "escalate"
 
 
+class ActionTier(StrEnum):
+    """Explore-vs-commit action tier for a governed call.
+
+    Tiering separates information-gathering ("explore") actions from
+    goal-executing ("commit") actions so a policy bundle can gate irreversible
+    side effects strictly while keeping read-only probes cheap. It is a
+    *policy-routing* dimension — it changes which rules match, never whether the
+    receipt gate applies. ``COMMIT`` is the strict/top tier and the fail-closed
+    default: an unknown, missing, or invalid declaration is always coerced to
+    ``COMMIT`` (a misdeclaration can never grant leniency).
+    """
+
+    EXPLORE = "explore"
+    COMMIT = "commit"
+
+    @classmethod
+    def coerce(cls, value: Any) -> ActionTier:
+        """Map an untrusted declaration to a tier, defaulting to ``COMMIT``.
+
+        The declared tier is proposed by the agent and is therefore untrusted:
+        only the exact string ``"explore"`` (or an :class:`ActionTier` instance)
+        yields ``EXPLORE``. Everything else — ``None``, empty string, wrong case,
+        unknown names, non-strings — is ``COMMIT``. Never raises.
+        """
+        if isinstance(value, cls):
+            return value
+        if value == cls.EXPLORE.value:
+            return cls.EXPLORE
+        return cls.COMMIT
+
+
 def canonical_json(payload: Any) -> str:
     """Canonical JSON: sorted keys, no whitespace, ensure_ascii=False.
 
@@ -73,9 +104,11 @@ class DecisionRecord:
     path: tuple[str, ...] = ()
     state_hash: str | None = None
     decision_request_hash: str = ""
+    action_tier: str | None = None
+    declared_action_tier: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "decision": self.decision.value,
             "tool": self.tool,
             "argument_hash": self.argument_hash,
@@ -91,3 +124,17 @@ class DecisionRecord:
             "state_hash": self.state_hash,
             "decision_request_hash": self.decision_request_hash,
         }
+        # The tier fields are additive and are emitted only when they carry
+        # something the strict default does not already say. `commit` is what a
+        # record from before action tiering means, so omitting it there keeps
+        # audit events (and their hash chain) byte-identical for every
+        # pre-tiering deployment. A *declared* explore that resolved to commit
+        # is a downgrade attempt and IS recorded — that is the audit-relevant
+        # case, and it survives this fold because only the default is dropped.
+        for key, value in (
+            ("action_tier", self.action_tier),
+            ("declared_action_tier", self.declared_action_tier),
+        ):
+            if value is not None and value != ActionTier.COMMIT.value:
+                payload[key] = value
+        return payload

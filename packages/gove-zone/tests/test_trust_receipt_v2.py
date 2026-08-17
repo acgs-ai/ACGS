@@ -1348,6 +1348,14 @@ _NEVER_HASHED = frozenset({"receipt_hash", "signature"})
 _V2_SCOPED_FIELDS = frozenset(
     {"receipt_schema_version", "project_id", "environment_id", "trust_epoch"}
 )
+# Fields folded into the hash payload only when they carry a non-default value.
+# `action_tier` defaults to "commit", which is exactly what every receipt minted
+# before the field existed means — folding it out at that value keeps those
+# receipts' hashes and wire bytes unchanged. It IS hashed for any other value;
+# `test_conditionally_hashed_fields_are_bound_when_set` below proves that, so
+# this exclusion cannot hide an unbound field.
+_CONDITIONALLY_HASHED = frozenset({"action_tier"})
+_CONDITIONAL_NON_DEFAULTS: dict[str, str] = {"action_tier": "explore"}
 
 
 def _declared_fields() -> frozenset[str]:
@@ -1356,11 +1364,13 @@ def _declared_fields() -> frozenset[str]:
 
 def test_v1_hash_payload_covers_every_declared_field_except_documented_exclusions() -> None:
     covered = frozenset(_v1_receipt()._hash_payload())
-    assert covered == _declared_fields() - _NEVER_HASHED - _V2_SCOPED_FIELDS, (
+    expected = _declared_fields() - _NEVER_HASHED - _V2_SCOPED_FIELDS - _CONDITIONALLY_HASHED
+    assert covered == expected, (
         "DecisionReceipt fields and the v1 hash payload have drifted. A declared "
         "field missing from _hash_payload is not bound by receipt_hash and not "
         "covered by the signature. Either add it to _hash_payload, or record it "
-        "in _NEVER_HASHED / _V2_SCOPED_FIELDS here with a stated reason."
+        "in _NEVER_HASHED / _V2_SCOPED_FIELDS / _CONDITIONALLY_HASHED here with a "
+        "stated reason."
     )
 
 
@@ -1368,8 +1378,25 @@ def test_v2_hash_payload_adds_exactly_the_scoped_trust_fields() -> None:
     signer = Ed25519Signer.generate(key_id="hash-coverage-v2")
     covered = frozenset(_v2_receipt(signer)._hash_payload())
 
-    assert covered == _declared_fields() - _NEVER_HASHED
+    assert covered == _declared_fields() - _NEVER_HASHED - _CONDITIONALLY_HASHED
     assert covered - frozenset(_v1_receipt()._hash_payload()) == _V2_SCOPED_FIELDS
+
+
+def test_conditionally_hashed_fields_are_bound_when_set() -> None:
+    """A conditional exclusion must never mean "unbound".
+
+    Every field in ``_CONDITIONALLY_HASHED`` is folded out only at its default.
+    Set it to a non-default value and it must appear in the hash payload, and
+    the receipt hash must move — otherwise the exclusion is hiding a field the
+    signature does not cover.
+    """
+    base = _v1_receipt()
+    for field, non_default in _CONDITIONAL_NON_DEFAULTS.items():
+        assert field in _CONDITIONALLY_HASHED
+        assert field not in base._hash_payload()
+        variant = dataclasses.replace(base, **{field: non_default})
+        assert field in variant._hash_payload()
+        assert variant.compute_hash() != base.compute_hash()
 
 
 def test_stripping_the_v2_scoped_fields_changes_receipt_identity() -> None:

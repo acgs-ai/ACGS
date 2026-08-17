@@ -49,6 +49,7 @@ EXPECTED_THREATS = {
     "Consumption-ledger tampering",
     "Unsigned dev mode misuse",
     "Policy-bundle substitution",
+    "Action-tier downgrade",
     "Native control-plane transaction drift",
     "MCP/tool-gateway misuse",
     "Executor bypass",

@@ -26,6 +26,7 @@ from gove_zone.receipt import (
 )
 from gove_zone.revocation import RevocationList
 from gove_zone.signing import ReceiptSigner
+from gove_zone.tier import ToolTierRegistry
 from gove_zone.trust import DECISION_RECEIPT_PURPOSE, RECEIPT_V2, ReceiptTrustRegistry
 
 
@@ -56,6 +57,7 @@ def execute_with_receipt(
     consumption_ledger: ReceiptConsumptionLedger | None = None,
     authz_enforce: bool = False,
     principal_registry: PrincipalRegistry | None = None,
+    tool_tier_registry: ToolTierRegistry | None = None,
 ) -> Any:
     """Execute *tool_fn* with *args* iff *receipt* is valid and matches constraints.
 
@@ -225,6 +227,7 @@ def execute_with_receipt(
         trust_registry=trust_registry,
         trust_purpose=trust_purpose,
         max_clock_skew_seconds=bounded_clock_skew_seconds,
+        tool_tier_registry=tool_tier_registry,
     )
 
     # Burn-before-execute: consume only after verify passes (a failed
@@ -297,6 +300,7 @@ class GovernedExecutor:
         consumption_ledger: ReceiptConsumptionLedger | None = None,
         authz_enforce: bool = False,
         principal_registry: PrincipalRegistry | None = None,
+        tool_tier_registry: ToolTierRegistry | None = None,
     ) -> None:
         if not expected_actor or not expected_actor.strip():
             raise ReceiptValidationError(
@@ -330,6 +334,9 @@ class GovernedExecutor:
         self.consumption_ledger = consumption_ledger
         self.authz_enforce = authz_enforce
         self.principal_registry = principal_registry
+        # Tier registry is constructor-only for the same reason: a per-call
+        # registry could widen explore leniency for a single call.
+        self.tool_tier_registry = tool_tier_registry
         self.registry: dict[str, Callable[..., Any]] = {}
 
     def register(self, name: str, fn: Callable[..., Any]) -> None:
@@ -418,4 +425,5 @@ class GovernedExecutor:
             consumption_ledger=effective_ledger,
             authz_enforce=self.authz_enforce,
             principal_registry=self.principal_registry,
+            tool_tier_registry=self.tool_tier_registry,
         )
