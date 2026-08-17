@@ -1,0 +1,24 @@
+ACGS Enterprise Governance Control Plane
+Copyright (c) 2024-2026 ACGS. All rights reserved.
+
+PROPRIETARY AND CONFIDENTIAL
+
+This software and its source code are the proprietary property of ACGS.
+No license, express or implied, is granted to any party to use, copy,
+modify, distribute, sublicense, or create derivative works of this
+software, in whole or in part, except under a separate written agreement
+executed by ACGS.
+
+Unauthorized copying, distribution, or use of this software, via any
+medium, is strictly prohibited.
+
+--------------------------------------------------------------------------
+
+PRIOR VERSIONS
+
+Revisions of this codebase up to and including commit
+9c6168f97e70d02c54c5d3a073c60ea9d611d5a6 were published under the
+Apache License, Version 2.0, as part of the public acgs-ai/ACGS
+repository. That license continues to apply to those revisions as
+published. All subsequent revisions are proprietary under the terms
+above.

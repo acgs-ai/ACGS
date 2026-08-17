@@ -62,9 +62,11 @@ jobs:
           if [ -n "${SUBMODULE_TOKEN}" ]; then
             git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
           fi
-          # Only the uv workspace members (pyproject.toml [tool.uv.workspace]);
-          # non-member submodules like ACGS-agency-agents stay uninitialized.
-          for sub in packages/acgs-lite packages/Acgs-Swarm packages/clinicalguard packages/acgs-control-plane; do
+          # Only the uv workspace members that are still submodules
+          # (pyproject.toml [tool.uv.workspace]); non-member submodules like
+          # ACGS-agency-agents stay uninitialized, and acgs-control-plane is
+          # vendored in-tree so it has no gitlink to initialize.
+          for sub in packages/acgs-lite packages/Acgs-Swarm packages/clinicalguard; do
             git submodule sync -- "$sub"
             if ! git submodule update --init --recursive -- "$sub"; then
               echo "::error::failed to initialize workspace member $sub; private submodules require SUBMODULE_TOKEN with Contents: Read" >&2

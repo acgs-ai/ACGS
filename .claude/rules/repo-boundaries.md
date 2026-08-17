@@ -12,7 +12,7 @@
 | `packages/Acgs-Swarm/` | Constitutional swarm research | Nested repo/submodule. Package-local tests only. |
 | `packages/clinicalguard/` | Clinical-domain agent | Nested/private submodule; path-filtered, may be unavailable. |
 | `packages/ACGS-agency-agents/` | Agency agents productization | Nested repo/submodule. Do not stage from parent. |
-| `packages/acgs-control-plane/` | Control plane | Nested repo/submodule. Do not stage from parent. |
+| `packages/acgs-control-plane/` | Control plane | **Vendored in-tree** (not a submodule) — stage it from the parent like any other package. |
 | `acgi-ai/` | Frontend/console | Privileged origin; no public-only CDN/script patterns in console routes. |
 | `acgs_governance_eval_mvp/` | Evaluation/governance MVP | Python package. |
 | `acgs-cft-governance-pack/` | Infrastructure governance pack | Python package. |
@@ -43,10 +43,11 @@ over filesystem guesses.
 
 ## Nested repo / submodule discipline
 
-All five `.gitmodules` entries are independent repos: `packages/acgs-lite`,
-`packages/Acgs-Swarm`, `packages/clinicalguard`, `packages/ACGS-agency-agents`, and
-`packages/acgs-control-plane` (when the topology changes, re-derive the list from
-`.gitmodules` / `git submodule status` rather than trusting this one).
+All four `.gitmodules` entries are independent repos: `packages/acgs-lite`,
+`packages/Acgs-Swarm`, `packages/clinicalguard`, and `packages/ACGS-agency-agents`.
+`packages/acgs-control-plane` was one until it was vendored in-tree; it is now an
+ordinary parent-repo package. When the topology changes, re-derive the list from
+`.gitmodules` / `git submodule status` rather than trusting this one.
 Run `git add` / `git commit` **from inside the package**,
 never from the parent. Treat parent gitlink pointer drift as out-of-scope unless that *is*
 the task. Parent-repo validation is not proof a nested repo is valid; validate both.

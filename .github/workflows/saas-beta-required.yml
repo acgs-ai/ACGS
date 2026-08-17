@@ -29,25 +29,13 @@ jobs:
           persist-credentials: false
           submodules: false
 
-      # acgs-control-plane is a private submodule (proprietary extraction).
-      # This gate is required on every PR, so a missing/underscoped
-      # SUBMODULE_TOKEN must fail loudly here, not soft-skip: the gate's
-      # whole job is to run the control-plane suites.
-      - name: Init control-plane submodule (hard requirement)
-        env:
-          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+      # acgs-control-plane is vendored in-tree, so the checkout above carries
+      # it and no SUBMODULE_TOKEN is involved. This gate is required on every
+      # PR and its whole job is to run the control-plane suites, so a missing
+      # tree must fail loudly here rather than soft-skip downstream.
+      - name: Assert vendored control-plane is present
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
-        run: |
-          # Ephemeral global gitconfig so the token never lands in a real
-          # ~/.gitconfig (see python-clinicalguard.yml for rationale).
-          export GIT_CONFIG_GLOBAL="${RUNNER_TEMP}/submodule-gitconfig"
-          if [ -z "${SUBMODULE_TOKEN}" ]; then
-            echo "::error::SUBMODULE_TOKEN is required: acgs-control-plane is a private submodule and this gate must run its tests." >&2
-            exit 1
-          fi
-          git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
-          git submodule sync -- packages/acgs-control-plane
-          git submodule update --init --recursive -- packages/acgs-control-plane
+        run: test -f packages/acgs-control-plane/pyproject.toml
 
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
         with:
