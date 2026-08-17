@@ -1,12 +1,12 @@
 # Hooks or runtime overview
 
-Hook systems are useful places to intercept tool calls. ACGS uses those surfaces as adapters, but its product boundary is broader: governed runtime enforcement with decision receipts and replayable audit evidence.
+Hook systems are useful places to intercept tool calls. ACGS uses those surfaces as adapters, but its product boundary is broader: governed runtime enforcement — for the execution paths wired through it — with decision receipts and replayable audit evidence.
 
 ## Comparison
 
 | Hook surface | ACGS boundary |
 | --- | --- |
-| Scriptable pre/post tool control | Governed runtime enforcement |
+| Scriptable pre/post tool control | Governed runtime enforcement on wired paths |
 | Can allow or deny tool use | Must fail closed before side effects |
 | Useful for local policy | Built for verifiable authority and evidence |
 | JSON stdin/stdout hook model | Decision receipt plus replayable audit evidence |

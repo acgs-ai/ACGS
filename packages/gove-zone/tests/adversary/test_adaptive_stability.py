@@ -32,14 +32,24 @@ _STABLE_PROPERTIES = {
     "evidence-omission": "receipt/audit anchoring fails closed before execution",
 }
 
+# The adaptive harness runs in-process against the real library surface, so it can
+# only model classes whose variants are expressible there. A class marked
+# ``adaptive: "UNTESTED"`` is outside its reach — host compromise and out-of-gate
+# effect authorship cannot be simulated by a variant of an in-process call — and
+# carries no variant generator. The registry test below pins that correspondence
+# in both directions, so "UNTESTED" cannot be used to quietly skip a class the
+# harness could in fact model.
+MODELLED = frozenset(name for name, entry in MANIFEST.items() if entry["adaptive"] != "UNTESTED")
 
-def test_adaptive_registry_matches_manifest() -> None:
-    assert frozenset(adaptive.VARIANT_GENERATORS) == frozenset(MANIFEST)
+
+def test_adaptive_registry_matches_modelled_classes() -> None:
+    assert frozenset(adaptive.VARIANT_GENERATORS) == MODELLED
 
 
 def test_adaptive_observations_match_manifest() -> None:
     mismatches: list[str] = []
-    for class_name, entry in MANIFEST.items():
+    for class_name in sorted(MODELLED):
+        entry = MANIFEST[class_name]
         result = adaptive.adaptive_attack(class_name)
         observed = "STABLE" if result.stable else "BYPASSABLE"
         if observed != entry["adaptive"]:
@@ -54,7 +64,9 @@ def test_adaptive_posture_is_pinned() -> None:
     counts = {"STABLE": 0, "BYPASSABLE": 0, "UNTESTED": 0}
     for entry in MANIFEST.values():
         counts[entry["adaptive"]] += 1
-    assert counts == {"STABLE": 3, "BYPASSABLE": 5, "UNTESTED": 0}
+    # UNTESTED is 3, not 0: the placement classes (negligent-integrator,
+    # compromised-host, exec-capable-agent) are outside the in-process harness.
+    assert counts == {"STABLE": 3, "BYPASSABLE": 5, "UNTESTED": 3}
 
 
 def test_stable_families_are_complete_and_named() -> None:
@@ -79,7 +91,7 @@ def test_bypassable_families_recover_first_admitted_variant() -> None:
 
 
 def test_adaptive_results_are_deterministic() -> None:
-    for class_name in MANIFEST:
+    for class_name in sorted(MODELLED):
         first = adaptive.adaptive_attack(class_name)
         second = adaptive.adaptive_attack(class_name)
         assert (

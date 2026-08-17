@@ -67,23 +67,32 @@ Severity uses: **Critical** (default config → unauthorized side effect), **Hig
 
 ### 1. Receipt forgery
 
-**Attack scenario.** `receipt_hash` is a keyless SHA-256 over the canonical receipt
-dict (`receipt.py:241-245`, `compute_hash` pops only `receipt_hash`/`signature`). An
-adversary who can construct a `DecisionReceipt` sets `decision=ALLOW` with any
-actor/action/args, calls `compute_hash()` themselves, stamps the result into
-`receipt_hash`, and the receipt "verifies" — because in **unsigned mode** verification
-only recomputes that same keyless hash (`receipt.py:386-393`).
+**Attack scenario.** `receipt_hash` is a keyless SHA-256 over a hand-enumerated payload
+built by `_hash_payload` (`receipt.py:332-374`). An adversary who can construct a
+`DecisionReceipt` sets `decision=ALLOW` with any actor/action/args, calls
+`compute_hash()` themselves, stamps the result into `receipt_hash`, and the receipt
+"verifies" — because in **unsigned mode** verification only recomputes that same keyless
+hash and compares (`receipt.py:663`).
 
-**Current defense.** Every security-relevant field *is* bound into the hash — actor,
+**Current defense.** The fields this section depends on are bound into the hash — actor,
 `proposed_action`, `argument_hash`, `tenant_id`, `execution_boundary`, `policy_hash`,
 `authority`, `decision`, `expires_at`, and the signature metadata
 `signature_algorithm`/`signing_key_id` (anti-downgrade) — so tampering is caught
-(`receipt.py:164-199`, `receipt.py:386-393`). The residual (a hash is *recomputable*)
-is closed **only when signing is engaged**: Ed25519 signs `receipt_hash` with a private
-key and the gate verifies with the matching public key (`signing.py:1-27`,
-`receipt.py:418-433`). `execute_with_receipt` / `GovernedExecutor` default to the secure
-posture — `require_signature=True` and a hard `ProductionProfileError` if no verifier is
-configured (`executor.py:38,63-64`).
+(`receipt.py:332-374`, compared at `receipt.py:663`).
+
+The payload is enumerated by hand rather than derived from the dataclass, so "every
+field is bound" is **not** an accurate statement of the mechanism: `receipt_hash` and
+`signature` are excluded by construction, and the four receipt-v2 scoped-trust fields
+are excluded on v1 (where they are validated empty — `receipt.py:255`, `:679`). See
+[DECISION_RECEIPT_SPEC.md § Hash behavior](../DECISION_RECEIPT_SPEC.md#hash-behavior)
+for the exact payload and the drift guards that fail when a newly added field is
+silently left unbound.
+
+The residual (a hash is *recomputable*) is closed **only when signing is engaged**:
+Ed25519 signs `receipt_hash` with a private key and the gate verifies with the matching
+public key (`signing.py:76-91`). `execute_with_receipt` / `GovernedExecutor` default to
+the secure posture — `require_signature=True` and a hard `ProductionProfileError` if no
+verifier is configured (`executor.py:38,63-64`).
 Covered: `test_receipt_signing.py::test_forged_recomputed_receipt_rejected_without_private_key`.
 
 **Missing control.** (a) Unsigned mode has *no* adversarial tripwire proving a
@@ -357,7 +366,7 @@ already closed upstream:
 | 1/6 | **`ReceiptVerifier` default `require_signature=False`** | **CLOSED** | `ReceiptVerifier` now defaults `require_signature=True` and raises without a verifier (`contracts.py:235,278`) — consistent with `execute_with_receipt`. The §8 doc-vs-code inconsistency is gone. |
 | 2a | **PQL empty/unknown-source fail-open** | **BRANCH FIX** | this implementation rejects missing/unknown source type, per-source zero-rule results, explicit empty graph results, and aggregate zero-rule compilation; merge/CI status is outside this document. |
 | 3 | **Standalone replay** | **CLOSED** | `master` ships `consumption.py` / `ReceiptConsumptionLedger` (single-use at the standalone gate); this branch has it only as a stale `.pyc`. |
-| 7 | **Audit full-rewrite** | **PARTIAL** | `verify_chain(expected_count, expected_last_hash)` external-anchor hook added (`audit.py`), but **no shipped call site passes an anchor**, so every production path is still keyless — a self-consistent rewrite still verifies. |
+| 7 | **Audit full-rewrite** | **PARTIAL** | `verify_chain(expected_count, expected_last_hash)` external-anchor hook added (`audit.py`), but **no call site inside `packages/gove-zone/src/` passes an anchor**, so the library's own default path is keyless and a self-consistent rewrite still verifies there. Repository-wide the anchor *is* exercised: `acgs-control-plane` persists it transactionally and passes it back (`governance.py:756-758`, `app.py:1731`, `:1792`, `migration_recovery.py:738`). |
 | 4d | **Authority not gate-enforced** | **OPEN** | `expected_authority`/`expected_validator_role` are still not threaded through `execute_with_receipt`/`GovernedExecutor.execute`/`resume_with_receipt` (`executor.py:37,40` exposes only `expected_policy_bundle_id`/`require_signature`). |
 | 2c | **Bundle-id unpinned** | **OPEN (Low)** | `expected_policy_bundle_id` defaults `None`; no auto-binding analog to `policy_hash`. |
 | 2b | **RuleSetPolicy allow-by-default** | **OPEN by design** | documented deny/escalate-list architecture; not a bug. |

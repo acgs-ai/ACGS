@@ -46,8 +46,23 @@ reconciliation still required; this is not a compliance certification.
 | `audit_event_hash` | yes | Audit event hash anchoring this decision. |
 | `signature_algorithm` | yes | `none` or `ed25519`. Bound into receipt hash. |
 | `signing_key_id` | yes | Key id for signature verification. Bound into receipt hash. |
-| `receipt_hash` | yes | SHA-256 over canonical receipt JSON except `receipt_hash` and `signature`. |
-| `signature` | yes | `unsigned_local` or signature over `receipt_hash`. |
+| `receipt_hash` | yes | SHA-256 over the canonical hash payload. That payload is enumerated explicitly, not derived from the field list above — see [Hash behavior](#hash-behavior). |
+| `signature` | yes | `unsigned_local` or signature over `receipt_hash`. Not itself hash-bound. |
+
+Receipt-v2 adds four scoped-trust fields. They are present on every receipt object
+but are only carried into the hash payload when `receipt_schema_version` is set:
+
+| Field | Required | Binding role |
+|---|---:|---|
+| `receipt_schema_version` | v2 only | Schema discriminator. Its presence is what selects the v2 hash payload. |
+| `project_id` | v2 only | Project scope for trust-key selection. |
+| `environment_id` | v2 only | Environment scope for trust-key selection. |
+| `trust_epoch` | v2 only | Trust-epoch generation for key rotation. |
+
+On a receipt-v1 these four must be empty, and the verifier rejects the receipt if
+they are not (`receipt.py:255` at parse, `receipt.py:679` at verify). Their
+exclusion from the v1 hash payload is therefore not an unbound-field weakness:
+there is no v1 receipt with a non-empty value for them that reaches execution.
 
 ## Actor binding
 
@@ -202,9 +217,36 @@ Evidence: `receipt.py`, `executor.py`, `contracts.py`,
 
 ## Hash behavior
 
-`receipt_hash = sha256(canonical_json(receipt_without_receipt_hash_and_signature))`.
+`receipt_hash = sha256(canonical_json(hash_payload))`, where `hash_payload` is built
+by `DecisionReceipt._hash_payload` (`receipt.py:332-374`).
 
-Changing any bound field without reissuing the receipt produces a hash mismatch. Recomputing a hash without a trusted signature is not production-grade proof; signing mode closes that residual only when engaged.
+The payload is **hand-enumerated**, not computed from the dataclass fields. Stating
+it as "every field except two" would be wrong for receipt-v1. Precisely:
+
+| Receipt | Fields in the hash payload |
+|---|---|
+| v1 (no `receipt_schema_version`) | every declared field **except** `receipt_hash`, `signature`, and the four v2 scoped-trust fields |
+| v2 (`receipt_schema_version` set) | the v1 set **plus** `receipt_schema_version`, `project_id`, `environment_id`, `trust_epoch` |
+
+`receipt_hash` and `signature` are excluded by construction — a hash cannot cover
+itself, and the signature is computed *over* the hash. The four scoped-trust fields
+are excluded on v1 because a v1 receipt is validated to carry them empty
+(`receipt.py:255`, `receipt.py:679`); a v1 receipt with a populated `project_id`
+never reaches execution, so the exclusion is not an authorization gap.
+
+Because the enumeration is manual, a new field added to `DecisionReceipt` is **not**
+hash-bound automatically. That drift is guarded by
+`tests/test_trust_receipt_v2.py::test_v1_hash_payload_covers_every_declared_field_except_documented_exclusions`
+and `::test_v2_hash_payload_adds_exactly_the_scoped_trust_fields`, which compare the
+payload key set against `dataclasses.fields(DecisionReceipt)` and fail when the two
+diverge. Any new field must be added to `_hash_payload` or to the documented
+exclusion set in that test — silence is not an option.
+
+Changing any bound field without reissuing the receipt produces a hash mismatch, and
+stripping the v2 scoped fields changes receipt identity
+(`::test_stripping_the_v2_scoped_fields_changes_receipt_identity`). Recomputing a
+hash without a trusted signature is not production-grade proof; signing mode closes
+that residual only when engaged.
 
 ## Validation algorithm
 

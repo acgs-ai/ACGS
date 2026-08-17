@@ -1331,3 +1331,67 @@ def test_adversarial_registry_metadata_mismatch_is_stable_zero_effect(tmp_path) 
         ledger=ledger,
         reason=ReceiptRejectionReason.SCOPED_TRUST_MISMATCH,
     )
+
+
+# --- hash-coverage drift guards --------------------------------------------
+#
+# ``DecisionReceipt._hash_payload`` is a hand-enumerated dict, so a field added
+# to the dataclass is NOT bound by ``receipt_hash`` — and therefore not covered
+# by the signature, which signs that hash — until someone also adds it there.
+# The golden-vector tests above do not catch that: omitting a new field from the
+# payload leaves the frozen golden bytes unchanged, so the omission is silent.
+#
+# These tests make hash coverage an explicit, reviewable list. They fail when
+# the declared fields and the hashed fields drift apart, in either direction.
+
+_NEVER_HASHED = frozenset({"receipt_hash", "signature"})
+_V2_SCOPED_FIELDS = frozenset(
+    {"receipt_schema_version", "project_id", "environment_id", "trust_epoch"}
+)
+
+
+def _declared_fields() -> frozenset[str]:
+    return frozenset(f.name for f in dataclasses.fields(DecisionReceipt))
+
+
+def test_v1_hash_payload_covers_every_declared_field_except_documented_exclusions() -> None:
+    covered = frozenset(_v1_receipt()._hash_payload())
+    assert covered == _declared_fields() - _NEVER_HASHED - _V2_SCOPED_FIELDS, (
+        "DecisionReceipt fields and the v1 hash payload have drifted. A declared "
+        "field missing from _hash_payload is not bound by receipt_hash and not "
+        "covered by the signature. Either add it to _hash_payload, or record it "
+        "in _NEVER_HASHED / _V2_SCOPED_FIELDS here with a stated reason."
+    )
+
+
+def test_v2_hash_payload_adds_exactly_the_scoped_trust_fields() -> None:
+    signer = Ed25519Signer.generate(key_id="hash-coverage-v2")
+    covered = frozenset(_v2_receipt(signer)._hash_payload())
+
+    assert covered == _declared_fields() - _NEVER_HASHED
+    assert covered - frozenset(_v1_receipt()._hash_payload()) == _V2_SCOPED_FIELDS
+
+
+def test_stripping_the_v2_scoped_fields_changes_receipt_identity() -> None:
+    """A v2 → v1 downgrade is detectable, not a silent no-op.
+
+    The four scoped-trust fields sit outside the *v1* hash payload. That is only
+    safe because a v1 receipt is pinned to empty values for them — ``from_dict``
+    rejects a v1 dict carrying them and ``verify`` rejects a v1 receipt holding
+    them, and the executor gate reaches that check via ``receipt.verify()``.
+
+    This pins the other half of the argument: stripping the fields from a signed
+    v2 receipt changes the recomputed hash, so the downgrade surfaces as a hash
+    mismatch instead of being accepted as an ordinary v1 receipt.
+    """
+    signer = Ed25519Signer.generate(key_id="downgrade-key")
+    signed = _v2_receipt(signer)
+
+    payload = signed.to_dict()
+    for field in _V2_SCOPED_FIELDS:
+        payload.pop(field)
+    downgraded = DecisionReceipt.from_dict(payload)
+
+    assert downgraded.receipt_schema_version == ""
+    assert downgraded.receipt_hash == signed.receipt_hash
+    assert downgraded.compute_hash() != downgraded.receipt_hash

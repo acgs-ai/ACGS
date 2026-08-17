@@ -1,7 +1,7 @@
 # Undeniable evidence path
 
 The flagship gove-zone demo: a single runnable script that walks the full
-chain of custody from a blocked action to tamper-proof evidence.
+chain of custody from a blocked action to tamper-evident evidence.
 
     No valid Decision Receipt, no side effect.
 
