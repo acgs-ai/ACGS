@@ -1,0 +1,215 @@
+{
+  "stack": {
+    "languages": [
+      "Python (>=3.11 local dev, >=3.10 published via PyPI for acgs-lite)",
+      "TypeScript",
+      "JavaScript",
+      "Markdown (governance docs, playbooks)",
+      "YAML (policies, workflows, automation)"
+    ],
+    "frameworks": [
+      "FastAPI (core executor, agent-bus-analyzer, runtime kernel)",
+      "Pydantic (data validation, schema enforcement)",
+      "React 19 (acgi-ai console frontend)",
+      "Vite 5 (JS build, asset bundling)",
+      "Tailwind CSS 4 (styling)",
+      "Vue 3 (acgs-enterprise-ai-manager frontend, experimental)",
+      "Turborepo (JS task orchestration)",
+      "uv (Python workspace management)"
+    ],
+    "tooling": [
+      "ruff (linting: E, F, I, B, UP, RUF rules; line-length=100)",
+      "mypy (type checking, with --strict mode in research-engine)",
+      "pytest (test framework, asyncio mode auto, import-mode=importlib)",
+      "pytest-asyncio (async test support)",
+      "pytest-cov (coverage reporting)",
+      "Biome (JS formatting, linting)",
+      "pnpm (Node.js package manager, v9.15.4)",
+      "make (Makefile-based build orchestration)",
+      "Makefile (root fan-out to pnpm/uv, per-package gates)",
+      "Node.js (>=24, <25)",
+      "Python runtime (3.11 for workspace, 3.10+ published)",
+      "SQLite (default receipt/audit store)",
+      "PostgreSQL (control-plane data store, optional production)"
+    ]
+  },
+  "dependencies": {
+    "manifests": [
+      "pyproject.toml (root + per-package: acgs-lite, Acgs-Swarm, clinicalguard, gove-zone, agent-bus-analyzer, research-engine, acgs_governance_eval_mvp, acgs-cft-governance-pack, hermes_acgs_bundle, acgs-chatgpt-app)",
+      "package.json (root, private monorepo coordinator)",
+      "pnpm-workspace.yaml (JS workspace: acgi-ai, acgs-enterprise-ai-manager/frontend)",
+      "turbo.json (Turborepo task definitions and caching strategy)"
+    ],
+    "lockfiles": [
+      "pnpm-lock.yaml (JS dependencies)"
+    ],
+    "top_level": [
+      "ruff (>=0.8)",
+      "mypy (>=1.13)",
+      "pytest (>=8.0)",
+      "pytest-asyncio (>=0.24)",
+      "pytest-cov (>=4.1)",
+      "turbo (^2.3.3)"
+    ],
+    "project_license": "Apache-2.0 (commercial licensing available)",
+    "dependency_licenses": [
+      "Framework/core: FastAPI (BSD-3), Pydantic (MIT), React (MIT), Vite (MIT), Tailwind (MIT), Turborepo (MPL-2.0)",
+      "Tooling: ruff (MIT), mypy (MIT), pytest (MIT), Biome (Apache-2.0)",
+      "Runtime support: asyncpg (Apache-2.0 via psycopg3), cryptography (Apache-2.0/BSD), numpy (BSD-3), torch (optional for Acgs-Swarm)"
+    ]
+  },
+  "topology": {
+    "monorepo": true,
+    "workspaces": [
+      {
+        "name": "acgi-ai",
+        "language": "TypeScript/React",
+        "type": "Frontend (console + marketing)",
+        "deployment": "GCP Cloud Run (privileged console origin); Vercel (public marketing)",
+        "notes": "React 19, Vite, Tailwind 4, Biome; CSP rules + WIF auth; path-filtered CI (console.yml, marketing.yml)"
+      },
+      {
+        "name": "acgs-enterprise-ai-manager/frontend",
+        "language": "Vue 3",
+        "type": "Frontend (experimental)",
+        "deployment": "TBD",
+        "notes": "Enterprise manager UI; included in pnpm workspace for dependency resolution"
+      },
+      {
+        "name": "packages/gove-zone",
+        "language": "Python",
+        "type": "Core kernel — governed runtime, receipt-gated executor",
+        "deployment": "Local + MCP server + runtime hooks",
+        "notes": "FastAPI, Pydantic, zero runtime deps; receipt validation, policy dispatch, audit chain, replay, signing (Ed25519 opt-in)"
+      },
+      {
+        "name": "packages/acgs-lite",
+        "language": "Python",
+        "type": "Published library (PyPI v2.10.0, requires-python >=3.10)",
+        "deployment": "PyPI (external)",
+        "notes": "Nested git repo (submodule), independent, public API stability critical; consumed by Acgs-Swarm, clinicalguard"
+      },
+      {
+        "name": "packages/Acgs-Swarm",
+        "language": "Python",
+        "type": "Constitutional swarm research",
+        "deployment": "Local + research outputs",
+        "notes": "Nested git repo (submodule), depends on acgs-lite >=2.8.1, optional torch for advanced features"
+      },
+      {
+        "name": "packages/clinicalguard",
+        "language": "Python",
+        "type": "Clinical-domain governance agent",
+        "deployment": "Local",
+        "notes": "Nested git repo (submodule, private: dislovelhl/clinicalguard), depends on acgs-lite"
+      },
+      {
+        "name": "packages/agent-bus-analyzer",
+        "language": "Python",
+        "type": "Enhanced Agent Bus observability layer",
+        "deployment": "Local + OpenAPI export to console",
+        "notes": "FastAPI, generates OpenAPI contract for acgi-ai"
+      },
+      {
+        "name": "packages/research-engine",
+        "language": "Python",
+        "type": "Self-deepening research engine (delve)",
+        "deployment": "Local + pluggable backends",
+        "notes": "Zero runtime deps (core); mypy --strict; optional extras for backends (vector DBs, LLM adapters)"
+      },
+      {
+        "name": "acgs_governance_eval_mvp",
+        "language": "Python",
+        "type": "Governance evaluation MVP",
+        "deployment": "Local",
+        "notes": "Path-filtered CI (python-eval-mvp.yml)"
+      },
+      {
+        "name": "acgs-cft-governance-pack",
+        "language": "Python",
+        "type": "Infrastructure governance pack for CloudFormation",
+        "deployment": "Local",
+        "notes": "Path-filtered CI (python-cft-pack.yml)"
+      },
+      {
+        "name": "hermes_acgs_bundle",
+        "language": "Python",
+        "type": "Hermes integration bundle",
+        "deployment": "Local",
+        "notes": "Path-filtered CI (python-hermes-bundle.yml)"
+      },
+      {
+        "name": "automation/",
+        "language": "YAML + Python",
+        "type": "Governance policies, proposals, workflows, automation scripts",
+        "deployment": "Policy enforcement via execution layer",
+        "notes": "Not a code package; covered by root lint-docs + automation system validation"
+      },
+      {
+        "name": "packages/ai-governance-research/",
+        "language": "Markdown",
+        "type": "Governance playbooks, solution catalog, validation templates",
+        "deployment": "Documentation + validation checks",
+        "notes": "Parent-tracked but not a workspace member; gated via make lint-docs"
+      }
+    ],
+    "deployment": "Hybrid: local kernel (Python FastAPI), GCP Cloud Run (acgi-ai console via WIF), Vercel (marketing), MCP server, runtime hooks, function-call adapters",
+    "api_styles": [
+      "FastAPI (gove-zone kernel, agent-bus-analyzer)",
+      "MCP (Model Context Protocol server integration shape)",
+      "Function-call / tool-call bridges (runtime adapters)",
+      "JSONL audit format (tamper-evident, replay-capable)"
+    ],
+    "data_stores": [
+      "SQLite (local default: receipts, audit, replay store, policies)",
+      "PostgreSQL (production-grade control-plane, optional; Alembic migrations)",
+      "In-memory (replay state during verification)",
+      "Filesystem (proof packs, evidence bundles, constitutional hashes)"
+    ],
+    "module_layout": "Multi-package Python + JS hybrid monorepo. Root pyproject.toml declares 9 Python members (uv workspace); root package.json declares 2 JS members (pnpm workspace). Three packages are nested repos (submodules in .gitmodules): acgs-lite, Acgs-Swarm, clinicalguard. Per-package CLAUDE.md/AGENTS.md/README.md override root conventions. Root Makefile fan-outs to pnpm turbo (JS) and uv + per-package validation (Python). CI path-filtered per package; cross-cutting gate for constitutional-hash drift."
+  },
+  "conventions": {
+    "instruction_files": [
+      "CLAUDE.md (root: permits direct edits under acceptEdits mode, security-sensitive files listed, nested repo discipline, hard constraints on constitutional hashes and API stability)",
+      "AGENTS.md (root: comprehensive team operating manual, delegation rules, skills, verification, failure modes)",
+      "MONOREPO.md (authoritative registry: which packages exist, what they're gated by, CI paths, submodule pins, required secrets)",
+      "CONCEPTS.md (domain vocabulary: Constitution, Constitutional hash, Sealed, Decision Receipt, etc.)",
+      "docs/PLAN-MONOREPO.md (6-phase unification plan, 5 of 6 landed for parent-tracked surfaces)",
+      "PLAN.md (frontend-only acgi-ai completion plan; does NOT cover monorepo unification)",
+      "docs/README.md (documentation index)",
+      "docs/START_HERE.md (entry point for new users)",
+      "docs/PROOF_PATH.md (canonical proof narrative: demo commands, security model, what's implemented, what's not claimed)",
+      "docs/CLAIMS.md (safe public wording ledger: what to claim, what NOT to claim)",
+      "docs/SECURITY_MODEL.md (threat model, fail-closed behavior, receipt validation, replay integrity)",
+      "docs/DECISION_RECEIPT_SPEC.md (Decision Receipt schema, versioning, binding)",
+      "docs/INTEGRATION_MATRIX.md (which runtimes supported, at what proof depth)",
+      ".claude/rules/*.md (per-repo security-sensitive files, verification gates, repo boundaries, claim safety)"
+    ],
+    "coding_standards": "Linter-driven: ruff (E, F, I, B, UP, RUF for Python; line-length=100), Biome (JS formatting), mypy (types, --strict in research-engine). Per-file ignore lists for intentional deviations (e.g., E402 for sys.path manipulation). Workspace-level defaults in pyproject.toml [tool.ruff]; per-package overrides win. No hand-style debates; automation enforces all standards.",
+    "testing": "pytest (Python) with asyncio_mode=auto, import-mode=importlib. Per-package test paths defined. Coverage collected but not enforced globally. Path-filtered CI per package prevents test drift. Negative-path tests required for security-sensitive changes (proving side effect did NOT run). Handler wiring proved via dispatcher-level tests, not unit-call mocks. Tests smoke the proof path: kernel fail-closed behavior, receipt validation, audit integrity, replay verification, tamper detection.",
+    "review_process": "PR-based. Constitutional-hash drift gate runs on every PR + push to master. Per-package CI gates (lint, typecheck, test) must pass. Security-sensitive changes (receipt.py, executor.py, kernel.py, audit.py, replay.py, signing.py, policy.py, integration.py, .claude/hooks, .github/workflows) require: code + tests verified, handler wiring proved, docs updated (CLAIMS.md, SECURITY_MODEL.md, DECISION_RECEIPT_SPEC.md), failure modes documented. `gh pr merge` verify-gated globally (requires fresh verify-pass marker bound to current HEAD SHA). Humans push/merge; agents prepare. OMC coordination for multi-package changes.",
+    "strategy": "Receipt-gated governance. Core invariant: No valid Decision Receipt, no side effect. Vendor-neutral (sits below any agent framework). Policy-before-execution dispatch. Tamper-evident audit chain (JSONL hash-linked). Opt-in cryptographic signing (Ed25519). Replay-capable (stateless: re-derive side-store from audit). Integration shapes for MCP, function-call, runtime hooks, CLI. Alpha status (0.1.0.dev0). Local proof pack (security proofs, not production deployment proof). NOT claiming: production-certified, compliance-certified, regulator-approved, sandbox replacement, complete IAM/PKI, formal-verification system."
+  },
+  "vocabulary": {
+    "concepts_present": true,
+    "terms": [
+      "Constitution — versioned ruleset enforced on every request; source of truth for allow/deny/escalate decisions",
+      "Constitutional Hash — content hash of Constitution data; stamped into files as provenance marker; identifies governing ruleset, not per-file content lock",
+      "Sealed — status applied to generated files, lock files, constitutional-hash-marked files; must not be hand-edited; integrity guaranteed by re-generation or hash recomputation",
+      "Decision Receipt — verifiable proof that an action was authorized under a specific policy; schema-versioned; binds actor, action, arguments, policy evidence, audit reference; required gate for executor",
+      "Governed Runtime Kernel — gove-zone: local policy-before-execution dispatch membrane, sits below any agent framework, vendor-neutral",
+      "Policy Binding — actor + action + argument + policy + audit proof linked in Decision Receipt; integrity checked at executor gate",
+      "Executor Gate — receipt validation checkpoint; enforces: No valid Decision Receipt, no side effect",
+      "Audit Chain — tamper-evident JSONL hash-linked log of governance decisions and side effects; integrity verified before replay",
+      "Replay — stateless re-derivation of audit chain and side-store from governance log; proves audit integrity and allows offline verification",
+      "Signing Mode — opt-in Ed25519 cryptographic signature on Decision Receipts; proves provenance and non-repudiation",
+      "Proof Pack — CLI artifact (gove-zone proofpack) containing local security proofs, fixture corpus, tamper-evident demos; proof of implementation, not production deployment proof",
+      "Side Effect — file write, API call, database update, email, payment, deployment, MCP tool, shell command, or any action requiring explicit authority",
+      "Fail-Closed — default behavior when receipt is missing, invalid, tampered, or mismatched; action denied; audit logged",
+      "Adapter Shape — integration contract for runtime/MCP/function-call bridges; defines how gove-zone kernel integrates with agent frameworks",
+      "Replay Verification — proof that an action's audit log and side effects match expected state; enables offline evidence validation",
+      "Actor — identity claiming authority for an action (agent, user, service account, MCP client)",
+      "Tenant Safety — isolation guarantees; audit and policy binding prevent cross-tenant action leakage"
+    ]
+  }
+}
