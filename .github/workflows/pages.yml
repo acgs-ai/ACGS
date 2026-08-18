@@ -1,5 +1,24 @@
 # GitHub Pages build for https://acgs-ai.github.io/ACGS/
 #
+# RETIRED 2026-08-17 — automatic triggers removed; `workflow_dispatch` only.
+#
+# The repository is private and its Pages site no longer exists
+# (`GET /repos/acgs-ai/ACGS/pages` -> 404, `has_pages: false`), so
+# actions/configure-pages@v5 fails at the first step of `build` on every run:
+#
+#   Get Pages site failed. Please verify that the repository has Pages enabled
+#   and configured to build using GitHub Actions ... Error: Not Found
+#
+# `deploy` is then skipped, so nothing is published and no code is ever built.
+# That reddened every push to master from adcc688ad (2026-08-17) onward with a
+# failure that no code change can fix. acgs.ai itself is served by Cloudflare
+# Workers Assets, not by this workflow, so nothing user-facing depends on it.
+#
+# The job definitions below are left intact and runnable via the Actions "Run
+# workflow" button. To bring the docs site back: re-enable Pages on the repo
+# with source "GitHub Actions", confirm `GET .../pages` returns 200, then
+# restore the `push:` / `pull_request:` triggers recorded in the block below.
+#
 # Replaces the legacy "deploy from branch" Pages build, which recursively
 # clones every submodule and has failed on every push since
 # packages/acgs-control-plane became a private submodule (#429): the legacy
@@ -13,29 +32,32 @@
 name: pages
 
 on:
-  push:
-    branches: [master]
-    # Only publishable content should trigger a deploy. _config.yml excludes
-    # the source trees (packages/, tests/, acgi-ai/, ...) from the rendered
-    # site, so pushes confined to them would rebuild an identical artifact.
-    paths:
-      - '_config.yml'
-      - '*.md'
-      - 'llms.txt'
-      - 'LICENSE'
-      - 'docs/**'
-      - '.github/workflows/pages.yml'
-  pull_request:
-    # Dry-run the Jekyll build (deploy is master-gated below) whenever site
-    # content or this workflow changes — Liquid parse failures surface on the
-    # PR instead of after merge.
-    paths:
-      - '_config.yml'
-      - '*.md'
-      - 'llms.txt'
-      - 'LICENSE'
-      - 'docs/**'
-      - '.github/workflows/pages.yml'
+  # Retired: manual only. The automatic triggers are preserved verbatim below
+  # so restoring them is a comment-uncomment once Pages is enabled again.
+  #
+  # push:
+  #   branches: [master]
+  #   # Only publishable content should trigger a deploy. _config.yml excludes
+  #   # the source trees (packages/, tests/, acgi-ai/, ...) from the rendered
+  #   # site, so pushes confined to them would rebuild an identical artifact.
+  #   paths:
+  #     - '_config.yml'
+  #     - '*.md'
+  #     - 'llms.txt'
+  #     - 'LICENSE'
+  #     - 'docs/**'
+  #     - '.github/workflows/pages.yml'
+  # pull_request:
+  #   # Dry-run the Jekyll build (deploy is master-gated below) whenever site
+  #   # content or this workflow changes — Liquid parse failures surface on the
+  #   # PR instead of after merge.
+  #   paths:
+  #     - '_config.yml'
+  #     - '*.md'
+  #     - 'llms.txt'
+  #     - 'LICENSE'
+  #     - 'docs/**'
+  #     - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
