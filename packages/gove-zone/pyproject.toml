@@ -65,6 +65,8 @@ dev = [
     # offline verifier stays stdlib-only (dependencies = [] is by design).
     "jsonschema>=4",
 ]
+# Observation sink only. Never a kernel dependency. Heavy transitive ML stack.
+semantica = ["semantica>=0.6.5"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gove_zone", "src/mcp_gateway"]
