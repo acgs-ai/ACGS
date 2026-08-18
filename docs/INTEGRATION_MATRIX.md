@@ -32,6 +32,15 @@ Where the neutrality actually lives in code: `packages/gove-zone/src/gove_zone/i
 | OpenAI Agents SDK (framework loop) | Pattern | generic wrapper snippet; conformance tests are roadmap (`ROADMAP.md`) |
 | AutoGen / CrewAI / Anthropic-branded SDK | Roadmap | tool-call dicts generally reach the generic parse path, but no named, tested example exists — not claimed |
 
+
+## Adjacent observation layers (not gates)
+
+These are not runtimes and not policy enforcement points. They sit *after* a Decision Receipt exists.
+
+| Product | Relationship | Artifact |
+|---|---|---|
+| Semantica context graph | One-way example export of a Decision Receipt into a graph-shaped record. Semantica does not authorize side effects. | `examples/semantica_evidence_export/` |
+
 ## How to read a tier before you rely on it
 
 1. **Shipped + tested** — copy the example, swap your tool, run the listed test. The gate behaves identically to every other shipped surface.

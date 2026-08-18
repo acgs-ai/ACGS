@@ -64,6 +64,7 @@ EXAMPLE_SCRIPTS = [
     "examples/mcp-governed-agent/demo.py",
     "examples/governed_aml_screening/demo.py",
     "examples/governed_legal_drafting/demo.py",
+    "examples/semantica_evidence_export/demo.py",
 ]
 
 EXAMPLE_READMES = [
@@ -76,6 +77,7 @@ EXAMPLE_READMES = [
     "examples/mcp-governed-agent/README.md",
     "examples/governed_aml_screening/README.md",
     "examples/governed_legal_drafting/README.md",
+    "examples/semantica_evidence_export/README.md",
 ]
 
 
