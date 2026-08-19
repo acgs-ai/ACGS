@@ -32,6 +32,8 @@ from gove_zone import (
     DecisionRecord,
     sha256_json,
 )
+from gove_zone._locking import FileLockUnavailableError
+from gove_zone.errors import AuditError
 
 
 def _record(event_id: str, tool: str = "write_file") -> DecisionRecord:
@@ -48,7 +50,15 @@ def test_append_fails_closed_without_lock_primitive(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """No POSIX ``fcntl`` and no Windows ``msvcrt`` -> append refuses rather than
-    writing an unserialized event. Fail-closed, never a silent unsafe append."""
+    writing an unserialized event. Fail-closed, never a silent unsafe append.
+
+    The refusal is an :class:`AuditError`, not a bare ``RuntimeError``: every
+    caller guards the audit boundary with ``except AuditError`` and turns it
+    into a fail-closed refusal, so a type outside that hierarchy would escape
+    the guard and break the caller's response contract. The lock-unavailable
+    cause is preserved (and remains a ``RuntimeError`` subclass, so any handler
+    written against the older type still matches it).
+    """
     real_import = builtins.__import__
 
     def _no_lock_import(name: str, *args: object, **kwargs: object) -> object:
@@ -60,8 +70,11 @@ def test_append_fails_closed_without_lock_primitive(
 
     audit_path = tmp_path / "audit.jsonl"
     store = ChainHashAuditStore(audit_path)
-    with pytest.raises(RuntimeError, match="file-lock primitive"):
+    with pytest.raises(AuditError, match="file-lock primitive") as exc_info:
         store.append(_record("e1"))
+
+    assert isinstance(exc_info.value.__cause__, FileLockUnavailableError)
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
 
     # Fail-closed: the refused append left no event in the chain.
     assert not audit_path.exists() or audit_path.stat().st_size == 0

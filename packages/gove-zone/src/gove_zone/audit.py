@@ -39,6 +39,7 @@ from gove_zone._fsprobe import (
 from gove_zone._fsprobe import (
     unsafe_fs_override_enabled,
 )
+from gove_zone._locking import FileLockUnavailableError
 from gove_zone._locking import _exclusive_file_lock as _exclusive_file_lock
 from gove_zone.decision import DecisionRecord, sha256_json
 from gove_zone.errors import AuditError, UnsafeAuditFilesystemError
@@ -59,7 +60,16 @@ class AuditAppender(Protocol):
     """
 
     def append(self, decision: DecisionRecord) -> Mapping[str, Any]:
-        """Append *decision* and return the complete persisted event mapping."""
+        """Append *decision* and return the complete persisted event mapping.
+
+        Failures are reported as :class:`~gove_zone.errors.AuditError` (or a
+        subclass). Callers — the kernel, the gateways, escalation approval —
+        guard the audit boundary with ``except AuditError`` and turn it into a
+        fail-closed refusal, so a sink that raises some other exception type
+        escapes that boundary and breaks the caller's response contract.
+        Implementations must translate their storage-layer exceptions
+        accordingly, chaining the original as ``__cause__``.
+        """
 
 
 class ChainHashAuditStore:
@@ -102,7 +112,20 @@ class ChainHashAuditStore:
         Serializes read-then-write under an exclusive platform file lock so
         concurrent callers never produce sibling events pointing at the same
         ``previous_hash``. Writes are fsync'd before the lock is released.
+
+        A storage-layer failure (lock file unopenable, disk full, read-only or
+        failing device, or a host with no file-lock primitive at all) surfaces
+        as :class:`AuditChainError` with the original exception chained as
+        ``__cause__`` — the same domain type the tail read already raises, and
+        the type every caller's audit guard names. Nothing else is translated:
+        a programming defect still propagates as itself.
         """
+        try:
+            return self._append_locked(decision)
+        except (OSError, FileLockUnavailableError) as exc:
+            raise AuditChainError(f"could not append to audit chain {self.path}: {exc}") from exc
+
+    def _append_locked(self, decision: DecisionRecord) -> dict[str, Any]:
         lock_path = self.path.with_suffix(self.path.suffix + ".lock")
         with lock_path.open("a+") as lock_fh, _exclusive_file_lock(lock_fh):
             previous_hash = self._previous_hash_locked()
@@ -146,7 +169,16 @@ class ChainHashAuditStore:
 
         Returns the persisted event dicts in append order; an empty batch
         writes nothing and returns ``[]``.
+
+        Storage failures surface as :class:`AuditChainError`, exactly as in
+        :meth:`append`.
         """
+        try:
+            return self._append_many_locked(decisions)
+        except (OSError, FileLockUnavailableError) as exc:
+            raise AuditChainError(f"could not append to audit chain {self.path}: {exc}") from exc
+
+    def _append_many_locked(self, decisions: Iterable[DecisionRecord]) -> list[dict[str, Any]]:
         records = list(decisions)
         if not records:
             return []
