@@ -6,4 +6,6 @@ Repository-specific instructions:
 - Do not edit files; this workflow is review-only.
 - Keep feedback concise and actionable.
 
-Use the checked-out merge ref plus the fetched base/head refs to inspect the PR diff.
+Use the checked-out merge ref plus the base/head refs prepared by the workflow to inspect the
+PR diff. `HEAD^1` is the base commit and `HEAD^2` is the head commit; the same two commits are
+also reachable as `refs/remotes/origin/<base branch>` and `refs/pull/<number>/head`.

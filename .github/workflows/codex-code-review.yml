@@ -21,6 +21,14 @@ on:
 # The gate now fails closed instead. When the review genuinely cannot run (fork pull requests
 # do not receive secrets), a maintainer must make that call explicitly by applying the
 # `codex-review-waived` label, which leaves an auditable record on the pull request.
+#
+# The gate can only decide what it is allowed to reach. Every step that can fail for
+# infrastructure reasons therefore carries `continue-on-error: true` and an `id:`, and the
+# gate reads those outcomes explicitly. Without that, a step failing *before* the gate marks
+# the job failed on its own, which made the waiver unreachable exactly when it was needed —
+# a maintainer could apply `codex-review-waived`, watch the gate step pass, and still see the
+# required check red. `continue-on-error` here does not soften the gate: an infrastructure
+# failure with no waiver still exits non-zero below.
 jobs:
   codex-review:
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -36,30 +44,67 @@ jobs:
       IS_INTERNAL: ${{ github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' }}
       IS_WAIVED: ${{ contains(github.event.pull_request.labels.*.name, 'codex-review-waived') }}
     steps:
+      # `persist-credentials: false` is deliberate and load-bearing: the Codex step below runs
+      # a model over this working tree, and a persisted token in `.git/config` would be inside
+      # what it can read. Nothing after this step may assume git can authenticate.
+      #
+      # `fetch-depth: 2` gets the merge commit AND both of its parents, which is all the
+      # materialization below needs. Depth 1 would fetch the merge commit alone.
       - name: Checkout repository
+        id: checkout
         if: ${{ env.OPENAI_API_KEY != '' && env.IS_INTERNAL == 'true' }}
+        continue-on-error: true
         uses: actions/checkout@v5
         with:
           ref: refs/pull/${{ github.event.pull_request.number }}/merge
           persist-credentials: false
-          fetch-depth: 1
+          fetch-depth: 2
 
-      - name: Pre-fetch base and head refs
-        if: ${{ env.OPENAI_API_KEY != '' && env.IS_INTERNAL == 'true' }}
+      # Materializes the same two ref names the previous `git fetch` produced, from commits
+      # that are already local — so it needs no network and no credentials.
+      #
+      # This step used to run `git fetch --no-tags origin ...`. With `persist-credentials:
+      # false` that fetch is unauthenticated, which silently worked while this repository was
+      # public and began failing the moment it went private:
+      #
+      #     fatal: could not read Username for 'https://github.com': No such device or address
+      #
+      # A merge ref's first parent IS the base commit and its second parent IS the head
+      # commit, so both refs can be derived locally. Re-authenticating instead would mean
+      # putting a token back within reach of the model — see the checkout note above.
+      - name: Materialize base and head refs
+        id: refs
+        if: ${{ env.OPENAI_API_KEY != '' && env.IS_INTERNAL == 'true' && steps.checkout.outcome == 'success' }}
+        continue-on-error: true
         env:
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          git fetch --no-tags origin \
-            "$PR_BASE_REF" \
-            "+refs/pull/$PR_NUMBER/head"
+          set -euo pipefail
+
+          # A merge ref always has two parents. If it does not, the checkout is not what we
+          # think it is — fail loudly rather than review the wrong tree.
+          if ! base_sha=$(git rev-parse --verify --quiet 'HEAD^1'); then
+            echo "::error title=Unexpected checkout::HEAD has no first parent; expected a merge ref."
+            exit 1
+          fi
+          if ! head_sha=$(git rev-parse --verify --quiet 'HEAD^2'); then
+            echo "::error title=Unexpected checkout::HEAD has no second parent; expected a merge ref."
+            exit 1
+          fi
+
+          git update-ref "refs/remotes/origin/$PR_BASE_REF" "$base_sha"
+          git update-ref "refs/pull/$PR_NUMBER/head" "$head_sha"
+
+          echo "base: $PR_BASE_REF -> $base_sha"
+          echo "head: refs/pull/$PR_NUMBER/head -> $head_sha"
 
       # `continue-on-error` keeps a failed review step from turning the job red on its
       # own: the "Gate on review outcome" step below is the sole decider of this required
       # check (it reads `steps.codex-review.outcome`, which records the real result even
       # with `continue-on-error`), so an unwaived failure still fails the gate.
       - name: Run Codex Code Review
-        if: ${{ env.OPENAI_API_KEY != '' && env.IS_INTERNAL == 'true' }}
+        if: ${{ env.OPENAI_API_KEY != '' && env.IS_INTERNAL == 'true' && steps.checkout.outcome == 'success' && steps.refs.outcome == 'success' }}
         id: codex-review
         continue-on-error: true
         uses: openai/codex-action@v1
@@ -94,15 +139,23 @@ jobs:
         if: ${{ always() }}
         env:
           REVIEW_OUTCOME: ${{ steps.codex-review.outcome }}
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          REFS_OUTCOME: ${{ steps.refs.outcome }}
           AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
         run: |
           set -euo pipefail
 
+          # A real review result is the only unconditional pass. Note this is reached only
+          # when Codex actually ran, which requires checkout and ref materialization to have
+          # succeeded first — so no infrastructure failure can produce it.
           if [ "$REVIEW_OUTCOME" = "success" ]; then
             echo "Codex review ran and completed."
             exit 0
           fi
 
+          # Everything below this line is a non-result: rejection, infrastructure failure, or
+          # an environment where the review cannot run. All of them fail closed unless a
+          # maintainer has explicitly waived.
           if [ "$IS_WAIVED" = "true" ]; then
             echo "::warning title=Codex review waived::A maintainer applied the 'codex-review-waived' label, so this required check passes without a Codex review. The waiver is recorded in the pull request's label history."
             exit 0
@@ -112,6 +165,10 @@ jobs:
             reason="the author's association is '$AUTHOR_ASSOCIATION', and fork pull requests do not receive repository secrets, so the review cannot run"
           elif [ -z "$OPENAI_API_KEY" ]; then
             reason="the OPENAI_API_KEY secret is not configured or is empty"
+          elif [ "$CHECKOUT_OUTCOME" != "success" ]; then
+            reason="the repository checkout did not succeed (outcome: '$CHECKOUT_OUTCOME'); the pull request may not have a mergeable merge ref"
+          elif [ "$REFS_OUTCOME" != "success" ]; then
+            reason="the base and head refs could not be materialized (outcome: '$REFS_OUTCOME'), so there was no diff for Codex to review"
           else
             reason="the review step did not complete (outcome: '$REVIEW_OUTCOME')"
           fi
