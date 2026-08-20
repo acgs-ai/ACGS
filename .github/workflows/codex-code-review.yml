@@ -24,11 +24,10 @@ on:
 #
 # The gate can only decide what it is allowed to reach. Every step that can fail for
 # infrastructure reasons therefore carries `continue-on-error: true` and an `id:`, and the
-# gate reads those outcomes explicitly. Without that, a step failing *before* the gate marks
-# the job failed on its own, which made the waiver unreachable exactly when it was needed —
-# a maintainer could apply `codex-review-waived`, watch the gate step pass, and still see the
-# required check red. `continue-on-error` here does not soften the gate: an infrastructure
-# failure with no waiver still exits non-zero below.
+# gate reads the review-path outcomes explicitly. Without that, a step failing *before* or
+# *after* the gate's logical decision can mark the job failed on its own, which made the
+# waiver unreachable exactly when it was needed. `continue-on-error` here does not soften
+# the gate: an infrastructure failure with no waiver still exits non-zero below.
 jobs:
   codex-review:
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -118,7 +117,12 @@ jobs:
           # runners because sudo is not granted via the mechanisms it strips.
           safety-strategy: read-only
 
+      # Posting feedback is best-effort. A GitHub API/rate-limit/body-size failure must not
+      # override the gate's decision after Codex has completed; the gate below remains the
+      # sole decider of the required check.
       - name: Post Codex feedback
+        id: post-feedback
+        continue-on-error: true
         if: ${{ env.OPENAI_API_KEY != '' && env.IS_INTERNAL == 'true' && steps.codex-review.outputs.final-message != '' }}
         uses: actions/github-script@v7
         env:
@@ -134,7 +138,9 @@ jobs:
             });
 
       # Decides the required check. Runs unconditionally so the gate can never be satisfied
-      # by a skip; the only green paths are "the review ran" and "a maintainer waived it".
+      # by a skip; the only green paths are "the Codex action completed" and "a maintainer
+      # waived it". This is a liveness gate: it does not parse the review text as an
+      # APPROVE/REJECT verdict.
       - name: Gate on review outcome
         if: ${{ always() }}
         env:
@@ -145,16 +151,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          # A real review result is the only unconditional pass. Note this is reached only
-          # when Codex actually ran, which requires checkout and ref materialization to have
-          # succeeded first — so no infrastructure failure can produce it.
+          # Successful action execution is the only unconditional pass. This means Codex ran
+          # to completion after checkout and ref materialization succeeded; it does NOT mean
+          # that the review text approved the change.
           if [ "$REVIEW_OUTCOME" = "success" ]; then
-            echo "Codex review ran and completed."
+            echo "Codex review action ran and completed."
             exit 0
           fi
 
-          # Everything below this line is a non-result: rejection, infrastructure failure, or
-          # an environment where the review cannot run. All of them fail closed unless a
+          # Everything below this line is a non-result: infrastructure failure or an
+          # environment where the review cannot run. All of them fail closed unless a
           # maintainer has explicitly waived.
           if [ "$IS_WAIVED" = "true" ]; then
             echo "::warning title=Codex review waived::A maintainer applied the 'codex-review-waived' label, so this required check passes without a Codex review. The waiver is recorded in the pull request's label history."
