@@ -113,6 +113,11 @@ class LocalProcessSandbox(SandboxProvider):
         require_bwrap: bool = False,
         allow_fork: bool = False,
     ) -> None:
+        # Cleanup-owned state is initialized FIRST: everything below can raise
+        # (the require_bwrap refusal, and the fallback warning under a filter
+        # that promotes warnings to errors), and a finalizer must never depend
+        # on a constructor having run to completion.
+        self._temp_dir: tempfile.TemporaryDirectory[str] | None = None
         bwrap_available = bool(shutil.which("bwrap"))
         if use_bwrap and require_bwrap and not bwrap_available:
             raise SandboxError(
@@ -131,7 +136,6 @@ class LocalProcessSandbox(SandboxProvider):
             )
         self.use_bwrap = use_bwrap and bwrap_available
         self.allow_fork = allow_fork
-        self._temp_dir = None
         if sandbox_dir:
             self.sandbox_dir = sandbox_dir
         else:
@@ -307,10 +311,30 @@ class LocalProcessSandbox(SandboxProvider):
             raise SandboxError(f"Failed to parse sandbox output: {res.stdout.strip()}")
         return data["result"]
 
+    def _release_temp_dir(self) -> None:
+        """Release the temporary directory this sandbox created. Never raises.
+
+        Three properties the finalizer depends on:
+
+        * **Partial-construction safe** — ``__init__`` can raise before the
+          attribute exists at all (a subclass, or a future guard placed above
+          it), so the read is guarded rather than assumed.
+        * **Idempotent and ownership-scoped** — ownership is dropped before the
+          removal is attempted, so a second call is a no-op and a directory
+          later assigned to the instance is never removed on its behalf. A
+          caller-supplied ``sandbox_dir`` is not owned and never touched.
+        * **Non-raising** — this is the path ``__del__`` runs on; a removal
+          failure here must not become an unraisable interpreter exception.
+        """
+        temp_dir = getattr(self, "_temp_dir", None)
+        if temp_dir is None:
+            return
+        self._temp_dir = None
+        with contextlib.suppress(Exception):
+            temp_dir.cleanup()
+
     def __del__(self) -> None:
-        if self._temp_dir:
-            with contextlib.suppress(Exception):
-                self._temp_dir.cleanup()
+        self._release_temp_dir()
 
 
 class E2BSandbox(SandboxProvider):

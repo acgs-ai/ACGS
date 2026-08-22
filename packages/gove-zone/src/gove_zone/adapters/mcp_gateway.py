@@ -500,8 +500,11 @@ class GovernedGateway:
         # Chain-linkage anchor for the minted receipt (informational): the hash
         # the decision event chains onto. Captured before the decision append,
         # mirroring evaluate_tenant_action.
-        previous_audit_hash = self._audit.last_hash()
         try:
+            # Inside the guard: the pre-read touches the same chain the append
+            # does, so an unreadable chain must fail closed into the leak-safe
+            # envelope rather than raise out of the dispatcher.
+            previous_audit_hash = self._audit.last_hash()
             record, audit_hash = ctx.kernel.evaluate_and_record(call)
         except AuditError:
             # The decision could not be recorded -> fail closed with a fixed,

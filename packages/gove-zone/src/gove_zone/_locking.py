@@ -15,6 +15,19 @@ from contextlib import contextmanager
 from typing import TextIO
 
 
+class FileLockUnavailableError(RuntimeError):
+    """No platform file-lock primitive exists, so a write cannot be serialized.
+
+    A distinct type (rather than a bare ``RuntimeError``) so a caller whose
+    contract is "storage failures surface as my domain error" can name this
+    condition without widening its ``except`` to every ``RuntimeError`` — which
+    would also swallow genuine programming defects. Kept a ``RuntimeError``
+    subclass so existing handlers keep working, and defined here rather than in
+    ``gove_zone.errors`` so this module stays importable by both the audit chain
+    and the receipt consumption ledger without taking a domain dependency.
+    """
+
+
 @contextmanager
 def _exclusive_file_lock(lock_fh: TextIO) -> Generator[None, None, None]:
     """Hold an exclusive cross-process lock on the sidecar lock file.
@@ -42,7 +55,7 @@ def _exclusive_file_lock(lock_fh: TextIO) -> Generator[None, None, None]:
     try:
         import msvcrt
     except ModuleNotFoundError as exc:
-        raise RuntimeError(
+        raise FileLockUnavailableError(
             "ChainHashAuditStore append requires a platform file-lock primitive "
             "(POSIX fcntl or Windows msvcrt); neither is available on this host, "
             "so audit append cannot be serialized safely and is refused."

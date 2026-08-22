@@ -539,11 +539,20 @@ class UniversalGateway:
         )
 
         if self.allowed_actors is not None and actor not in self.allowed_actors:
-            record, audit_hash = self._append_synthesized_deny(
-                call,
-                rule=_ACTOR_ALLOWLIST_RULE,
-                reason=f"actor {actor!r} is not in the gateway actor allowlist",
-            )
+            reason = f"actor {actor!r} is not in the gateway actor allowlist"
+            try:
+                record, audit_hash = self._append_synthesized_deny(
+                    call,
+                    rule=_ACTOR_ALLOWLIST_RULE,
+                    reason=reason,
+                )
+            except AuditError:
+                return GatewayResult(
+                    status="error",
+                    tool=tool,
+                    actor=actor,
+                    error_class="AuditError",
+                )
             return GatewayResult(
                 status="denied",
                 tool=tool,
@@ -554,8 +563,10 @@ class UniversalGateway:
                 ),
             )
 
-        previous_audit_hash = self._audit.last_hash()
         try:
+            # The chain-linkage pre-read is part of the audit boundary: an
+            # unreadable chain must produce the fail-closed result, not raise.
+            previous_audit_hash = self._audit.last_hash()
             record, audit_hash = self._kernel_for(actor).evaluate_and_record(call)
         except AuditError:
             # Decision could not be recorded -> nothing may run.
@@ -987,10 +998,10 @@ class UniversalGateway:
             )
         except AuditError:
             return GatewayResult(
-                status="denied",
+                status="error",
                 tool=tool,
                 actor=actor,
-                envelope={"decision": "deny", "reason": reason, "audit_hash": None},
+                error_class="AuditError",
             )
         return GatewayResult(
             status="denied",
@@ -1022,14 +1033,10 @@ class UniversalGateway:
             )
         except AuditError:
             return GatewayResult(
-                status="denied",
+                status="error",
                 tool=tool,
                 actor=actor,
-                envelope={
-                    "decision": "deny",
-                    "reason": "escalation capacity exhausted; call refused",
-                    "audit_hash": None,
-                },
+                error_class="AuditError",
             )
         return GatewayResult(
             status="denied",
