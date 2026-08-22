@@ -8653,6 +8653,28 @@
   line-height: 1.25;
 }
 
+/* The three cards are independent flex columns, so each one's header row is
+   sized on its own. A longer category label (card 02) wraps its badge to a
+   second line, which pushes only that card's h3 down and breaks the shared
+   baseline across the row. Subgrid puts every card on the grid's own row
+   tracks — header, title, flow — so all three headers share one track height
+   and the titles align regardless of which labels wrap. row-gap is reset to 0
+   because the cards inherit the grid's gap, which is column spacing between
+   cards, not internal spacing. Left as flex where subgrid is unsupported:
+   the cards still stack correctly, only the baseline goes unshared. */
+@supports (grid-template-rows: subgrid) {
+  .m-boundaries-grid {
+    grid-template-rows: auto auto 1fr;
+  }
+
+  .m-boundary-card {
+    display: grid;
+    grid-row: span 3;
+    grid-template-rows: subgrid;
+    row-gap: 0;
+  }
+}
+
 .m-boundary-flow {
   margin: 0;
   display: flex;
