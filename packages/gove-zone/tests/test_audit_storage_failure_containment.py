@@ -14,10 +14,11 @@ Two things broke that promise:
    exception type their ``except AuditError`` clauses do not name.
    (The kernel path is already safe: ``Kernel._append_validated`` normalizes
    every append exception into ``AuditError``.)
-2. Two ``UniversalGateway.invoke`` call sites were outside an ``except
-   AuditError`` at all — the actor-allowlist refusal, and the
-   ``last_hash()`` chain-linkage pre-read — so even a *typed* audit error
-   escaped as an exception instead of the canonical envelope.
+2. Gateway audit-failure paths must return the canonical leak-safe error result.
+   In particular, synthesized actor-allowlist, human-loop, and pending-capacity
+   denials cannot claim a recorded denial when their audit append failed.
+3. The ``UniversalGateway.invoke`` ``last_hash()`` chain-linkage pre-read must
+   also stay inside the audit-error containment boundary.
 
 The authorization outcome was never fail-open, but the response contract and
 the leak-safety boundary were. These tests pin both.
@@ -40,7 +41,8 @@ from gove_zone._locking import FileLockUnavailableError
 from gove_zone.audit import AuditChainError
 from gove_zone.decision import Decision, DecisionRecord, sha256_json
 from gove_zone.errors import AuditError
-from gove_zone.gateway import UniversalGateway
+from gove_zone.gateway import MCP_APPROVE_TOOL, UniversalGateway
+from gove_zone.policy import Policy, PolicyRule, RuleSetPolicy
 from gove_zone.profile import GovernanceProfile
 from gove_zone.receipt import Validator
 
@@ -80,18 +82,25 @@ def _break_lock_acquisition(monkeypatch: pytest.MonkeyPatch, exc: BaseException)
 
 
 def _make_gateway(
-    tmp_path: Path, *, allowed_actors: frozenset[str] | None = None
+    tmp_path: Path,
+    *,
+    allowed_actors: frozenset[str] | None = None,
+    policy: Policy | None = None,
+    max_pending: int = 256,
+    max_pending_per_principal: int = 64,
 ) -> UniversalGateway:
     return UniversalGateway(
         tenant_id="tenant-1",
         execution_boundary="boundary-1",
-        policy=AllowAllPolicy(),
+        policy=policy or AllowAllPolicy(),
         profile=GovernanceProfile.dev(),
         validator=Validator(validator_id="validator-1"),
         authority="authority-1",
         audit_path=tmp_path / "audit.jsonl",
         ledger_path=tmp_path / "ledger.jsonl",
         allowed_actors=allowed_actors,
+        max_pending=max_pending,
+        max_pending_per_principal=max_pending_per_principal,
     )
 
 
@@ -240,14 +249,13 @@ def test_a_successful_append_is_unchanged_and_still_verifies(tmp_path: Path) -> 
 # --- gateway containment -------------------------------------------------------
 
 
-def test_a_storage_failure_on_the_allowlist_refusal_returns_an_envelope(
+def test_a_storage_failure_on_the_allowlist_refusal_returns_canonical_audit_error(
     tmp_path: Path,
 ) -> None:
     """An actor-allowlist refusal is audited through ``_append_synthesized_deny``.
 
-    That append is not behind the kernel's normalization, and its call site had
-    no ``except AuditError`` at all — so a dead audit sink turned a routine
-    fail-closed DENY into a raw exception out of ``invoke``.
+    A dead audit sink must return the canonical ``AuditError`` result rather
+    than claiming a recorded denial with a synthetic rejection envelope.
     """
 
     gateway = _make_gateway(tmp_path, allowed_actors=frozenset({"agent-a"}))
@@ -262,10 +270,13 @@ def test_a_storage_failure_on_the_allowlist_refusal_returns_an_envelope(
 
     outcome = gateway.invoke("stranger", "echo", {"message": "hi"})
 
-    assert outcome.status == "denied"
-    assert outcome.envelope is not None
-    assert outcome.envelope["decision"] == "deny"
-    assert outcome.envelope["audit_hash"] is None
+    assert outcome.to_dict() == {
+        "status": "error",
+        "tool": "echo",
+        "actor": "stranger",
+        "audit_hash": "",
+        "error_class": "AuditError",
+    }
     assert ran == []  # no downstream invocation
     assert _audit_events(tmp_path) == []  # and no success record
 
@@ -319,7 +330,8 @@ def test_a_storage_failure_never_leaks_its_detail_to_the_caller(
 
     outcome = gateway.invoke("stranger", "echo", {"message": "hunter2"})
 
-    assert outcome.status == "denied"
+    assert outcome.status == "error"
+    assert outcome.error_class == "AuditError"
     text = _envelope_text(outcome)
     assert "injected storage failure" not in text
     assert str(tmp_path) not in text
@@ -327,6 +339,78 @@ def test_a_storage_failure_never_leaks_its_detail_to_the_caller(
     assert "OSError" not in text
     assert "Traceback" not in text
     assert ran == []
+
+
+def test_human_loop_audit_failure_projects_as_canonical_mcp_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gateway = _make_gateway(tmp_path)
+
+    def _boom(*_args: Any, **_kwargs: Any) -> tuple[DecisionRecord, str]:
+        raise AuditError(f"sensitive audit path: {tmp_path / 'audit.jsonl'}")
+
+    monkeypatch.setattr(gateway, "_append_synthesized_deny", _boom)
+
+    outcome = gateway.handle_mcp_call(
+        {"name": MCP_APPROVE_TOOL, "arguments": {}},
+        actor="agent-a",
+    )
+
+    assert outcome == {
+        "isError": True,
+        "content": [{"type": "text", "text": f"gove-zone error: {MCP_APPROVE_TOOL}"}],
+        "_meta": {"gove_zone": {"decision": "error", "error_class": "AuditError"}},
+    }
+    assert str(tmp_path) not in json.dumps(outcome)
+    assert _audit_events(tmp_path) == []
+
+
+def test_pending_capacity_audit_failure_projects_as_canonical_mcp_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    policy = RuleSetPolicy(
+        policy_id="capacity-test",
+        rules=(
+            PolicyRule(
+                rule_id="escalate-deploy",
+                effect=Decision.ESCALATE,
+                tools=frozenset({"deploy"}),
+                reason="approval required",
+            ),
+        ),
+    )
+    gateway = _make_gateway(
+        tmp_path,
+        policy=policy,
+        max_pending=1,
+        max_pending_per_principal=1,
+    )
+    ran: list[str] = []
+    gateway.register_tool("deploy", lambda env: ran.append(env))
+
+    first = gateway.handle_mcp_call(
+        {"name": "deploy", "arguments": {"env": "first"}},
+        actor="agent-a",
+    )
+    assert first["_meta"]["gove_zone"]["decision"] == "escalated"
+
+    def _boom(*_args: Any, **_kwargs: Any) -> tuple[DecisionRecord, str]:
+        raise AuditError(f"sensitive audit path: {tmp_path / 'audit.jsonl'}")
+
+    monkeypatch.setattr(gateway, "_append_synthesized_deny", _boom)
+    outcome = gateway.handle_mcp_call(
+        {"name": "deploy", "arguments": {"env": "overflow"}},
+        actor="agent-a",
+    )
+
+    assert outcome == {
+        "isError": True,
+        "content": [{"type": "text", "text": "gove-zone error: deploy"}],
+        "_meta": {"gove_zone": {"decision": "error", "error_class": "AuditError"}},
+    }
+    assert str(tmp_path) not in json.dumps(outcome)
+    assert ran == []
+    assert len(gateway._pending) == 1
 
 
 def test_a_typed_audit_error_still_produces_the_canonical_envelope(

@@ -547,13 +547,11 @@ class UniversalGateway:
                     reason=reason,
                 )
             except AuditError:
-                # The refusal never depended on the append succeeding; an
-                # unrecordable deny still denies, as a GatewayResult.
                 return GatewayResult(
-                    status="denied",
+                    status="error",
                     tool=tool,
                     actor=actor,
-                    envelope={"decision": "deny", "reason": reason, "audit_hash": None},
+                    error_class="AuditError",
                 )
             return GatewayResult(
                 status="denied",
@@ -1000,10 +998,10 @@ class UniversalGateway:
             )
         except AuditError:
             return GatewayResult(
-                status="denied",
+                status="error",
                 tool=tool,
                 actor=actor,
-                envelope={"decision": "deny", "reason": reason, "audit_hash": None},
+                error_class="AuditError",
             )
         return GatewayResult(
             status="denied",
@@ -1035,14 +1033,10 @@ class UniversalGateway:
             )
         except AuditError:
             return GatewayResult(
-                status="denied",
+                status="error",
                 tool=tool,
                 actor=actor,
-                envelope={
-                    "decision": "deny",
-                    "reason": "escalation capacity exhausted; call refused",
-                    "audit_hash": None,
-                },
+                error_class="AuditError",
             )
         return GatewayResult(
             status="denied",
