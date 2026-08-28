@@ -1,0 +1,149 @@
+# Path-filtered verification for the isolated Second Brain application.
+# This workflow has no deployment authority and receives no provider secrets.
+
+name: second-brain
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'apps/second-brain/**'
+      - 'pnpm-workspace.yaml'
+      - '.gitignore'
+      - '.github/workflows/second-brain.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'apps/second-brain/**'
+      - 'pnpm-workspace.yaml'
+      - '.gitignore'
+      - '.github/workflows/second-brain.yml'
+
+concurrency:
+  group: second-brain-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CI: 'true'
+  NEXT_TELEMETRY_DISABLED: '1'
+  UV_FROZEN: '1'
+  SECOND_BRAIN_MODEL_PROVIDER: fake
+  SECOND_BRAIN_WORKER_MODEL_PROVIDER: fake
+
+jobs:
+  verify:
+    name: Full local acceptance gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: 'pgvector/pgvector:0.8.6-pg18-bookworm@sha256:2ba9ca5f2e7daa0f0e7723cba1ee9167bab54efd3640516a44ac1a928dd67e7a'
+        env:
+          POSTGRES_DB: second_brain
+          POSTGRES_USER: second_brain_owner
+          POSTGRES_PASSWORD: second_brain_owner_dev
+        ports:
+          - 55439:5432
+        options: >-
+          --health-cmd "pg_isready -U second_brain_owner -d second_brain"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - name: Bootstrap restricted database roles
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i \
+            -e PGPASSWORD=second_brain_owner_dev \
+            -e SECOND_BRAIN_DB_APP_PASSWORD=second_brain_app_dev \
+            -e SECOND_BRAIN_DB_WORKER_PASSWORD=second_brain_worker_dev \
+            '${{ job.services.postgres.id }}' \
+            psql -v ON_ERROR_STOP=1 -U second_brain_owner -d second_brain -f - \
+            < apps/second-brain/service/db/init/001_app_role.sql
+
+          roles="$({ docker exec -e PGPASSWORD=second_brain_owner_dev \
+            '${{ job.services.postgres.id }}' \
+            psql -At -U second_brain_owner -d second_brain \
+            -c "SELECT rolname,rolsuper,rolcreatedb,rolcreaterole,rolbypassrls \
+                FROM pg_roles \
+                WHERE rolname IN ('second_brain_app','second_brain_worker') \
+                ORDER BY rolname"; } 2>/dev/null)"
+          expected=$'second_brain_app|f|f|f|f\nsecond_brain_worker|f|f|f|f'
+          [[ "$roles" == "$expected" ]]
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+        with:
+          version: 0.11.19
+          enable-cache: true
+          cache-dependency-glob: 'apps/second-brain/service/uv.lock'
+
+      - name: Install frozen Python environment
+        working-directory: apps/second-brain/service
+        run: |
+          uv python install 3.13.7
+          uv sync --frozen --python 3.13.7
+          uv run --frozen python --version
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.18.0
+
+      - name: Install exact pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4+sha512.b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0 --activate
+          [[ "$(node --version)" == 'v24.18.0' ]]
+          [[ "$(pnpm --version)" == '9.15.4' ]]
+
+      - name: Install frozen web environment
+        run: pnpm --dir apps/second-brain/web install --frozen-lockfile --ignore-workspace
+
+      - name: Install Chromium runtime
+        run: pnpm --dir apps/second-brain/web exec playwright install --with-deps chromium
+
+      - name: Provide fail-closed fnm compatibility for package gates
+        run: |
+          shim_dir="$RUNNER_TEMP/second-brain-ci-bin"
+          install -d -m 0755 "$shim_dir"
+          cat >"$shim_dir/fnm" <<'BASH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [[ "$#" -lt 4 || "$1" != exec || "$2" != --using || "$3" != 24 ]]; then
+            echo 'CI fnm shim accepts only: fnm exec --using 24 <command>' >&2
+            exit 64
+          fi
+          [[ "$(node --version)" == v24.* ]]
+          shift 3
+          exec "$@"
+          BASH
+          chmod 0755 "$shim_dir/fnm"
+          printf '%s\n' "$shim_dir" >>"$GITHUB_PATH"
+          export PATH="$shim_dir:$PATH"
+          fnm exec --using 24 node --version
+          [[ "$(fnm exec --using 24 pnpm --version)" == '9.15.4' ]]
+
+      - name: Assert offline provider contract
+        run: |
+          [[ "$SECOND_BRAIN_MODEL_PROVIDER" == fake ]]
+          [[ "$SECOND_BRAIN_WORKER_MODEL_PROVIDER" == fake ]]
+          [[ -z "${SECOND_BRAIN_ANSWER_API_KEY:-}" ]]
+          [[ -z "${SECOND_BRAIN_WORKER_MODEL_API_KEY:-}" ]]
+
+      # The package's foundation Playwright target starts `next start` inside
+      # its test phase. A clean runner therefore needs one build before the
+      # full Make gate; `make verify` still rebuilds and gates that artifact.
+      - name: Prepare clean-checkout Playwright server build
+        run: pnpm --dir apps/second-brain/web build
+
+      - name: Run complete Second Brain gate
+        run: make -C apps/second-brain verify

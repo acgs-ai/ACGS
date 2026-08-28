@@ -1,0 +1,25 @@
+name: acgs-second-brain
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg18-bookworm@sha256:2ba9ca5f2e7daa0f0e7723cba1ee9167bab54efd3640516a44ac1a928dd67e7a
+    environment:
+      POSTGRES_DB: second_brain
+      POSTGRES_USER: second_brain_owner
+      POSTGRES_PASSWORD: ${SECOND_BRAIN_DB_OWNER_PASSWORD:-second_brain_owner_dev}
+      SECOND_BRAIN_DB_APP_PASSWORD: ${SECOND_BRAIN_DB_APP_PASSWORD:-second_brain_app_dev}
+      SECOND_BRAIN_DB_WORKER_PASSWORD: ${SECOND_BRAIN_DB_WORKER_PASSWORD:-second_brain_worker_dev}
+    ports:
+      - "127.0.0.1:${SECOND_BRAIN_DB_PORT:-55439}:5432"
+    volumes:
+      - second_brain_postgres:/var/lib/postgresql
+      - ./service/db/init:/docker-entrypoint-initdb.d:ro,Z
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U second_brain_owner -d second_brain"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+volumes:
+  second_brain_postgres:

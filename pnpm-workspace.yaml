@@ -3,3 +3,4 @@
 # Add new JS workspace members here.
 packages:
   - "acgi-ai"
+  - "apps/second-brain/web"

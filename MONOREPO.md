@@ -19,6 +19,7 @@ Parent-tracked packages (declared in `pyproject.toml` `[tool.uv.workspace]` or
 | Package | Tracking | Toolchain | Parent CI | Maintainer / notes |
 |---|---|---|---|---|
 | `acgi-ai/` | parent files | Node 20, pnpm 9.15.4, Vite 5, Tailwind 4, Biome | `.github/workflows/console.yml`, `marketing.yml` | Frontend — deploys to GCP Cloud Run via WIF; CSP rules in `acgi-ai/DEPLOY.md` §4–§7 |
+| `apps/second-brain/web/` | parent files | Node 24, pnpm 9.15.4, Next.js 16, React 19, TypeScript 6 | `.github/workflows/second-brain.yml` | Private provenance-first Second Brain web app; uses a package-local workspace and lockfile |
 | `docs/archive/acgs-enterprise-ai-manager/frontend/` | parent files | Vue 3, Vite 5 (archived) | none (archived) | Enterprise manager frontend — archived 2026-07-05, removed from pnpm workspace; rationale in `docs/archive/acgs-enterprise-ai-manager/ARCHIVED.md` |
 | `acgs_governance_eval_mvp/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-eval-mvp.yml` | Eval MVP — path-filtered on `acgs_governance_eval_mvp/**`; also hosts the Hermes/Phoenix host adapter (`governance/adapters/hermes/`, folded in from the retired `hermes_acgs_bundle/`) |
 | `acgs-cft-governance-pack/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-cft-pack.yml` | CFT governance pack — path-filtered |
@@ -83,6 +84,7 @@ license permits redistribution.
 | Constitutional-hash drift | `.github/workflows/constitutional-hash.yml` | PR + push to `master` | Recomputes every `# Constitutional Hash:` marker against `docs/constitutional-hashes.lock`. Lock holds 201 markers post-Phase 2 — drilled from the now-visible submodules; 2 fixture-bearing files (`scripts/hardening_report.py`, `tests/test_verify_constitutional_hashes.py`) are in `SKIP_FILES` so synthetic markers don't pollute the inventory. |
 | Cloud Run console | `.github/workflows/console.yml` | path-filtered on `acgi-ai/**` | Lint + build + deploy of privileged console origin |
 | Marketing verify | `.github/workflows/marketing.yml` | path-filtered on `acgi-ai/**` | Lint + build + readiness of public marketing origin (verify-only; deploy is in `marketing-cloudflare.yml`) |
+| Second Brain verify | `.github/workflows/second-brain.yml` | path-filtered on `apps/second-brain/**`, `pnpm-workspace.yaml`, `.gitignore`, and workflow changes | Frozen service/web validation with pgvector, deterministic fake providers, migrations, restart, privacy, accessibility, real-persistence browser tests, and dependency audit |
 | iii governance lab static | `.github/workflows/iii-governance-lab-static.yml` | path-filtered on `experiments/iii-governance-lab/**`, its invariant test, and static workflow changes | Static contract checks only: Python compile, shell syntax, TypeScript typecheck, and pytest invariants; no live iii engine |
 
 ## Required Actions secrets
