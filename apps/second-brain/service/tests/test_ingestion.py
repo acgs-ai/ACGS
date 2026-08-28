@@ -2353,7 +2353,34 @@ def test_long_running_worker_process_stops_cleanly_on_sigterm(
         env=environment,
     )
     try:
-        time.sleep(0.4)
+        deadline = time.monotonic() + 5
+        sigterm_mask = 1 << (signal.SIGTERM - 1)
+        status_path = Path(f"/proc/{process.pid}/status")
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                _, error = process.communicate(timeout=1)
+                raise AssertionError(
+                    f"worker exited before installing its SIGTERM handler: {error}"
+                )
+            try:
+                status = status_path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                if process.poll() is not None:
+                    _, error = process.communicate(timeout=1)
+                    raise AssertionError(
+                        f"worker exited before installing its SIGTERM handler: {error}"
+                    ) from None
+                time.sleep(0.01)
+                continue
+            caught_signals = next(
+                (line.split()[1] for line in status.splitlines() if line.startswith("SigCgt:")),
+                None,
+            )
+            if caught_signals is not None and int(caught_signals, 16) & sigterm_mask:
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError("worker did not install its SIGTERM handler within 5 seconds")
         process.terminate()
         _, error = process.communicate(timeout=5)
         assert process.returncode == 0, error
