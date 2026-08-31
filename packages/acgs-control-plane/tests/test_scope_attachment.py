@@ -199,7 +199,7 @@ def test_revision_0010_backfills_one_default_scope_per_org_and_attaches_legacy_r
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0009
-    assert result.after.state is DatabaseSchemaState.VERSION_0011
+    assert result.after.state is DatabaseSchemaState.VERSION_0012
     engine = make_engine(database_url)
     try:
         with engine.connect() as connection:
@@ -255,7 +255,7 @@ def test_revision_0010_leaves_already_scoped_agents_untouched(tmp_path: Path) ->
     _seed_0009_scoped_agent(database_url, "org-a", "project-managed", "environment-managed")
 
     result = upgrade_database(database_url)
-    assert result.after.state is DatabaseSchemaState.VERSION_0011
+    assert result.after.state is DatabaseSchemaState.VERSION_0012
 
     engine = make_engine(database_url)
     try:
@@ -582,7 +582,7 @@ def test_revision_0010_retry_completes_after_scope_column_interruption(
     assert preflight.state is DatabaseSchemaState.VERSION_0009_PARTIAL_SCOPE_ATTACHMENT
     result = upgrade_database(database_url)
     assert result.before.state is DatabaseSchemaState.VERSION_0009_PARTIAL_SCOPE_ATTACHMENT
-    assert result.after.state is DatabaseSchemaState.VERSION_0011
+    assert result.after.state is DatabaseSchemaState.VERSION_0012
 
 
 def test_revision_0010_retry_drops_safe_leftover_batch_temp_table(
@@ -605,7 +605,7 @@ def test_revision_0010_retry_drops_safe_leftover_batch_temp_table(
 
     result = upgrade_database(database_url)
     assert result.before.state is DatabaseSchemaState.VERSION_0009_PARTIAL_SCOPE_ATTACHMENT
-    assert result.after.state is DatabaseSchemaState.VERSION_0011
+    assert result.after.state is DatabaseSchemaState.VERSION_0012
 
 
 def test_revision_0010_refuses_malformed_batch_temp_table_before_retry(
@@ -857,4 +857,16 @@ def test_scope_attachment_does_not_add_project_or_environment_routes(tmp_path: P
     finally:
         app.state.engine.dispose()
 
-    assert not any("projects" in path or "environments" in path for path in paths)
+    policy_scope_paths = {
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies",
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies/{policy_version_id}/activate",
+        "/v1/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies",
+        "/v1/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies/{policy_version_id}/activate",
+    }
+    unexpected = {
+        path
+        for path in paths
+        if ("/projects" in path or "/environments" in path) and path not in policy_scope_paths
+    }
+    assert unexpected == set()
+    assert policy_scope_paths <= paths

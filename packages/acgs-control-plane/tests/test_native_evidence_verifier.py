@@ -97,8 +97,8 @@ class _FakeSigner:
 def engine(tmp_path: Path) -> Iterator[sa.Engine]:
     database_url = f"sqlite:///{tmp_path / 'native-evidence.sqlite3'}"
     result = upgrade_database(database_url)
-    assert result.after.state is DatabaseSchemaState.VERSION_0011
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0011
+    assert result.after.state is DatabaseSchemaState.VERSION_0012
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0012
     engine = make_engine(database_url)
     with engine.connect() as connection:
         connection.exec_driver_sql("PRAGMA foreign_keys=ON")

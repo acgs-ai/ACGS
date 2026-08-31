@@ -501,6 +501,172 @@ class PolicyBundle(Base):
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class PolicyVersion(Base):
+    """Immutable signed canonical policy envelope for one environment scope."""
+
+    __tablename__ = "policy_versions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_policy_versions_environment",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        UniqueConstraint("org_id", "project_id", "environment_id", "id", name="uq_pv_scope_id"),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "policy_id",
+            "version",
+            name="uq_pv_scope_policy_version",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "content_hash",
+            name="uq_pv_scope_content_hash",
+        ),
+        CheckConstraint("trust_epoch > 0", name="ck_pv_trust_epoch_positive"),
+        CheckConstraint("signature_algorithm = 'ed25519'", name="ck_pv_signature_algorithm"),
+        CheckConstraint("purpose = 'acgs.policy-envelope/v1'", name="ck_pv_purpose"),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"), index=True
+    )
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    version: Mapped[str] = mapped_column(String(200), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    document: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    rules: Mapped[list[dict[str, Any]]] = mapped_column(JSONVariant, nullable=False)
+    canonical_envelope: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    purpose: Mapped[str] = mapped_column(String(64), nullable=False)
+    key_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    signature_algorithm: Mapped[str] = mapped_column(String(32), nullable=False)
+    signature: Mapped[str] = mapped_column(Text, nullable=False)
+    trust_epoch: Mapped[int] = mapped_column(Integer, nullable=False)
+    receipt_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EnvironmentPolicyHead(Base):
+    """Single active policy pointer for an org/project/environment scope."""
+
+    __tablename__ = "environment_policy_heads"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_environment_policy_heads_environment",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "active_policy_version_id"],
+            [
+                "policy_versions.org_id",
+                "policy_versions.project_id",
+                "policy_versions.environment_id",
+                "policy_versions.id",
+            ],
+            name="fk_environment_policy_heads_active_version",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "receipt_id"],
+            [
+                "managed_decision_receipts.org_id",
+                "managed_decision_receipts.project_id",
+                "managed_decision_receipts.environment_id",
+                "managed_decision_receipts.receipt_id",
+            ],
+            name="fk_environment_policy_heads_receipt_scope",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            name="uq_environment_policy_heads_scope",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "generation",
+            name="uq_environment_policy_heads_scope_generation",
+        ),
+        CheckConstraint("generation >= 0", name="ck_eph_generation_nonnegative"),
+        CheckConstraint("status IN ('active')", name="ck_eph_status"),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"), index=True
+    )
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    active_policy_version_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    receipt_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PolicyRegistryIdempotency(Base):
+    """Terminal response for one scoped managed policy-registry request."""
+
+    __tablename__ = "policy_registry_idempotency"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_policy_registry_idempotency_environment",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "receipt_id"],
+            [
+                "managed_decision_receipts.org_id",
+                "managed_decision_receipts.project_id",
+                "managed_decision_receipts.environment_id",
+                "managed_decision_receipts.receipt_id",
+            ],
+            name="fk_policy_registry_idempotency_receipt_scope",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        UniqueConstraint("idempotency_key_hash", name="uq_policy_registry_idempotency_key_hash"),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    idempotency_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"), index=True
+    )
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    action: Mapped[str] = mapped_column(String(200), nullable=False)
+    receipt_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    response: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ReceiptRow(Base):
     __tablename__ = "receipts"
 
