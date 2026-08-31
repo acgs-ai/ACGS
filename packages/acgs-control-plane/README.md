@@ -159,6 +159,36 @@ Configured deployments must set both variables, where `ACP_CURSOR_KEY` is a base
 key. Production posture still refuses startup before persistence because the provider preflight
 contains a `cursor-aead-keyring` blocker alongside the existing legacy governance blockers.
 
+### Dedicated `/v1` collection cursor pagination
+
+Four authenticated collection reads have dedicated `/v1` contracts:
+
+- `GET /v1/orgs/{org_id}/users`
+- `GET /v1/orgs/{org_id}/agents`
+- `GET /v1/orgs/{org_id}/policies`
+- `GET /v1/orgs/{org_id}/exports`
+
+Each returns `{"items":[...],"limit":50,"next_cursor":null}` (with the requested admitted
+limit) and orders rows by `created_at DESC, id DESC`. The query language accepts only one optional
+decimal `limit` from 1 through 500 and one optional opaque `cursor`. Its raw aggregate byte bound
+and strict syntax checks run only after authentication, tenant lookup, and endpoint RBAC, so a
+malformed query cannot override an earlier 401, 404, or 403 refusal.
+
+Collection cursors use a protocol separate from receipt cursors. AES-256-GCM authentication binds
+the token to its organization, collection resource, fixed order and filter digest, key id, issue
+and expiry times, and exact `(created_at, id)` boundary. Receipt and collection cursors reject each
+other. Cursor and query refusals use the same generic redacted `invalid_cursor` envelope and
+`Cache-Control: private, no-store`; they do not echo a token or failure detail. Trailing slashes on
+these four reads are canonicalized inside the application without an external redirect, so the
+query string is not reflected through a `Location` header.
+
+The unversioned collection routes keep their existing array responses and behavior. The
+unversioned receipt explorer also keeps its existing offset fields and separate receipt-cursor
+protocol. This functional local slice does not add migration-managed composite
+`(org_id, created_at, id)` indexes, and it provides no staging, production, capacity, or latency
+claim. Those indexes and PostgreSQL query-plan evidence are a separate required follow-up;
+production startup continues to refuse its existing blockers.
+
 ## Verify
 
 ```bash

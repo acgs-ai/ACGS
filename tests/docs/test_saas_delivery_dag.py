@@ -138,14 +138,37 @@ def _validate_state_invariants(dag: dict[str, Any]) -> None:
                 by_id[dependency]["status"] == "completed" for dependency in node["dependencies"]
             )
         if node["evidence_state"] in {"independently_reviewed", "external_verified"}:
-            assert node["status"] == "completed"
             assert node["implementation_state"] == "built"
             assert all(
                 by_id[dependency]["status"] == "completed" for dependency in node["dependencies"]
             )
+            if node["evidence_state"] == "external_verified":
+                assert node["status"] == "completed"
+            else:
+                assert node["status"] in {"completed", "in_progress"}
+                if node["status"] == "in_progress":
+                    blocker = node["blocker"]
+                    next_safe_action = node["next_safe_action"]
+                    assert isinstance(blocker, str) and blocker.strip()
+                    assert isinstance(next_safe_action, str) and next_safe_action.strip()
+                    outstanding_gate = f"{blocker} {next_safe_action}".lower()
+                    assert any(
+                        gate in outstanding_gate
+                        for gate in ("evidence", "verification", "review", "ci", "proof", "audit", "commit")
+                    )
+                    assert any(
+                        state in outstanding_gate
+                        for state in ("remain", "required", "pending", "unavailable", "missing", "until")
+                    )
         if node["status"] == "ready":
             assert all(
-                by_id[dependency]["status"] == "completed" for dependency in node["dependencies"]
+                by_id[dependency]["status"] == "completed"
+                or (
+                    by_id[dependency]["status"] == "in_progress"
+                    and by_id[dependency]["implementation_state"] == "built"
+                    and by_id[dependency]["evidence_state"] == "independently_reviewed"
+                )
+                for dependency in node["dependencies"]
             )
         if node["status"] == "blocked":
             assert isinstance(node["blocker"], str) and node["blocker"].strip()
@@ -629,10 +652,19 @@ def test_g101_reconciliation_keeps_current_merged_slices_and_dr_separate() -> No
         "partial",
         "local_verified",
     )
-    assert g102["dependencies"] == ["G101", "G102A", "G102B", "G102C", "G102D"]
+    assert g102["dependencies"] == [
+        "G101",
+        "G102A",
+        "G102B",
+        "G102C",
+        "G102D",
+        "G102E",
+        "G102F",
+    ]
     assert "EXT-GITHUB-BILLING" not in g102["blocker"]
     for missing_contract in (
-        "complete all-collections cursor pagination",
+        "mandatory G102F migration-managed composite (org_id, created_at, id) collection indexes",
+        "cursor coverage beyond the four dedicated collections",
         "durable idempotency for mutating routes beyond native agent.register",
         "async export jobs",
         "production provider wiring",
@@ -716,7 +748,13 @@ def test_g101_reconciliation_keeps_current_merged_slices_and_dr_separate() -> No
     assert "timestamped-dr-report.json" in g603["evidence_artifact"]
 
     matrix = MATRIX_PATH.read_text(encoding="utf-8")
+    assert (
+        "G101, G102, G102A, G102B, G102C, G102D, G102E, G102F, G103, G104, G105, G106"
+        in matrix
+    )
     assert "G101 and slices G102A-D are completed/built/independently reviewed" in matrix
+    assert "Mandatory G102F remains missing" in matrix
+    assert "before any staging, production, capacity, or latency claim" in matrix
     assert "hosted GitHub checks did not start" not in matrix
     assert "EXT-GITHUB-BILLING" not in matrix
     assert "Open clean PR #393" in matrix

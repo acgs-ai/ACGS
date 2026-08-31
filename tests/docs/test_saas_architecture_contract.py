@@ -327,15 +327,17 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
 
     assert (
         "| AM-005 | Tenant-scoped managed control-plane foundation | partial | "
-        "current_local | G101, G102, G102A, G102B, G102C, G102D, G103, G104, G105, G106 |"
+        "current_local | G101, G102, G102A, G102B, G102C, G102D, G102E, G102F, "
+        "G103, G104, G105, G106 |"
     ) in matrix
     am_005 = next(line for line in matrix.splitlines() if line.startswith("| AM-005 |"))
     for evidence in (
         "G101 and slices G102A-D are completed/built/independently reviewed",
         "merged PRs #354/#355/#357/#359/#361/#363",
         "hosted checks green",
-        "Aggregate G102 remains in_progress/partial/current-local",
-        "complete all-collections cursor pagination",
+        "Mandatory G102F remains missing",
+        "before any staging, production, capacity, or latency claim",
+        "Aggregate G102 therefore remains in_progress/partial/current-local",
         "durable idempotency beyond native `agent.register`",
         "async export jobs",
         "production provider wiring",
@@ -365,7 +367,15 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
     assert "Production launch remains a separate human-authorized decision" in matrix
 
     g102 = next(node for node in dag["nodes"] if node["id"] == "G102")
-    assert g102["dependencies"] == ["G101", "G102A", "G102B", "G102C", "G102D"]
+    assert g102["dependencies"] == [
+        "G101",
+        "G102A",
+        "G102B",
+        "G102C",
+        "G102D",
+        "G102E",
+        "G102F",
+    ]
     assert (
         g102["status"],
         g102["implementation_state"],
@@ -373,7 +383,8 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
     ) == ("in_progress", "partial", "local_verified")
     assert "EXT-GITHUB-BILLING" not in g102["blocker"]
     for missing_contract in (
-        "complete all-collections cursor pagination",
+        "mandatory G102F migration-managed composite (org_id, created_at, id) collection indexes",
+        "cursor coverage beyond the four dedicated collections",
         "durable idempotency for mutating routes beyond native agent.register",
         "async export jobs",
         "policy signing/distribution",
@@ -486,7 +497,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
     g102b = next(node for node in dag["nodes"] if node["id"] == "G102B")
     assert g102b["title"] == "Bounded opaque receipt cursor pagination"
     assert set(g102b["dependencies"]) == {"G101"}
-    assert g102b["consumers"] == ["G102"]
+    assert g102b["consumers"] == ["G102", "G102E"]
     assert (
         g102b["status"],
         g102b["implementation_state"],
@@ -569,7 +580,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
     g102d = next(node for node in dag["nodes"] if node["id"] == "G102D")
     assert g102d["title"] == "Additive legacy-v0 /v1 API aliases"
     assert set(g102d["dependencies"]) == {"G101"}
-    assert g102d["consumers"] == ["G102"]
+    assert g102d["consumers"] == ["G102", "G102E"]
     assert (
         g102d["status"],
         g102d["implementation_state"],

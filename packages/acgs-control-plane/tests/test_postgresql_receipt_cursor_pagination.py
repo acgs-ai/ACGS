@@ -41,9 +41,10 @@ from acgs_control_plane.app import create_app
 from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.db import make_engine
 from acgs_control_plane.migrations import upgrade_database
-from acgs_control_plane.models import ReceiptRow
+from acgs_control_plane.models import AgentRecord, ReceiptRow
 from acgs_control_plane.pagination import (
     CursorKeyring,
+    decode_collection_cursor,
     decode_receipt_cursor,
     receipt_filter_digest,
 )
@@ -309,3 +310,63 @@ def test_postgresql_cursor_from_another_org_is_refused_without_detail(tmp_path: 
     assert "scope" not in serialized
     assert "expired" not in serialized
     assert "decrypt" not in serialized
+
+
+def test_postgresql_collection_cursor_preserves_tied_timestamptz_and_resource_scope(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    org_id, headers = _bootstrap(
+        client, name="PG Collection Cursor", email="pg.collection@example.com"
+    )
+    tied = datetime(2026, 7, 31, 9, 30, 0, 765_432, tzinfo=UTC)
+    with client.app.state.session_factory() as session:
+        for index in range(5):
+            session.add(
+                AgentRecord(
+                    id=f"pg-agent-{index}",
+                    org_id=org_id,
+                    name=f"PG agent {index}",
+                    description="",
+                    trust_tier="untrusted",
+                    allowed_tools=[],
+                    status="active",
+                    created_at=tied + timedelta(seconds=index // 2),
+                )
+            )
+        session.commit()
+        expected = [
+            row.id
+            for row in session.execute(
+                select(AgentRecord)
+                .where(AgentRecord.org_id == org_id)
+                .order_by(AgentRecord.created_at.desc(), AgentRecord.id.desc())
+            ).scalars()
+        ]
+
+    first = client.get(f"/v1/orgs/{org_id}/agents", params={"limit": 2}, headers=headers)
+    assert first.status_code == 200, first.text
+    cursor = first.json()["next_cursor"]
+    decoded = decode_collection_cursor(
+        token=cursor,
+        keyring=_keyring(),
+        org_id=org_id,
+        expected_resource="agents",
+    )
+    assert decoded.item_id == expected[1]
+    assert decoded.created_at.microsecond == 765_432
+
+    resumed = client.get(
+        f"/v1/orgs/{org_id}/agents",
+        params={"limit": 3, "cursor": cursor},
+        headers=headers,
+    )
+    assert resumed.status_code == 200, resumed.text
+    assert [item["agent_id"] for item in resumed.json()["items"]] == expected[2:]
+
+    cross_resource = client.get(
+        f"/v1/orgs/{org_id}/users", params={"cursor": cursor}, headers=headers
+    )
+    assert cross_resource.status_code == 400
+    assert cross_resource.json()["code"] == "invalid_cursor"
+    assert cross_resource.headers["cache-control"] == "private, no-store"

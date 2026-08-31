@@ -979,7 +979,9 @@
         "G102A",
         "G102B",
         "G102C",
-        "G102D"
+        "G102D",
+        "G102E",
+        "G102F"
       ],
       "consumers": [
         "G103",
@@ -999,7 +1001,9 @@
         "packages/acgs-control-plane/src/acgs_control_plane/schemas.py",
         "packages/acgs-control-plane/tests/integration/test_production_posture.py",
         "packages/acgs-control-plane/tests/test_api_contract.py",
+        "packages/acgs-control-plane/tests/test_collection_cursor_pagination.py",
         "packages/acgs-control-plane/tests/test_openapi_drift.py",
+        "packages/acgs-control-plane/tests/test_postgresql_receipt_cursor_pagination.py",
         "packages/acgs-control-plane/tests/test_receipt_cursor_pagination.py",
         "packages/acgs-control-plane/tests/test_startup_preflight.py",
         "packages/acgs-control-plane/tests/test_v1_api_contract.py",
@@ -1022,7 +1026,7 @@
       ],
       "risk_class": "yellow",
       "positive_tests": [
-        "G102A proves the bounded request-admission and redacted-error slice locally; G102B proves bounded opaque cursor pagination only for the receipt explorer route; G102C proves a current-v0 OpenAPI drift sentinel locally; G102D proves additive legacy-v0 /v1 aliases and a typed /v1 root locally; the PR #369 scope-attachment slice proves project/environment attachment for agents and policy bundles locally; the PR #370 native transaction slice proves the first canonical native agent-create route locally with signed native DecisionReceipts, environment-bound full policy hash, SQL-transaction receipt/event/outbox/head/consumption state, and export/verify/dashboard preservation of native versus legacy assurance; the PR #371 durable idempotency slice proves exactly-one Idempotency-Key admission, digest-only key/request/response storage, terminal-only ALLOW/DENY/ESCALATE result replay, semantic reconstruction from authoritative rows, PostgreSQL tenant-row-lock serialization, and same-process-only SQLite replay safety for the same native agent-create route. The aggregate G102 contract still lacks complete all-collections cursor pagination, durable idempotency for other mutating routes, and async export jobs."
+        "G102A proves the bounded request-admission and redacted-error slice locally; G102B proves bounded opaque cursor pagination only for the receipt explorer route; G102C proves a current-v0 OpenAPI drift sentinel locally; G102D proves additive legacy-v0 /v1 aliases and a typed /v1 root locally; G102E proves dedicated authenticated cursor envelopes for users, agents, policies, and exports locally while preserving the unversioned arrays and separate receipt cursor protocol; the PR #369 scope-attachment slice proves project/environment attachment for agents and policy bundles locally; the PR #370 native transaction slice proves the first canonical native agent-create route locally with signed native DecisionReceipts, environment-bound full policy hash, SQL-transaction receipt/event/outbox/head/consumption state, and export/verify/dashboard preservation of native versus legacy assurance; the PR #371 durable idempotency slice proves exactly-one Idempotency-Key admission, digest-only key/request/response storage, terminal-only ALLOW/DENY/ESCALATE result replay, semantic reconstruction from authoritative rows, PostgreSQL tenant-row-lock serialization, and same-process-only SQLite replay safety for the same native agent-create route. The aggregate G102 contract still lacks mandatory G102F migration-managed composite collection indexes and PostgreSQL query-plan proof, cursor coverage beyond the four dedicated collections, durable idempotency for other mutating routes, and async export jobs."
       ],
       "forbidden_side_effect_negative_tests": [
         "Duplicate, oversized, malformed, unversioned, missing-key, ambiguous-key, same-key/different-digest, tampered replay-result, missing historical trust, and failed-before-terminal-result requests cannot create duplicate mutations or silently bypass the versioned API contract; for the native agent-create route, missing providers, same issuer/attestor trust material, DENY, ESCALATE, tampered native receipt/event/consumption/idempotency evidence, wrong-environment policy, and legacy production posture execute or commit zero forbidden business side effects."
@@ -1031,6 +1035,7 @@
         "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
         "cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q",
         "cd packages/acgs-control-plane && uv run pytest tests/test_receipt_cursor_pagination.py -q",
+        "cd packages/acgs-control-plane && uv run pytest tests/test_collection_cursor_pagination.py tests/test_v1_api_contract.py tests/test_openapi_drift.py -q",
         "cd packages/acgs-control-plane && uv run pytest tests/test_openapi_drift.py -q",
         "cd packages/acgs-control-plane && uv run pytest tests/test_v1_api_contract.py tests/test_openapi_drift.py tests/test_startup_preflight.py tests/integration/test_production_posture.py -q",
         "cd packages/acgs-control-plane && uv run ruff check .",
@@ -1044,15 +1049,15 @@
         "cd packages/acgs-control-plane && ACP_TEST_POSTGRES_URL=<ephemeral PG17 URL> ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE=1 uv run --extra postgres python -m pytest tests/test_postgresql_migrations.py tests/test_postgresql_migration_cli.py tests/test_postgresql_rolling_upgrade.py tests/test_postgresql_migration_recovery.py --import-mode=importlib -q",
         "cd packages/acgs-control-plane && uv run mypy src/acgs_control_plane tests/test_native_agent_transaction_route.py tests/test_agent_create_idempotency.py tests/test_exports.py tests/test_scope_attachment.py tests/test_v1_api_contract.py tests/integration/test_production_posture.py"
       ],
-      "evidence_artifact": "Aggregate G102 remains partial/current-local: G102A/G102B/G102C/G102D are merged independently reviewed leaves; #369 merged scope-attachment precursor covers project/environment attachment; #370 merged one-route native transaction spine covers native agent.register ALLOW/DENY/ESCALATE receipt/executor/event/outbox/export semantics for one route; #371 merged route-scoped idempotency/outbox covers agent.register terminal replay and PostgreSQL tenant-row-lock serialization; #391 open clean evidence-isolation/replay branch at 2194ae43308d01fbbd0819ebad7d31ac2a10636c adds current-local replay/idempotency evidence on top of beta/p2-idempotency-002-retry. The accepted aggregate still lacks complete all-collections cursor pagination, durable idempotency for other mutating routes, async export jobs, production provider wiring, complete tenant isolation, direct receipt project/environment columns, policy signing/distribution, external exactly-once delivery, out-of-band trusted public-key distribution for exports, async export/recovery/rolling-upgrade evidence, and full native cutover from the legacy unsigned route aliases.",
+      "evidence_artifact": "Aggregate G102 remains partial/current-local: G102A/G102B/G102C/G102D are merged independently reviewed leaves; G102E is an independently reviewed local functional leaf for four dedicated v1 collection cursor envelopes with focused evidence at 88 passed, the full non-PostgreSQL control-plane suite at 513 passed and 56 skipped, and the disposable PostgreSQL cursor file at 4 passed, recorded in the local branch commit but still unmerged and without a PR or hosted-CI evidence; #369 merged scope-attachment precursor covers project/environment attachment; #370 merged one-route native transaction spine covers native agent.register ALLOW/DENY/ESCALATE receipt/executor/event/outbox/export semantics for one route; #371 merged route-scoped idempotency/outbox covers agent.register terminal replay and PostgreSQL tenant-row-lock serialization; #391 open clean evidence-isolation/replay branch at 2194ae43308d01fbbd0819ebad7d31ac2a10636c adds current-local replay/idempotency evidence on top of beta/p2-idempotency-002-retry. The accepted aggregate still lacks mandatory G102F migration-managed composite collection indexes and PostgreSQL EXPLAIN/query-plan proof, cursor coverage beyond the four dedicated collections, durable idempotency for other mutating routes, async export jobs, production provider wiring, complete tenant isolation, direct receipt project/environment columns, policy signing/distribution, external exactly-once delivery, out-of-band trusted public-key distribution for exports, async export/recovery/rolling-upgrade evidence, and full native cutover from the legacy unsigned route aliases.",
       "branch": "beta/p1-g102-durable-idempotency",
       "worktree": "saas-beta/p1-g101-tool-provenance",
       "pr": 371,
       "status": "in_progress",
       "implementation_state": "partial",
       "evidence_state": "local_verified",
-      "blocker": "Aggregate G102 is not complete: complete all-collections cursor pagination beyond the receipt route, durable idempotency for mutating routes beyond native agent.register, async export jobs, production provider wiring, complete tenant isolation, policy signing/distribution, external exactly-once delivery, and full native cutover from legacy unsigned route aliases remain missing.",
-      "next_safe_action": "Use merged G101/G102A-D and #369/#370/#371 as completed/partial foundations, then complete the remaining aggregate API pagination, cross-route durable idempotency, async export, provider wiring, policy signing/distribution, and native cutover work before marking G102 complete.",
+      "blocker": "Aggregate G102 is not complete: mandatory G102F migration-managed composite (org_id, created_at, id) collection indexes and PostgreSQL EXPLAIN/query-plan proof, cursor coverage beyond the four dedicated collections, durable idempotency for mutating routes beyond native agent.register, async export jobs, production provider wiring, complete tenant isolation, policy signing/distribution, external exactly-once delivery, and full native cutover from legacy unsigned route aliases remain missing.",
+      "next_safe_action": "Use merged G101/G102A-D, independently reviewed local G102E, and #369/#370/#371 as completed/partial foundations; complete G102F and the remaining cross-route idempotency, async export, provider wiring, policy signing/distribution, and native cutover work before marking G102 complete or making staging, production, capacity, or latency claims.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
@@ -1113,7 +1118,8 @@
         "G101"
       ],
       "consumers": [
-        "G102"
+        "G102",
+        "G102E"
       ],
       "likely_interfaces_files": [
         "packages/acgs-control-plane/README.md",
@@ -1211,7 +1217,8 @@
         "G101"
       ],
       "consumers": [
-        "G102"
+        "G102",
+        "G102E"
       ],
       "likely_interfaces_files": [
         "packages/acgs-control-plane/src/acgs_control_plane/app.py",
@@ -1249,6 +1256,114 @@
       "evidence_state": "independently_reviewed",
       "blocker": null,
       "next_safe_action": "Use this slice as completed dependency evidence; keep the remaining aggregate G102 and downstream tenant/trust/policy/fleet gaps explicit.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G102E",
+      "phase": 1,
+      "title": "Dedicated v1 public collection cursors",
+      "buyer_user_outcome": "Authenticated API consumers can page users, agents, policies, and exports through dedicated bounded v1 envelopes without changing the unversioned collection or receipt contracts.",
+      "repo_owner": "packages/acgs-control-plane",
+      "dependencies": [
+        "G102B",
+        "G102D"
+      ],
+      "consumers": [
+        "G102",
+        "G102F"
+      ],
+      "likely_interfaces_files": [
+        "packages/acgs-control-plane/README.md",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/pagination.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/schemas.py",
+        "packages/acgs-control-plane/tests/test_collection_cursor_pagination.py",
+        "packages/acgs-control-plane/tests/test_openapi_drift.py",
+        "packages/acgs-control-plane/tests/test_postgresql_receipt_cursor_pagination.py",
+        "packages/acgs-control-plane/tests/test_v1_api_contract.py",
+        "docs/saas/API_AND_DATA_CONTRACT.md",
+        "docs/saas/ACCEPTANCE_MATRIX.md",
+        "docs/saas/DELIVERY_DAG.yaml"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Focused final local evidence records 88 passed for dedicated authenticated /v1/orgs/{org_id}/{users,agents,policies,exports} envelopes {items,limit,next_cursor}, DESC(created_at,id) keyset continuation across ties and boundary changes, a strict maximum of 500, separate AEAD collection cursors bound to tenant/resource/order/filter/key/time/boundary, and preserved unversioned array and receipt cursor protocols.",
+        "The full non-PostgreSQL control-plane suite records 513 passed and 56 skipped; the cursor file against disposable PostgreSQL records 4 passed; Ruff check, Ruff format check with 76 files already formatted, mypy across 35 source files, root docs tests at 80 passed and 5 skipped, make lint-docs, DAG parse/dependency checks, and git diff --check all pass.",
+        "Independent code review returned APPROVE and independent security review returned APPROVE_WITH_RESIDUAL because mandatory G102F indexes and PostgreSQL query-plan proof remain absent."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Real-router tests keep malformed, duplicate, unknown, oversized, tampered, expired, wrong-tenant, wrong-resource, and cross-protocol cursor input behind authentication, tenant lookup, and RBAC; refusals are generic, redacted, private/no-store, do not reflect query secrets, and do not mutate receipts, audit anchors, or audit files.",
+        "Trailing slash forms are canonicalized internally without redirects or query reflection; the implementation cannot promote aggregate G102, production readiness, staging suitability, capacity, or latency because G102F indexes and PostgreSQL query-plan proof remain absent."
+      ],
+      "validation_commands": [
+        "cd packages/acgs-control-plane && uv run pytest tests/test_collection_cursor_pagination.py tests/test_v1_api_contract.py tests/test_openapi_drift.py -q",
+        "cd packages/acgs-control-plane && uv run pytest tests -q",
+        "cd packages/acgs-control-plane && ACP_TEST_POSTGRES_URL=<ephemeral PG17 URL> ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE=1 uv run --extra postgres python -m pytest tests/test_postgresql_receipt_cursor_pagination.py --import-mode=importlib -q",
+        "cd packages/acgs-control-plane && uv run ruff check .",
+        "cd packages/acgs-control-plane && uv run ruff format --check .",
+        "cd packages/acgs-control-plane && uv run mypy src/acgs_control_plane",
+        "uv run python -m pytest tests/docs --import-mode=importlib -q",
+        "make lint-docs",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Current-local functional leaf on branch beta/p1-g102e-public-collection-cursors records focused evidence at 88 passed, full non-PostgreSQL control-plane evidence at 513 passed and 56 skipped, and disposable PostgreSQL cursor evidence at 4 passed. Ruff check, Ruff format check with 76 files already formatted, mypy across 35 source files, root docs tests at 80 passed and 5 skipped, make lint-docs, DAG parse/dependency checks, and git diff --check pass. Independent code review returned APPROVE; independent security review returned APPROVE_WITH_RESIDUAL because G102F indexes and PostgreSQL query-plan proof remain mandatory before any staging, production, capacity, or latency claim. The slice is recorded in the local branch commit but remains unmerged and has no PR or hosted-CI evidence.",
+      "branch": "beta/p1-g102e-public-collection-cursors",
+      "worktree": "saas-beta/p1-g102e-public-cursors",
+      "pr": null,
+      "status": "in_progress",
+      "implementation_state": "built",
+      "evidence_state": "independently_reviewed",
+      "blocker": "Hosted CI evidence remains unavailable until creation of a PR is separately authorized. This delivery-evidence blocker is separate from mandatory G102F indexes and PostgreSQL query-plan proof, which remain a product dependency before any staging, production, capacity, or latency claim.",
+      "next_safe_action": "After separate authorization, create a PR and collect hosted CI evidence for G102E; independently, implement G102F indexes and PostgreSQL query-plan proof before any staging, production, capacity, or latency claim.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G102F",
+      "phase": 1,
+      "title": "Composite collection indexes and PostgreSQL query-plan proof",
+      "buyer_user_outcome": "The four dedicated v1 collection keyset queries have migration-managed PostgreSQL indexes and reproducible query-plan evidence before operational scale claims.",
+      "repo_owner": "packages/acgs-control-plane",
+      "dependencies": [
+        "G102E"
+      ],
+      "consumers": [
+        "G102"
+      ],
+      "likely_interfaces_files": [
+        "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions",
+        "packages/acgs-control-plane/src/acgs_control_plane/models.py",
+        "packages/acgs-control-plane/tests/test_migrations.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migrations.py",
+        "packages/acgs-control-plane/tests/test_postgresql_receipt_cursor_pagination.py"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "A forward migration creates composite (org_id, created_at, id) indexes for users, agents, policy_bundles, and compliance_exports, and migration verification proves the exact catalog shape.",
+        "Disposable PostgreSQL tests seed representative tenant-scoped data and retain EXPLAIN/query-plan evidence that each DESC(created_at,id) keyset query can use its matching composite index without changing functional pagination results."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "A SQLite-only result, a small PostgreSQL correctness result, a skipped PostgreSQL case, or an index declared only in ORM metadata cannot satisfy G102F or authorize staging, production, capacity, or latency claims.",
+        "Index migration and rollback/rolling-upgrade tests must not drop tenant filtering, change collection ordering, alter unversioned response contracts, or merge the separate receipt and collection cursor protocols."
+      ],
+      "validation_commands": [
+        "cd packages/acgs-control-plane && uv run pytest tests/test_migrations.py -q",
+        "cd packages/acgs-control-plane && ACP_TEST_POSTGRES_URL=<ephemeral PG17 URL> ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE=1 uv run --extra postgres python -m pytest tests/test_postgresql_migrations.py tests/test_postgresql_receipt_cursor_pagination.py --import-mode=importlib -q",
+        "cd packages/acgs-control-plane && uv run ruff check .",
+        "cd packages/acgs-control-plane && uv run ruff format --check .",
+        "cd packages/acgs-control-plane && uv run mypy src/acgs_control_plane",
+        "git diff --check"
+      ],
+      "evidence_artifact": "No accepted G102F artifact exists. The G102E functional queries are implemented, but migration-managed composite indexes and PostgreSQL EXPLAIN/query-plan evidence are absent.",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "ready",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Add the four migration-managed composite indexes, prove upgrade/catalog behavior, and capture fresh disposable PostgreSQL EXPLAIN/query-plan evidence before any staging, production, capacity, or latency claim.",
       "mandatory": true,
       "completion_scope": "non_external"
     },

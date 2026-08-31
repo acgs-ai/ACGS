@@ -354,6 +354,24 @@ EXPECTED_PATHS: dict[str, dict[str, dict[str, Any]]] = {
         for path, methods in EXPECTED_V0_PATHS.items()
         if path == "/orgs" or path.startswith("/orgs/")
     },
+    **{
+        f"/v1/orgs/{{org_id}}/{resource}": {
+            **{
+                method: _v1_operation_contract(operation)
+                for method, operation in EXPECTED_V0_PATHS[f"/orgs/{{org_id}}/{resource}"].items()
+                if method != "get"
+            },
+            "get": {
+                "operation_id": (f"v1_list_{resource}_orgs__org_id__{resource}_get"),
+                "parameters": _expected_params(
+                    "path:org_id", "header:X-API-Key", "query:limit", "query:cursor"
+                ),
+                "responses": ["200", "400", "422"],
+                "tag": resource,
+            },
+        }
+        for resource in ("users", "agents", "policies", "exports")
+    },
 }
 
 EXPECTED_COMPONENTS = {
@@ -383,6 +401,10 @@ EXPECTED_COMPONENTS = {
     "UserResponse",
     "ValidationError",
     "V1MetadataResponse",
+    "V1AgentListResponse",
+    "V1ExportListResponse",
+    "V1PolicyListResponse",
+    "V1UserListResponse",
 }
 
 EXPECTED_SELECTED_COMPONENTS: dict[str, dict[str, Any]] = {
@@ -443,6 +465,26 @@ EXPECTED_SELECTED_COMPONENTS: dict[str, dict[str, Any]] = {
     "Role": {
         "enum": ["org_admin", "policy_author", "agent_operator", "auditor", "viewer"],
         "type": "string",
+    },
+    **{
+        f"V1{singular}ListResponse": {
+            "properties": {
+                "items": {
+                    "items": {"$ref": f"#/components/schemas/{item_schema}"},
+                    "type": "array",
+                },
+                "limit": {"type": "integer"},
+                "next_cursor": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            },
+            "required": ["items", "limit", "next_cursor"],
+            "type": "object",
+        }
+        for singular, item_schema in (
+            ("User", "UserResponse"),
+            ("Agent", "AgentResponse"),
+            ("Policy", "PolicyResponse"),
+            ("Export", "ExportSummary"),
+        )
     },
 }
 
@@ -616,15 +658,47 @@ def test_current_openapi_contract_records_missing_beta_contract_boundaries(
         for method, operation in methods.items()
         if any(parameter["name"] == "cursor" for parameter in operation.get("parameters", []))
     ]
-    assert cursor_parameters == [
+    assert set(cursor_parameters) == {
+        (f"/v1/orgs/{{org_id}}/{resource}", "get")
+        for resource in ("users", "agents", "policies", "exports")
+    } | {
         ("/orgs/{org_id}/receipts", "get"),
         ("/v1/orgs/{org_id}/receipts", "get"),
-    ]
+    }
+    cursor_components = {
+        "ReceiptListResponse",
+        "V1UserListResponse",
+        "V1AgentListResponse",
+        "V1PolicyListResponse",
+        "V1ExportListResponse",
+    }
     assert all(
         "next_cursor" not in json.dumps(component, sort_keys=True)
         for name, component in schema["components"]["schemas"].items()
-        if name != "ReceiptListResponse"
+        if name not in cursor_components
     )
+    expected_invalid_cursor = {
+        "description": "Invalid cursor",
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["code", "status", "request_id"],
+                    "properties": {
+                        "code": {"type": "string", "const": "invalid_cursor"},
+                        "status": {"type": "string", "const": "error"},
+                        "request_id": {"type": "string"},
+                    },
+                }
+            }
+        },
+    }
+    for resource in ("users", "agents", "policies", "exports"):
+        assert (
+            schema["paths"][f"/v1/orgs/{{org_id}}/{resource}"]["get"]["responses"]["400"]
+            == expected_invalid_cursor
+        )
 
 
 def test_current_openapi_contract_does_not_leak_local_runtime_values(tmp_path: Path) -> None:
