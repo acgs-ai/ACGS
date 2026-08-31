@@ -74,7 +74,7 @@ _LEGACY_TABLES = (
     "users",
 )
 _CURRENT_FORWARD_ONLY_REVISIONS = frozenset(
-    {"0001", "0002", "0003", "0004", "0005", "0007", "0008", "0009", "0010", "0011"}
+    {"0001", "0002", "0003", "0004", "0005", "0007", "0008", "0009", "0010", "0011", "0012"}
 )
 _CURRENT_REVERSIBLE_REVISIONS: frozenset[str] = frozenset({"0006"})
 _LEGACY_ROW_COLUMNS = {
@@ -443,7 +443,7 @@ def test_empty_and_existing_alpha_upgrade_head() -> None:
     expected_database = _EXPECTED_DATABASES[_MAIN_ENV]
     empty_result = upgrade_database(database_url, expected_database=expected_database)
     assert empty_result.before.state is DatabaseSchemaState.EMPTY
-    assert empty_result.after.state is DatabaseSchemaState.VERSION_0011
+    assert empty_result.after.state is DatabaseSchemaState.VERSION_0012
     assert _head_version(database_url) == HEAD_REVISION
 
     _reset_exact_database(database_url, expected_database)
@@ -453,7 +453,7 @@ def test_empty_and_existing_alpha_upgrade_head() -> None:
 
     existing_result = upgrade_database(database_url, expected_database=expected_database)
     assert existing_result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert existing_result.after.state is DatabaseSchemaState.VERSION_0011
+    assert existing_result.after.state is DatabaseSchemaState.VERSION_0012
     assert _head_version(database_url) == HEAD_REVISION
     assert _rows(database_url, _LEGACY_TABLES) == legacy_rows
 
@@ -480,7 +480,7 @@ def test_immutable_0004_upgrade_defers_managed_ledger_constraints_and_bootstraps
 
     existing_result = upgrade_database(database_url, expected_database=expected_database)
     assert existing_result.before.state is DatabaseSchemaState.VERSION_0004
-    assert existing_result.after.state is DatabaseSchemaState.VERSION_0011
+    assert existing_result.after.state is DatabaseSchemaState.VERSION_0012
     assert _head_version(database_url) == HEAD_REVISION
     assert all(_constraint_deferrability(database_url, managed_constraints).values())
 
@@ -531,7 +531,7 @@ def test_mixed_version_rolling_compatibility(
         rolling_pg.test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
             engine, tmp_path
         )
-        assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0011
+        assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0012
         assert _head_version(database_url) == HEAD_REVISION
     finally:
         engine.dispose()
@@ -691,7 +691,7 @@ def test_large_table_online_migration_budget(monkeypatch: pytest.MonkeyPatch) ->
         assert overlapping.started_at <= actual_upgrade_interval["finished_at"]
         assert overlapping.finished_at >= actual_upgrade_interval["started_at"]
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0011
+    assert result.after.state is DatabaseSchemaState.VERSION_0012
     assert elapsed < _MIGRATION_ELAPSED_BUDGET_SECONDS
     assert _rows(database_url, _LEGACY_TABLES) == legacy_rows
 
@@ -793,7 +793,7 @@ def test_irreversible_restore_rehearsal(tmp_path: Path) -> None:
         )
         assert created == verified == restored
         assert _capture_database_state_url(target_url) == expected_state
-        assert inspect_schema(target_url).state is DatabaseSchemaState.VERSION_0011
+        assert inspect_schema(target_url).state is DatabaseSchemaState.VERSION_0012
 
         target_before_refusal = _capture_database_state_url(target_url)
         with pytest.raises(RecoveryRefused, match="must have an exact empty"):
@@ -854,6 +854,6 @@ def test_failed_migration_no_later_state(monkeypatch: pytest.MonkeyPatch) -> Non
 
     retried = upgrade_database(database_url, expected_database=_EXPECTED_DATABASES[_MAIN_ENV])
     assert retried.before.state is DatabaseSchemaState.LEGACY_V0
-    assert retried.after.state is DatabaseSchemaState.VERSION_0011
+    assert retried.after.state is DatabaseSchemaState.VERSION_0012
     assert _head_version(database_url) == HEAD_REVISION
     assert _rows(database_url, _LEGACY_TABLES) == legacy_rows

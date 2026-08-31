@@ -45,7 +45,8 @@ NATIVE_RECEIPT_LEDGER_REVISION: Final = "0008"
 NATIVE_ARTIFACT_REVISION: Final = "0009"
 SCOPE_ATTACHMENT_REVISION: Final = "0010"
 MANAGED_IDEMPOTENCY_REVISION: Final = "0011"
-HEAD_REVISION: Final = MANAGED_IDEMPOTENCY_REVISION
+POLICY_REGISTRY_REVISION: Final = "0012"
+HEAD_REVISION: Final = POLICY_REGISTRY_REVISION
 _VERSION_TABLE = "alembic_version"
 _ALEMBIC_VERSION_TABLE: Final = sa.table(_VERSION_TABLE, sa.column("version_num"))
 _SCOPE_TABLES: Final = MappingProxyType(
@@ -95,6 +96,7 @@ class DatabaseSchemaState(StrEnum):
     VERSION_0009_PARTIAL_SCOPE_ATTACHMENT = "version_0009_partial_scope_attachment"
     VERSION_0010 = "version_0010"
     VERSION_0011 = "version_0011"
+    VERSION_0012 = "version_0012"
     UNKNOWN = "unknown"
 
 
@@ -119,7 +121,7 @@ class StartupSchemaPreflightError(RuntimeError):
     def __init__(self, preflight: SchemaPreflight) -> None:
         self.schema_state = preflight.state
         super().__init__(
-            f"{self.code}: expected {DatabaseSchemaState.VERSION_0011.value}; "
+            f"{self.code}: expected {DatabaseSchemaState.VERSION_0012.value}; "
             f"found {preflight.state.value}. Run the acgs-control-plane migration CLI."
         )
 
@@ -659,6 +661,53 @@ _IDEMPOTENCY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("created_at", "datetime", False),
     ),
 }
+_POLICY_REGISTRY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_IDEMPOTENCY_COLUMNS,
+    "policy_versions": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("policy_id", "string", False, 200),
+        _ColumnSpec("version", "string", False, 200),
+        _ColumnSpec("content_hash", "string", False, 64),
+        _ColumnSpec("document", "json", False),
+        _ColumnSpec("rules", "json", False),
+        _ColumnSpec("canonical_envelope", "json", False),
+        _ColumnSpec("purpose", "string", False, 64),
+        _ColumnSpec("key_id", "string", False, 200),
+        _ColumnSpec("signature_algorithm", "string", False, 32),
+        _ColumnSpec("signature", "text", False),
+        _ColumnSpec("trust_epoch", "integer", False),
+        _ColumnSpec("receipt_id", "string", False, 200),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+    "environment_policy_heads": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("active_policy_version_id", "string", False, 64),
+        _ColumnSpec("generation", "integer", False),
+        _ColumnSpec("status", "string", False, 16),
+        _ColumnSpec("receipt_id", "string", False, 200),
+        _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("updated_at", "datetime", False),
+    ),
+    "policy_registry_idempotency": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("idempotency_key_hash", "string", False, 64),
+        _ColumnSpec("actor_hash", "string", False, 64),
+        _ColumnSpec("request_hash", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("action", "string", False, 200),
+        _ColumnSpec("receipt_id", "string", False, 200),
+        _ColumnSpec("response", "json", False),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+}
 _PROJECTS_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
     **_LEGACY_COLUMNS,
     "projects": _SCOPED_COLUMNS["projects"],
@@ -718,6 +767,12 @@ _SCOPE_ATTACHMENT_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = dict(
 _IDEMPOTENCY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     **_SCOPE_ATTACHMENT_PRIMARY_KEYS,
     "managed_idempotency_results": ("id",),
+}
+_POLICY_REGISTRY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
+    **_IDEMPOTENCY_PRIMARY_KEYS,
+    "policy_versions": ("id",),
+    "environment_policy_heads": ("id",),
+    "policy_registry_idempotency": ("id",),
 }
 _PROJECTS_ONLY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     table_name: ("id",) for table_name in _PROJECTS_ONLY_COLUMNS
@@ -806,7 +861,12 @@ _MANAGED_MUTATION_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     ),
 }
 _DEFERRABLE_MANAGED_MUTATION_FK_TABLES: Final = frozenset(
-    _MANAGED_MUTATION_FOREIGN_KEYS.keys() - _SCOPED_FOREIGN_KEYS.keys()
+    (_MANAGED_MUTATION_FOREIGN_KEYS.keys() - _SCOPED_FOREIGN_KEYS.keys())
+    | {
+        "policy_versions",
+        "environment_policy_heads",
+        "policy_registry_idempotency",
+    }
 )
 _TRUST_SCOPE_FK: Final[_ForeignKeySpec] = (
     ("org_id", "project_id", "environment_id", "purpose"),
@@ -978,6 +1038,44 @@ _IDEMPOTENCY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
                 ("org_id", "id"),
             ),
             (("org_id", "agent_id"), None, "agents", ("org_id", "id")),
+        }
+    ),
+}
+_POLICY_VERSION_SCOPE_ID_FK: Final[_ForeignKeySpec] = (
+    ("org_id", "project_id", "environment_id", "active_policy_version_id"),
+    None,
+    "policy_versions",
+    ("org_id", "project_id", "environment_id", "id"),
+)
+_ENVIRONMENT_POLICY_HEAD_RECEIPT_FK: Final[_ForeignKeySpec] = (
+    ("org_id", "project_id", "environment_id", "receipt_id"),
+    None,
+    "managed_decision_receipts",
+    ("org_id", "project_id", "environment_id", "receipt_id"),
+)
+_POLICY_REGISTRY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
+    **_IDEMPOTENCY_FOREIGN_KEYS,
+    "policy_versions": frozenset(
+        {(("org_id",), None, "organizations", ("id",)), _SCOPE_ENVIRONMENT_FK}
+    ),
+    "environment_policy_heads": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            _SCOPE_ENVIRONMENT_FK,
+            _POLICY_VERSION_SCOPE_ID_FK,
+            _ENVIRONMENT_POLICY_HEAD_RECEIPT_FK,
+        }
+    ),
+    "policy_registry_idempotency": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            _SCOPE_ENVIRONMENT_FK,
+            (
+                ("org_id", "project_id", "environment_id", "receipt_id"),
+                None,
+                "managed_decision_receipts",
+                ("org_id", "project_id", "environment_id", "receipt_id"),
+            ),
         }
     ),
 }
@@ -1217,9 +1315,32 @@ _IDEMPOTENCY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
         {("org_id", "environment_id", "principal_id", "canonical_action", "key_digest")}
     ),
 }
+_POLICY_REGISTRY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_IDEMPOTENCY_UNIQUES,
+    "policy_versions": frozenset(
+        {
+            ("org_id", "project_id", "environment_id", "id"),
+            ("org_id", "project_id", "environment_id", "policy_id", "version"),
+            ("org_id", "project_id", "environment_id", "content_hash"),
+        }
+    ),
+    "environment_policy_heads": frozenset(
+        {
+            ("org_id", "project_id", "environment_id"),
+            ("org_id", "project_id", "environment_id", "generation"),
+        }
+    ),
+    "policy_registry_idempotency": frozenset({("idempotency_key_hash",)}),
+}
 _IDEMPOTENCY_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
     **_SCOPE_ATTACHMENT_UNIQUE_INDEXES,
     "managed_idempotency_results": frozenset(),
+}
+_POLICY_REGISTRY_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
+    **_IDEMPOTENCY_UNIQUE_INDEXES,
+    "policy_versions": frozenset(),
+    "environment_policy_heads": frozenset(),
+    "policy_registry_idempotency": frozenset(),
 }
 _PROJECTS_ONLY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
@@ -1392,6 +1513,12 @@ _IDEMPOTENCY_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = 
     **_SCOPE_ATTACHMENT_NON_UNIQUE_INDEXES,
     "managed_idempotency_results": frozenset({("org_id",)}),
 }
+_POLICY_REGISTRY_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_IDEMPOTENCY_NON_UNIQUE_INDEXES,
+    "policy_versions": frozenset({("org_id",)}),
+    "environment_policy_heads": frozenset({("org_id",)}),
+    "policy_registry_idempotency": frozenset({("org_id",)}),
+}
 _NATIVE_RECEIPT_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
     **_GOVERNANCE_EVENT_CHECKS,
     "native_decision_receipts": frozenset(
@@ -1426,6 +1553,23 @@ _IDEMPOTENCY_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
             )
         }
     ),
+}
+_POLICY_REGISTRY_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
+    **_IDEMPOTENCY_CHECKS,
+    "policy_versions": frozenset(
+        {
+            ("ck_pv_trust_epoch_positive", "trust_epoch > 0"),
+            ("ck_pv_signature_algorithm", "signature_algorithm = 'ed25519'"),
+            ("ck_pv_purpose", "purpose = 'acgs.policy-envelope/v1'"),
+        }
+    ),
+    "environment_policy_heads": frozenset(
+        {
+            ("ck_eph_generation_nonnegative", "generation >= 0"),
+            ("ck_eph_status", "status IN ('active')"),
+        }
+    ),
+    "policy_registry_idempotency": frozenset(),
 }
 _PROJECTS_ONLY_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_NON_UNIQUE_INDEXES,
@@ -1723,7 +1867,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0010, "known Alembic revision 0010")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
-    if versions == [HEAD_REVISION]:
+    if versions == [MANAGED_IDEMPOTENCY_REVISION]:
         detail = _schema_detail(
             inspector,
             user_tables,
@@ -1737,6 +1881,21 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         )
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0011, "known Alembic revision 0011")
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
+    if versions == [HEAD_REVISION]:
+        detail = _schema_detail(
+            inspector,
+            user_tables,
+            _POLICY_REGISTRY_COLUMNS,
+            _POLICY_REGISTRY_PRIMARY_KEYS,
+            _POLICY_REGISTRY_FOREIGN_KEYS,
+            _POLICY_REGISTRY_UNIQUES,
+            _POLICY_REGISTRY_NON_UNIQUE_INDEXES,
+            _POLICY_REGISTRY_CHECKS,
+            _POLICY_REGISTRY_UNIQUE_INDEXES,
+        )
+        if detail is None:
+            return SchemaPreflight(DatabaseSchemaState.VERSION_0012, "known Alembic revision 0012")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
 
     return SchemaPreflight(
@@ -1752,7 +1911,7 @@ def assert_current_startup_schema(connection: Connection) -> SchemaPreflight:
     stamps, upgrades, creates, repairs, or otherwise mutates schema or data.
     """
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0011:
+    if preflight.state is not DatabaseSchemaState.VERSION_0012:
         raise StartupSchemaPreflightError(preflight)
     return preflight
 
@@ -1855,7 +2014,7 @@ def _upgrade_database_with_independent_connections(database_url: str) -> Migrati
             lambda: command.upgrade(config, "head"),
         )
     after = inspect_schema(database_url)
-    if after.state is not DatabaseSchemaState.VERSION_0011:
+    if after.state is not DatabaseSchemaState.VERSION_0012:
         msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
         raise MigrationPreflightError(msg)
     return MigrationResult(before=before, after=after)
@@ -1917,7 +2076,7 @@ def _upgrade_postgresql_database(
                         )
 
                     after = inspect_connection(connection)
-                    if after.state is not DatabaseSchemaState.VERSION_0011:
+                    if after.state is not DatabaseSchemaState.VERSION_0012:
                         msg = (
                             "Migration ended in unexpected schema state: "
                             f"{after.state} ({after.detail})"
@@ -2503,6 +2662,17 @@ def _non_table_object_detail(connection: Connection) -> str | None:
     except SQLAlchemyError as exc:
         return f"unable to inspect non-table schema objects: {type(exc).__name__}"
 
+    owned_objects = {
+        ("trigger", "environment_policy_heads_monotonic_update"),
+        ("trigger", "policy_versions_immutable_delete"),
+        ("trigger", "policy_versions_immutable_update"),
+        ("trigger", "public.environment_policy_heads.environment_policy_heads_monotonic_update"),
+        ("trigger", "public.policy_versions.policy_versions_immutable_delete"),
+        ("trigger", "public.policy_versions.policy_versions_immutable_update"),
+        ("function", "public.acgs_environment_policy_heads_monotonic()"),
+        ("function", "public.acgs_policy_versions_immutable()"),
+    }
+    rows = [row for row in rows if (str(row[0]), str(row[1])) not in owned_objects]
     if rows:
         objects = ", ".join(f"{row[0]}:{row[1]}" for row in rows)
         return f"unexpected non-table schema objects: {objects}"
@@ -2682,6 +2852,30 @@ def _check_constraint_signature(value: object) -> str:
         "status=any(array['active','retired','revoked'])",
     }:
         return "status:active,retired,revoked"
+    if compact in {
+        "status='active'",
+        "statusin('active')",
+        "statusin'active'",
+        "status=any(array['active'])",
+        "status=any((array['active']))",
+    }:
+        return "status:active"
+    if compact in {
+        "trust_epoch>0",
+    }:
+        return "trust_epoch:positive"
+    if compact in {
+        "generation>=0",
+    }:
+        return "generation:nonnegative"
+    if compact in {
+        "signature_algorithm='ed25519'",
+    }:
+        return "signature_algorithm:ed25519"
+    if compact in {
+        "purpose='acgs.policy-envelope/v1'",
+    }:
+        return "purpose:policy-envelope-v1"
     if compact in {
         "status='pending'",
         "statusin('pending')",

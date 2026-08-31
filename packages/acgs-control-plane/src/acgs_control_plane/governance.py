@@ -51,7 +51,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, SessionTransaction
 
 from acgs_control_plane.auth import Principal
-from acgs_control_plane.managed_mutations import TENANT_BOOTSTRAP_ACTION
+from acgs_control_plane.managed_mutations import (
+    CONTROL_PLANE_POLICY_ACTIVATE_ACTION,
+    CONTROL_PLANE_POLICY_PUBLISH_ACTION,
+    TENANT_BOOTSTRAP_ACTION,
+)
 from acgs_control_plane.models import (
     AuditProjectionOutbox,
     GovernanceEvent,
@@ -89,6 +93,10 @@ _READ_PATHS = (
     ("GET", "/orgs/{org_id}/agents"),
     ("GET", "/orgs/{org_id}/agents/{agent_id}"),
     ("GET", "/orgs/{org_id}/policies"),
+    (
+        "GET",
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies",
+    ),
     ("POST", "/orgs/{org_id}/policies/simulate"),
     ("GET", "/orgs/{org_id}/receipts"),
     ("GET", "/orgs/{org_id}/receipts/{receipt_id}"),
@@ -105,7 +113,19 @@ _LEGACY_WRITES = (
     ("POST", "/orgs/{org_id}/policies/{bundle_id}/activate", "policy.activate"),
     ("POST", "/orgs/{org_id}/exports", "export.generate"),
 )
-_CANONICAL_MANAGED_WRITES = (("POST", "/orgs/{org_id}/agents", "database.agent.create"),)
+_CANONICAL_MANAGED_WRITES = (
+    ("POST", "/orgs/{org_id}/agents", "database.agent.create"),
+    (
+        "POST",
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies",
+        CONTROL_PLANE_POLICY_PUBLISH_ACTION,
+    ),
+    (
+        "POST",
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies/{policy_version_id}/activate",
+        CONTROL_PLANE_POLICY_ACTIVATE_ACTION,
+    ),
+)
 ROUTE_CONTRACTS: tuple[RouteContract, ...] = (
     RouteContract("GET", "/healthz", ExecutionClass.PROTOCOL_OPERATION),
     RouteContract("GET", "/readyz", ExecutionClass.PROTOCOL_OPERATION),

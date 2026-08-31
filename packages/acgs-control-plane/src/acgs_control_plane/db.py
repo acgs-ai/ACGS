@@ -53,6 +53,9 @@ _ALEMBIC_MANAGED_TABLE_NAMES = frozenset(
         "native_decision_receipts",
         "native_receipt_consumptions",
         "managed_idempotency_results",
+        "policy_versions",
+        "environment_policy_heads",
+        "policy_registry_idempotency",
     }
 )
 _LEGACY_CREATE_ALL_TABLE_NAMES = frozenset(

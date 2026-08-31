@@ -146,7 +146,7 @@ def _main() -> int:
         cast(Callable[..., Any], original_upgrade)(config, revision, **kwargs)
         if mode == "pause-after-upgrade":
             state = migration_module.inspect_connection(connection).state
-            if state is not DatabaseSchemaState.VERSION_0011:
+            if state is not DatabaseSchemaState.VERSION_0012:
                 raise RuntimeError(
                     f"migration DDL did not reach revision {HEAD_REVISION} inside transaction"
                 )

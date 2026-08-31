@@ -54,6 +54,8 @@ from acgs_control_plane.trust import SqlReceiptTrustRegistry
 _GENESIS_HASH = "0" * 64
 ASSURANCE_CLASS_NATIVE = "native"
 CONTROL_PLANE_AGENT_CREATE_ACTION = "control-plane.agent.create"
+CONTROL_PLANE_POLICY_PUBLISH_ACTION = "control-plane.policy.publish"
+CONTROL_PLANE_POLICY_ACTIVATE_ACTION = "control-plane.policy.activate"
 TENANT_BOOTSTRAP_ACTION = "tenant.bootstrap"
 TENANT_BOOTSTRAP_EXECUTION_BOUNDARY = "control-plane:tenant.bootstrap/v1"
 _BOUNDARY_SCHEMA = "acgs-control-plane:managed-mutation-uow/v1"
@@ -311,6 +313,17 @@ class ManagedMutationUnitOfWork:
         receipt: DecisionReceipt | None,
         args: Mapping[str, Any],
         before_record: Callable[[Session], None] | None = None,
+        after_record: Callable[
+            [
+                Session,
+                ManagedDecisionReceipt,
+                ManagedGovernanceEvent,
+                ManagedOutboxMessage,
+                ManagedNonExecutableEvidenceResult,
+            ],
+            None,
+        ]
+        | None = None,
         trust_registry: ReceiptTrustRegistry | None = None,
         revoked_keys: RevocationList | None = None,
         trust_purpose: str = DECISION_RECEIPT_PURPOSE,
@@ -371,8 +384,7 @@ class ManagedMutationUnitOfWork:
                     result_hash=result_hash,
                     assurance_class=assurance_class,
                 )
-                session.flush()
-                return ManagedNonExecutableEvidenceResult(
+                evidence_result = ManagedNonExecutableEvidenceResult(
                     receipt_row_id=receipt_row.id,
                     event_row_id=event.id,
                     outbox_row_id=outbox.id,
@@ -380,6 +392,10 @@ class ManagedMutationUnitOfWork:
                     result_hash=result_hash,
                     decision=receipt.decision,
                 )
+                if after_record is not None:
+                    after_record(session, receipt_row, event, outbox, evidence_result)
+                session.flush()
+                return evidence_result
 
     def _execute_reserved_attempt(
         self,
@@ -1188,6 +1204,10 @@ def managed_receipt_artifact_aad(
 def _validated_operation_args(action: str, args: Mapping[str, Any]) -> dict[str, Any]:
     if action == TENANT_BOOTSTRAP_ACTION:
         return _validated_tenant_bootstrap_args(args)
+    if action == CONTROL_PLANE_POLICY_PUBLISH_ACTION:
+        return _validated_policy_publish_args(args)
+    if action == CONTROL_PLANE_POLICY_ACTIVATE_ACTION:
+        return _validated_policy_activate_args(args)
     if action != CONTROL_PLANE_AGENT_CREATE_ACTION:
         raise ReceiptValidationError(f"unsupported managed mutation action: {action}")
     allowed_fields = {"name", "description", "trust_tier", "allowed_tools"}
@@ -1243,6 +1263,46 @@ def _validated_tenant_bootstrap_args(args: Mapping[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _validated_policy_publish_args(args: Mapping[str, Any]) -> dict[str, Any]:
+    allowed_fields = {"policy_id", "version", "content_hash", "canonical_envelope"}
+    if set(args) != allowed_fields:
+        raise ReceiptValidationError("policy.publish requires exactly the canonical arguments")
+    policy_id = args.get("policy_id")
+    version = args.get("version")
+    content_hash = args.get("content_hash")
+    envelope = args.get("canonical_envelope")
+    if not isinstance(policy_id, str) or not policy_id.strip():
+        raise ReceiptValidationError("policy.publish policy_id must be non-empty text")
+    if not isinstance(version, str) or not version.strip():
+        raise ReceiptValidationError("policy.publish version must be non-empty text")
+    if not isinstance(content_hash, str) or len(content_hash) != 64:
+        raise ReceiptValidationError("policy.publish content_hash must be sha256 hex")
+    if not isinstance(envelope, dict):
+        raise ReceiptValidationError("policy.publish canonical_envelope must be an object")
+    return {
+        "policy_id": policy_id,
+        "version": version,
+        "content_hash": content_hash,
+        "canonical_envelope": dict(envelope),
+    }
+
+
+def _validated_policy_activate_args(args: Mapping[str, Any]) -> dict[str, Any]:
+    allowed_fields = {"policy_version_id", "expected_generation"}
+    if set(args) != allowed_fields:
+        raise ReceiptValidationError("policy.activate requires exactly the canonical arguments")
+    policy_version_id = args.get("policy_version_id")
+    expected_generation = args.get("expected_generation")
+    if not isinstance(policy_version_id, str) or not policy_version_id.strip():
+        raise ReceiptValidationError("policy.activate policy_version_id must be non-empty text")
+    if type(expected_generation) is not int or expected_generation < 0:
+        raise ReceiptValidationError("policy.activate expected_generation must be nonnegative int")
+    return {
+        "policy_version_id": policy_version_id,
+        "expected_generation": expected_generation,
+    }
+
+
 def _execute_verified_operation(
     session: Session,
     context: ManagedMutationContext,
@@ -1255,6 +1315,21 @@ def _execute_verified_operation(
             "environment_id_hash": sha256_json(context.environment_id),
             "owner_user_id_hash": sha256_json(verified_args["owner_user_id"]),
             "owner_membership_id_hash": sha256_json(verified_args["owner_membership_id"]),
+        }
+    if context.action in {
+        CONTROL_PLANE_POLICY_PUBLISH_ACTION,
+        CONTROL_PLANE_POLICY_ACTIVATE_ACTION,
+    }:
+        return {
+            "policy_effect_hash": sha256_json(
+                {
+                    "action": context.action,
+                    "org_id": context.org_id,
+                    "project_id": context.project_id,
+                    "environment_id": context.environment_id,
+                    "args": dict(verified_args),
+                }
+            )
         }
     if context.action != CONTROL_PLANE_AGENT_CREATE_ACTION:
         raise ReceiptValidationError(f"unsupported managed mutation action: {context.action}")

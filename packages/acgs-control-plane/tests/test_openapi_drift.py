@@ -39,6 +39,24 @@ PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": True,
         "schema": {"type": "string"},
     },
+    "path:project_id": {
+        "in": "path",
+        "name": "project_id",
+        "required": True,
+        "schema": {"type": "string"},
+    },
+    "path:environment_id": {
+        "in": "path",
+        "name": "environment_id",
+        "required": True,
+        "schema": {"type": "string"},
+    },
+    "path:policy_version_id": {
+        "in": "path",
+        "name": "policy_version_id",
+        "required": True,
+        "schema": {"type": "string"},
+    },
     "path:receipt_id": {
         "in": "path",
         "name": "receipt_id",
@@ -264,6 +282,55 @@ EXPECTED_V0_PATHS: dict[str, dict[str, dict[str, Any]]] = {
             "tag": "policies",
         }
     },
+    "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies": {
+        "get": {
+            "operation_id": (
+                "list_environment_policies_orgs__org_id__projects__project_id__"
+                "environments__environment_id__policies_get"
+            ),
+            "parameters": _expected_params(
+                "path:project_id",
+                "path:environment_id",
+                "path:org_id",
+                "header:X-API-Key",
+            ),
+            "responses": ["200", "422"],
+            "tag": "policies",
+        },
+        "post": {
+            "operation_id": (
+                "publish_environment_policy_orgs__org_id__projects__project_id__"
+                "environments__environment_id__policies_post"
+            ),
+            "parameters": _expected_params(
+                "path:project_id",
+                "path:environment_id",
+                "path:org_id",
+                "header:Idempotency-Key",
+                "header:X-API-Key",
+            ),
+            "responses": ["201", "422"],
+            "tag": "policies",
+        },
+    },
+    "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies/{policy_version_id}/activate": {  # noqa: E501
+        "post": {
+            "operation_id": (
+                "activate_environment_policy_orgs__org_id__projects__project_id__"
+                "environments__environment_id__policies__policy_version_id__activate_post"
+            ),
+            "parameters": _expected_params(
+                "path:project_id",
+                "path:environment_id",
+                "path:policy_version_id",
+                "path:org_id",
+                "header:Idempotency-Key",
+                "header:X-API-Key",
+            ),
+            "responses": ["200", "422"],
+            "tag": "policies",
+        }
+    },
     "/orgs/{org_id}/receipts": {
         "get": {
             "operation_id": "list_receipts_orgs__org_id__receipts_get",
@@ -387,6 +454,7 @@ EXPECTED_COMPONENTS = {
     "OrgCreateResponse",
     "OrgResponse",
     "PolicyPublishRequest",
+    "PolicyActivateRequest",
     "PolicyResponse",
     "ReceiptDetail",
     "ReceiptListResponse",
