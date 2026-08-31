@@ -4,6 +4,7 @@ import Link from "next/link";
 import { type FormEvent, useEffect, useState } from "react";
 
 import { apiRequest, formatApiError } from "@/lib/browser-api";
+import { inclusiveDateQueryValue } from "@/lib/date-query";
 import type { Project, SearchResult, Tag } from "@/lib/product-contracts";
 import { parseProjects, parseSearchResponse, parseTags } from "@/lib/resource-parsers";
 
@@ -38,7 +39,7 @@ export function SearchView() {
     const params = new URLSearchParams();
     for (const [key, raw] of data.entries()) {
       const value = String(raw);
-      if (value) params.set(key, value);
+      if (value) params.set(key, inclusiveDateQueryValue(key, value));
     }
     setSubmitted(true);
     setLoading(true);

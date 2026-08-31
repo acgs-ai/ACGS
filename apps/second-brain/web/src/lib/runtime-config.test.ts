@@ -85,4 +85,14 @@ describe("web runtime configuration", () => {
       code: "bind_host_required",
     });
   });
+
+  it("defaults the probe bind host in development when pnpm dev omitted it", () => {
+    const environment = developmentEnvironment({ SECOND_BRAIN_WEB_APP_ENV: "development" });
+    delete environment.SECOND_BRAIN_WEB_BIND_HOST;
+
+    expect(resolveWebRuntimeConfig(environment, "probe")).toEqual({
+      ok: true,
+      value: expect.objectContaining({ bindHost: "127.0.0.1" }),
+    });
+  });
 });

@@ -15,7 +15,8 @@ def source_detail(session: Session, source_id: UUID) -> dict[str, Any] | None:
                 "original_filename,source_metadata,content_sha256,mime_type,processing_state,"
                 "semantic_state,processing_error_code,processing_error_message,ingested_at,"
                 "project_id FROM sources WHERE id=:source_id "
-                "AND processing_state<>'purged' AND deleted_at IS NULL FOR KEY SHARE"
+                "AND processing_state<>'purged' "
+                "AND (deleted_at IS NULL OR processing_state='purge_pending') FOR KEY SHARE"
             ),
             {"source_id": source_id},
         )

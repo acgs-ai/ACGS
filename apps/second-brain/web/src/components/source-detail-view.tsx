@@ -160,7 +160,9 @@ export function SourceDetailView({
           </div>
           <div>
             <dt>SHA-256</dt>
-            <dd className="code-value">{source.content_sha256}</dd>
+            <dd className="code-value">
+              {source.content_sha256 ?? "Recorded on the fetched version"}
+            </dd>
           </div>
           <div>
             <dt>Original filename or URI</dt>

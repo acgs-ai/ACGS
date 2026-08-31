@@ -498,9 +498,13 @@ async def test_source_purge_route_is_tenant_scoped_and_reports_durable_worker_st
         operation_id = requested.json()["operation_id"]
         queued = await client.get(f"/api/v1/purges/{operation_id}", headers=headers)
         assert queued.status_code == 200 and queued.json()["state"] == "queued"
-        assert (
-            await client.get(f"/api/v1/sources/{seeded['source_id']}", headers=headers)
-        ).status_code == 404
+        listed = await client.get("/api/v1/sources", headers=headers)
+        assert listed.status_code == 200
+        assert [row["source_id"] for row in listed.json()] == [str(seeded["source_id"])]
+        assert listed.json()[0]["processing_state"] == "purge_pending"
+        metadata = await client.get(f"/api/v1/sources/{seeded['source_id']}", headers=headers)
+        assert metadata.status_code == 200
+        assert metadata.json()["processing_state"] == "purge_pending"
         assert (
             await client.get(f"/api/v1/sources/{seeded['source_id']}/content", headers=headers)
         ).status_code == 404
@@ -510,7 +514,6 @@ async def test_source_purge_route_is_tenant_scoped_and_reports_durable_worker_st
                 headers=headers,
             )
         ).status_code == 404
-        assert (await client.get("/api/v1/sources", headers=headers)).json() == []
         assert (
             await client.get("/api/v1/search", headers=headers, params={"q": "route purge"})
         ).json()["results"] == []

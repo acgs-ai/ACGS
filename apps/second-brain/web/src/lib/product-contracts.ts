@@ -27,7 +27,7 @@ export interface CaptureResult {
   source_id: string;
   source_version_id: string | null;
   job_id: string;
-  state: "queued" | "processing" | "ready" | "failed";
+  state: "queued" | "processing" | "ready" | "failed" | "dead";
   duplicate: boolean;
 }
 
@@ -56,7 +56,7 @@ export interface SourceDetail extends Omit<SourceSummary, "project_name" | "tag_
   object_key: string | null;
   original_filename: string | null;
   source_metadata: Record<string, unknown> | null;
-  content_sha256: string;
+  content_sha256: string | null;
   mime_type: string;
   semantic_state: SemanticState;
   processing_error_code: string | null;

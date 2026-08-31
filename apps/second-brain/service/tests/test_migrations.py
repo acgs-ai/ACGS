@@ -207,6 +207,9 @@ def assert_schema(database_url: URL) -> None:
                 "processing_error_message",
                 "semantic_state",
             }
+            source_indexes = {index["name"] for index in schema_inspector.get_indexes("sources")}
+            assert "sources_active_normalized_dedup_sha256" in source_indexes
+            assert "sources_active_idempotency_key" in source_indexes
             job_columns = {
                 column["name"] for column in schema_inspector.get_columns("ingestion_jobs")
             }

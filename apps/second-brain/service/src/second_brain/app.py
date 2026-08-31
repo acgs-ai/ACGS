@@ -845,8 +845,8 @@ def create_app(
                     "ORDER BY link.tag_id) FROM source_tags AS link "
                     "WHERE link.source_id=source.id),'{}'::uuid[]) AS tag_ids "
                     "FROM sources AS source LEFT JOIN projects AS project "
-                    "ON project.id=source.project_id WHERE source.deleted_at IS NULL "
-                    "AND source.processing_state<>'purged' "
+                    "ON project.id=source.project_id WHERE source.processing_state<>'purged' "
+                    "AND (source.deleted_at IS NULL OR source.processing_state='purge_pending') "
                     "AND (CAST(:state AS text) IS NULL OR source.processing_state=:state) "
                     "AND (CAST(:project AS uuid) IS NULL OR source.project_id=:project) "
                     "AND (CAST(:tag AS uuid) IS NULL OR EXISTS "
@@ -1375,6 +1375,7 @@ def create_app(
             with scoped_session(
                 session_factory, principal.owner_id, principal.workspace_id
             ) as session:
+                _require_membership(session, principal)
                 row = source_detail(session, source_id)
         except SQLAlchemyError as exc:
             raise HTTPException(
@@ -1591,6 +1592,7 @@ def create_app(
     @app.get("/api/v1/jobs/{job_id}")
     def ingestion_job(job_id: UUID, principal: PrincipalDependency) -> dict[str, Any]:
         with scoped_session(session_factory, principal.owner_id, principal.workspace_id) as session:
+            _require_membership(session, principal)
             row = (
                 session.execute(
                     text(
@@ -1609,6 +1611,7 @@ def create_app(
     @app.get("/api/v1/sources/{source_id}/content")
     def source_content(source_id: UUID, principal: PrincipalDependency) -> dict[str, Any]:
         with scoped_session(session_factory, principal.owner_id, principal.workspace_id) as session:
+            _require_membership(session, principal)
             row = (
                 session.execute(
                     text(
@@ -1638,6 +1641,7 @@ def create_app(
         source_id: UUID, chunk_id: UUID, principal: PrincipalDependency
     ) -> dict[str, Any]:
         with scoped_session(session_factory, principal.owner_id, principal.workspace_id) as session:
+            _require_membership(session, principal)
             row = citation_context(session, source_id, chunk_id)
         if row is None:
             raise deny(
@@ -1669,6 +1673,7 @@ def create_app(
             )
         filters = SearchFilters(project_id, tag_id, source_type, date_from, date_to)
         with scoped_session(session_factory, principal.owner_id, principal.workspace_id) as session:
+            _require_membership(session, principal)
             results, semantic_status = hybrid_search(
                 session,
                 resolved_query,

@@ -186,7 +186,7 @@ export function parseCaptureResult(value: unknown): CaptureResult {
     source_id: uuid(input.source_id, "source_id"),
     source_version_id: nullableUuid(input.source_version_id, "source_version_id"),
     job_id: uuid(input.job_id, "job_id"),
-    state: enumeration(input.state, "state", ["queued", "processing", "ready", "failed"]),
+    state: enumeration(input.state, "state", JOB_STATES),
     duplicate: boolean(input.duplicate, "duplicate"),
   };
 }
@@ -322,12 +322,17 @@ function parseHistory(value: unknown): SourceDetail["ingestion_history"][number]
 
 export function parseSourceDetail(value: unknown): SourceDetail {
   const input = object(value, "source_detail");
-  const hash = string(input.content_sha256, "content_sha256", 64);
-  if (!SHA256.test(hash)) throw new TypeError("content_sha256 is invalid");
+  const parsedType = sourceType(input.source_type, "source_type");
+  const hash = nullableString(input.content_sha256, "content_sha256", 64);
+  if (parsedType === "url") {
+    if (hash !== null) throw new TypeError("url content_sha256 must be null");
+  } else if (hash === null || !SHA256.test(hash)) {
+    throw new TypeError("content_sha256 is invalid");
+  }
   return {
     source_id: uuid(input.source_id, "source_id"),
     display_title: string(input.display_title, "display_title", 500),
-    source_type: sourceType(input.source_type, "source_type"),
+    source_type: parsedType,
     processing_state: sourceState(input.processing_state, "processing_state"),
     project_id: nullableUuid(input.project_id, "project_id"),
     ingested_at: utc(input.ingested_at, "ingested_at"),

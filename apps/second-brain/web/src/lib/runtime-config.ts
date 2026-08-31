@@ -57,7 +57,9 @@ export function resolveWebRuntimeConfig(
   }
 
   const bindHost = environment.SECOND_BRAIN_WEB_BIND_HOST;
-  if (!bindHost && command !== "dev") return { ok: false, code: "bind_host_required" };
+  const allowDefaultBindHost =
+    command === "dev" || (command === "probe" && appEnvironment === "development");
+  if (!bindHost && !allowDefaultBindHost) return { ok: false, code: "bind_host_required" };
   const resolvedBindHost = bindHost ?? "127.0.0.1";
   if (isIP(resolvedBindHost) === 0) return { ok: false, code: "bind_host_invalid" };
 

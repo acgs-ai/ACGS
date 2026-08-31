@@ -70,6 +70,46 @@ describe("resource response parsers", () => {
     expect(source.versions[0]?.parser_mime_type).toBeNull();
   });
 
+  it("accepts a URL source whose source-level hash is null", () => {
+    const source = parseSourceDetail({
+      source_id: UUID_A,
+      display_title: "Example article",
+      source_type: "url",
+      processing_state: "queued",
+      project_id: null,
+      ingested_at: NOW,
+      original_uri: "https://example.test/article",
+      object_key: null,
+      original_filename: null,
+      source_metadata: {},
+      content_sha256: null,
+      mime_type: "text/uri-list",
+      semantic_state: "pending",
+      processing_error_code: null,
+      processing_error_message: null,
+      tags: [],
+      versions: [],
+      documents: [],
+      chunks: [],
+      jobs: [],
+      ingestion_history: [],
+    });
+
+    expect(source.content_sha256).toBeNull();
+  });
+
+  it("accepts a duplicate capture that reused a dead job", () => {
+    expect(
+      parseCaptureResult({
+        source_id: UUID_A,
+        source_version_id: UUID_B,
+        job_id: UUID_A,
+        state: "dead",
+        duplicate: true,
+      }).state,
+    ).toBe("dead");
+  });
+
   it.each([
     ["project collection", parseProjects],
     ["tag collection", parseTags],

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { apiRequest, formatApiError } from "@/lib/browser-api";
+import { inclusiveDateQueryValue } from "@/lib/date-query";
 import type {
   Project,
   PurgeRequestResult,
@@ -130,7 +131,9 @@ export function LibraryView() {
       "date_to",
     ]) {
       const value = data.get(key);
-      if (typeof value === "string" && value) params.set(key, value);
+      if (typeof value === "string" && value) {
+        params.set(key, inclusiveDateQueryValue(key, value));
+      }
     }
     void load(params.size ? `?${params}` : "");
   }

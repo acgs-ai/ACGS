@@ -236,6 +236,14 @@ def test_runtime_settings_reject_owner_credentials_and_do_not_serialize_them(
         Settings(_env_file=canonical)
 
 
+def test_api_settings_load_canonical_env_example() -> None:
+    example = Path(__file__).resolve().parents[2] / ".env.example"
+    settings = Settings(_env_file=example)
+    assert settings.app_env == "development"
+    assert settings.model_provider == "fake"
+    assert not hasattr(settings, "answer_generation_model")
+
+
 def test_api_settings_never_load_worker_model_secret(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setenv("SECOND_BRAIN_MODEL_API_KEY", "must-not-enter-api-process")
     with raises(ValueError, match="unknown Second Brain environment keys"):

@@ -79,7 +79,8 @@ def _capture_url(
                 session.execute(
                     text(
                         "SELECT id,display_title,original_uri FROM sources "
-                        "WHERE idempotency_key=:key"
+                        "WHERE idempotency_key=:key AND deleted_at IS NULL "
+                        "AND processing_state NOT IN ('purge_pending','purged')"
                     ),
                     {"key": idempotency_key},
                 )
@@ -107,7 +108,10 @@ def _capture_url(
                     existing["id"], job["source_version_id"], job["id"], job["state"], True
                 )
         existing_id = session.scalar(
-            text("SELECT id FROM sources WHERE normalized_dedup_sha256=:hash"),
+            text(
+                "SELECT id FROM sources WHERE normalized_dedup_sha256=:hash "
+                "AND deleted_at IS NULL AND processing_state NOT IN ('purge_pending','purged')"
+            ),
             {"hash": request_hash},
         )
         source_id = existing_id or uuid4()
@@ -198,7 +202,11 @@ def _existing_capture(
         if idempotency_key is not None:
             existing = (
                 session.execute(
-                    text(query + "WHERE source.idempotency_key=:key LIMIT 1"),
+                    text(
+                        query + "WHERE source.idempotency_key=:key "
+                        "AND source.deleted_at IS NULL "
+                        "AND source.processing_state NOT IN ('purge_pending','purged') LIMIT 1"
+                    ),
                     {"key": idempotency_key},
                 )
                 .mappings()
@@ -225,6 +233,8 @@ def _existing_capture(
                 session.execute(
                     text(
                         query + "WHERE source.normalized_dedup_sha256=:hash "
+                        "AND source.deleted_at IS NULL "
+                        "AND source.processing_state NOT IN ('purge_pending','purged') "
                         "ORDER BY version.version_number DESC LIMIT 1"
                     ),
                     {"hash": dedupe_hash},
