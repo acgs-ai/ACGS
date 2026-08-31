@@ -2,7 +2,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { MarketingFrame, NavigationLink } from './Marketing'
 
 const ASTERISM = '⁂'
-const GITHUB_URL = 'https://github.com/CA-git-com-co/ACGS'
+const GITHUB_URL = 'https://github.com/acgs-ai/Acgs-Swarm'
 const PYPI_URL = 'https://pypi.org/project/constitutional-swarm/'
 const INSTALL_CMD = 'pip install constitutional-swarm'
 
@@ -36,7 +36,7 @@ const PROOF_STATS: ProofStat[] = [
     label: 'Constitutional check cost',
     source: 'dna.py docstring',
   },
-  { value: '800+', unit: 'agents', label: 'Coordinated peer mesh', source: 'AGENTS.md inventory' },
+  { value: '10–800', unit: 'agents', label: 'Benchmark scale range', source: 'bench.py' },
   {
     value: '1603',
     unit: 'tests',
