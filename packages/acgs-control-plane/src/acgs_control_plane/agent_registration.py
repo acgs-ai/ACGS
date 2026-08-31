@@ -35,6 +35,7 @@ from acgs_control_plane.models import (
     ManagedDecisionReceipt,
     ManagedGovernanceEvent,
     ManagedOutboxMessage,
+    Organization,
     PolicyBundle,
     Project,
     new_id,
@@ -379,14 +380,6 @@ class AgentRegistrationService:
             agent = session.get(AgentRecord, result.result["agent_id"])
             if agent is None:
                 raise RuntimeError("managed agent registration committed without agent row")
-            mirror_managed_decision(
-                session,
-                org_id=org_id,
-                audit_dir=audit_dir,
-                record=decision_record,
-                result_hash=result.result_hash,
-                tool=LEGACY_AGENT_REGISTER_ACTION,
-            )
             holder["response"] = AgentRegistrationResult(
                 agent_id=agent.id,
                 org_id=agent.org_id,
@@ -398,18 +391,45 @@ class AgentRegistrationService:
                 created_at=agent.created_at,
                 receipt_id=receipt_row.receipt_id,
             )
+            # Mirror last, once every other in-session effect has been issued.
+            # `store.append` writes the org's tamper-evident JSONL, and no
+            # transaction rollback undoes a line already on disk -- so anything
+            # that can still abort belongs above it. The flush makes the
+            # ordering real rather than textual: without it, pending inserts
+            # would not reach the database until commit, which is after append.
+            session.flush()
+            mirror_managed_decision(
+                session,
+                org_id=org_id,
+                audit_dir=audit_dir,
+                record=decision_record,
+                result_hash=result.result_hash,
+                tool=LEGACY_AGENT_REGISTER_ACTION,
+            )
+
+        def before_execute(tx_session: Session) -> None:
+            # Take the org's audit-chain anchor row before the scope and policy
+            # locks below. A successful registration ends by advancing that same
+            # row (`_anchor`, via `mirror_managed_decision`). Acquiring it last
+            # let two registrations cycle: one holds the `environments` row that
+            # `_revalidate_active_policy_under_lock` locks and waits for the
+            # anchor, while the other holds the anchor and waits on that same
+            # `environments` row through the foreign keys its inserts check.
+            # PostgreSQL broke the tie by aborting a victim.
+            tx_session.get(Organization, org_id, with_for_update=True)
+            _revalidate_active_policy_under_lock(
+                tx_session,
+                context=context,
+                args=args,
+                actor=principal.actor_id,
+            )
 
         try:
             uow.execute(
                 context=context,
                 receipt=receipt,
                 args=args,
-                before_execute=lambda tx_session: _revalidate_active_policy_under_lock(
-                    tx_session,
-                    context=context,
-                    args=args,
-                    actor=principal.actor_id,
-                ),
+                before_execute=before_execute,
                 operation_effect=operation_effect,
                 after_success=after_success,
             )
