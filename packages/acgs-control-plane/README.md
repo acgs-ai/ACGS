@@ -95,7 +95,7 @@ uv run --package acgs-control-plane uvicorn --factory acgs_control_plane.app:cre
 This posture is deliberately non-production: its explicit local bootstrap runs the packaged
 operator migration path on an empty database only, and `/readyz` always returns 503. For a
 migration-managed database, run the
-secret-safe operator CLI to the current head (`0011` at this writing), then set
+secret-safe operator CLI to the current head (`0012` at this writing), then set
 `ACP_CREATE_TABLES=0`. Schema currency is reported separately from production readiness.
 `ACP_RUNTIME_POSTURE=production` currently refuses before constructing a database engine because
 legacy mutation routes still exist; an exact current schema does not weaken that blocker.
@@ -204,7 +204,7 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
   native receipt evidence and the SQL single-use consumption ledger, but the remaining legacy
   routes still differ from gove-zone's secure `require_signature=True` profile. Production posture
   refuses while those legacy mutation routes remain.
-- **Schema mutation is operator-only**: Alembic revisions `0001` through `0011` are advanced
+- **Schema mutation is operator-only**: Alembic revisions `0001` through `0012` are advanced
   through `python -m acgs_control_plane.migration_cli`; schema-managed startup performs an exact,
   read-only revision preflight and never migrates. The frozen legacy `create_all` contract remains
   available only for migration-adoption tests; the app's explicit local-development bootstrap runs
@@ -242,6 +242,12 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
   receipt, and governance-event rows before comparing it with the stored hash; it deliberately has
   no pending/lease/takeover protocol, async job surface, expiry, purge path, or raw response body
   storage.
+- **Environment-scoped signed policy registry is a distinct active pointer**: revision `0012`
+  adds immutable `policy_versions` plus one `environment_policy_heads` row per environment.
+  An org-level `PolicyBundle` (`status=active`) and an environment `EnvironmentPolicyHead` are
+  not the same object: org rules still govern legacy `/orgs/{org_id}/policies` writes and must
+  also authorize the first env-scoped publish/activate; the env head is the signed pointer used
+  after that environment has been bootstrapped.
 - **Production posture remains blocked** while any mutation route uses the legacy unsigned
   governance membrane. A current database schema is necessary startup evidence, not production
   readiness.

@@ -18,7 +18,7 @@ from gove_zone.receipt import DecisionReceipt
 from gove_zone.signing import Ed25519Signer
 from gove_zone.tool import ToolCall
 from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustScope, TrustConfigurationError
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, MultipleResultsFound, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from acgs_control_plane.auth import Principal
@@ -38,6 +38,7 @@ from acgs_control_plane.models import (
     ManagedDecisionReceipt,
     ManagedGovernanceEvent,
     ManagedOutboxMessage,
+    PolicyBundle,
     PolicyRegistryIdempotency,
     PolicyVersion,
     Project,
@@ -59,6 +60,8 @@ from acgs_control_plane.trust import (
 POLICY_ENVELOPE_PURPOSE = "acgs.policy-envelope/v1"
 POLICY_REGISTRY_AUTHORITY = "control-plane.policy-registry/v1"
 POLICY_REGISTRY_VALIDATOR_ROLE = "control-plane.policy-policy/v1"
+LEGACY_POLICY_PUBLISH_ACTION = "policy.publish"
+LEGACY_POLICY_ACTIVATE_ACTION = "policy.activate"
 _GENESIS_AUDIT_HASH = "0" * 64
 _IDEMPOTENCY_RE = re.compile(r"^[A-Za-z0-9._:/-]{8,200}$")
 _LOCAL_POLICY_SIGNER_SEED = bytes.fromhex(
@@ -767,7 +770,10 @@ def _parse_policy(body: PolicyPublishRequest) -> dict[str, Any]:
         parsed = RuleSetPolicy.from_dict(document)
     except (ValueError, TypeError) as exc:
         raise PolicyRegistryHttpError(
-            422, "POLICY_INVALID", "policy_invalid", f"invalid policy bundle: {exc}"
+            422,
+            "POLICY_INVALID",
+            "policy_invalid",
+            "policy bundle is invalid",
         ) from exc
     return {"id": parsed.policy_id, "version": parsed.version, "rules": list(document["rules"])}
 
@@ -1107,6 +1113,20 @@ def _authorizing_policy_context(
                 "policy_not_ready",
                 "active environment policy head is not configured",
             )
+        org_policy = _active_org_policy_context(session, org_id=org_id, lock=lock)
+        if org_policy is not None:
+            policy, bundle_id, policy_hash = org_policy
+            return _AuthorizingPolicyContext(
+                policy,
+                bundle_id,
+                policy_hash,
+                _canonicalize_registry_decision(
+                    _evaluate_registry_policy(policy, action=action, args=args, actor=actor),
+                    action=action,
+                    args=args,
+                    actor=actor,
+                ),
+            )
         baseline_hash = sha256_json(
             {
                 "schema": "policy-registry-bootstrap-baseline/v1",
@@ -1160,16 +1180,95 @@ def _authorizing_policy_context(
             "policy_not_ready",
             "active environment policy document is invalid",
         ) from exc
-    record = policy.evaluate(
-        ToolCall(
-            name=action,
-            args=dict(args),
+    return _AuthorizingPolicyContext(
+        policy,
+        version.id,
+        version.content_hash,
+        _canonicalize_registry_decision(
+            _evaluate_registry_policy(policy, action=action, args=args, actor=actor),
+            action=action,
+            args=args,
             actor=actor,
-            goal="managed policy registry",
-            path=("control-plane", "policy-registry"),
-        )
+        ),
     )
-    record = replace(
+
+
+def _active_org_policy_context(
+    session: Session, *, org_id: str, lock: bool
+) -> tuple[RuleSetPolicy, str, str] | None:
+    try:
+        statement = sa.select(PolicyBundle).where(
+            PolicyBundle.org_id == org_id,
+            PolicyBundle.status == "active",
+        )
+        if lock:
+            statement = statement.with_for_update()
+        row = session.execute(statement).scalar_one_or_none()
+    except MultipleResultsFound as exc:
+        raise PolicyRegistryHttpError(
+            409,
+            "POLICY_NOT_READY",
+            "policy_not_ready",
+            "active organization policy bundle is not uniquely configured",
+        ) from exc
+    if row is None:
+        return None
+    try:
+        policy = RuleSetPolicy.from_dict(row.bundle)
+    except (TypeError, ValueError) as exc:
+        raise PolicyRegistryHttpError(
+            409,
+            "POLICY_NOT_READY",
+            "policy_not_ready",
+            "active organization policy document is invalid",
+        ) from exc
+    return policy, row.id, sha256_json(row.bundle)
+
+
+def _evaluate_registry_policy(
+    policy: RuleSetPolicy, *, action: str, args: Mapping[str, Any], actor: str
+) -> DecisionRecord:
+    """Decide under both the managed and the legacy action name.
+
+    Governing this route renamed ``policy.publish`` / ``policy.activate`` to
+    ``control-plane.policy.publish`` / ``control-plane.policy.activate``. Org
+    PolicyBundle rules already name the old actions, so evaluating only the new
+    name would skip them and leak a bootstrap ALLOW. Both names are evaluated
+    and the restrictive outcome wins, matching agent-create.
+    """
+    managed = policy.evaluate(_registry_policy_tool_call(action, args=args, actor=actor))
+    if managed.decision is not Decision.ALLOW:
+        return managed
+    legacy = policy.evaluate(
+        _registry_policy_tool_call(_legacy_registry_action(action), args=args, actor=actor)
+    )
+    if legacy.decision is not Decision.ALLOW:
+        return legacy
+    return managed
+
+
+def _legacy_registry_action(action: str) -> str:
+    if action == CONTROL_PLANE_POLICY_PUBLISH_ACTION:
+        return LEGACY_POLICY_PUBLISH_ACTION
+    if action == CONTROL_PLANE_POLICY_ACTIVATE_ACTION:
+        return LEGACY_POLICY_ACTIVATE_ACTION
+    return action
+
+
+def _registry_policy_tool_call(name: str, *, args: Mapping[str, Any], actor: str) -> ToolCall:
+    return ToolCall(
+        name=name,
+        args=dict(args),
+        actor=actor,
+        goal="managed policy registry",
+        path=("control-plane", "policy-registry"),
+    )
+
+
+def _canonicalize_registry_decision(
+    record: DecisionRecord, *, action: str, args: Mapping[str, Any], actor: str
+) -> DecisionRecord:
+    return replace(
         record,
         tool=action,
         actor=actor,
@@ -1179,7 +1278,6 @@ def _authorizing_policy_context(
         path=("control-plane", "policy-registry"),
         transformed_args=dict(args),
     )
-    return _AuthorizingPolicyContext(policy, version.id, version.content_hash, record)
 
 
 def _is_initial_bootstrap_action(*, action: str, args: Mapping[str, Any]) -> bool:

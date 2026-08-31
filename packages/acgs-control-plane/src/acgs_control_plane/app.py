@@ -527,13 +527,14 @@ def create_app(
         return mutation_inventory_drift_response(exc)
 
     @app.exception_handler(PolicyRegistryHttpError)
-    def _policy_registry_error(_request: Request, exc: PolicyRegistryHttpError) -> JSONResponse:
+    def _policy_registry_error(request: Request, exc: PolicyRegistryHttpError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
             content={
                 "code": exc.code,
                 "status": exc.status,
                 "detail": exc.detail,
+                "request_id": request_id_from_scope(request.scope),
             },
         )
 

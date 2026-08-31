@@ -119,6 +119,32 @@ def _allowing_rules() -> list[dict[str, Any]]:
     return [{"id": "deny-unrelated", "effect": "deny", "tools": ["unrelated.tool"]}]
 
 
+def _stable_error_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    return {key: payload[key] for key in ("code", "status", "detail")}
+
+
+def _activate_org_policy(
+    client: TestClient,
+    org_id: str,
+    headers: dict[str, str],
+    *,
+    policy_id: str,
+    rules: list[dict[str, Any]],
+) -> dict[str, Any]:
+    published = client.post(
+        f"/orgs/{org_id}/policies",
+        json={"policy_id": policy_id, "rules": rules},
+        headers=headers,
+    )
+    assert published.status_code == 201, published.text
+    activated = client.post(
+        f"/orgs/{org_id}/policies/{published.json()['bundle_id']}/activate",
+        headers=headers,
+    )
+    assert activated.status_code == 200, activated.text
+    return published.json()
+
+
 def test_managed_policy_publish_creates_immutable_version_without_head(
     client: TestClient, org: dict[str, Any], admin_headers: dict[str, str]
 ) -> None:
@@ -425,7 +451,8 @@ def test_managed_policy_publish_denial_records_evidence_without_policy_state(
         policy_id="blocked-candidate",
     )
     assert replay.status_code == 403
-    assert replay.json() == denied.json()
+    assert _stable_error_fields(replay.json()) == _stable_error_fields(denied.json())
+    assert "request_id" in replay.json()
     assert _counts(client) == after
 
 
@@ -643,3 +670,110 @@ def test_managed_policy_wrong_environment_fails_before_effect(
     assert resp.status_code == 404
     assert resp.json()["code"] == "SCOPE_NOT_FOUND"
     assert _counts(client) == before
+
+
+def test_org_policy_bundle_deny_blocks_first_env_scoped_publish(
+    client: TestClient, org: dict[str, Any], admin_headers: dict[str, str]
+) -> None:
+    project_id, environment_id = _seed_scope(client, org["org_id"])
+    _activate_org_policy(
+        client,
+        org["org_id"],
+        admin_headers,
+        policy_id="org-deny-publish",
+        rules=[{"id": "deny-legacy-publish", "effect": "deny", "tools": ["policy.publish"]}],
+    )
+    before_publish = _counts(client)
+
+    denied_publish = _publish(
+        client,
+        org["org_id"],
+        project_id,
+        environment_id,
+        admin_headers,
+        key="org-bundle-deny-env-publish",
+        policy_id="must-not-land",
+    )
+    assert denied_publish.status_code == 403, denied_publish.text
+    assert _stable_error_fields(denied_publish.json())["code"] == "POLICY_DENIED"
+    assert "request_id" in denied_publish.json()
+    after_denied_publish = _counts(client)
+    assert after_denied_publish["versions"] == before_publish["versions"]
+    assert after_denied_publish["heads"] == before_publish["heads"]
+    assert after_denied_publish["receipts"] == before_publish["receipts"] + 1
+
+
+def test_org_policy_bundle_deny_blocks_first_env_scoped_activate(
+    client: TestClient, org: dict[str, Any], admin_headers: dict[str, str]
+) -> None:
+    project_id, environment_id = _seed_scope(client, org["org_id"])
+    _activate_org_policy(
+        client,
+        org["org_id"],
+        admin_headers,
+        policy_id="org-deny-activate",
+        rules=[{"id": "deny-legacy-activate", "effect": "deny", "tools": ["policy.activate"]}],
+    )
+    published = _publish(
+        client,
+        org["org_id"],
+        project_id,
+        environment_id,
+        admin_headers,
+        key="org-bundle-allow-env-publish",
+        policy_id="activate-blocked-candidate",
+        rules=_allowing_rules(),
+    )
+    assert published.status_code == 201, published.text
+    before_activate = _counts(client)
+
+    denied_activate = _activate(
+        client,
+        org["org_id"],
+        project_id,
+        environment_id,
+        published.json()["bundle_id"],
+        admin_headers,
+        key="org-bundle-deny-env-activate",
+        expected_generation=0,
+    )
+    assert denied_activate.status_code == 403, denied_activate.text
+    assert denied_activate.json()["code"] == "POLICY_DENIED"
+    after_denied_activate = _counts(client)
+    assert after_denied_activate["heads"] == before_activate["heads"]
+    assert after_denied_activate["versions"] == before_activate["versions"]
+    assert after_denied_activate["receipts"] == before_activate["receipts"] + 1
+
+
+def test_viewer_cannot_publish_or_activate_environment_policies(
+    client: TestClient,
+    org: dict[str, Any],
+    admin_headers: dict[str, str],
+    make_user: Any,
+) -> None:
+    project_id, environment_id = _seed_scope(client, org["org_id"])
+    published = _publish(client, org["org_id"], project_id, environment_id, admin_headers)
+    assert published.status_code == 201, published.text
+    viewer = make_user("viewer")
+
+    denied_publish = _publish(
+        client,
+        org["org_id"],
+        project_id,
+        environment_id,
+        viewer,
+        key="viewer-env-publish",
+        policy_id="viewer-must-not-publish",
+    )
+    denied_activate = _activate(
+        client,
+        org["org_id"],
+        project_id,
+        environment_id,
+        published.json()["bundle_id"],
+        viewer,
+        key="viewer-env-activate",
+        expected_generation=0,
+    )
+    assert denied_publish.status_code == 403
+    assert denied_activate.status_code == 403
