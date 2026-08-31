@@ -8,6 +8,39 @@ import pytest
 from governance.adapters.tools import GovernedToolAdapter
 from governance.audit import ChainHashAuditStore
 
+_BASE_PAYLOAD = {
+    "actor": {"id": "agent-legal-1", "role": "LegalOps"},
+    "intent": "Redline supplier agreement",
+    "action_type": "contract.redline",
+    "inputs_hash": "sha256:test",
+    "metadata": {"policy_citations": ["CONTRACT-AUTHORITY-001"]},
+}
+
+_CHILD_APPENDER = '''
+import sys
+
+from governance.adapters.tools import GovernedToolAdapter
+from governance.audit import ChainHashAuditStore
+from governance.policy_loader import load_policy_bundle, load_roles
+
+audit_path, resource = sys.argv[1], sys.argv[2]
+adapter = GovernedToolAdapter(
+    roles_bundle=load_roles("governance/roles.json"),
+    policy_bundle=load_policy_bundle("governance/policies/2026-05"),
+    audit_store=ChainHashAuditStore(audit_path),
+)
+adapter.validate(
+    {
+        "actor": {"id": "agent-legal-1", "role": "LegalOps"},
+        "intent": "Redline supplier agreement",
+        "action_type": "contract.redline",
+        "resource": resource,
+        "inputs_hash": "sha256:test",
+        "metadata": {"policy_citations": ["CONTRACT-AUTHORITY-001"]},
+    }
+)
+'''
+
 
 def test_audit_chain_valid_for_two_events(tmp_path, roles_bundle, policy_bundle):
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
@@ -340,3 +373,81 @@ def test_audit_append_writes_one_line_no_rewrite(
         f"final size {sizes[-1]} != sum of deltas {sum(deltas)}; "
         "append rewrote prior content"
     )
+
+
+@pytest.mark.regression(
+    pr="codex-investigate (no upstream PR)",
+    severity="HIGH",
+    issue="codex_audit_race",
+    coverage_angle="audit_chain_valid_across_two_store_instances_same_path",
+)
+def test_audit_chain_valid_across_two_store_instances_same_path(
+    tmp_path, roles_bundle, policy_bundle
+):
+    audit_path = tmp_path / "audit.jsonl"
+    store_a = ChainHashAuditStore(audit_path)
+    store_b = ChainHashAuditStore(audit_path)
+    adapter_a = GovernedToolAdapter(
+        roles_bundle=roles_bundle, policy_bundle=policy_bundle, audit_store=store_a
+    )
+    adapter_b = GovernedToolAdapter(
+        roles_bundle=roles_bundle, policy_bundle=policy_bundle, audit_store=store_b
+    )
+
+    first = adapter_a.validate({**_BASE_PAYLOAD, "resource": "contracts/inst-a1"})
+    second = adapter_b.validate({**_BASE_PAYLOAD, "resource": "contracts/inst-b1"})
+    third = adapter_a.validate({**_BASE_PAYLOAD, "resource": "contracts/inst-a2"})
+
+    assert second.previous_hash == first.event_hash
+    assert third.previous_hash == second.event_hash
+
+    verification = store_a.verify_chain()
+    assert verification["valid"] is True, verification["failures"]
+    assert verification["checked"] == 3
+    assert verification["failures"] == []
+    assert store_a.last_hash() == third.event_hash
+    assert store_b.last_hash() == third.event_hash
+
+
+@pytest.mark.regression(
+    pr="codex-investigate (no upstream PR)",
+    severity="HIGH",
+    issue="codex_audit_race",
+    coverage_angle="audit_chain_valid_across_separate_writer_processes",
+)
+def test_audit_chain_valid_across_separate_writer_processes(
+    tmp_path, roles_bundle, policy_bundle
+):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[1]
+    audit_path = tmp_path / "audit.jsonl"
+    script = tmp_path / "child_appender.py"
+    script.write_text(_CHILD_APPENDER, encoding="utf-8")
+
+    store = ChainHashAuditStore(audit_path)
+    adapter = GovernedToolAdapter(
+        roles_bundle=roles_bundle, policy_bundle=policy_bundle, audit_store=store
+    )
+
+    adapter.validate({**_BASE_PAYLOAD, "resource": "contracts/parent-1"})
+
+    child = subprocess.run(
+        [sys.executable, str(script), str(audit_path), "contracts/child-1"],
+        cwd=str(repo_root),
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert child.returncode == 0, child.stderr
+
+    adapter.validate({**_BASE_PAYLOAD, "resource": "contracts/parent-2"})
+
+    verification = store.verify_chain()
+    assert verification["valid"] is True, verification["failures"]
+    assert verification["checked"] == 3
+    assert verification["failures"] == []

@@ -23,6 +23,7 @@ class ChainHashAuditStore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._last_hash: str | None = None
+        self._last_size: int | None = None
 
     def append(self, decision: DecisionRecord) -> dict[str, Any]:
         # Serialize read-then-write under an exclusive lock so concurrent
@@ -33,8 +34,10 @@ class ChainHashAuditStore:
         with lock_path.open("a+") as lock_fh:
             fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
             try:
-                if self._last_hash is None:
+                current_size = self._current_size()
+                if self._last_hash is None or self._last_size != current_size:
                     self._last_hash = self._read_last_hash_from_disk()
+                    self._last_size = current_size
                 previous_hash = self._last_hash
                 payload = decision.to_dict()
                 payload["previous_hash"] = previous_hash
@@ -47,14 +50,21 @@ class ChainHashAuditStore:
                     fh.flush()
                     os.fsync(fh.fileno())
                 self._last_hash = str(payload["event_hash"])
+                self._last_size = self._current_size()
             finally:
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
         return payload
 
     def last_hash(self) -> str:
-        if self._last_hash is not None:
+        if self._last_hash is not None and self._last_size == self._current_size():
             return self._last_hash
         return self._read_last_hash_from_disk()
+
+    def _current_size(self) -> int:
+        try:
+            return self.path.stat().st_size
+        except OSError:
+            return 0
 
     def _read_last_hash_from_disk(self) -> str:
         if not self.path.exists():
