@@ -1,0 +1,22 @@
+\getenv app_password SECOND_BRAIN_DB_APP_PASSWORD
+\getenv worker_password SECOND_BRAIN_DB_WORKER_PASSWORD
+
+SELECT format(
+    'CREATE ROLE second_brain_app LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS',
+    :'app_password'
+)
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'second_brain_app') \gexec
+
+ALTER ROLE second_brain_app
+    WITH NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+GRANT CONNECT ON DATABASE second_brain TO second_brain_app;
+
+SELECT format(
+    'CREATE ROLE second_brain_worker LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS',
+    :'worker_password'
+)
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'second_brain_worker') \gexec
+
+ALTER ROLE second_brain_worker
+    WITH NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+GRANT CONNECT ON DATABASE second_brain TO second_brain_worker;

@@ -1,0 +1,12 @@
+[
+  {
+    "title": "Harbor garden field note",
+    "content": "On 14 May, the harbor garden trial placed blue-flowering plants beside the east path. The observation plan is to count pollinator visits for ten minutes at noon on each dry Friday.",
+    "source_type": "note"
+  },
+  {
+    "title": "Archive release checklist",
+    "content": "# Archive release checklist\n\n- Preserve the original source.\n- Record the parser and chunker versions.\n- Verify every citation against its stored passage.\n- Approve durable memories explicitly.",
+    "source_type": "markdown"
+  }
+]
