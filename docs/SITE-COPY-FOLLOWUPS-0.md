@@ -43,7 +43,7 @@ Not pushed. Not merged.
 
 ## Hook fix (Cursor compatibility)
 
-Applied to `~/.claude/hooks/acgs-worktree-hook-dispatch.py` (outside this repo):
+Applied to `~/.claude/hooks/acgs-worktree-hook-dispatch.py` (outside this repo). Not origin copy. Do not typeset.
 
 - Event name aliases (`preToolUse` → `PreToolUse`)
 - Tool name aliases (`Shell` → `Bash`)
