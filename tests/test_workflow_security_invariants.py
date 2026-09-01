@@ -3,8 +3,12 @@ import pathlib
 import re
 
 import pytest
+from count_codex_connector_evidence import CONNECTOR_BOT, count_comments, count_reviews
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
+
+HEAD_SHA = "33d9eec6277c2b12f7c8c7aefeaf639a0a7ca2dd"
+OLD_SHA = "2d39074fc72efffc9d63f17c730051dc0b6d0d05"
 
 
 @pytest.fixture
@@ -12,15 +16,103 @@ def ai_review_workflows() -> list[pathlib.Path]:
     return sorted((REPO_ROOT / ".github" / "workflows").glob("*code-review.yml"))
 
 
-def test_ai_review_workflows_gate_trusted_author_associations(
+def _codex_workflow_text() -> str:
+    return (REPO_ROOT / ".github" / "workflows" / "codex-code-review.yml").read_text()
+
+
+def _job_level_if_lines(text: str) -> list[str]:
+    """Return job-level ``if:`` lines (4-space indent), not step-level (6+)."""
+    return [
+        line
+        for line in text.splitlines()
+        if line.startswith("    if:") and not line.startswith("      ")
+    ]
+
+
+def test_codex_review_workflow_has_no_job_level_skip(
     ai_review_workflows: list[pathlib.Path],
 ) -> None:
-    trusted_associations = ("OWNER", "MEMBER", "COLLABORATOR")
-
+    assert ai_review_workflows
     for workflow in ai_review_workflows:
         text = workflow.read_text()
-        assert "author_association" in text, workflow
-        assert any(association in text for association in trusted_associations), workflow
+        assert not _job_level_if_lines(text), workflow
+
+
+def test_codex_review_workflow_wires_sha_bound_evidence_counter() -> None:
+    text = _codex_workflow_text()
+    assert "scripts/count_codex_connector_evidence.py" in text
+    assert CONNECTOR_BOT in text
+    assert "codex-review-waived" in text
+    assert "Reviewed commit" in text
+    assert "id-token: write" not in text
+
+
+def test_codex_review_rejects_empty_stub_and_dismissed_reviews() -> None:
+    payload = [
+        [
+            {
+                "user": {"login": CONNECTOR_BOT},
+                "commit_id": HEAD_SHA,
+                "state": "COMMENTED",
+                "body": "",
+            },
+            {
+                "user": {"login": CONNECTOR_BOT},
+                "commit_id": HEAD_SHA,
+                "state": "COMMENTED",
+                "body": "To use Codex here, create an environment for this repo.",
+            },
+            {
+                "user": {"login": CONNECTOR_BOT},
+                "commit_id": HEAD_SHA,
+                "state": "DISMISSED",
+                "body": "### Codex Review\n**Reviewed commit:** `33d9eec627`",
+            },
+            {
+                "user": {"login": CONNECTOR_BOT},
+                "commit_id": OLD_SHA,
+                "state": "COMMENTED",
+                "body": "### Codex Review\n**Reviewed commit:** `2d39074fc7`",
+            },
+        ]
+    ]
+    assert count_reviews(payload, sha=HEAD_SHA) == 0
+
+
+def test_codex_review_accepts_sha_bound_review_and_reviewed_commit_comment() -> None:
+    reviews = [
+        [
+            {
+                "user": {"login": CONNECTOR_BOT},
+                "commit_id": HEAD_SHA,
+                "state": "COMMENTED",
+                "body": "### Codex Review\n**Reviewed commit:** `33d9eec627`",
+            }
+        ]
+    ]
+    comments = [
+        [
+            {
+                "user": {"login": CONNECTOR_BOT},
+                "body": (
+                    "Codex Review: Didn't find any major issues.\n**Reviewed commit:** `33d9eec627`"
+                ),
+            },
+            {
+                "user": {"login": CONNECTOR_BOT},
+                "body": "Still running on `33d9eec627` — no Reviewed commit line yet.",
+            },
+            {
+                "user": {"login": CONNECTOR_BOT},
+                "body": (
+                    "Codex Review: Didn't find any major issues.\n**Reviewed commit:** `2d39074fc7`"
+                ),
+            },
+        ]
+    ]
+    assert count_reviews(reviews, sha=HEAD_SHA) == 1
+    assert count_comments(comments, sha=HEAD_SHA) == 1
+    assert count_comments(comments, sha=OLD_SHA) == 1
 
 
 def test_ai_review_workflows_do_not_request_id_token_write(

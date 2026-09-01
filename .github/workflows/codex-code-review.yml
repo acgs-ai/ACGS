@@ -34,27 +34,42 @@ concurrency:
 # Review auth is the ChatGPT Codex GitHub connector (subscription seat), not platform
 # API credits. `openai/codex-action` always bills an API key through the Responses API
 # proxy, and stuffing `~/.codex/auth.json` into Actions is not allowed on a public
-# repository. The connector already posts as `chatgpt-codex-connector[bot]`; this job
-# only waits for a SHA-bound review from that bot on the pull request head. Issue-level
-# 👍 reactions are not evidence: they are not bound to a commit.
+# repository. The connector already posts as `chatgpt-codex-connector[bot]`. This job
+# waits for SHA-bound evidence from that bot on the pull request head:
+#   * a review whose `commit_id` equals the head SHA, with a non-empty body that is not
+#     the connector's "create an environment" stub;
+#   * or an issue comment that contains `Reviewed commit` and the head SHA prefix.
+# Empty-body reviews, dismissed reviews, and issue-level 👍 reactions are not evidence.
 #
 # The gate can only decide what it is allowed to reach. Every step that can fail for
 # infrastructure reasons therefore carries `continue-on-error: true` and an `id:`, and the
 # gate reads the review-path outcomes explicitly. `continue-on-error` here does not soften
-# the gate: a missing connector review with no waiver still exits non-zero below.
+# the gate: missing SHA-bound connector evidence with no waiver still exits non-zero below.
 jobs:
   codex-review:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      issues: read
       pull-requests: read
     env:
       IS_WAIVED: ${{ contains(github.event.pull_request.labels.*.name, 'codex-review-waived') }}
     steps:
+      # persist-credentials is false: nothing later needs git auth, and the
+      # working tree must not contain a token even though no model runs here.
+      - name: Checkout evidence counter
+        id: checkout
+        if: ${{ env.IS_WAIVED != 'true' }}
+        continue-on-error: true
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
       # `continue-on-error` keeps a timeout from turning the job red on its own: the
       # "Gate on review outcome" step below is the sole decider of this required check.
       - name: Wait for ChatGPT Codex subscription review
-        if: ${{ env.IS_WAIVED != 'true' }}
+        if: ${{ env.IS_WAIVED != 'true' && steps.checkout.outcome == 'success' }}
         id: codex-review
         continue-on-error: true
         env:
@@ -67,41 +82,52 @@ jobs:
         run: |
           set -euo pipefail
 
+          if ! [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Missing head SHA::pull request head SHA is unset or malformed."
+            exit 1
+          fi
+
           count_reviews() {
             gh api --paginate --slurp "repos/${GH_REPO}/pulls/${PR_NUMBER}/reviews" \
-              | jq --arg sha "$HEAD_SHA" --arg bot "$CONNECTOR_BOT" \
-                '[((add // []) | .[]) | select(.user.login == $bot and .commit_id == $sha)] | length'
+              | python3 scripts/count_codex_connector_evidence.py reviews --sha "$HEAD_SHA" --bot "$CONNECTOR_BOT"
+          }
+
+          count_comments() {
+            gh api --paginate --slurp "repos/${GH_REPO}/issues/${PR_NUMBER}/comments" \
+              | python3 scripts/count_codex_connector_evidence.py comments --sha "$HEAD_SHA" --bot "$CONNECTOR_BOT"
           }
 
           deadline=$((SECONDS + WAIT_SECONDS))
           while true; do
             reviews=$(count_reviews)
-            if [ "$reviews" -gt 0 ]; then
-              echo "ChatGPT Codex connector review found for ${HEAD_SHA} (reviews=${reviews})."
+            comments=$(count_comments)
+            if [ "$reviews" -gt 0 ] || [ "$comments" -gt 0 ]; then
+              echo "ChatGPT Codex connector evidence found for ${HEAD_SHA} (reviews=${reviews}, comments=${comments})."
               exit 0
             fi
             if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "::error title=ChatGPT Codex review missing::No ${CONNECTOR_BOT} review bound to ${HEAD_SHA} after ${WAIT_SECONDS}s."
+              echo "::error title=ChatGPT Codex review missing::No ${CONNECTOR_BOT} SHA-bound review or Reviewed-commit comment for ${HEAD_SHA} after ${WAIT_SECONDS}s."
               echo "Comment '@codex review', then re-run this job after the review lands (or wait for the pull_request_review trigger once this workflow is on the default branch)."
               exit 1
             fi
-            echo "Waiting for ${CONNECTOR_BOT} review of ${HEAD_SHA} (reviews=0)..."
+            echo "Waiting for ${CONNECTOR_BOT} evidence of ${HEAD_SHA} (reviews=0, comments=0)..."
             sleep 20
           done
 
       # Decides the required check. Runs unconditionally so the gate can never be satisfied
-      # by a skip; the only green paths are "the ChatGPT connector reviewed this head SHA"
-      # and "a maintainer waived it". This is a liveness gate: it does not parse the review
-      # text as an APPROVE/REJECT verdict.
+      # by a skip; the only green paths are "the ChatGPT connector left SHA-bound evidence
+      # for this head" and "a maintainer waived it". This is a liveness gate: it does not
+      # parse the review text as an APPROVE/REJECT verdict.
       - name: Gate on review outcome
         if: ${{ always() }}
         env:
           REVIEW_OUTCOME: ${{ steps.codex-review.outcome }}
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
         run: |
           set -euo pipefail
 
           if [ "$REVIEW_OUTCOME" = "success" ]; then
-            echo "ChatGPT Codex connector review is present for this head SHA."
+            echo "ChatGPT Codex connector SHA-bound evidence is present for this head."
             exit 0
           fi
 
@@ -110,15 +136,17 @@ jobs:
             exit 0
           fi
 
-          if [ "$REVIEW_OUTCOME" = "skipped" ]; then
+          if [ "$CHECKOUT_OUTCOME" != "success" ]; then
+            reason="the evidence-counter checkout did not succeed (outcome: '$CHECKOUT_OUTCOME')"
+          elif [ "$REVIEW_OUTCOME" = "skipped" ]; then
             reason="the wait step was skipped without a waiver"
           else
-            reason="no chatgpt-codex-connector[bot] review bound to this head SHA (outcome: '$REVIEW_OUTCOME')"
+            reason="no chatgpt-codex-connector[bot] SHA-bound review or Reviewed-commit comment for this head (outcome: '$REVIEW_OUTCOME')"
           fi
 
           echo "::error title=Codex review did not run::This required check fails closed because $reason."
           echo "Reason: $reason."
           echo
-          echo "Comment '@codex review' and re-run this check after the SHA-bound review lands,"
+          echo "Comment '@codex review' and re-run this check after SHA-bound evidence lands,"
           echo "or apply the 'codex-review-waived' label after a maintainer reviews the change by hand."
           exit 1
