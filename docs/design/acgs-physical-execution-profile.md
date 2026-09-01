@@ -153,15 +153,24 @@ hostile and places the enforcement point below it.
 The physical binding lives in fields that already exist. This is what keeps the
 profile an adapter rather than a fork:
 
-> **Why this is sound rather than decorative.** The design depends on
-> `constraints` being covered by the canonical hash — otherwise an attacker could
-> swap a calibration digest without invalidating `receipt_hash`. Verified against
-> the current implementation: `constraints` is emitted inside `to_dict()`
-> (`receipt.py:186`), which is what `compute_hash` canonicalizes, so the whole
-> physical block is hash-bound and signature-covered. The gate additionally
-> supports exact-match pinning via `expected_constraints`
-> (`receipt.py:701` → "Constraints mismatch"), which is precisely the check the
-> Lease Authority performs in §7. **No core change is required for any of this.**
+> **Why the hash binding is sound, and where a core check is still required.**
+> The design depends on `constraints` being covered by the canonical hash —
+> otherwise an attacker could swap a calibration digest without invalidating
+> `receipt_hash`. Verified against the published kernel: `constraints` is
+> emitted inside `to_dict()`, which is what `compute_hash` canonicalizes, so the
+> physical block is hash-bound and signature-covered against later mutation of
+> the receipt.
+>
+> That is **not** a comparison against the loader's live compiled
+> `PhysicalSafetyContract`. `DecisionReceipt.verify()` has no
+> `expected_constraints` parameter and no "Constraints mismatch" branch; the
+> published `execute_with_receipt` gate likewise does not pin a caller-supplied
+> constraint dict. Hash-binding stops a tampered receipt; it does not stop a
+> valid receipt issued against a different physical contract. The Lease
+> Authority in §7 **must** compare `constraints["physical"]` (and the
+> contract digest inside it) to the live compiled contract before arming a
+> lease. That comparison is a profile requirement, not an existing kernel
+> primitive.
 
 | MAR concept | Existing `DecisionReceipt` field |
 |---|---|
@@ -264,12 +273,28 @@ only meaningful relative to a robot, a frame, a calibration, and a tool.
 
 ### Issuance flow
 
-1. Motion compiler emits canonical artifact + digests. Non-finite values,
+`Kernel.dispatch` is an execute-and-return API: after `ALLOW` or `TRANSFORM` it
+invokes the registered tool. Registering `robot.motion.execute` and calling
+`dispatch` would run the motion **before** the Lease Authority could validate a
+MAR. Issuance must not execute.
+
+1. Motion compiler emits canonical artifact + digests (`trajectory_root` /
+   `merkle_root`, contract digest, calibration epoch). Non-finite values,
    out-of-order timestamps, and NaN/Inf are rejected **here**, at encode time.
-2. `ToolCall` constructed; `Kernel.dispatch` evaluates the cell's policy bundle.
+   The compiler does **not** emit `execution_root` — that root includes
+   `receipt_id`, `lease_id`, and `boot_id`, which do not exist yet (§6.3).
+2. `ToolCall` constructed. `Kernel.evaluate_and_record` (or
+   `evaluate_and_append`) evaluates the cell's policy bundle and appends the
+   decision. Mint `DecisionReceipt.from_record`. Do **not** call `dispatch`.
 3. `DENY` / `ESCALATE` → no receipt. `ESCALATE` is **never** executable.
-4. `ALLOW` → receipt issued, signed (Ed25519 required in this profile — see §11).
-5. Receipt persisted to the audit chain before the lease is requested.
+   `TRANSFORM` is executable only at the later executor gate, and only with the
+   rewritten arguments.
+4. `ALLOW` → receipt issued, signed (`require_signature=True` with a real
+   verifier — see §11). Direct `DecisionReceipt.verify()` defaults
+   `require_signature=False` and is **not** an execution boundary.
+5. Receipt persisted to the audit chain before the lease is requested. Motion
+   runs only later, through `execute_with_receipt` / `GovernedExecutor` after
+   the lease is armed.
 
 ---
 
@@ -438,9 +463,14 @@ The lease is the constant-time, real-time-safe projection of a receipt.
 
 - **Derived, never primary.** A lease exists only as the product of a fully
   validated receipt. The Lease Authority performs every expensive check *once*.
-- **No replay.** Issuance consumes the receipt nonce through the existing
-  `ReceiptConsumptionStore.reserve()` (SQLite, atomic, durable-before-return).
-  A second lease for the same nonce fails closed.
+- **No replay.** Issuance consumes the MAR through the published
+  `ReceiptConsumptionLedger.consume(receipt)` (JSONL ledger, file locking,
+  burns the receipt anchor). That primitive is **not** an atomic MAR-nonce
+  reservation in SQLite, and it gives no cross-instance protection. T-02's
+  multi-controller semantics therefore still need a durable shared
+  nonce-reservation operation before this profile is safe on redundant
+  controllers; until that exists, a second lease for the same receipt must
+  fail closed on the single-node ledger plus `boot_id` mismatch.
 - **No reboot survival.** The control block lives in volatile shared memory
   (`tmpfs`/`/dev/shm`, `mlock`ed) and carries the kernel `boot_id`. On mismatch
   the RT kernel refuses it. A lease can never outlive the machine state it was
@@ -530,8 +560,17 @@ valid old trajectory + valid old root + different physical context
       = still cryptographically valid
 ```
 
-The root must bind the execution context, not just the bytes. The verified root
-is domain-separated and computed over the context tuple:
+The root must bind the execution context, not just the bytes. Split the two
+roots so construction order is possible:
+
+- **`trajectory_root` / `merkle_root`** — compiler output. Trajectory bytes
+  only. Available before any receipt or lease exists.
+- **`execution_root`** — computed at **lease issuance**, after `receipt_id`,
+  `lease_id`, and `boot_id` exist. Never a compiler output. The loader
+  recomputes it from the live tuple and compares; it does not trust a
+  pre-authorization root that could not have included those fields.
+
+The verified root is domain-separated and computed over the context tuple:
 
 ```
 execution_root = H( "acgs.physical.traj/v0"
@@ -634,7 +673,7 @@ every ROS node yields denial of service, not unauthorized torque.
 | ID | Attack | Detection | Fail-closed response | Evidence |
 |---|---|---|---|---|
 | T-01 | **Signed trajectory mutation** — bytes altered after authorization | Merkle block verify in non-RT loader; `blocks_verified` never advances past a bad block | RT check 5 fails → `category_1_stop` (commanded geometry is untrusted); lease `REVOKED` | refusal receipt w/ block index, expected vs. actual block hash |
-| T-02 | **Replay** of a previously valid MAR | `ReceiptConsumptionStore.reserve()` rejects the consumed nonce; `boot_id` mismatch after restart; `expires_at` | activation aborts; no lease issued | refusal receipt, nonce, first-consumption timestamp |
+| T-02 | **Replay** of a previously valid MAR | `ReceiptConsumptionLedger.consume(receipt)` rejects a burned receipt anchor; `boot_id` mismatch after restart; `expires_at`. Multi-controller cells still need a shared nonce-reservation op — the published ledger is single-node JSONL | activation aborts; no lease issued | refusal receipt, nonce, first-consumption timestamp |
 | T-03 | **Wrong robot / model / calibration** | `activate` compares receipt digests against **live device-queried** firmware, kinematic, calibration, tool values | activation aborts | refusal receipt listing each mismatched digest |
 | T-04 | **NaN / Inf / denormal actions** | rejected at canonical encode; re-checked per setpoint (check 6) | `category_1_stop` | refusal receipt w/ seq index and raw bit pattern |
 | T-05 | **Unsafe intermediate path** — endpoints legal, path not | per-tick `admissible()`; SDF + polytope evaluated on every setpoint, not just waypoints | `category_1_stop` at first inadmissible tick — **geometric violation, so the path must not be followed further** (§5) | refusal receipt w/ seq, violated constraint id, margin |
@@ -649,7 +688,7 @@ every ROS node yields denial of service, not unauthorized torque.
 
 **Residual risks, stated plainly:** host/root compromise of the Lease Authority
 machine; private-key custody and revocation (no PKI — the verifier map is static,
-inherited from the base kernel); the single-node `ReceiptConsumptionStore`
+inherited from the base kernel); the single-node `ReceiptConsumptionLedger`
 provides **no cross-instance replay protection**, so a multi-controller cell needs
 a shared consumption authority before this profile is safe there; modeling error
 in the contract (a wrong SDF authorizes a real collision); and any hardware fault
@@ -678,8 +717,8 @@ Each phase has an exit gate. No phase claims the next phase's properties.
 
 | Phase | Scope | Exit gate |
 |---|---|---|
-| **P0-1** Compiler | `PhysicalExecutionCompiler`: inputs `PhysicalSafetyContract`, `RobotCapability`, `CellPolicy`, `OperatorConstraint`, `CalibrationManifest`, `TrajectoryBundle` → emits `ExecutionArtifact` { `contract_digest`, `constraint_digest`, `trajectory_root`, `calibration_epoch`, `execution_root`, `compiler_version`, `provenance` } | Monotonicity lattice `operator ⊆ cell ⊆ capability` enforced — a relaxation yields `CompilationRejected` and **no artifact**; provenance present on every constraint and covered by `contract_digest`; byte-identical output for identical input |
-| **P0-2** Loader + MAR | MAR as a `constraints.physical` profile; canonical encoder w/ NaN rejection; policy bundle for one cell; loader: verify `execution_root` → verify receipt signature → verify `calibration_epoch` → create lease → enable executor | Receipts issue + verify against the unmodified kernel; round-trip replay stable; negative-path tests prove no receipt → no lease; **a test asserts the loader cannot widen a constraint, resolve a layer conflict, or default a missing field** (§6.4) |
+| **P0-1** Compiler | `PhysicalExecutionCompiler`: inputs `PhysicalSafetyContract`, `RobotCapability`, `CellPolicy`, `OperatorConstraint`, `CalibrationManifest`, `TrajectoryBundle` → emits `ExecutionArtifact` { `contract_digest`, `constraint_digest`, `trajectory_root`, `calibration_epoch`, `compiler_version`, `provenance` }. **Does not emit `execution_root`** | Monotonicity lattice `operator ⊆ cell ⊆ capability` enforced — a relaxation yields `CompilationRejected` and **no artifact**; provenance present on every constraint and covered by `contract_digest`; byte-identical output for identical input |
+| **P0-2** Loader + MAR | MAR as a `constraints.physical` profile; canonical encoder w/ NaN rejection; policy bundle for one cell; mint MAR via `evaluate_and_record` (no `dispatch`); verify receipt signature and live contract pin; verify `calibration_epoch`; allocate `lease_id` and read `boot_id`; **then** compute `execution_root` (§6.3); consume receipt; write lease; enable executor | Receipts issue + verify against the unmodified kernel; round-trip replay stable; negative-path tests prove no receipt → no lease; **a test asserts the loader cannot widen a constraint, resolve a layer conflict, or default a missing field** (§6.4) |
 | **P1** Lease + RT kernel in sim | Lease Authority, shm control block, RT kernel as a userspace `SCHED_FIFO` loop against a simulated arm (MuJoCo/Isaac) | All 13 threats (T-01…T-13) reproduced as **failing-before / passing-after** tests; each asserts the side effect did *not* occur |
 | **P2** Timing characterization | `PREEMPT_RT` kernel; `cyclictest` baseline; measure worst-case `admissible()` under full contract, incl. the SDF lookup | Measured WCET reported with p99.9 and max; **no green claim without literal output**; budget declared *before* measuring (below) |
 | **P3** ROS 2 adapter | Lifecycle node, activation checks, evidence topics; hostile-node test harness | Compromised-ROS-graph test yields DoS only, never motion |
@@ -739,11 +778,15 @@ does not re-derive geometry either.
 
 ### Open questions
 
-1. **Signing is mandatory here, unsigned is the base-kernel default.** This
-   profile requires `require_signature=True` with a real verifier. Key custody
-   and rotation for robot cells is unsolved and blocks P4.
-2. **Cross-controller replay.** The consumption store is single-node. A cell with
-   redundant controllers needs a shared, fail-closed consumption authority.
+1. **Signing is mandatory here.** Execution gates
+   (`execute_with_receipt`, `GovernedExecutor`) default
+   `require_signature=True`. Direct `DecisionReceipt.verify()` defaults
+   `False` and is not an execution boundary. This profile requires a real
+   verifier at the lease gate. Key custody and rotation for robot cells is
+   unsolved and blocks P4.
+2. **Cross-controller replay.** `ReceiptConsumptionLedger` is single-node JSONL.
+   A cell with redundant controllers needs a shared, fail-closed nonce-reservation
+   authority.
 3. **Contract authoring and review** — who signs a `PhysicalSafetyContract`, and
    what evidence backs the SDF/limit values? Currently undefined.
 4. **Force/impedance and admittance control** — the joint-position action space

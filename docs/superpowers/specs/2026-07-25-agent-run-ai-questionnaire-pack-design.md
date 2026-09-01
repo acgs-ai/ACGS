@@ -130,7 +130,7 @@ In scope:
 - Repository evidence mining with `file:line` citations.
 - Adversarial QA refutation pass (§5).
 - Gap register with remediation suggestions.
-- Artifact assembly (sealed via `proof_pack`; *signed* only once §8.7 passes — see §1.4)
+- Artifact assembly (sealed via `gove_zone.proofpack` plus a product-owned pack digest; *signed* only once §8.7 passes — see §1.4)
   and email delivery.
 - Stripe payment gating.
 - Receipt chain export.
@@ -170,6 +170,7 @@ Explicitly excluded from the MVP:
 
 | Field | Type | Notes |
 |---|---|---|
+| `question_id` | str (uuid) | Stable primary key. `control_id` is not unique across sources. |
 | `control_id` | str | Source-native identifier, e.g. `AIS-01`; `UNMAPPED-<n>` if absent |
 | `question_text` | str | Verbatim from source. Never paraphrased. |
 | `evidence_requirements` | list[str] | Derived evidence types sought, e.g. `code`, `config`, `policy_doc`, `test`, `process` |
@@ -190,22 +191,28 @@ Explicitly excluded from the MVP:
 | `source_metadata` | dict | Language, detected role (test/config/doc), mtime |
 | `job_id` | str | Owning job — required for lineage |
 | `produced_by_receipt_id` | str | The `DecisionReceipt` that authorized the mining call producing this citation |
+| `produced_by_result_hash` | str | `Receipt.result_hash` of the mining outcome that emitted this citation. Authorization IDs alone do not bind output. |
 | `verified_by_receipt_id` | str \| None | The `DecisionReceipt` for the QA pass that adjudicated it |
+| `verified_by_result_hash` | str \| None | `Receipt.result_hash` of the QA outcome. Null iff `verified_by_receipt_id` is null. |
 | `contradicts_locator` | Evidence \| None | A *different* artifact found to contradict the assertion this citation was offered for (§5.4.1). Non-null forces `CONTRADICTED`. |
 
 A citation without `commit_sha` and `artifact_hash` is not a citation. It cannot be
 reproduced by the customer, and reproducibility is the entire value (§6).
 
-The two receipt references close the lineage chain: every evidence artifact traces back to
-the authorized action that produced it and the authorized action that checked it. Without
-them, lineage stops at `Response` and individual citations are unattributable.
+The receipt IDs plus result hashes close the lineage chain: every evidence
+artifact traces back to the authorized action that produced it, the executed
+outcome of that action, and the authorized action that checked it. A worker
+cannot attach an unrelated valid mining receipt ID to evidence from another
+call, because `produced_by_result_hash` must match the outcome bytes of the
+cited mining step. Without the outcome binding, lineage stops at authorization
+and individual citations are unattributable.
 
 ### 2.4 Response
 
 | Field | Type | Notes |
 |---|---|---|
 | `response_id` | str (uuid) | |
-| `question_id` | str | |
+| `question_id` | str | FK to `Question.question_id` |
 | `state` | enum | See below |
 | `answer_text` | str | Draft, for customer review and editing |
 | `evidence` | list[Evidence] | Empty iff state is `NOT_EVIDENCED` or `ESCALATED` |
@@ -214,7 +221,9 @@ them, lineage stops at `Response` and individual citations are unattributable.
 | `verification_state` | enum | **Deterministic function** of citation count and QA verdict — see below. Never model-authored. |
 | `job_id` | str | Owning job — required for lineage |
 | `produced_by_receipt_id` | str | The `DecisionReceipt` authorizing the mining call that produced this response |
+| `produced_by_result_hash` | str | `Receipt.result_hash` of that mining outcome |
 | `verified_by_receipt_id` | str \| None | The `DecisionReceipt` for the QA pass that adjudicated it. Null means **unadjudicated**, which may never be delivered as `SUPPORTED`. |
+| `verified_by_result_hash` | str \| None | `Receipt.result_hash` of the QA outcome. Null iff `verified_by_receipt_id` is null. |
 
 **`verification_state` replaces the former `confidence` field, which is deleted.** A
 `HIGH | MEDIUM | LOW` label with no derivation rule re-imports model self-assessment as if
@@ -226,8 +235,18 @@ computed in code, never authored by a model:
 CONTRADICTED_BY_OTHER_ARTIFACT  any citation has contradicts_locator != None
 VERIFIED_MULTI                  >=2 citations passed check 0 and QA PASS
 VERIFIED_SINGLE                 exactly 1 citation passed check 0 and QA PASS
+QA_REFUTED                      >=1 citation passed check 0 and QA is REFUTED
+                                (no citation survived QA)
+QA_INSUFFICIENT                 >=1 citation passed check 0 and QA is INSUFFICIENT
+                                (no citation survived QA)
 UNVERIFIED                      no citation passed check 0
 ```
+
+A citation can pass deterministic check 0 and still receive a `REFUTED` or
+`INSUFFICIENT` QA verdict. That case is neither `VERIFIED_*` nor `UNVERIFIED`.
+`QA_REFUTED` / `QA_INSUFFICIENT` are the explicit no-surviving-citation states
+for those outcomes; they MUST be tested before the value is used in delivered
+packs.
 
 Nothing labelled "confidence" appears in the delivered pack. The customer is told what was
 *checked*, not how sure a model felt.
@@ -258,7 +277,7 @@ without a fresh evidence-mining pass and a fresh QA pass, each with its own rece
 | Field | Type | Notes |
 |---|---|---|
 | `gap_id` | str (uuid) | |
-| `question_id` | str | |
+| `question_id` | str | FK to `Question.question_id` |
 | `control_id` | str | |
 | `missing_evidence` | str | What was sought and not found. Specific, not generic. |
 | `search_performed` | list[str] | Queries/paths actually searched — proves the absence is a finding, not a skip |
@@ -287,7 +306,11 @@ and duplicating it would fork the trust model. Implementation MUST use these typ
 | actor | `actor` |
 | timestamp | `timestamp` |
 | input hash | `argument_hash` |
-| decision result | `decision` (`ALLOW` / `DENY` / `ESCALATE`) |
+| decision result | `decision` (`ALLOW` / `DENY` / `TRANSFORM` / `ESCALATE`) |
+
+`TRANSFORM` is a first-class kernel verdict. Execution MUST use the rewritten
+arguments on the receipt, never the original request. Treating `TRANSFORM` as
+`DENY` or as `ALLOW` of the original args is a spec defect.
 
 Plus, already present and load-bearing: `receipt_id`, `request_id`, `tenant_id`,
 `declared_goal`, `execution_boundary`, `policy_bundle_id`, `policy_version`, `policy_hash`,
@@ -307,11 +330,16 @@ The split is the fail-closed shape and must be preserved: **authorization is min
 execution; the outcome is recorded after.** A single merged record would permit
 after-the-fact authorization.
 
-> **Signing is off by default.** `gove_zone/signing.py:14`: *"Default deployments are
-> unsigned; operators must engage signing explicitly."* The default is
-> `signature = "unsigned_local"`. Production MUST set `require_signature=True` and install
-> the `crypto` extra (`gove-zone[crypto]`). Until that is configured and verified, no
-> customer-facing or XPRIZE-facing material may describe the pack as *signed*. See §12 R1.
+> **Signing is on by default at execution gates.** `gove_zone/signing.py`:
+> production profile / unset `GOVE_ZONE_PROFILE` makes
+> `execute_with_receipt`, `GovernedExecutor`, and `ReceiptVerifier` default
+> `require_signature=True`, and a production gate with no verifier fails
+> closed. The unsigned path is the explicit dev-mode opt-out
+> (`GovernanceProfile.dev` / `require_signature=False`). Direct
+> `DecisionReceipt.verify()` still defaults `require_signature=False` and is
+> **not** an execution boundary. Until signing is configured and verified, no
+> customer-facing or XPRIZE-facing material may describe the pack as *signed*.
+> See §12 R1.
 
 ### 2.6.1 Validator identity — required, or no receipt can be minted
 
@@ -369,7 +397,7 @@ Customer upload (questionnaire file + repo access)
 Intake agent            parse, hash, classify source_type
     |
     v
-Normalization           -> Question[] with control_id, verbatim text
+Normalization           -> Question[] with question_id, control_id, verbatim text
     |
     v
 Scope / quote decision  size repo, classify AI Act tier (acgs-lite),
@@ -400,8 +428,8 @@ Every business action — not merely the analysis steps — passes:
 Agent proposal
     ->  gove-zone policy evaluation        (fail-closed)
     ->  Audit chain append                 <-- anchors the decision BEFORE execution
-    ->  Decision Receipt (ALLOW / DENY / ESCALATE)
-    ->  Executor                           (only on ALLOW)
+    ->  Decision Receipt (ALLOW / DENY / TRANSFORM / ESCALATE)
+    ->  Executor                           (only on ALLOW or TRANSFORM)
     ->  Outcome record append              (result_hash / error_class)
 ```
 
@@ -410,31 +438,22 @@ the audit chain before execution — which is why `DecisionReceipt` already carr
 `previous_audit_hash` and `audit_event_hash` at authorization time — and the outcome is
 appended after.
 
-**The invariant holds only on the side-effect seam, and this product runs entirely on it.**
-This correction matters: the legacy pure-tool path does **not** provide the guarantee.
-`kernel.py:251-285` (`_dispatch_legacy_pure`) appends the decision, executes, then
-constructs a `Receipt` **in memory** with `result_hash` and returns it — no outcome append
-occurs. Its only post-execution append is `_record_execution_failure` (`kernel.py:595-606`),
-documented "Best-effort… re-raises the original exception regardless of whether this append
-succeeds." Citing that seam for the two-append property would be false.
+**The invariant holds only if issuance and execution are split.** `Kernel.dispatch`
+evaluates, then **invokes the registered tool** and returns an in-memory
+`Receipt` with `result_hash` — no post-execution audit append. Using `dispatch`
+for a Gemini/payment/delivery tool runs the side effect as part of issuance.
 
-The property is provided by `side_effect_kernel.py`, which appends via `append_committed`
-at `side_effect_kernel.py:1039`, `:1600`, and `:2034`.
-
-**Required executor configuration (§3.5).** Every commit-tier step in §3.3 — payment,
-Gemini call, assembly, delivery — is a side effect. `kernel.py:189-201` DENIES with
-`SIDE_EFFECT_RECEIPT_REQUIRED` and reason "side-effect execution requires a configured
-receipt-gated dispatcher" when no dispatcher is configured. The product MUST therefore run:
+The published kernel therefore requires this configuration (not the unshipped
+`side_effect_kernel` / `managed_execution` modules):
 
 | Component | Symbol |
 |---|---|
-| Authorization kernel | `gove_zone.side_effect_kernel.SideEffectAuthorizationKernel` (`:497`) |
-| Receipt-gated executor | `gove_zone.side_effect_kernel.ReceiptGatedSideEffectExecutor` (`:1058`) |
-| Managed dispatch route | `gove_zone.managed_execution.ManagedExecutionDispatcher` (`:226`) |
+| Authorization (no execute) | `Kernel.evaluate_and_record` / `evaluate_and_append`, then `DecisionReceipt.from_record` |
+| Receipt-gated executor | `gove_zone.executor.execute_with_receipt` / `GovernedExecutor` (`require_signature=True`) |
+| Outcome binding | persist `Receipt.result_hash` after the gate; do not treat `dispatch`'s in-memory receipt as the audit outcome |
 
-This configuration is the trace target for §8.4's dispatcher-level integration proof. An
-unconfigured dispatcher is not a degraded mode — it is a hard DENY, which is the correct
-fail-closed behavior.
+This configuration is the trace target for §8.4. Skipping the executor and
+calling `dispatch` is not a degraded mode — it is an ungoverned side effect.
 
 **`Kernel.simulate()` output is not authorization.** `kernel.py:303-309` (the docstring of
 `Kernel.simulate()`, `kernel.py:287` — **not** `evaluate()`, which is a different symbol on
@@ -455,7 +474,7 @@ execution precedes receipt validation.
 | 3 | Payment | Verify Stripe webhook | Missing/invalid → executor refuses |
 | 4 | Evidence mining | Per-question repo search + reasoning | `ALLOW`; Gemini failure → retry → `ESCALATE` |
 | 5 | Adversarial QA | Refute each citation | `ALLOW`; verdict drives response state |
-| 6 | Assembly | Build + seal pack via `proof_pack` | `ALLOW`; refuses to emit a pack described as signed while `signature == "unsigned_local"` |
+| 6 | Assembly | Build + seal pack via `gove_zone.proofpack` + product-owned directory digest | `ALLOW`; refuses to emit a pack described as signed while `signature == "unsigned_local"` |
 | 7 | Delivery | Email pack + receipts | `ALLOW`; **the pack root digest MUST be recorded in the delivery receipt and published alongside the download** (§3.3.3) |
 | 8 | Follow-up | Day-7 check-in | `ALLOW` |
 
@@ -483,18 +502,16 @@ A single job fans out across up to ~320 questions in step 4, then again in step 
 a bound, one malformed job can consume an unbounded amount of API spend, and a job's cost
 can exceed its quote.
 
-**The existing gove-zone spend modules are local fixtures and MUST NOT be relied on as the
-production ceiling.** `spend_store.py:1-5` describes itself verbatim as "Fail-closed durable
-**local-fixture** state for Spend Guard B1 and B2… It deliberately has no payment provider
-call, payment execution adapter, or **production deployment claim**," implemented over
-`sqlite3` plus `flock` and directory file descriptors. `spend_adapter.py:1` is a "Strict
-**local-fixture** Spend Guard route." On multi-instance Cloud Run with an ephemeral
-filesystem there is no shared `flock` domain: two instances would each reserve against their
-own SQLite file, and the ceiling would not bind.
+**The published kernel has no spend_guard / spend_store / spend_adapter
+modules.** Those names are not in `packages/gove-zone/src/gove_zone` on the
+merge target. Do not implement the ceiling as an adapter over nonexistent
+local-fixture types. The authoritative reservation ledger is a transaction on
+the job document in Firestore, or serialization through a single-consumer
+queue.
 
 | Layer | Use |
 |---|---|
-| `spend_guard` / `spend_store` / `spend_adapter` | **Schema and decision types only** — development helper, local fixture |
+| gove-zone | No spend ledger. Do not invent a local SQLite ceiling and call it the kernel. |
 | Production reservation ledger | **Authoritative** — a transaction on the job document in Firestore, or serialization through a single-consumer queue |
 
 The production ledger MUST provide:
@@ -560,9 +577,13 @@ quote band derived from it — not the reverse. Do not invent market pricing to 
 
 ### 3.3.3 Binding the sealed pack to the delivered artifact
 
-`proof_pack.PinnedOutputRoot` (`proof_pack.py:189`) seals a **local directory** against path
-substitution during write. It says nothing about the object that reaches the customer. §3.5
-stores artifacts in GCS and §1.5 delivers by email — two transports the seal does not cover.
+`gove_zone.proofpack.generate_proof_pack` / `verify_pack` package a governed
+**action's** receipt, audit chain, and replay report. They do **not** expose
+`PinnedOutputRoot` or `AttestedDirectory`, and there is no `gove_zone.proof_pack`
+module. Directory sealing for the customer questionnaire pack is therefore a
+**product-owned** primitive: hash the assembled tree at seal time and bind that
+digest into the delivery receipt. Do not instruct implementers to call APIs that
+are not on the published kernel.
 
 Without a binding, the customer verifies a pack whose *transport* is unverified: the sealed
 directory and the received attachment are not provably the same bytes.
@@ -598,15 +619,15 @@ predictable failure mode of this business, and it is closed structurally, not by
 | Artifacts | GCS | |
 | Payments | Stripe Checkout + webhook | |
 | Reasoning | **Gemini API** | §4 |
-| Authorization kernel | `side_effect_kernel.SideEffectAuthorizationKernel` (`:497`) | §3.2 — required; the legacy pure path does not provide the two-append property |
-| Receipt-gated executor | `side_effect_kernel.ReceiptGatedSideEffectExecutor` (`:1058`) | §8.4 trace target |
-| Managed dispatch | `managed_execution.ManagedExecutionDispatcher` (`:226`) | Unconfigured → hard DENY `SIDE_EFFECT_RECEIPT_REQUIRED` |
+| Authorization | `Kernel.evaluate_and_record` + `DecisionReceipt.from_record` | §3.2 — do not use `Kernel.dispatch` for issuance |
+| Receipt-gated executor | `executor.execute_with_receipt` / `GovernedExecutor` | §8.4 trace target; `require_signature=True` |
+| Managed dispatch | not in the published kernel | Unshipped `managed_execution` MUST NOT be a required import |
 | Tool-tier registry | Explore-capable set = {intake, scope} only | §3.3 — omitting it fails closed for explore receipts |
-| Reservation + consumption ledger | Firestore transaction on the job document | §3.3.1, §7 — authoritative; gove-zone spend/consumption modules are local fixtures |
+| Reservation + consumption ledger | Firestore transaction on the job document | §3.3.1, §7 — authoritative; published kernel has no spend modules |
 | Signing key | Cloud KMS, sign-only grant (§6.3) | Key holder MUST NOT have write access to the audit store |
 | Governance | `gove-zone` receipts, audit, signing types | |
-| Pack sealing | `gove_zone.proof_pack` | Use `PinnedOutputRoot` / `AttestedDirectory` for artifact assembly. Do **not** hand-roll directory hashing — the module already pins the output root against path substitution during write. |
-| Spend control | `gove_zone.spend_guard` / `spend_store` / `spend_adapter` | §3.3.1 |
+| Pack sealing | `gove_zone.proofpack.generate_proof_pack` for action evidence; product-owned tree digest for the questionnaire pack | No `PinnedOutputRoot` / `AttestedDirectory` on the published kernel |
+| Spend control | Firestore job-document transaction | §3.3.1 — not `spend_guard` / `spend_store` / `spend_adapter` |
 | Classification | `acgs-lite` EU AI Act risk-tier classifier | Existing, tested |
 
 ---
@@ -886,7 +907,7 @@ All defaults fail closed.
 | Gemini call fails | Retry to budget, then `ESCALATE` | §4.3 — never silently degrade |
 | Gemini returns malformed output | Retry once, then `ESCALATE` | |
 | Payment missing or unverified | Executor **refuses** to run step 4 onward | Payment receipt gates job release |
-| Stripe webhook replay | Single-use receipt store rejects the duplicate | `gove_zone.consumption.ReceiptConsumptionStore` (`consumption.py:154`). **It is SQLite-backed and gives no cross-instance protection** — on multi-instance Cloud Run the authoritative consumption record MUST be the same shared transactional store as the spend ledger (§3.3.1), or a duplicate webhook hitting a second instance releases the job twice. |
+| Stripe webhook replay | Single-use receipt store rejects the duplicate | `gove_zone.consumption.ReceiptConsumptionLedger.consume(receipt)` (`consumption.py`). JSONL + file lock; **no cross-instance protection** — on multi-instance Cloud Run the authoritative consumption record MUST be the same shared transactional store as the spend ledger (§3.3.1), or a duplicate webhook hitting a second instance releases the job twice. |
 | Receipt expired (`expires_at`) | Refuse; re-mint | Existing kernel behavior |
 | Refund / discount request | `ESCALATE` — human only | §3.4 |
 | Art. 5 prohibited-practice classification | `ESCALATE` — human only | Beyond automated competence |
@@ -983,10 +1004,11 @@ exactly once. A single-process test cannot detect the SQLite-locality defect.
 
 ### 8.4 Dispatcher-level integration proof
 
-At least one test MUST drive a request through the real HTTP/dispatch entry point
-(`app.fetch` / `TestClient` / kernel dispatch) rather than calling handlers directly.
-Trace: entry point → router → gate → handler. A test that imports the handler and calls
-it bypasses the exact wiring that matters.
+At least one test MUST drive a request through the real HTTP/executor entry point
+(`TestClient` / `execute_with_receipt` / `GovernedExecutor`) rather than calling
+handlers directly. Trace: entry point → gate → handler. A test that imports the
+handler and calls it, or that uses `Kernel.dispatch` for a side-effecting tool,
+bypasses the exact wiring that matters.
 
 ### 8.5 Prohibited-claim lint gate
 
@@ -1219,7 +1241,8 @@ explicitly in the narrative (§9.4).
 **R10 — Unbounded Gemini spend per job.** Step 4 fans out over up to ~320 questions and
 step 5 fans out again over the survivors. Cost per job is variable, incurred before
 delivery, and can exceed the quote. **Mitigation:** §3.3.1 — reserve a ceiling at quote
-time via the existing `spend_guard` / `spend_store` / `spend_adapter` modules, reconcile
+time via the Firestore job-document reservation in §3.3.1 (not unshipped
+`spend_guard` / `spend_store` / `spend_adapter` modules), reconcile
 per call, `ESCALATE` on exhaustion. Verify the reservation is wired into the *batch loop*,
 not just present as a module; that exact gap has burned this workspace before.
 
@@ -1258,12 +1281,13 @@ self-consistent rather than independently authenticated. **Mitigation:** §6.3; 
 narrative must not present self-attestation as external verification.
 
 **R17 — Prior revision mis-cited the enforcement seam.** Revision 1 asserted the two-append
-property from `kernel.py:472`, the legacy pure-tool path, where it does **not** hold — that
-path returns an in-memory `Receipt` and never appends an outcome. The property holds only on
-`side_effect_kernel.py`. A verbatim quotation was mistaken for architectural accuracy.
-**Mitigation:** §3.2/§3.5 now name the executor configuration; §8.4 has a concrete trace
-target. Generalized lesson: quoting a real line proves the line exists, not that it governs
-the path the product runs on.
+property from a kernel line that belongs to `Kernel.dispatch`, which executes the tool
+and returns an in-memory `Receipt`. Revision 2 then named unshipped
+`side_effect_kernel.py` symbols as the required stack. The published kernel's
+issuance/execution split is `evaluate_and_record` + `execute_with_receipt`.
+**Mitigation:** §3.2/§3.5 now name those shipped APIs; §8.4 traces the executor
+gate. Generalized lesson: quoting a real line proves the line exists, not that
+it governs the path the product runs on, and naming a module does not ship it.
 
 **R18 — Scope creep into the portal/dashboard.** The excluded list in §11 exists because
 23 days is the real constraint. **Mitigation:** treat §11 exclusions as frozen for the
