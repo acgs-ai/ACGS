@@ -19,6 +19,9 @@ different work streams and are not governed by this file.
 from __future__ import annotations
 
 import ast
+import base64
+import hashlib
+import json
 import re
 from pathlib import Path
 
@@ -640,7 +643,7 @@ def test_physical_live_bindings_and_negative_requirements_are_frozen() -> None:
     text = _rfc()
     normalized = re.sub(r"\s+", " ", text)
     for token in (
-        "complete `constraints.physical`",
+        "two disjoint",
         "live compiled contract",
         "source_hash",
         "immutable source repository revision",
@@ -649,6 +652,47 @@ def test_physical_live_bindings_and_negative_requirements_are_frozen() -> None:
         "unavailable shared nonce authority",
     ):
         assert token in normalized
+
+
+def test_physical_contract_projection_is_canonical_and_checked_before_arming() -> None:
+    text = _rfc()
+    section = text.partition(
+        "### Canonical physical-contract projection and activation comparison"
+    )[2].partition("### Why each binding exists")[0]
+    normalized = re.sub(r"\s+", " ", section)
+    for token in (
+        "PhysicalContractProjection/v0",
+        "LiveDeviceProjection/v0",
+        "physical_contract_projection_hash",
+        "live_device_projection_hash",
+        "acgs.physical.contract-projection/v0\\0",
+        "acgs.physical.live-device-projection/v0\\0",
+        "RFC 8785 canonical JSON",
+        '"sha256:" + lowerhex',
+        "exactly 64 lowercase hexadecimal characters",
+        "Authoritative source",
+        "MAR PhysicalContractProjection equals compiled-artifact projection",
+        "MAR LiveDeviceProjection equals live projection",
+        "field-for-field canonical equality",
+        "loaded compiled contract is valid only when recomputing each projection",
+        "three-way equality among the recomputed MAR live hash",
+        "one indivisible activation predicate",
+        (
+            "validly signed MAR that mixes contract A's contract_digest with "
+            "contract B's live_device_projection_hash is rejected"
+        ),
+        "robot/tool/action-space field substituted into the static projection",
+        "compiler/contract field substituted into the live projection",
+        "static/live substitution",
+        "no coercion, tolerance, fallback, or default",
+        "fails before arming",
+        "Per-motion fields are deliberately outside the contract projection",
+        "compiler.input_plan_digest",
+        "canonical MotionRequest/argument_hash",
+        "only within the bound initial_state.tolerance_rad",
+        "may not be moved between these sets",
+    ):
+        assert token in normalized.replace("`", "")
 
 
 def test_questionnaire_refuted_and_insufficient_states_never_support_delivery() -> None:
@@ -662,6 +706,39 @@ def test_questionnaire_refuted_and_insufficient_states_never_support_delivery() 
     section = section.partition("### ")[0]
     assert "fail the assembly support predicate" in section
     assert "cannot reach delivery" in section
+
+
+def test_questionnaire_verification_reducer_is_total_and_first_match() -> None:
+    text = _read(QUESTIONNAIRE_SPEC)
+    response = text.partition("### 2.4 Response")[2].partition("### 2.5 Gap")[0]
+    regression = text.partition(
+        "### 8.3.2b Refuted and insufficient QA never support delivery"
+    )[2].partition("### 8.3.3")[0]
+    response_normalized = re.sub(r"\s+", " ", response).replace("`", "")
+    regression_normalized = re.sub(r"\s+", " ", regression).replace("`", "")
+    for token in (
+        "first-match precedence",
+        "mutually exclusive and deterministic",
+        "CONTRADICTED_BY_OTHER_ARTIFACT",
+        "otherwise, any check-0-valid citation is REFUTED",
+        "otherwise, any check-0-valid citation is INSUFFICIENT",
+        "otherwise, any check-0-valid citation lacks a valid PASS QA record",
+        "REFUTED + INSUFFICIENT + CANDIDATE_EVIDENCE reduces to QA_REFUTED",
+        "INSUFFICIENT + CANDIDATE_EVIDENCE reduces to QA_INSUFFICIENT",
+        "CONFIRMED + CANDIDATE_EVIDENCE remains CANDIDATE_EVIDENCE",
+        "Contradiction dominates every mix",
+        "CONTRADICTED > REFUTED > INSUFFICIENT > CANDIDATE_EVIDENCE",
+    ):
+        assert token in response_normalized
+    for token in (
+        "REFUTED + INSUFFICIENT + CANDIDATE_EVIDENCE -> QA_REFUTED",
+        "INSUFFICIENT + CANDIDATE_EVIDENCE -> QA_INSUFFICIENT",
+        "CONFIRMED + CANDIDATE_EVIDENCE -> CANDIDATE_EVIDENCE",
+        "CONTRADICTED_BY_OTHER_ARTIFACT",
+        "No mixed input may depend on record iteration order",
+        "contrary to the first-match precedence",
+    ):
+        assert token in regression_normalized
 
 
 def test_questionnaire_citation_qa_is_per_citation_and_reduced() -> None:
@@ -773,10 +850,19 @@ def test_questionnaire_mining_envelope_binds_producer_lineage_without_cycle() ->
     schema = schema.partition("### 2.4 Response")[0]
     schema = re.sub(r"\s+", " ", schema)
     for token in (
-        "MiningOutcomePreimage",
-        "mining agent returns only",
+        "RawMiningResult",
+        "MUST NOT construct an `AssertionManifest`",
+        "Construct `MiningOutcomePreimage`",
+        "Only then hash the preimage",
         "outcome_event_id, produced_by_receipt_id",
         "evidence_records[] sorted by evidence_id",
+        "classifier_registry_proofs[] sorted by",
+        "complete ClassifierRegistryProofArchive/v1",
+        "RegistryKeyAuthorityProof/v1",
+        "produced_by_receipt_id.policy_hash",
+        "no unreferenced archive",
+        "assertion_manifest_hash",
+        "complete ordered AssertionManifest",
         "MUST NOT contain `produced_by_outcome_hash`",
         "OutcomeEvent.result_hash",
         "OutcomeEvent.outcome_hash",
@@ -795,7 +881,11 @@ def test_questionnaire_mining_envelope_binds_producer_lineage_without_cycle() ->
     regression = regression.partition("### 8.4")[0]
     regression = re.sub(r"\s+", " ", regression)
     for token in (
-        "agent returns that preimage only",
+        "agent returns that raw result only",
+        "cannot construct the manifest, canonical preimage, or outcome",
+        "wrapper canonicalizes the answer",
+        "constructs `MiningOutcomePreimage`",
+        "only then computes the result hash",
         "reserves a unique append slot",
         "atomically finalizes the pending record",
         "verifies the bound `ATTESTED` `AppendAcceptance`",
@@ -808,6 +898,491 @@ def test_questionnaire_mining_envelope_binds_producer_lineage_without_cycle() ->
         "not self-referential",
     ):
         assert token in regression
+
+
+def test_questionnaire_assertion_manifest_is_complete_and_lineage_bound() -> None:
+    text = _read(QUESTIONNAIRE_SPEC)
+    schema = text.partition("### 2.3.3 MiningOutcomeEnvelope")[2]
+    schema = schema.partition("### 2.4 Response")[0]
+    response = text.partition("### 2.4 Response")[2].partition("### 2.5 Gap")[0]
+    regression = text.partition("### 8.3.11a Assertion manifest completeness")[2]
+    regression = regression.partition("### 8.3.12")[0]
+    normalized = re.sub(r"\s+", " ", schema + response + regression)
+    for token in (
+        "AssertionManifestMemberPreimage",
+        "It excludes assertion_hash",
+        "acgs.questionnaire.assertion-member/v1\\0",
+        '"sha256:" + lowerhex',
+        "exactly 64 lowercase hexadecimal characters",
+        "ownership, immutable response/answer version",
+        "segmentation-rule version",
+        "text-only hash is invalid",
+        "complete member preimage plus its derived assertion_hash",
+        "assertion_hash inconsistent with its acyclic member preimage",
+        "segmentation_rule_id",
+        "segmentation_rule_version",
+        "contiguous assertion_index order",
+        "answer_utf8_start",
+        "answer_utf8_end",
+        "acgs.questionnaire.assertion-manifest/v1\\0",
+        "RFC 8785 canonical JSON",
+        "assertion_manifest_hash",
+        "response_lineage_hash binds",
+        "every evidence assertion id/hash must name an exact manifest member",
+        "every manifest assertion to have at least one bound Evidence",
+        "complete valid CitationQARecord",
+        "valid bound SemanticAdjudicationRecord",
+        "rejects any assertion missing any one of those records",
+        "Reorder assertions, duplicate or skip an index/id",
+        "prevent the response from reaching SUPPORTED",
+        "known-vector AssertionManifestMemberPreimage",
+        "include assertion_hash in that preimage",
+        "substitute a text-only hash",
+        "mutate the domain literal",
+    ):
+        assert token.lower() in normalized.replace("`", "").lower()
+
+
+def test_questionnaire_raw_mining_flow_precedes_canonical_outcome() -> None:
+    text = _read(QUESTIONNAIRE_SPEC)
+    schema = text.partition("### 2.3.3 MiningOutcomeEnvelope")[2]
+    schema = schema.partition("### 2.4 Response")[0]
+    normalized = re.sub(r"\s+", " ", schema).replace("`", "")
+    ordered = (
+        "RawMiningResult",
+        "Validate answer_text",
+        "Construct and durably store the canonical ordered AssertionManifest",
+        "Validate every raw candidate against the canonical answer and manifest",
+        "derive and attach the matched member's assertion_id and assertion_hash",
+        "Construct MiningOutcomePreimage",
+        "Only then hash the preimage",
+    )
+    positions = [normalized.index(token) for token in ordered]
+    assert positions == sorted(positions)
+    assert "Before mining, the product freezes" not in schema
+    assert "mining agent returns only a MiningOutcomePreimage" not in normalized
+
+
+def test_questionnaire_raw_candidates_cannot_choose_assertion_identity() -> None:
+    text = _read(QUESTIONNAIRE_SPEC)
+    schema = text.partition("### 2.3.3 MiningOutcomeEnvelope")[2]
+    schema = schema.partition("### 2.4 Response")[0]
+    regression = text.partition("### 8.3.12 Mining envelope and producer lineage")[2]
+    regression = regression.partition("### 8.4")[0]
+    normalized = re.sub(r"\s+", " ", schema + regression)
+    normalized = normalized.replace("`", "")
+
+    for token in (
+        "RawMiningResult has exactly answer_text and evidence_candidates",
+        "RawEvidenceCandidate",
+        "candidate_id",
+        "assertion_answer_utf8_start",
+        "assertion_answer_utf8_end",
+        "immutable source-evidence fields",
+        "MUST NOT contain assertion_id, assertion_hash, source_metadata, or any unknown field",
+        "trusted-wrapper outputs, never model-selected inputs",
+        "0 <= start < end <= len(answer_utf8)",
+        "UTF-8 code point boundaries",
+        "equal exactly one manifest member",
+        "Overlap, containment, fuzzy matching, and text search are not binding rules",
+        "rejects zero or multiple exact matches",
+        "duplicate candidate_id",
+        "stale, out-of-range, or non-boundary offsets",
+        "model-supplied assertion_id or assertion_hash",
+        "wrapper—not the model— derives and attaches",
+        "produces no accepted outcome",
+        "source_metadata is never accepted from RawMiningResult",
+        "SourceMetadata/v1",
+        "SOURCE | TEST | CONFIG | DOC | PROCESS | OTHER",
+        "Filesystem mtime is neither accepted nor derived",
+        "classifier_artifact_hash",
+        "classifier_registry_entry_hash",
+        "classifier_registry_checkpoint_hash",
+        "ClassifierRegistryEntryPreimage/v1",
+        "ClassifierRegistryCheckpointPreimage/v1",
+        "linearizable authenticated-head authority",
+        "durable high-water tuple keyed by registry_id/classifier_id/classifier_version",
+        "replaying sequence 7 ACTIVE after observing sequence 8 REVOKED is denied",
+        "SourceEvidencePreimage/v1",
+        "acgs.questionnaire.artifact/v1\\0",
+        "acgs.questionnaire.excerpt/v1\\0",
+        "acgs.questionnaire.source-classifier-artifact/v1\\0",
+        "acgs.questionnaire.classifier-registry-entry/v1\\0",
+        "acgs.questionnaire.classifier-registry-checkpoint/v1\\0",
+        "acgs.questionnaire.source-evidence/v1\\0",
+        "model-selected metadata",
+        "classifier substitution",
+    ):
+        assert token in normalized
+
+    raw_schema = schema.partition("The raw schemas are closed:")[2]
+    raw_schema = raw_schema.partition("The trusted product wrapper")[0]
+    for source_field in (
+        "file_path",
+        "line_start",
+        "line_end",
+        "excerpt",
+        "artifact_hash",
+        "commit_sha",
+    ):
+        assert source_field in raw_schema
+    raw_candidate = raw_schema.partition("RawEvidenceCandidate = {")[2].partition("}")[0]
+    assert "source_metadata" not in raw_candidate
+
+
+def test_questionnaire_answer_bytes_and_hash_are_canonical_and_frozen() -> None:
+    text = _read(QUESTIONNAIRE_SPEC)
+    schema = text.partition("### 2.3.3 MiningOutcomeEnvelope")[2]
+    schema = schema.partition("### 2.4 Response")[0]
+    regression = text.partition("### 8.3.12 Mining envelope and producer lineage")[2]
+    regression = regression.partition("### 8.4")[0]
+    normalized = re.sub(r"\s+", " ", schema + regression).replace("`", "")
+    for token in (
+        "canonical answer is an identity encoding, not a text normalization",
+        "decode one RFC 8259 JSON string",
+        "invalid UTF-8",
+        "unpaired Unicode surrogates",
+        "canonical_answer_bytes = UTF8(answer_text)",
+        "no Unicode normalization, CRLF/LF conversion, whitespace trimming",
+        "acgs.questionnaire.answer/v1\\0",
+        "410d0ac3a9f09f9982",
+        "sha256:f07c9b089a9c3b49dc69d4268dc1d091590d7d98f62f5519874241e69c20d0ec",
+        "c3a9",
+        "sha256:4feb9b937ca108cd20a4e967393299b910514315042ca0edb83627ca08ca794c",
+        "65cc81",
+        "sha256:5dde93076bcf9a7ac0b22fbb390bf88f96fbcc79a3c848f11b7345c55cebb766",
+        "U+0065 U+0301",
+        '"e\\u0301"',
+        "Composed and decomposed Unicode remain distinct",
+        "Freeze the three answer-byte/hash vectors",
+        "Preserve CRLF",
+        "vector mismatch must fail before manifest construction",
+    ):
+        assert token in normalized
+
+
+def test_questionnaire_source_evidence_hash_components_are_frozen() -> None:
+    text = _read(QUESTIONNAIRE_SPEC)
+    schema = text.partition("### 2.3.3 MiningOutcomeEnvelope")[2]
+    schema = schema.partition("### 2.4 Response")[0]
+    regression = text.partition("### 8.3.12 Mining envelope and producer lineage")[2]
+    regression = regression.partition("### 8.4")[0]
+    normalized = re.sub(r"\s+", " ", schema + regression).replace("`", "")
+
+    def domain_hash(domain: str, payload: bytes) -> str:
+        digest = hashlib.sha256(domain.encode() + b"\0" + payload).hexdigest()
+        return "sha256:" + digest
+
+    def vector_jcs(value: object) -> bytes:
+        # This vector uses only JCS-stable strings and integers.
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+
+    artifact_hash = domain_hash("acgs.questionnaire.artifact/v1", b"alpha\n")
+    excerpt_hash = domain_hash("acgs.questionnaire.excerpt/v1", b"alpha")
+    classifier_artifact_hash = domain_hash(
+        "acgs.questionnaire.source-classifier-artifact/v1",
+        b"classifier-v1\n",
+    )
+    registry_preimage = {
+        "schema_version": "ClassifierRegistryEntry/v1",
+        "classifier_id": "source-role",
+        "classifier_version": "1.0.0",
+        "classifier_artifact_hash": classifier_artifact_hash,
+        "registry_sequence": 7,
+        "status": "ACTIVE",
+    }
+    classifier_registry_entry_hash = domain_hash(
+        "acgs.questionnaire.classifier-registry-entry/v1",
+        vector_jcs(registry_preimage),
+    )
+    checkpoint_preimage = {
+        "schema_version": "ClassifierRegistryCheckpoint/v1",
+        "registry_id": "source-classifier-registry",
+        "classifier_id": "source-role",
+        "classifier_version": "1.0.0",
+        "current_registry_sequence": 7,
+        "current_registry_entry_hash": classifier_registry_entry_hash,
+        "current_status": "ACTIVE",
+        "request_nonce": "000102030405060708090a0b0c0d0e0f",
+        "issued_at": "2026-01-01T00:00:00Z",
+        "expires_at": "2026-01-01T00:01:00Z",
+    }
+    classifier_registry_checkpoint_hash = domain_hash(
+        "acgs.questionnaire.classifier-registry-checkpoint/v1",
+        vector_jcs(checkpoint_preimage),
+    )
+    source_metadata = {
+        "schema_version": "SourceMetadata/v1",
+        "language": "Python",
+        "detected_role": "SOURCE",
+        "classifier_id": "source-role",
+        "classifier_version": "1.0.0",
+        "classifier_artifact_hash": classifier_artifact_hash,
+        "classifier_registry_entry_hash": classifier_registry_entry_hash,
+        "classifier_registry_checkpoint_hash": classifier_registry_checkpoint_hash,
+    }
+    source_evidence_preimage = {
+        "schema_version": "SourceEvidencePreimage/v1",
+        "evidence_id": "ev-1",
+        "assertion_id": "as-1",
+        "assertion_hash": "sha256:" + "a" * 64,
+        "commit_sha": "0123456789abcdef0123456789abcdef01234567",
+        "file_path": "src/a.py",
+        "line_start": 1,
+        "line_end": 1,
+        "artifact_hash": artifact_hash,
+        "excerpt_hash": excerpt_hash,
+        "source_metadata": source_metadata,
+    }
+    source_evidence_hash = domain_hash(
+        "acgs.questionnaire.source-evidence/v1",
+        vector_jcs(source_evidence_preimage),
+    )
+
+    expected = (
+        "sha256:1e6f051f9e613e96aa7cae9326e57c1e48eca357fc5c81728786ce493f1d4f43",
+        "sha256:bb38581a1481f962bdb5e211141f1e62d8a76e6ba1552c9586fec56b8b563648",
+        "sha256:312edfabd0313bacd27057bd1165f6ce2259faa69870e478a8cf5b9188bcb97b",
+        "sha256:09eac77595895cbbb35761d703259a93c960d4721869fd5a8447fa02a9524405",
+        "sha256:36cfa8824963f2f91527e5a75d75f391c3a4fea797ce50aeefff12c43b464ab2",
+        "sha256:c8db69efe2684d07acd3d111eba7bbd12b5b2288757a97061d3527c4d6a3ffed",
+    )
+    assert (
+        artifact_hash,
+        excerpt_hash,
+        classifier_artifact_hash,
+        classifier_registry_entry_hash,
+        classifier_registry_checkpoint_hash,
+        source_evidence_hash,
+    ) == expected
+
+    key_manifest = {
+        "schema_version": "RegistryVerificationKeyManifest/v1",
+        "manifest_id": "source-classifier-registry-keys/v1",
+        "keys": [
+            {
+                "purpose": "CHECKPOINT",
+                "key_id": "checkpoint-key-1",
+                "signature_alg": "Ed25519",
+                "public_key_b64u": (
+                    "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+                ),
+                "status": "ACTIVE",
+                "not_before": "2026-01-01T00:00:00Z",
+                "not_after": "2027-01-01T00:00:00Z",
+            },
+            {
+                "purpose": "ENTRY",
+                "key_id": "entry-key-1",
+                "signature_alg": "Ed25519",
+                "public_key_b64u": (
+                    "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+                ),
+                "status": "ACTIVE",
+                "not_before": "2026-01-01T00:00:00Z",
+                "not_after": "2027-01-01T00:00:00Z",
+            },
+        ],
+    }
+    key_manifest_hash = domain_hash(
+        "acgs.questionnaire.registry-verification-keys/v1",
+        vector_jcs(key_manifest),
+    )
+    policy_bundle_preimage = {
+        "schema_version": "QuestionnairePolicyBundlePreimage/v1",
+        "policy_bundle_id": "questionnaire-default",
+        "decision_policy_artifact_hash": domain_hash(
+            "acgs.questionnaire.decision-policy-artifact/v1",
+            b'{"default":"DENY"}',
+        ),
+        "registry_verification_key_manifest_hash": key_manifest_hash,
+    }
+    policy_hash = "questionnaire-policy/" + hashlib.sha256(
+        b"acgs.questionnaire.policy-bundle/v1\0"
+        + vector_jcs(policy_bundle_preimage)
+    ).hexdigest()
+    policy_bundle = {
+        "schema_version": "QuestionnairePolicyBundle/v1",
+        "policy_bundle_id": policy_bundle_preimage["policy_bundle_id"],
+        "policy_version": policy_hash,
+        "decision_policy_artifact_hash": (
+            policy_bundle_preimage["decision_policy_artifact_hash"]
+        ),
+        "registry_verification_key_manifest_hash": key_manifest_hash,
+    }
+    assert key_manifest_hash == (
+        "sha256:db4d119fc84c37631ef4b7c58295aba5627f04c38da45633a959e6eb26ceecd1"
+    )
+    assert policy_hash == (
+        "questionnaire-policy/"
+        "62a949696e4d806e44ad3bdc18ef77dc64ae3cf9ef33c5d5f19f82abbc65c16f"
+    )
+    changed_rule_preimage = {
+        **policy_bundle_preimage,
+        "decision_policy_artifact_hash": domain_hash(
+            "acgs.questionnaire.decision-policy-artifact/v1",
+            b'{"default":"ALLOW"}',
+        ),
+    }
+    changed_rule_policy_hash = "questionnaire-policy/" + hashlib.sha256(
+        b"acgs.questionnaire.policy-bundle/v1\0"
+        + vector_jcs(changed_rule_preimage)
+    ).hexdigest()
+    assert changed_rule_policy_hash == (
+        "questionnaire-policy/"
+        "5266c8f7c19d763bc36a74b28a52045007e162ac9373b867e031830735f0d517"
+    )
+    assert changed_rule_policy_hash != policy_hash
+    wrong_id_preimage = {
+        **policy_bundle_preimage,
+        "policy_bundle_id": "wrong",
+    }
+    wrong_id_policy_hash = "questionnaire-policy/" + hashlib.sha256(
+        b"acgs.questionnaire.policy-bundle/v1\0"
+        + vector_jcs(wrong_id_preimage)
+    ).hexdigest()
+    assert wrong_id_policy_hash != policy_bundle["policy_version"]
+    wrong_version_bundle = {
+        **policy_bundle,
+        "policy_version": "questionnaire-policy/" + "0" * 64,
+    }
+    assert wrong_version_bundle["policy_version"] != policy_hash
+
+    def decode_policy_artifact_b64u(value: str) -> bytes:
+        if not value or not re.fullmatch(r"[A-Za-z0-9_-]+", value):
+            raise ValueError("non-canonical base64url alphabet")
+        if len(value) % 4 == 1:
+            raise ValueError("invalid base64url length")
+        raw = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+        canonical = base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+        if canonical != value or not 1 <= len(raw) <= 1_048_576:
+            raise ValueError("non-canonical or out-of-range policy artifact")
+        return raw
+
+    valid_policy_artifact_b64u = "eyJkZWZhdWx0IjoiREVOWSJ9"
+    assert decode_policy_artifact_b64u(valid_policy_artifact_b64u) == (
+        b'{"default":"DENY"}'
+    )
+    for invalid_artifact_b64u in (
+        "",
+        valid_policy_artifact_b64u + "=",
+        valid_policy_artifact_b64u + " ",
+        "A",
+        "AB",
+    ):
+        try:
+            decode_policy_artifact_b64u(invalid_artifact_b64u)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(
+                f"accepted malformed policy artifact: {invalid_artifact_b64u!r}"
+            )
+
+    for token in (
+        *expected,
+        key_manifest_hash,
+        policy_hash,
+        changed_rule_policy_hash,
+        "file_bytes are the exact Git blob bytes",
+        "excerpt_bytes = UTF8(excerpt)",
+        "no archive repacking, newline conversion, text decoding",
+        "decoded bytes against an allowlisted registry key",
+        "linearizable authenticated-head authority",
+        "unique 128-bit request_nonce",
+        "Caller-supplied or cached checkpoints are never accepted",
+        "durable high-water tuple keyed by registry_id/classifier_id/classifier_version",
+        "including REVOKED checkpoints",
+        "replaying sequence 7 ACTIVE after observing sequence 8 REVOKED is denied",
+        "excerpt_bytes == range_bytes",
+        "subsequence, trimmed range, or model-selected byte window is invalid",
+        "Online validation is not the proof archive",
+        "complete signed entry_envelope",
+        "complete signed checkpoint_envelope",
+        "immutable verification-key manifest",
+        "signatures are never recomputed",
+        "RegistryVerificationKeyManifest/v1",
+        "schema_version is exactly RegistryVerificationKeyManifest/v1",
+        "signature_alg = \"Ed25519\"",
+        "public_key_b64u",
+        "without = padding, of exactly 32 raw Ed25519 public-key bytes",
+        "decodes to exactly 64 raw Ed25519 signature bytes",
+        "non-canonical re-encoding",
+        "not_before <= t < not_after",
+        "registry_verification_key_manifest_hash",
+        "acgs.questionnaire.registry-verification-keys/v1\\0",
+        "QuestionnairePolicyBundle/v1",
+        (
+            "contains exactly schema_version, policy_bundle_id, policy_version, "
+            "decision_policy_artifact_hash, and "
+            "registry_verification_key_manifest_hash"
+        ),
+        "schema_version is exactly QuestionnairePolicyBundle/v1",
+        "QuestionnairePolicyBundlePreimage/v1",
+        'schema_version = "QuestionnairePolicyBundlePreimage/v1"',
+        "It excludes only the derived policy_version",
+        "Policy.version = policy_version",
+        (
+            "bundle.policy_bundle_id == DecisionReceipt.policy_bundle_id and "
+            "bundle.policy_version == DecisionReceipt.policy_version == "
+            "DecisionReceipt.policy_hash == derived_policy_version"
+        ),
+        "wrong bundle id, wrong version, or legacy semantic version fails closed",
+        "acgs.questionnaire.decision-policy-artifact/v1\\0",
+        "exact immutable artifact loaded by the policy engine",
+        "No parsing, re-serialization, normalization, or rule-subset projection",
+        "acgs.questionnaire.policy-bundle/v1\\0",
+        "questionnaire-policy/",
+        "derived value therefore identifies the complete decision-policy bytes",
+        "cross-implementation known vector",
+        "proving that an ALLOW/DENY rule change cannot preserve the receipt policy hash",
+        "Implementations must freeze both values",
+        "RegistryKeyAuthorityProof/v1",
+        "schema_version is exactly RegistryKeyAuthorityProof/v1",
+        "decision_policy_artifact_b64u",
+        "inherits only the encoding-canonicality rules above",
+        "must contain 1..1,048,576 bytes",
+        "32-byte key and 64-byte signature length rules do not apply",
+        "accepted 18-byte value",
+        "Empty, oversized, malformed, or non-canonically encoded artifacts fail closed",
+        "recomputes decision_policy_artifact_hash",
+        "recomputes registry_verification_key_manifest_hash",
+        "enforces the bundle/receipt id and version equalities above",
+        "entry envelope must resolve a key whose purpose is exactly ENTRY",
+        "checkpoint envelope must resolve a key whose purpose is exactly CHECKPOINT",
+        "Purpose-swapped keys fail closed",
+        "For both the resolved ENTRY and CHECKPOINT key",
+        "future, expired, empty, reversed, or malformed key intervals fail closed",
+        "derives the content-addressed policy version",
+        "DecisionReceipt.policy_hash",
+        "same exact objects are embedded in the delivered proof pack",
+        "OutcomeEvent.timestamp",
+        "AppendAcceptanceUnsignedPreimage.commit_timestamp",
+        "Immediately before the durable finalize transaction",
+        "crash-recovered or delayed finalizer may not reuse the expired candidate",
+        "Missing policy artifact or policy/key proof",
+        "remote pointer or mutable cache is not a substitute",
+        "Delete either signed envelope or its archive",
+        "policy bundle, policy artifact, policy artifact digest, manifest digest, manifest key",
+        (
+            "schema version, bundle id, bundle version, key purpose, "
+            "public-key encoding, signature encoding, "
+            "key validity interval"
+        ),
+        "crash-recover finalization",
+        "outside the checkpoint interval",
+        "rebuild the preimage under a fresh checkpoint",
+        "archive write/read uncertain",
+        "raw/uppercase/malformed artifact or excerpt hashes",
+        "high-water-store failure or uncertain commit",
+        "registry rollback",
+    ):
+        assert token in normalized
 
 
 def test_questionnaire_outcome_payment_and_spend_fail_closed_contracts() -> None:

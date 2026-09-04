@@ -315,7 +315,9 @@ only meaningful relative to a robot, a frame, a calibration, and a tool.
   },
   "safety_contract": {
     "contract_digest": "sha256:…",
-    "contract_version": "cell-3/strict/v7"
+    "contract_version": "cell-3/strict/v7",
+    "physical_contract_projection_hash": "sha256:…",
+    "live_device_projection_hash": "sha256:…"
   },
   "initial_state": {
     "joint_position_hash": "sha256:…",
@@ -334,6 +336,95 @@ only meaningful relative to a robot, a frame, a calibration, and a tool.
   }
 }
 ```
+
+### Canonical physical-contract projection and activation comparison
+
+The Lease Authority does not compare an ad hoc subset of the receipt or mix
+compiled authority with live observations. The MAR binds two disjoint,
+closed-schema projections.
+
+```text
+PhysicalContractProjection/v0:
+  profile
+  compiler.{compiler_digest,compiler_version}
+  safety_contract.{contract_version}
+
+LiveDeviceProjection/v0:
+  robot.{robot_id,serial,firmware_digest,kinematic_model_digest,
+         calibration_digest,tool.{tool_id,tcp_digest,payload_kg}}
+  action_space.{kind,dof,joint_order,units,control_rate_hz,
+                coordinate_frame,frame_tree_digest}
+```
+
+Both projections use RFC 8785 canonical JSON encoded as UTF-8. Non-finite
+numbers, unknown fields, duplicate keys, omitted required fields, implicit
+defaults, and fields from the other projection are rejected. Their serialized
+digests are exactly:
+
+```text
+physical_contract_projection_hash =
+  "sha256:" + lowerhex(
+    SHA256("acgs.physical.contract-projection/v0\0" ||
+           JCS(PhysicalContractProjection)))
+
+live_device_projection_hash =
+  "sha256:" + lowerhex(
+    SHA256("acgs.physical.live-device-projection/v0\0" ||
+           JCS(LiveDeviceProjection)))
+```
+
+Each digest is therefore `sha256:` followed by exactly 64 lowercase hexadecimal
+characters. The projection preimages exclude both projection-hash fields and
+`contract_digest`, avoiding self-reference. `contract_digest` separately covers
+the complete compiled contract, including both expected projection hashes. The
+loaded compiled contract is valid only when recomputing each projection from
+the artifact yields its embedded expected projection hash.
+
+| Field set | Authoritative source | Exact before-arm comparison |
+|---|---|---|
+| `profile` | Loaded compiled contract | MAR `PhysicalContractProjection` equals compiled-artifact projection |
+| `compiler_digest`, `compiler_version` | Loaded compiler/artifact manifest | MAR value equals compiled-artifact value |
+| `contract_version` | Loaded compiled safety contract | MAR value equals compiled-artifact value |
+| `physical_contract_projection_hash` | Loaded compiled contract | Recomputed MAR hash equals the compiled contract's expected static hash |
+| `live_device_projection_hash` | Loaded compiled contract plus fresh device projection | Recomputed MAR hash, compiled expected live hash, and fresh live hash are all equal |
+| Robot identity, firmware, kinematics, calibration | Fresh controller/device query | MAR `LiveDeviceProjection` equals live projection |
+| Installed tool id, TCP digest, configured payload | Fresh tool/controller query | MAR value equals live value |
+| Action-space kind, DOF, order, units, rate, frame, frame tree | Fresh controller/cell capability query | MAR value equals live value |
+
+Immediately before requesting `EMPTY -> ARMED`, the Lease Authority constructs
+the static projection from the MAR and independently from the loaded compiled
+artifact. It requires field-for-field canonical equality, recomputes the static
+hash, and compares it to the MAR-bound
+`physical_contract_projection_hash` and to the compiled contract's embedded
+expected static hash. Separately, it constructs the live projection from the
+MAR and from freshly queried robot, tool, controller, and cell inputs. It
+requires field-for-field canonical equality and three-way equality among the
+recomputed MAR live hash, the compiled contract's embedded expected live hash,
+and the freshly recomputed live-device hash. It also requires the complete
+compiled `contract_digest` to equal the MAR value. These comparisons are one
+indivisible activation predicate: a validly signed MAR that mixes contract A's
+`contract_digest` with contract B's `live_device_projection_hash` is rejected
+even when contract B happens to match the freshly queried device.
+
+String, array order, integer, digest, unit, frame, rate, identity, and tool
+values are compared exactly—no coercion, tolerance, fallback, or default is
+allowed. A robot/tool/action-space field substituted into the static projection,
+or a compiler/contract field substituted into the live projection, is an
+unknown-field plus missing-required-field failure. Any unavailable authoritative
+input, malformed digest encoding, static/live substitution, or mismatch fails
+before arming.
+
+Per-motion fields are deliberately outside the contract projection and are
+checked separately against the same MAR: `trajectory` (digest/root/block shape,
+duration, encoding), `compiler.input_plan_digest`, `initial_state`, `lease`, the
+canonical `MotionRequest`/`argument_hash`, `source_hash`, and immutable source
+revision. Their comparisons are exact except for the one declared physical
+comparison: measured initial joint positions may differ only within the bound
+`initial_state.tolerance_rad`; observation age must be within
+`observation_max_age_ms`, while timestamp, perception digest, trajectory,
+sequence, nonce, duration, actuator-group, source, and artifact bindings remain
+exact. Contract-owned and per-motion fields may not be moved between these sets
+by an adapter.
 
 ### Why each binding exists
 
@@ -922,7 +1013,7 @@ observability**, not enforcement.
 | Transition | Checks performed |
 |---|---|
 | `configure` | load contract blob; verify `contract_digest`; verify RT kernel binary hash; map shared memory; lock pages; verify clock source is monotonic RT |
-| `activate` | require MAR; verify signature, `receipt_hash`, nonempty timezone-aware expiry with trusted clock and bounded maximum TTL (`require_expiry=True` / strict receipt version), tenant, boundary, actor, policy digest; compare the receipt's complete `constraints.physical` and contract digest to the live compiled contract; verify `firmware/kinematic/calibration/tool` digests against **live queried device values**; verify measured joint state within `initial_state.tolerance_rad`; verify perception age; **read `calibration_epoch`, re-verify the calibration digest at that epoch, and pin the epoch into the lease** (T-13); allocate fresh lease/boot identities, fresh request page, and fresh generation namespace; derive `execution_root` (§6.3); atomically consume receipt plus nonce through the supported authority; initialize fresh authority fields and request STM `EMPTY -> ARMED`; never clear/rebind an old request page or reuse a terminal block |
+| `activate` | require MAR; verify signature, `receipt_hash`, nonempty timezone-aware expiry with trusted clock and bounded maximum TTL (`require_expiry=True` / strict receipt version), tenant, boundary, actor, policy digest; compare the MAR's static `PhysicalContractProjection` only with the compiled artifact and compare its disjoint `LiveDeviceProjection` only with freshly queried robot/tool/action-space inputs; require exact field equality, canonical digest encoding, both bound projection hashes, and the complete contract digest before arming; separately verify every per-motion field with only the declared initial-joint tolerance; verify perception age; **read `calibration_epoch`, re-verify the calibration digest at that epoch, and pin the epoch into the lease** (T-13); allocate fresh lease/boot identities, fresh request page, and fresh generation namespace; derive `execution_root` (§6.3); atomically consume receipt plus nonce through the supported authority; initialize fresh authority fields and request STM `EMPTY -> ARMED`; never clear/rebind an old request page or reuse a terminal block |
 | `deactivate` | publish an allocation-bound revoke request; while ticks are scheduled only the servo thread may invoke STM; `category_1_stop` (never path-following ramp stop); await terminal acknowledgement |
 | `cleanup` | publish the allocation's terminal revoke; stop scheduling new RT ticks; wait for RT quiescence; if still pending, the trusted RT component's control thread may then perform the bounded direct STM transition and acknowledge only a terminal state; only after acknowledgement/terminal observation revoke mappings, unmap, and retire/destroy without zero/reset/reuse; reauthorization creates a fresh allocation, identity, and namespace |
 | `error` (`on_error`) | publish an allocation-bound revoke request; `category_1_stop`; while scheduled, only the servo thread invokes STM; emit refusal evidence; require operator acknowledgement before re-activate |

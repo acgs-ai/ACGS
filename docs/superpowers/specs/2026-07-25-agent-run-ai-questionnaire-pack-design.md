@@ -188,13 +188,16 @@ Explicitly excluded from the MVP:
 | Field | Type | Notes |
 |---|---|---|
 | `evidence_id` | str (uuid) | |
+| `assertion_id` | str | Exact member of the owning response's frozen assertion manifest |
+| `assertion_hash` | str | Exact digest defined by `AssertionManifestMemberPreimage` in §2.3.3; never a text-only hash |
 | `file_path` | str | Repository-relative. Never absolute. |
 | `line_start` | int | 1-indexed |
 | `line_end` | int | |
-| `excerpt` | str | Bounded (max 2000 chars) verbatim quote |
-| `artifact_hash` | str | SHA-256 of the *file* at the cited commit |
+| `excerpt` | str | Exact decoded whole-line-range bytes defined in §2.3.3; max 2000 UTF-8 bytes |
+| `artifact_hash` | str | Exact domain-separated digest of Git blob bytes defined in §2.3.3 |
 | `commit_sha` | str | Repository state the citation is bound to |
-| `source_metadata` | dict | Language, detected role (test/config/doc), mtime |
+| `source_metadata` | SourceMetadata | Wrapper-derived closed object binding immutable classifier artifact, registry entry, and fresh current-head checkpoint hashes; never model supplied and never mtime-derived |
+| `source_evidence_hash` | str | Domain-separated hash of the exact closed `SourceEvidencePreimage/v1`, including assertion binding and `source_metadata` |
 | `job_id` | str | Owning job — required for lineage |
 | `produced_by_receipt_id` | str | The `DecisionReceipt` that authorized the mining call producing this citation |
 | `produced_by_outcome_hash` | str | Canonical `OutcomeEvent.outcome_hash` for the mining result that emitted this citation. Authorization IDs alone do not bind output. |
@@ -231,11 +234,11 @@ model-authored aggregate verdict.
 | `question_id` | str | Stable question binding |
 | `response_id` | str | Response being adjudicated |
 | `response_version` | int | Immutable version; a later answer requires new QA |
-| `answer_hash` | str | SHA-256 of the canonical answer text at that version |
+| `answer_hash` | str | Exact domain-separated digest of unchanged strict UTF-8 answer bytes defined in §2.3.3 |
 | `assertion_id` | str | Stable assertion within the response version |
-| `assertion_hash` | str | SHA-256 of the exact canonical assertion text |
+| `assertion_hash` | str | Exact digest defined once by `AssertionManifestMemberPreimage` in §2.3.3 |
 | `evidence_id` | str | Exactly one citation |
-| `source_evidence_hash` | str | Canonical hash of evidence id, commit, file, line range, artifact hash, and excerpt hash before producer/QA pointers are attached |
+| `source_evidence_hash` | str | Exact `SourceEvidencePreimage/v1` digest defined in §2.3.3, including closed wrapper-derived metadata |
 | `producer_lineage_hash` | str | Exact bound producer lineage from `Evidence` |
 | `deterministic_check_passed` | bool | Result of check 0; false can never be upgraded by a model |
 | `qa_verdict` | enum | `PASS`, `REFUTED`, `INSUFFICIENT`, `CONTRADICTED` |
@@ -310,17 +313,467 @@ a valid confirming semantic record for every contributing citation.
 
 ### 2.3.3 MiningOutcomeEnvelope
 
-The mining agent returns only a `MiningOutcomePreimage`; it cannot construct an
-outcome event or final envelope. The preimage is the exact canonical byte object:
+The mining agent returns only a non-authoritative `RawMiningResult` containing
+draft answer text and evidence candidates. It MUST NOT construct an
+`AssertionManifest`, `MiningOutcomePreimage`, `OutcomeEvent`, or final envelope.
+The raw schemas are closed:
+
+```text
+RawMiningResult = {
+  answer_text,
+  evidence_candidates
+}
+
+RawEvidenceCandidate = {
+  candidate_id,
+  assertion_answer_utf8_start,
+  assertion_answer_utf8_end,
+  file_path,
+  line_start,
+  line_end,
+  excerpt,
+  artifact_hash,
+  commit_sha
+}
+```
+
+`RawMiningResult` has exactly `answer_text` and `evidence_candidates`.
+Each `RawEvidenceCandidate` has exactly the fields above: one unique
+`candidate_id`, the canonical-answer UTF-8 byte start/end for the assertion it
+claims to support, and the immutable source-evidence fields. Raw candidates
+MUST NOT contain `assertion_id`, `assertion_hash`, `source_metadata`, or any
+unknown field. Those
+identities are trusted-wrapper outputs, never model-selected inputs.
+
+For this protocol, the canonical answer is an identity encoding, not a text
+normalization. The transport must first decode one RFC 8259 JSON string and
+reject invalid UTF-8, unpaired Unicode surrogates, or non-string input.
+`canonical_answer_bytes = UTF8(answer_text)` uses the decoded string unchanged:
+no Unicode normalization, CRLF/LF conversion, whitespace trimming, case
+folding, escape re-emission, or other rewrite is permitted. `answer_hash` is:
+
+```text
+"sha256:" + lowerhex(
+  SHA256("acgs.questionnaire.answer/v1\0" || canonical_answer_bytes))
+```
+
+The frozen known vectors are:
+
+| Decoded string | `canonical_answer_bytes` hex | `answer_hash` |
+|---|---|---|
+| `A\r\né🙂` | `410d0ac3a9f09f9982` | `sha256:f07c9b089a9c3b49dc69d4268dc1d091590d7d98f62f5519874241e69c20d0ec` |
+| composed `é` | `c3a9` | `sha256:4feb9b937ca108cd20a4e967393299b910514315042ca0edb83627ca08ca794c` |
+| decomposed `U+0065 U+0301` (JSON `"e\u0301"`) | `65cc81` | `sha256:5dde93076bcf9a7ac0b22fbb390bf88f96fbcc79a3c848f11b7345c55cebb766` |
+
+Composed and decomposed Unicode remain distinct; an implementation producing
+the same bytes or hash for the last two vectors is non-conforming.
+
+The trusted product wrapper performs the canonicalization sequence:
+
+1. Validate `answer_text`, freeze its unchanged `canonical_answer_bytes` and
+   `response_version`, and compute `answer_hash`.
+2. Apply the pinned deterministic segmentation rule.
+3. Construct and durably store the canonical ordered `AssertionManifest`.
+4. Validate every raw candidate against the canonical answer and manifest, then
+   derive and attach the matched member's `assertion_id` and `assertion_hash`.
+5. Construct `MiningOutcomePreimage`.
+6. Only then hash the preimage and enter outcome reservation/signing.
+
+Candidate offsets are interpreted only against the canonical UTF-8
+`answer_text`. The wrapper requires integer offsets satisfying
+`0 <= start < end <= len(answer_utf8)`, requires both offsets to be UTF-8 code
+point boundaries, and requires the pair to equal exactly one manifest member's
+`answer_utf8_start`/`answer_utf8_end`. Overlap, containment, fuzzy matching, and
+text search are not binding rules. The wrapper rejects zero or multiple exact
+matches, duplicate `candidate_id`, stale, out-of-range, or non-boundary offsets,
+and any model-supplied `assertion_id` or `assertion_hash`. Only after one exact
+span match does the wrapper copy that manifest member's trusted id/hash onto the
+canonical Evidence record.
+
+`source_metadata` is never accepted from `RawMiningResult`. After validating the
+repository-relative path, commit, file digest, line range, and excerpt against
+the repository snapshot, the trusted wrapper derives this recursively closed
+`SourceMetadata/v1` object:
+
+```text
+{
+  schema_version,
+  language,
+  detected_role,
+  classifier_id,
+  classifier_version,
+  classifier_artifact_hash,
+  classifier_registry_entry_hash,
+  classifier_registry_checkpoint_hash
+}
+```
+
+`schema_version` is exactly `SourceMetadata/v1`. The allowed role enum is
+`SOURCE | TEST | CONFIG | DOC | PROCESS | OTHER`. The object rejects null,
+missing, duplicate, or unknown nested fields. Filesystem mtime is neither
+accepted nor derived because it is not commit-stable.
+
+The classifier is an immutable byte artifact, not a mutable ID/version label.
+`classifier_artifact_hash` is exactly:
+
+```text
+"sha256:" + lowerhex(
+  SHA256("acgs.questionnaire.source-classifier-artifact/v1\0" ||
+         classifier_artifact_bytes))
+```
+
+`classifier_artifact_bytes` are the exact bytes stored by the product registry
+and loaded for classification; no archive repacking, newline conversion, text
+decoding, or filesystem reconstruction is permitted. The closed
+`ClassifierRegistryEntryPreimage/v1` contains exactly `schema_version`,
+`classifier_id`, `classifier_version`, `classifier_artifact_hash`,
+`registry_sequence`, and `status`. Its `schema_version` is exactly
+`ClassifierRegistryEntry/v1`, `registry_sequence` is a non-negative JSON
+integer, and `status` is `ACTIVE | REVOKED`. The entry hash is exactly:
+
+```text
+"sha256:" + lowerhex(
+  SHA256("acgs.questionnaire.classifier-registry-entry/v1\0" ||
+         JCS(ClassifierRegistryEntryPreimage)))
+```
+
+The immutable entry envelope contains exactly `preimage`,
+`classifier_registry_entry_hash`, `signature_alg`, `key_id`, and `signature`.
+`signature_alg` and `key_id` must resolve in the immutable verification-key
+manifest bound through the producer receipt's policy bundle as defined below.
+`signature` is the unpadded base64url string encoding of the 64 raw bytes
+returned by
+`KMS.Sign("acgs-questionnaire-classifier-registry/v1\0" ||
+UTF8(classifier_registry_entry_hash))`. The wrapper verifies the decoded bytes
+against an allowlisted registry key, but an entry signature alone never proves
+that the entry is current.
+
+Current state comes only from the linearizable authenticated-head authority.
+For each lookup, the wrapper generates a unique 128-bit `request_nonce` and
+requires a closed `ClassifierRegistryCheckpointPreimage/v1` containing exactly
+`schema_version`, `registry_id`, `classifier_id`, `classifier_version`,
+`current_registry_sequence`, `current_registry_entry_hash`, `current_status`,
+`request_nonce`, `issued_at`, and `expires_at`. Its `schema_version` is exactly
+`ClassifierRegistryCheckpoint/v1`; timestamps are UTC RFC 3339 seconds;
+`expires_at - issued_at <= 60 seconds`. The checkpoint hash is exactly:
+
+```text
+"sha256:" + lowerhex(
+  SHA256("acgs.questionnaire.classifier-registry-checkpoint/v1\0" ||
+         JCS(ClassifierRegistryCheckpointPreimage)))
+```
+
+The checkpoint envelope contains exactly `preimage`,
+`classifier_registry_checkpoint_hash`, `signature_alg`, `key_id`, and
+`signature`, with the same policy-bound verification-key rule. `signature` is
+the unpadded base64url string encoding of the 64 raw bytes returned by
+`KMS.Sign("acgs-questionnaire-classifier-checkpoint/v1\0" ||
+UTF8(classifier_registry_checkpoint_hash))`. The wrapper performs a
+linearizable live read, requires its exact nonce, verifies the signature with
+an allowlisted checkpoint key, and requires current time within the bounded
+interval. Caller-supplied or cached checkpoints are never accepted.
+
+The wrapper also maintains a durable high-water tuple keyed by
+`registry_id`/`classifier_id`/`classifier_version`: current sequence, entry
+hash, and status. It atomically records every freshly authenticated checkpoint, including
+`REVOKED` checkpoints, before returning. A lower sequence, or the same sequence
+with a different entry hash/status, is rollback or equivocation and fails
+closed. Store failure or uncertain commit fails closed. Only a checkpoint
+whose current entry equals the signed entry, whose artifact hash matches, and
+whose current status is `ACTIVE` can classify evidence. Therefore replaying
+sequence 7 `ACTIVE` after observing sequence 8 `REVOKED` is denied even if both
+entries remain correctly signed.
+
+`classifier_registry_entry_hash` and `classifier_registry_checkpoint_hash` in
+`SourceMetadata/v1` are the verified active entry and fresh current-head
+checkpoint hashes. An unavailable head authority, nonce mismatch, expired
+checkpoint, unknown entry, duplicate sequence, rollback, bad signature,
+artifact mismatch, or `REVOKED` current state fails closed. `language` and
+`detected_role` must be outputs of the exact loaded artifact they bind; label
+equality alone is insufficient.
+
+Online validation is not the proof archive. Before accepting `SourceMetadata`
+or constructing `Evidence`, the wrapper durably stores a closed
+`ClassifierRegistryProofArchive/v1` containing exactly `schema_version`, the
+complete signed `entry_envelope`, and the complete signed
+`checkpoint_envelope`. It then reads the object back and recomputes both
+preimage hashes and verifies both signatures against their bound public keys;
+signatures are never recomputed. The archive is embedded in
+`MiningOutcomePreimage.classifier_registry_proofs[]` and therefore covered by
+`mining_result_hash` and the accepted `OutcomeEvent`; the same exact objects are
+embedded in the delivered proof pack. A remote pointer or mutable cache is not
+a substitute.
+
+The closed `RegistryVerificationKeyManifest/v1` contains exactly
+`schema_version`, `manifest_id`, and `keys[]` sorted by
+`(purpose, key_id, signature_alg)`. `schema_version` is exactly
+`RegistryVerificationKeyManifest/v1`. Each closed key record contains exactly
+`purpose` (`ENTRY | CHECKPOINT`), `key_id`, `signature_alg`,
+`public_key_b64u`, `status` (`ACTIVE | REVOKED`), `not_before`, and
+`not_after`. Version 1 admits only `signature_alg = "Ed25519"`:
+`public_key_b64u` is a JSON string containing the RFC 4648 base64url encoding,
+without `=` padding, of exactly 32 raw Ed25519 public-key bytes. `signature` in
+both signed envelopes is likewise an unpadded base64url JSON string that
+decodes to exactly 64 raw Ed25519 signature bytes. Decoders reject whitespace,
+padding, non-url-safe alphabet characters, non-zero discarded bits,
+non-canonical re-encoding, wrong decoded lengths, and any other algorithm.
+`not_before` and `not_after` are UTC RFC 3339 seconds with `Z` and no fractional
+seconds; the interval is valid only when `not_before < not_after` and uses the
+half-open predicate `not_before <= t < not_after`.
+`registry_verification_key_manifest_hash` is exactly
+`"sha256:" + lowerhex(SHA256(
+"acgs.questionnaire.registry-verification-keys/v1\0" ||
+JCS(RegistryVerificationKeyManifest)))`.
+
+The closed `QuestionnairePolicyBundle/v1` contains exactly `schema_version`,
+`policy_bundle_id`, `policy_version`, `decision_policy_artifact_hash`, and
+`registry_verification_key_manifest_hash`; `schema_version` is exactly
+`QuestionnairePolicyBundle/v1`. `decision_policy_artifact_hash` is exactly
+`"sha256:" + lowerhex(SHA256(
+"acgs.questionnaire.decision-policy-artifact/v1\0" ||
+decision_policy_artifact_bytes))`, where the bytes are the exact immutable
+artifact loaded by the policy engine for the receipt decision. No parsing,
+re-serialization, normalization, or rule-subset projection is allowed.
+
+To avoid a self-referential `policy_version`, the content address is computed
+from one closed `QuestionnairePolicyBundlePreimage/v1` projection containing
+exactly `schema_version = "QuestionnairePolicyBundlePreimage/v1"`,
+`policy_bundle_id`, `decision_policy_artifact_hash`, and
+`registry_verification_key_manifest_hash`. It excludes only the derived
+`policy_version`. The content-addressed version is exactly
+`"questionnaire-policy/" + lowerhex(SHA256(
+"acgs.questionnaire.policy-bundle/v1\0" ||
+JCS(QuestionnairePolicyBundlePreimage)))`. The materialized bundle's
+`policy_version` must equal that result.
+
+At issuance, the questionnaire policy adapter constructs the preimage and
+derived version once, then exposes `policy_id = policy_bundle_id` and
+`Policy.version = policy_version`. The shipped gove-zone issuance path therefore
+stamps the same derived version into both `DecisionReceipt.policy_version` and
+`DecisionReceipt.policy_hash` without hashing either derived receipt field.
+Offline verification reconstructs the preimage and requires exact equality:
+`bundle.policy_bundle_id == DecisionReceipt.policy_bundle_id` and
+`bundle.policy_version == DecisionReceipt.policy_version ==
+DecisionReceipt.policy_hash == derived_policy_version`. A wrong bundle id,
+wrong version, or legacy semantic version fails closed. The derived value
+therefore identifies the complete decision-policy bytes and key-manifest digest,
+not metadata alone.
+
+The cross-implementation known vector uses a manifest with
+`manifest_id = "source-classifier-registry-keys/v1"`, validity interval
+`2026-01-01T00:00:00Z..2027-01-01T00:00:00Z`, and these sorted active keys:
+`CHECKPOINT/checkpoint-key-1/ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8`
+and
+`ENTRY/entry-key-1/AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8`.
+Its exact manifest digest is
+`sha256:db4d119fc84c37631ef4b7c58295aba5627f04c38da45633a959e6eb26ceecd1`.
+The exact decision-policy artifact bytes `{"default":"DENY"}` have unpadded
+base64url `eyJkZWZhdWx0IjoiREVOWSJ9` and digest
+`sha256:05a834e1d29ada549d71f6b5b35f734b7e49d9e3c0085f345cbdfe3c873d8e38`.
+Putting both digests in
+`QuestionnairePolicyBundlePreimage/v1(questionnaire-default)` yields exactly
+`questionnaire-policy/62a949696e4d806e44ad3bdc18ef77dc64ae3cf9ef33c5d5f19f82abbc65c16f`;
+that exact value is the materialized bundle version and both receipt version
+fields.
+Changing only the rule bytes to `{"default":"ALLOW"}` yields
+`questionnaire-policy/5266c8f7c19d763bc36a74b28a52045007e162ac9373b867e031830735f0d517`,
+proving that an ALLOW/DENY rule change cannot preserve the receipt policy hash.
+Implementations must freeze both values and reject any field-order-independent
+JCS preimage whose schema, key order, encoding, purpose, interval, or field set
+does not satisfy the closed contracts above.
+
+The mining preimage and delivered proof pack embed one closed
+`RegistryKeyAuthorityProof/v1` containing exactly `schema_version`, the complete
+`questionnaire_policy_bundle`, the complete
+`registry_verification_key_manifest`, and
+`decision_policy_artifact_b64u`. The artifact field is the unpadded base64url
+encoding of the exact policy bytes. It inherits only the encoding-canonicality
+rules above: no padding or whitespace, URL-safe alphabet only, zero discarded
+bits, and exact canonical re-encoding. Its decoded value is variable length but
+must contain 1..1,048,576 bytes; the 32-byte key and 64-byte signature length
+rules do not apply. The frozen `eyJkZWZhdWx0IjoiREVOWSJ9` vector decodes to the
+accepted 18-byte value `{"default":"DENY"}`. Empty, oversized, malformed, or
+non-canonically encoded artifacts fail closed. `schema_version` is
+exactly `RegistryKeyAuthorityProof/v1`. Offline verification decodes the policy
+artifact, recomputes `decision_policy_artifact_hash` and requires exact equality
+with the bundle field, validates the manifest schema version, recomputes
+`registry_verification_key_manifest_hash`, and requires exact equality with the
+field inside the policy bundle. It reconstructs
+`QuestionnairePolicyBundlePreimage/v1`, derives the content-addressed policy
+version, enforces the bundle/receipt id and version equalities above, then
+resolves each envelope's
+`signature_alg`/`key_id` only from an active key in that verified manifest.
+The entry envelope must resolve a key whose `purpose` is exactly `ENTRY`; the
+checkpoint envelope must resolve a key whose `purpose` is exactly `CHECKPOINT`.
+Purpose-swapped keys fail closed even when key bytes, key id, algorithm, and
+signature are otherwise valid.
+Missing/unknown/duplicate/extra manifest fields or keys fail closed.
+
+The verifier then recomputes both envelope preimage hashes, verifies both
+signatures with those bound public keys, and verifies the nonce and `ACTIVE`
+state. For both the resolved `ENTRY` and `CHECKPOINT` key, the checkpoint
+`issued_at`, `OutcomeEvent.timestamp`, and
+`AppendAcceptanceUnsignedPreimage.commit_timestamp` must fall within the
+key's `not_before..not_after` interval; future, expired, empty, reversed, or
+malformed key intervals fail closed. Both outcome timestamps must also fall
+within the checkpoint's `issued_at..expires_at` interval. Immediately before the durable
+finalize transaction, `OutcomeAppendAuthority` rechecks that interval against
+the commit timestamp it will persist. If expired, it refuses finalization and
+the wrapper must obtain a new nonce-bound live checkpoint, rebuild
+`MiningOutcomePreimage`, recompute `mining_result_hash`, and reserve/sign a new
+outcome. A crash-recovered or delayed finalizer may not reuse the expired
+candidate.
+
+Missing policy artifact or policy/key proof,
+archive/envelope/preimage/signature/key, an unknown,
+revoked, future, expired, or wrong-purpose key, malformed/non-canonical
+base64url, any content/hash/signature mismatch, archive write/read uncertainty,
+or an expired checkpoint fails closed and produces no accepted outcome.
+
+After validating the repository snapshot, `file_bytes` are the exact Git blob
+bytes at `commit_sha`. `artifact_hash` is exactly:
+
+```text
+"sha256:" + lowerhex(
+  SHA256("acgs.questionnaire.artifact/v1\0" || file_bytes))
+```
+
+The transport decodes `excerpt` as one strict RFC 8259 JSON string.
+`excerpt_bytes = UTF8(excerpt)` uses the decoded string unchanged.
+`range_bytes` are deterministic: line 1 starts at byte zero; each later line
+starts immediately after the preceding `0x0A`; a line ends immediately before
+its terminating `0x0A` or at EOF. The inclusive multi-line range runs from the
+start of `line_start` through the end of `line_end`, excludes only the final
+`line_end` terminator, and preserves every intervening `0x0A` and every `0x0D`.
+The wrapper requires `excerpt_bytes == range_bytes`; a subsequence, trimmed
+range, or model-selected byte window is invalid. `excerpt_hash` is exactly:
+
+```text
+"sha256:" + lowerhex(
+  SHA256("acgs.questionnaire.excerpt/v1\0" || excerpt_bytes))
+```
+
+Invalid UTF-8 or surrogates, text normalization, line-ending conversion, raw
+hex, uppercase hex, a missing `sha256:` prefix, or a digest other than exactly
+64 lowercase hexadecimal characters is rejected for every digest above.
+
+The wrapper then constructs the closed `SourceEvidencePreimage/v1` from
+exactly `schema_version`, `evidence_id`, `assertion_id`, `assertion_hash`,
+`commit_sha`, `file_path`, `line_start`, `line_end`, `artifact_hash`,
+`excerpt_hash`, and the complete `source_metadata`. `schema_version` is exactly
+`SourceEvidencePreimage/v1`, and JCS means RFC 8785 canonical JSON encoded as
+UTF-8. `source_evidence_hash` is exactly
+`"sha256:" + lowerhex(SHA256("acgs.questionnaire.source-evidence/v1\0" ||
+JCS(SourceEvidencePreimage)))`. A raw or nested unknown, model-selected
+metadata, forged role, mtime field, classifier substitution, or metadata/hash
+mismatch fails before canonical Evidence or outcome acceptance.
+
+The complete recursively bound known vector uses exact bytes `alpha\n` for
+`file_bytes`, exact decoded excerpt `alpha`, and exact bytes `classifier-v1\n`
+for `classifier_artifact_bytes`. Its classifier registry preimage is
+`{schema_version:"ClassifierRegistryEntry/v1", classifier_id:"source-role",
+classifier_version:"1.0.0",
+classifier_artifact_hash:"sha256:312edfabd0313bacd27057bd1165f6ce2259faa69870e478a8cf5b9188bcb97b",
+registry_sequence:7, status:"ACTIVE"}`. Its checkpoint preimage is
+`{schema_version:"ClassifierRegistryCheckpoint/v1",
+registry_id:"source-classifier-registry", classifier_id:"source-role",
+classifier_version:"1.0.0", current_registry_sequence:7,
+current_registry_entry_hash:"sha256:09eac77595895cbbb35761d703259a93c960d4721869fd5a8447fa02a9524405",
+current_status:"ACTIVE", request_nonce:"000102030405060708090a0b0c0d0e0f",
+issued_at:"2026-01-01T00:00:00Z", expires_at:"2026-01-01T00:01:00Z"}`.
+The derived hashes are:
+
+- `artifact_hash = sha256:1e6f051f9e613e96aa7cae9326e57c1e48eca357fc5c81728786ce493f1d4f43`
+- `excerpt_hash = sha256:bb38581a1481f962bdb5e211141f1e62d8a76e6ba1552c9586fec56b8b563648`
+- `classifier_artifact_hash = sha256:312edfabd0313bacd27057bd1165f6ce2259faa69870e478a8cf5b9188bcb97b`
+- `classifier_registry_entry_hash = sha256:09eac77595895cbbb35761d703259a93c960d4721869fd5a8447fa02a9524405`
+- `classifier_registry_checkpoint_hash = sha256:36cfa8824963f2f91527e5a75d75f391c3a4fea797ce50aeefff12c43b464ab2`
+
+The full `SourceEvidencePreimage/v1` object for that vector is:
+
+```json
+{
+  "schema_version": "SourceEvidencePreimage/v1",
+  "evidence_id": "ev-1",
+  "assertion_id": "as-1",
+  "assertion_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "commit_sha": "0123456789abcdef0123456789abcdef01234567",
+  "file_path": "src/a.py",
+  "line_start": 1,
+  "line_end": 1,
+  "artifact_hash": "sha256:1e6f051f9e613e96aa7cae9326e57c1e48eca357fc5c81728786ce493f1d4f43",
+  "excerpt_hash": "sha256:bb38581a1481f962bdb5e211141f1e62d8a76e6ba1552c9586fec56b8b563648",
+  "source_metadata": {
+    "schema_version": "SourceMetadata/v1",
+    "language": "Python",
+    "detected_role": "SOURCE",
+    "classifier_id": "source-role",
+    "classifier_version": "1.0.0",
+    "classifier_artifact_hash": "sha256:312edfabd0313bacd27057bd1165f6ce2259faa69870e478a8cf5b9188bcb97b",
+    "classifier_registry_entry_hash": "sha256:09eac77595895cbbb35761d703259a93c960d4721869fd5a8447fa02a9524405",
+    "classifier_registry_checkpoint_hash": "sha256:36cfa8824963f2f91527e5a75d75f391c3a4fea797ce50aeefff12c43b464ab2"
+  }
+}
+```
+
+Its expected digest is
+`source_evidence_hash = sha256:c8db69efe2684d07acd3d111eba7bbd12b5b2288757a97061d3527c4d6a3ffed`.
+Any field, nested field, domain, byte input, registry state, or encoding change
+must produce a different digest or fail validation.
+
+The closed, acyclic `AssertionManifestMemberPreimage` contains exactly:
+
+```text
+schema_version, job_id, question_id, response_id, response_version, answer_hash,
+segmentation_rule_id, segmentation_rule_version, assertion_index, assertion_id,
+assertion_text, answer_utf8_start, answer_utf8_end
+```
+
+It excludes `assertion_hash`. Strings use UTF-8 and the object uses RFC 8785
+canonical JSON with no null, duplicate, missing, or unknown fields.
+`assertion_hash` is exactly:
+
+```text
+"sha256:" + lowerhex(
+  SHA256("acgs.questionnaire.assertion-member/v1\0" ||
+         JCS(AssertionManifestMemberPreimage)))
+```
+
+The hash is therefore `sha256:` plus exactly 64 lowercase hexadecimal
+characters. It binds ownership, immutable response/answer version,
+segmentation-rule version, member order/id, exact text, and UTF-8 byte span; a
+text-only hash is invalid.
+
+The manifest's closed schema is
+`{schema_version, job_id, question_id, response_id, response_version,
+answer_hash, segmentation_rule_id, segmentation_rule_version, assertions[]}`.
+`assertions[]` is stored in contiguous `assertion_index` order. Each member is
+the complete member preimage plus its derived `assertion_hash`. Byte spans
+address canonical UTF-8 `answer_text`; they may not overlap, skip an assertive
+span, or point outside the answer. The deterministic versioned segmentation
+rule is rerun by the reducer.
+`assertion_manifest_hash = "sha256:" + lowerhex(
+SHA256("acgs.questionnaire.assertion-manifest/v1\0" ||
+JCS(AssertionManifest)))`. Alternate ordering, duplicate/missing indices or
+ids, changed spans/text, unknown fields, stale answer/version bindings, or an
+`assertion_hash` inconsistent with its acyclic member preimage fail closed.
 
 ```
 schema_version, job_id, question_id, response_id, response_version, answer_hash,
+assertion_manifest_hash, complete ordered AssertionManifest,
 outcome_event_id, produced_by_receipt_id,
-evidence_records[] sorted by evidence_id, each containing every immutable source
-field used by source_evidence_hash
+evidence_records[] sorted by evidence_id, each containing assertion_id,
+assertion_hash, and every immutable source field used by source_evidence_hash,
+classifier_registry_proofs[] sorted by
+(classifier_registry_entry_hash, classifier_registry_checkpoint_hash), each
+containing one complete ClassifierRegistryProofArchive/v1 for every unique
+SourceMetadata registry-hash pair and no unreferenced archive,
+one RegistryKeyAuthorityProof/v1 containing the exact policy bundle and
+verification-key manifest bound through produced_by_receipt_id.policy_hash
 ```
 
-The product wrapper canonicalizes that returned preimage and defines
+The product wrapper canonicalizes the preimage it constructed from the accepted
+raw result and defines
 `mining_result_hash = SHA256(canonical(MiningOutcomePreimage))`; that value must
 equal `OutcomeEvent.result_hash`. The preimage MUST NOT contain
 `produced_by_outcome_hash`. Only after the wrapper reserves the unique append
@@ -334,17 +787,24 @@ must have a matching committed acceptance proof. The envelope's own
 pointers are projections from this envelope, and `producer_lineage_hash` binds
 `source_evidence_hash`, the preimage's receipt/outcome-event ids, the result
 hash, and the outcome hash. `Response.response_lineage_hash` binds the response
-identities, answer hash, both producer pointers, and the sorted set of evidence
-producer lineage hashes. This two-stage construction binds the final event
+identities, answer hash, assertion manifest hash, both producer pointers, and
+the sorted set of evidence producer lineage hashes. This two-stage construction binds the final event
 pointer without asking either hash to contain itself.
 
 The reducer verifies the mining receipt's `argument_hash` against the canonical
-mining `ToolCall` arguments, checks every envelope identity and evidence record,
+mining `ToolCall` arguments, checks every envelope identity, the stored ordered
+assertion manifest, and every evidence record,
 recomputes the preimage/result hash and canonical outcome-event hash, and
 requires exact equality with `OutcomeEvent.result_hash`,
 `OutcomeEvent.outcome_hash`, `Evidence.produced_by_*`, and
 `Response.produced_by_*`. A substituted producer pointer, wrong envelope, or
-evidence record omitted from the preimage fails closed.
+evidence record omitted from the preimage fails closed. Every evidence assertion
+id/hash must name an exact manifest member. Before any supported assembly, the
+reducer requires every manifest assertion to have at least one bound `Evidence`,
+a complete valid `CitationQARecord`, and a valid bound
+`SemanticAdjudicationRecord`. It rejects any assertion missing any one of those
+records from supported delivery, creates/retains its Gap, and never silently
+omits the assertion from completeness accounting.
 
 ### 2.4 Response
 
@@ -354,6 +814,8 @@ evidence record omitted from the preimage fails closed.
 | `question_id` | str | FK to `Question.question_id` |
 | `state` | enum | See below |
 | `answer_text` | str | Draft, for customer review and editing |
+| `assertion_manifest` | AssertionManifest | Canonical ordered manifest frozen and stored for this response version |
+| `assertion_manifest_hash` | str | Domain-separated hash bound into mining and response lineage |
 | `evidence` | list[Evidence] | Empty iff state is `NOT_EVIDENCED` or `ESCALATED` |
 | `verification_state` | enum | **Deterministic reducer output** from bound `CitationQARecord` values — see below. Never model-authored. |
 | `job_id` | str | Owning job — required for lineage |
@@ -365,27 +827,34 @@ evidence record omitted from the preimage fails closed.
 `HIGH | MEDIUM | LOW` label with no derivation rule re-imports model self-assessment as if
 it were evidence quality, contradicting §6.1's declaration that LLM output is untrusted — and
 it would ship that self-report to a customer inside an evidence artifact. The replacement is
-computed in code, never authored by a model:
+computed in code, never authored by a model. The reducer classifies every
+source-fidelity-valid citation, then evaluates this first-match precedence;
+because it returns on the first satisfied branch, the states are mutually
+exclusive and deterministic even for mixed records:
 
 ```
-CONTRADICTED_BY_OTHER_ARTIFACT  any citation has contradicts_locator != None
-VERIFIED_MULTI                  >=2 citations passed check 0, adverse-QA checks,
-                                and independent semantic adjudication
-VERIFIED_SINGLE                 exactly 1 citation passed those three gates
-CANDIDATE_EVIDENCE              source-fidelity passed but semantic relevance
-                                is not independently confirmed; non-deliverable
-QA_REFUTED                      >=1 citation passed check 0 and QA is REFUTED
-                                (no citation survived QA)
-QA_INSUFFICIENT                 >=1 citation passed check 0 and QA is INSUFFICIENT
-                                (no citation survived QA)
-UNVERIFIED                      no citation passed check 0
+1. CONTRADICTED_BY_OTHER_ARTIFACT  any citation has a valid contradicts_locator
+2. QA_REFUTED                      otherwise, any check-0-valid citation is REFUTED
+3. QA_INSUFFICIENT                 otherwise, any check-0-valid citation is INSUFFICIENT
+4. CANDIDATE_EVIDENCE              otherwise, any check-0-valid citation lacks a
+                                   valid PASS QA record or confirming signed semantic record
+5. VERIFIED_MULTI                  otherwise, >=2 citations passed all three gates
+6. VERIFIED_SINGLE                 otherwise, exactly 1 citation passed all three gates
+7. UNVERIFIED                      otherwise (no citation passed check 0)
 ```
+
+Thus `REFUTED + INSUFFICIENT + CANDIDATE_EVIDENCE` reduces to `QA_REFUTED`;
+`INSUFFICIENT + CANDIDATE_EVIDENCE` reduces to `QA_INSUFFICIENT`; and
+`CONFIRMED + CANDIDATE_EVIDENCE` remains `CANDIDATE_EVIDENCE`, not
+`VERIFIED_SINGLE`. Contradiction dominates every mix.
+The precedence shorthand is `CONTRADICTED > REFUTED > INSUFFICIENT >
+CANDIDATE_EVIDENCE > VERIFIED_MULTI > VERIFIED_SINGLE > UNVERIFIED`.
 
 A citation can pass deterministic check 0 and still receive a `REFUTED` or
 `INSUFFICIENT` QA verdict. That case is neither `VERIFIED_*` nor `UNVERIFIED`.
-`QA_REFUTED` / `QA_INSUFFICIENT` are the explicit no-surviving-citation states
-for those outcomes; they MUST be tested before the value is used in delivered
-packs.
+`QA_REFUTED` / `QA_INSUFFICIENT` are the explicit adverse aggregate states for
+those outcomes; they MUST be tested, including mixed-record inputs, before the
+value is used in delivered packs.
 
 Nothing labelled "confidence" appears in the delivered pack. The customer is told what was
 *checked*, not how sure a model felt.
@@ -643,7 +1112,13 @@ Evidence mining agents  fan-out, one unit of work per question
     |                   credential injector resolves committed account binding
     |                   to a same-account short-lived Authorization credential
     |                   *** Gemini API reasoning call lives here ***
-    |                   returns MiningOutcomePreimage only
+    |                   returns closed RawMiningResult/RawEvidenceCandidate only;
+    |                   model supplies answer spans, never assertion ids/hashes
+    v
+Trusted product wrapper canonicalizes answer, freezes/stores assertion manifest,
+    |                   validates exact UTF-8 span equality, derives assertion
+    |                   ids/hashes, then constructs
+    |                   MiningOutcomePreimage before outcome hashing/signing
     v
 ProviderUsageAttestor   fetches authoritative usage read-only, signs bound UsageRecord;
     |                   ledger mediates accepted signature into one downward release;
@@ -1289,6 +1764,9 @@ Deterministic transition cases are release requirements: a sole check-0-valid
 but QA-`REFUTED` citation produces `QA_REFUTED` plus `NOT_EVIDENCED` and a Gap;
 a sole check-0-valid but QA-`INSUFFICIENT` citation produces `QA_INSUFFICIENT`
 plus `NOT_EVIDENCED` and a Gap. Neither state supports assembly or delivery.
+For mixed citation records the response-level `verification_state` uses the
+first-match precedence in §2.4: `CONTRADICTED > REFUTED > INSUFFICIENT >
+CANDIDATE_EVIDENCE > VERIFIED_MULTI > VERIFIED_SINGLE > UNVERIFIED`.
 
 ### 5.4.1 Contradiction detection
 
@@ -1391,6 +1869,9 @@ for it.
 | `OutcomeAppendAuthority` identity and reservation/finalization store | CAS-reserve each unique predecessor/sequence, atomically persist event/head/pending acceptance, and block successors until attested; compromise can accept forks or fabricate commit state |
 | Dedicated acceptance-finalizer identity and append-acceptance key custody | Revalidate only durable pending commits, sign their immutable acceptance hashes, and attest idempotently; compromise can authenticate fabricated commit history |
 | Semantic adjudicator, allowlisted rules, identities, and keys | Establish independently signed semantic relevance; compromise can manufacture support |
+| Classifier registry signer/key custody, linearizable authenticated-head service, and durable per-key high-water store | Prove a classifier entry is current, complete, and non-revoked; compromise can suppress revocation, replay stale authority, equivocate, or deny classification |
+| Questionnaire policy-bundle archive and immutable registry verification-key manifest | Bind registry public keys through the producer receipt's content-addressed policy; compromise can substitute offline verification authority |
+| Immutable classifier artifact store/loader and deterministic classifier executor | Load and run the exact hash-bound classifier bytes; compromise can substitute artifacts or falsify language/role provenance |
 | Deterministic code checks | Recompute hashes, locators, rule inputs, and chain links; compromise can accept fabricated lineage |
 
 These are the questionnaire product's security TCB and authority-completeness
@@ -1583,6 +2064,13 @@ Construct one response with a citation that passes deterministic check 0 and a
 QA `REFUTED` result, and another with QA `INSUFFICIENT`. Assert exact states
 `QA_REFUTED` and `QA_INSUFFICIENT`; both transition to `NOT_EVIDENCED`, retain a
 Gap, fail the assembly support predicate, and cannot reach delivery.
+Then exercise mixed sets through the real reducer:
+`REFUTED + INSUFFICIENT + CANDIDATE_EVIDENCE -> QA_REFUTED`,
+`INSUFFICIENT + CANDIDATE_EVIDENCE -> QA_INSUFFICIENT`, and
+`CONFIRMED + CANDIDATE_EVIDENCE -> CANDIDATE_EVIDENCE`. Add a contradiction to
+each mix and assert `CONTRADICTED_BY_OTHER_ARTIFACT`. No mixed input may depend
+on record iteration order or reduce to a `VERIFIED_*` state contrary to the
+first-match precedence.
 
 ### 8.3.3 Two-append ordering
 
@@ -1776,23 +2264,86 @@ outcome hashes, and exact Evidence back-pointers. Missing either record, sharing
 one receipt/outcome across both, or presenting a singular response-level QA
 receipt/outcome leaves the response non-deliverable.
 
+### 8.3.11a Assertion manifest completeness
+
+Freeze an answer with at least three assertions and store its canonical ordered
+`AssertionManifest`. Recompute its UTF-8 spans, assertion hashes, manifest hash,
+and deterministic segmentation result. Reorder assertions, duplicate or skip an
+index/id, alter a span/text/hash, bind a stale response version/answer hash, or
+substitute a correctly encoded manifest from another response; every case must
+fail reduction. Remove the Evidence, `CitationQARecord`, or
+`SemanticAdjudicationRecord` for each assertion in turn. The completeness gate
+must reject any assertion missing any one record from supported delivery, retain
+an explicit Gap, and prevent the response from reaching `SUPPORTED`.
+Freeze a known-vector `AssertionManifestMemberPreimage` and require the exact
+domain-separated lowercase `sha256:` digest. Attempt to include
+`assertion_hash` in that preimage, substitute a text-only hash, mutate the domain
+literal or any owning/version/segmentation/member field, uppercase the hex, or
+remove the prefix; every case must fail before evidence or QA lineage is accepted.
+
 ### 8.3.12 Mining envelope and producer lineage
 
 Execute a mining call through the receipt-gated executor and capture the exact
-canonical `MiningOutcomePreimage`. Assert the agent returns that preimage only;
-the product wrapper then computes the result hash, reserves a unique append
+`RawMiningResult`. Assert the agent returns that raw result only and cannot
+construct the manifest, canonical preimage, or outcome. The trusted product
+wrapper canonicalizes the answer, freezes and stores the ordered assertion
+manifest, validates every evidence assertion binding, constructs
+`MiningOutcomePreimage`, and only then computes the result hash, reserves a unique append
 slot, signs the matching event, atomically finalizes the pending record, waits for
 and verifies the bound `ATTESTED` `AppendAcceptance`, and only afterward constructs
 `MiningOutcomeEnvelope`. Assert
 the receipt `argument_hash` covers the canonical mining call,
 `OutcomeEvent.result_hash` equals the recomputed preimage hash, and every
 Evidence/Response producer pointer and lineage hash is an exact projection from
-the envelope. Substitute an otherwise-valid producer receipt,
+the envelope, including the stored ordered assertion manifest and
+`assertion_manifest_hash`. Substitute an otherwise-valid producer receipt,
 outcome-event id, or outcome hash; change response version/answer hash; remove or
 swap an evidence record; and present a correctly encoded but wrong envelope.
 Each case must fail reduction and leave the response non-deliverable. Also
 assert the preimage excludes `produced_by_outcome_hash`, proving the result hash
 construction is not self-referential.
+
+Exercise the closed raw schema through the real step-4 wrapper. Reject an
+unknown raw-result or candidate field, duplicate `candidate_id`, a candidate
+containing model-supplied `assertion_id`, `assertion_hash`, or
+`source_metadata`, stale or
+out-of-range offsets, offsets inside a multibyte UTF-8 code point, and spans
+that merely overlap, contain, fuzzily resemble, or text-match a manifest
+assertion. Reject zero or multiple exact manifest-member matches. For the valid
+case, require exact equality of the candidate start/end with one manifest
+member's UTF-8 start/end and assert that the trusted wrapper—not the model—
+derives and attaches that member's `assertion_id` and `assertion_hash` before
+constructing `MiningOutcomePreimage`. Every rejected case remains
+non-deliverable and produces no accepted outcome.
+
+Freeze the three answer-byte/hash vectors from §2.3.3 in the real decoder and
+hash implementation. Preserve CRLF, distinguish composed from decomposed
+Unicode, and use the multibyte emoji boundaries exactly. Invalid UTF-8, unpaired
+surrogates, normalization, line-ending conversion, trimming, wrong domain,
+uppercase digest encoding, or any vector mismatch must fail before manifest
+construction.
+
+Prove metadata is wrapper-derived: validate the repository snapshot, load the
+exact classifier artifact from the signed registry, and require the closed
+`SourceMetadata/v1` plus its exact `SourceEvidencePreimage/v1` hash. Freeze the
+complete source-evidence vector from section 2.3.3. Reject raw `source_metadata`,
+nested unknowns, a forged role, any mtime field, raw/uppercase/malformed
+artifact or excerpt hashes, text or line-ending normalization, classifier
+ID/version/artifact/entry substitution, an unknown or bad-signature entry, a
+nonce mismatch, expired checkpoint, registry rollback, and a replayed sequence
+7 `ACTIVE` after sequence 8 `REVOKED`. Every case must fail before accepting
+Evidence or an outcome, including high-water-store failure or uncertain commit.
+Delete either signed envelope or its archive; change `signature_alg`, `key_id`,
+signature, nonce, preimage, policy bundle, policy artifact, policy artifact
+digest, manifest digest, manifest key,
+schema version, bundle id, bundle version, key purpose, public-key encoding,
+signature encoding, key validity interval, or
+receipt `policy_hash`; substitute a remote pointer; add an unreferenced archive
+or manifest key; or make the archive write/read uncertain. Delay or
+crash-recover finalization until
+`AppendAcceptanceUnsignedPreimage.commit_timestamp` is outside the checkpoint
+interval. Each case must fail before outcome acceptance and proof-pack delivery;
+the expired case must rebuild the preimage under a fresh checkpoint.
 
 ### 8.4 Dispatcher-level integration proof
 
