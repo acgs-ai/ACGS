@@ -273,22 +273,24 @@ def test_physical_transform_requires_fresh_allow_and_never_runs_original_args() 
 
 def test_physical_replay_authority_is_not_attributed_to_execution_root() -> None:
     text = _rfc()
-    assert "derived lease-context identity" in text
-    assert "not from `execution_root`" in text
+    normalized = re.sub(r"\s+", " ", text)
+    assert "derived lease-context identity" in normalized
+    assert "not from `execution_root`" in normalized
     for authority in (
         "signed receipt bindings",
         "bounded expiry",
-        "consumed receipt/nonce state",
+        "applicable composite authority",
         "pinned boot state",
-        "shared nonce authority",
+        "shared nonce/receipt-burn authority",
     ):
-        assert authority in text
+        assert authority in normalized
 
 
 def test_physical_drive_and_replay_authorities_are_in_the_tcb() -> None:
     text = _rfc()
     diagram = text.partition("```mermaid")[2].partition("```")[0]
     trust = text.partition("### TCB enumeration")[2].partition("## 4.")[0]
+    enumeration = trust.partition("The published receipt-only")[0]
     normalized = re.sub(r"\s+", " ", trust)
     for token in (
         "drive command boundary",
@@ -298,29 +300,47 @@ def test_physical_drive_and_replay_authorities_are_in_the_tcb() -> None:
         "ROS, DDS, and other processes receive neither the bus mapping nor command credential",
         "hardware command subset",
         "Compromise can command arbitrary motion",
-        "`ReceiptConsumptionLedger`",
-        "durable JSONL store",
-        "OS lock/permissions",
-        "integrity sidecars",
-        "roll back burns and reopen receipts",
+        "profile-local composite receipt-plus-",
+        "one durable transaction/lock",
+        "protected checkpoint",
+        "REQUIRED but UNIMPLEMENTED",
         "shared nonce/receipt-burn authority",
         "durable transactional or consensus store",
         "redundant controllers remain unsupported and must fail closed",
         "direct ROS publisher or untrusted process attempting drive actuation",
         "rejected at the bus/arbiter boundary without actuator motion",
+        "non-authoritative reference code",
+        "outside the Security TCB",
+        "excluded from the claim that compromise can mint accepted motion",
     ):
         assert token in normalized
+    assert "ReceiptConsumptionLedger" not in enumeration
     diagram = re.sub(r"\s+", " ", diagram)
     for token in (
-        'RCL["ReceiptConsumptionLedger<br/>durable JSONL + OS lock/permissions + '
-        'integrity sidecars"]',
+        'subgraph REF["Reference only — outside Security TCB"]',
+        'RCL["ReceiptConsumptionLedger(path, checkpoint=True)<br/>receipt-anchor-only '
+        'reference; insufficient"]',
+        'SCB["Profile single-controller composite burn authority<br/>UNIMPLEMENTED — '
+        'required before activation"]',
         'BURN["Shared transactional burn/nonce authority<br/>UNIMPLEMENTED — required '
         'for redundant controllers"]',
-        'LA -- "single-controller receipt-anchor consume" --> RCL',
+        'LA -. "reference receipt-only consume" .-> RCL',
+        'LA -. "single-controller composite burn required;<br/>fail closed if absent" '
+        '.-> SCB',
         'LA -. "redundant consume required;<br/>fail closed if absent" .-> BURN',
-        "class ACGS,LOAD,RTSK,SHM,LA,RCL,BURN tcb",
+        "class MC,AUD,REV,RCL semi",
+        "class ACGS,LOAD,RTSK,SHM,LA,SCB,BURN tcb",
     ):
         assert token in diagram
+    tcb_diagram = diagram.partition(
+        'subgraph TCB["Security TCB (RT subset marked)"]'
+    )[2].partition('subgraph REF["Reference only — outside Security TCB"]')[0]
+    assert "RCL[" not in tcb_diagram
+    compromise = normalized.partition("Compromise of")[2].partition(
+        "failures are not containable"
+    )[0]
+    assert "ReceiptConsumptionLedger" not in compromise
+    assert "replay ledger/store" not in compromise
 
 
 def test_physical_tcb_and_atomic_state_publication_are_explicit() -> None:
@@ -339,7 +359,7 @@ def test_physical_tcb_and_atomic_state_publication_are_explicit() -> None:
         "exclusive capability to release-store `blocks_verified`",
         "RT subset",
         "can cause unauthorized motion",
-        "class ACGS,LOAD,RTSK,SHM,LA,RCL,BURN tcb",
+        "class ACGS,LOAD,RTSK,SHM,LA,SCB,BURN tcb",
         "atomic release-store",
         "acquire-load",
         "_Atomic uint32_t blocks_verified",
@@ -1844,3 +1864,114 @@ def test_site_copy_preserves_the_four_verdict_execution_invariant() -> None:
     assert "Only ALLOW and TRANSFORM can authorize a side effect" in text
     assert "Sends only the approved" in text
     assert "Fail closed. No tool call." in text
+
+
+def test_site_copy_qualifies_principal_authz_and_mcp_gateway_scope() -> None:
+    text = _read(SITE_DECK)
+    normalized = re.sub(r"\s+", " ", text)
+    for token in (
+        "Not a complete IAM / FGA system",
+        "opt-in `authz_enforce`",
+        "configured `PrincipalRegistry`",
+        "application-supplied",
+        "not a general MCP gateway",
+        "shipped alpha `adapters.mcp_gateway`",
+        "receipt-gated proxy only for explicitly wired MCP calls",
+        "transport hardening, MCP identity, deployment, and unwired servers",
+    ):
+        assert token in normalized
+
+
+def test_physical_profile_does_not_overclaim_the_shipped_replay_ledger() -> None:
+    text = _rfc()
+    normalized = re.sub(r"\s+", " ", text)
+    for token in (
+        "ReceiptConsumptionLedger(path, checkpoint=True)",
+        ".consume(receipt)",
+        "receipt-anchor-only reference",
+        "constructor configuration, not an external expected-tail argument",
+        "API has no `mar_nonce` or composite transaction",
+        "separate profile-local composite receipt-plus-`mar_nonce` burn authority",
+        "one durable transaction/lock and protected checkpoint",
+        "REQUIRED but UNIMPLEMENTED",
+        "fail closed at activation until it exists",
+        "single- and redundant-controller modes both fail closed",
+        "non-authoritative reference code",
+        "outside the Security TCB",
+        "excluded from the claim that compromise can mint accepted motion",
+        "dotted diagram edge is descriptive",
+    ):
+        assert token in normalized
+    assert "consume(receipt, checkpoint=True)" not in text
+    assert "published `ReceiptConsumptionLedger.consume" not in text
+
+
+def test_physical_deactivate_acknowledges_an_already_terminal_lease() -> None:
+    lifecycle = _rfc().partition("### State transitions")[2].partition("### Interfaces")[0]
+    normalized = re.sub(r"\s+", " ", lifecycle)
+    ordered = (
+        "publish an allocation-bound revoke request",
+        "stop scheduling and wait for RT quiescence",
+        "already `CONSUMED`, `REVOKED`, or `EXPIRED`",
+        "directly acknowledges the observed terminal generation",
+        "return only after terminal acknowledgement",
+    )
+    positions = [normalized.index(token) for token in ordered]
+    assert positions == sorted(positions)
+    assert "without attempting a transition" in normalized
+
+
+def test_questionnaire_outcome_signing_grant_is_distinct_and_single_use() -> None:
+    text = _read(QUESTIONNAIRE_SPEC)
+    section = text.partition("The trusted linearizable `OutcomeAppendAuthority`")[2]
+    section = section.partition("> **Signing is on by default")[0]
+    normalized = re.sub(r"\s+", " ", section)
+    for token in (
+        "distinct signing-grant state",
+        "UNUSED|CLAIMED|USED",
+        "signing_grant_nonce",
+        "issuing one signature never consumes the append reservation",
+        "CASes the distinct signing grant from `UNUSED` to `CLAIMED`",
+        "idempotency key derived from the reservation id, nonce, and event hash",
+        "`CLAIMED -> USED`",
+        "cannot sign another hash",
+        "`USED` cannot sign again",
+        "without changing append status `ACTIVE`",
+        "requires signing-grant state `USED`",
+        "exact stored nonce/event-hash/signature reference",
+    ):
+        assert token in normalized
+
+
+def test_questionnaire_retry_hold_keeps_all_remaining_attempt_maxima() -> None:
+    text = _read(QUESTIONNAIRE_SPEC)
+    spend = text.partition("### 3.3.1 Spend control")[2].partition("### 3.3.2")[0]
+    regression = text.partition("### 8.3.7 Two-worker spend concurrency")[2]
+    regression = regression.partition("### 8.3.8")[0]
+    normalized = re.sub(r"\s+", " ", spend + regression)
+    for token in (
+        "retains the capped maximum for every unused or ambiguous remaining attempt",
+        "cannot release retry headroom early",
+        "SpendOperation.state",
+        "OPEN|SUCCEEDED|FAILED|ESCALATED|CANCELLED",
+        "atomically requires `SpendOperation.state == OPEN`",
+        "No reconciliation may release the maximum for a not-yet-terminal retry slot",
+        "CAS `OPEN -> SUCCEEDED|FAILED|ESCALATED|CANCELLED`",
+        "atomically retire every unused attempt slot",
+        "release only caps proven unreachable",
+        "same operation row/version",
+        "one linearization winner",
+        "terminalization wins",
+        "non-`OPEN` state and makes zero provider calls",
+        "retry intent wins",
+        "cap remains charged or held",
+        "no schedule can both authorize the retry and release its cap",
+    ):
+        assert token in normalized
+
+    terminal = normalized.index(
+        "CAS `OPEN -> SUCCEEDED|FAILED|ESCALATED|CANCELLED`"
+    )
+    retire = normalized.index("atomically retire every unused attempt slot", terminal)
+    release = normalized.index("release only caps proven unreachable", retire)
+    assert terminal < retire < release

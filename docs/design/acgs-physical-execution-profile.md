@@ -106,8 +106,12 @@ flowchart TB
     LOAD["Non-RT verified-buffer loader"]
     RTSK["Trusted RT component<br/>Safety Kernel + inline STM"]
     SHM[("Lease control block<br/>volatile shared memory")]
-    RCL["ReceiptConsumptionLedger<br/>durable JSONL + OS lock/permissions + integrity sidecars"]
+    SCB["Profile single-controller composite burn authority<br/>UNIMPLEMENTED — required before activation"]
     BURN["Shared transactional burn/nonce authority<br/>UNIMPLEMENTED — required for redundant controllers"]
+  end
+
+  subgraph REF["Reference only — outside Security TCB"]
+    RCL["ReceiptConsumptionLedger(path, checkpoint=True)<br/>receipt-anchor-only reference; insufficient"]
   end
 
   subgraph HWT["Hardware command TCB"]
@@ -124,7 +128,8 @@ flowchart TB
   MC -. "artifact blocks" .-> LOAD
   LA --> LOAD
   LA --> AUD
-  LA -- "single-controller receipt-anchor consume" --> RCL
+  LA -. "reference receipt-only consume" .-> RCL
+  LA -. "single-controller composite burn required;<br/>fail closed if absent" .-> SCB
   LA -. "redundant consume required;<br/>fail closed if absent" .-> BURN
   LA -- "authority fields" --> SHM
   LA -- "off-loop EMPTY→ARMED mailbox" --> RTSK
@@ -140,8 +145,8 @@ flowchart TB
   classDef tcb fill:#16301f,stroke:#3f9d63,color:#dff3e6
   classDef hw fill:#1c2733,stroke:#4a80b0,color:#dbe9f5
   class VLA,OPT,ROS untrusted
-  class MC,AUD,REV semi
-  class ACGS,LOAD,RTSK,SHM,LA,RCL,BURN tcb
+  class MC,AUD,REV,RCL semi
+  class ACGS,LOAD,RTSK,SHM,LA,SCB,BURN tcb
   class DRV tcb
   class ESTOP hw
 ```
@@ -180,14 +185,25 @@ In the **security TCB**:
     exclusive channel; ROS, DDS, and other processes receive neither the bus
     mapping nor command credential. Compromise can command arbitrary motion
     within independent drive/E-stop limits and is therefore a TCB compromise.
-12. For a single controller, `ReceiptConsumptionLedger`, its durable JSONL
-    store, OS lock/permissions, and integrity sidecars that preserve burned
-    receipt anchors. Compromise can delete or roll back burns and reopen receipts.
+12. For a single controller, a separate profile-local composite receipt-plus-
+    `mar_nonce` burn authority with one durable transaction/lock and protected
+    checkpoint is REQUIRED but UNIMPLEMENTED. It must atomically reject reuse of
+    either the exact receipt anchor or exact bound nonce. Lease issuance and
+    activation fail closed until this authority exists. Its store, lock,
+    checkpoint, and integrity controls enter the TCB when implemented; deletion,
+    truncation, or rollback could otherwise reopen authority.
 13. For any redundant-controller deployment, the shared nonce/receipt-burn
     authority plus its durable transactional or consensus store. Compromise can
     reopen burned receipts across controllers. This authority is not yet
     implemented; redundant controllers remain unsupported and must fail closed
     rather than fall back to per-host ledgers.
+
+The published receipt-only
+`ReceiptConsumptionLedger(path, checkpoint=True).consume(receipt)` is
+non-authoritative reference code for this Draft profile. It is outside the
+Security TCB, cannot satisfy item 12, and is excluded from the claim that
+compromise can mint accepted motion. Its dotted diagram edge is descriptive,
+not an activation dependency or authority grant.
 
 Items 1--4, including item 1's inline STM path, are the **RT software subset**: only they
 execute or are read in the servo loop. Items 5--9 remain in the security TCB off the RT path because
@@ -202,10 +218,11 @@ The servo loop acquire-loads the revoke generation at its first and final state
 checks. No
 synchronous IPC or blocking operation exists on the servo path.
 Item 11 is the **hardware command subset** immediately downstream of that loop;
-items 12--13 are replay-authority storage outside the hot path.
+items 12--13 are required future replay authorities outside the hot path.
 Compromise of the policy decision, issuer/signer, key custody, Lease Authority,
-loader, trusted RT component, drive command boundary, replay ledger/store, shared
-burn authority, or their OS isolation can mint an accepted motion, forge a lease,
+loader, trusted RT component, drive command boundary, profile-local composite
+burn authority, shared burn authority, or their OS isolation can mint an
+accepted motion, forge a lease,
 reopen consumed authority, or
 publish unverified commands and therefore can cause unauthorized motion; those
 failures are not containable to denial. A compromised revoke adapter is
@@ -660,18 +677,27 @@ The lease is the constant-time, real-time-safe projection of a receipt.
 
 - **Derived, never primary.** A lease exists only as the product of a fully
   validated receipt. The Lease Authority performs every expensive check *once*.
-- **Replay authority is explicit.** Issuance consumes the MAR through the published
-  `ReceiptConsumptionLedger.consume(receipt)` (JSONL ledger, file locking,
-  burns the receipt anchor). Its durable store, OS lock/permissions, and integrity
-  sidecars are security TCB for a single controller; rollback or deletion can
-  reopen a burned receipt. That primitive is **not** an atomic MAR-nonce
-  reservation in SQLite, and it gives no cross-instance protection. T-02's
-  multi-controller semantics therefore still need a durable shared
-  nonce-reservation operation before this profile is safe on redundant
-  controllers. Freshness/replay protection comes from signed receipt bindings,
-  bounded expiry, consumed receipt/nonce state, pinned boot state, and that
-  shared nonce authority -- not from `execution_root`. Until the shared
-  authority exists, redundant controllers are unsupported and must fail closed.
+- **Replay authority is explicit and not yet implemented for this profile.**
+  The shipped reference is constructed as
+  `ReceiptConsumptionLedger(path, checkpoint=True)` and then called as
+  `.consume(receipt)`. It burns only the receipt anchor; `checkpoint=True` is
+  constructor configuration, not an external expected-tail argument, and the
+  API has no `mar_nonce` or composite transaction. It is therefore insufficient
+  to issue a physical lease.
+  A conforming single-controller deployment requires a separate profile-local
+  composite receipt-plus-`mar_nonce` burn authority that atomically burns the
+  exact receipt anchor and exact bound `mar_nonce` under one durable
+  transaction/lock and protected checkpoint.
+  Missing authority, unavailable or uncertain transaction, checkpoint deletion
+  or truncation, rollback, duplicate receipt anchor, or duplicate nonce all fail
+  before `EMPTY -> ARMED`. This authority is REQUIRED but UNIMPLEMENTED, so this
+  Draft profile must fail closed at activation until it exists.
+  Multi-controller semantics separately require the durable shared
+  nonce/receipt-burn authority in T-02. That authority is also unimplemented;
+  redundant controllers remain unsupported and fail closed. Freshness/replay
+  protection comes from signed receipt bindings, bounded expiry, consumed
+  receipt/nonce state, pinned boot state, and the applicable composite authority
+  -- not from `execution_root`.
 - **No reboot survival.** The control block lives in volatile shared memory
   (`tmpfs`/`/dev/shm`, `mlock`ed) and carries the kernel `boot_id`. On mismatch
   the RT kernel refuses it. A lease can never outlive the machine state it was
@@ -1013,8 +1039,8 @@ observability**, not enforcement.
 | Transition | Checks performed |
 |---|---|
 | `configure` | load contract blob; verify `contract_digest`; verify RT kernel binary hash; map shared memory; lock pages; verify clock source is monotonic RT |
-| `activate` | require MAR; verify signature, `receipt_hash`, nonempty timezone-aware expiry with trusted clock and bounded maximum TTL (`require_expiry=True` / strict receipt version), tenant, boundary, actor, policy digest; compare the MAR's static `PhysicalContractProjection` only with the compiled artifact and compare its disjoint `LiveDeviceProjection` only with freshly queried robot/tool/action-space inputs; require exact field equality, canonical digest encoding, both bound projection hashes, and the complete contract digest before arming; separately verify every per-motion field with only the declared initial-joint tolerance; verify perception age; **read `calibration_epoch`, re-verify the calibration digest at that epoch, and pin the epoch into the lease** (T-13); allocate fresh lease/boot identities, fresh request page, and fresh generation namespace; derive `execution_root` (§6.3); atomically consume receipt plus nonce through the supported authority; initialize fresh authority fields and request STM `EMPTY -> ARMED`; never clear/rebind an old request page or reuse a terminal block |
-| `deactivate` | publish an allocation-bound revoke request; while ticks are scheduled only the servo thread may invoke STM; `category_1_stop` (never path-following ramp stop); await terminal acknowledgement |
+| `activate` | require MAR; verify signature, `receipt_hash`, nonempty timezone-aware expiry with trusted clock and bounded maximum TTL (`require_expiry=True` / strict receipt version), tenant, boundary, actor, policy digest; compare the MAR's static `PhysicalContractProjection` only with the compiled artifact and compare its disjoint `LiveDeviceProjection` only with freshly queried robot/tool/action-space inputs; require exact field equality, canonical digest encoding, both bound projection hashes, and the complete contract digest before arming; separately verify every per-motion field with only the declared initial-joint tolerance; verify perception age; **read `calibration_epoch`, re-verify the calibration digest at that epoch, and pin the epoch into the lease** (T-13); allocate fresh lease/boot identities, fresh request page, and fresh generation namespace; derive `execution_root` (§6.3); require the profile-local composite receipt-plus-`mar_nonce` burn authority and fail closed while it is unimplemented; only after its one durable atomic burn may activation initialize fresh authority fields and request STM `EMPTY -> ARMED`; never clear/rebind an old request page or reuse a terminal block |
+| `deactivate` | publish an allocation-bound revoke request; while ticks are scheduled only the servo thread may invoke STM; `category_1_stop` (never path-following ramp stop); stop scheduling and wait for RT quiescence; if the lease is already `CONSUMED`, `REVOKED`, or `EXPIRED`, the trusted control thread directly acknowledges the observed terminal generation without attempting a transition; otherwise perform the bounded terminal transition; return only after terminal acknowledgement |
 | `cleanup` | publish the allocation's terminal revoke; stop scheduling new RT ticks; wait for RT quiescence; if still pending, the trusted RT component's control thread may then perform the bounded direct STM transition and acknowledge only a terminal state; only after acknowledgement/terminal observation revoke mappings, unmap, and retire/destroy without zero/reset/reuse; reauthorization creates a fresh allocation, identity, and namespace |
 | `error` (`on_error`) | publish an allocation-bound revoke request; `category_1_stop`; while scheduled, only the servo thread invokes STM; emit refusal evidence; require operator acknowledgement before re-activate |
 | `shutdown` | publish a terminal revoke; stop scheduling new RT ticks; `category_0_stop`; wait for RT quiescence; only then may the trusted control thread perform a pending bounded direct STM transition; after acknowledgement/terminal observation revoke mappings, unmap, and retire/destroy without reset or reuse |
@@ -1068,7 +1094,7 @@ every ROS node yields denial of service, not unauthorized torque.
 | ID | Attack | Detection | Fail-closed response | Evidence |
 |---|---|---|---|---|
 | T-01 | **Signed trajectory mutation** — bytes altered after authorization | Merkle block verify in non-RT loader; `blocks_verified` never advances past a bad block | RT check 5 fails → inline `REVOKED`, then `category_1_stop` (commanded geometry is untrusted); no later tick emits | refusal receipt w/ block index, expected vs. actual block hash |
-| T-02 | **Replay** of a previously valid MAR | single controller: `ReceiptConsumptionLedger.consume(receipt)` plus durable JSONL, OS lock/permissions, and integrity sidecars reject a burned anchor; redundant controllers: require shared transactional/consensus nonce authority; `boot_id` and `expires_at` also bind freshness | activation aborts; no lease issued; redundant mode fails closed while shared authority is unavailable | refusal receipt, nonce, first-consumption timestamp, burn-store integrity result |
+| T-02 | **Replay** of a previously valid MAR | the shipped `ReceiptConsumptionLedger(path, checkpoint=True).consume(receipt)` is receipt-anchor-only reference code and is insufficient; single-controller activation requires an unimplemented profile-local atomic receipt-plus-`mar_nonce` burn with one durable transaction/lock and protected checkpoint; deletion, truncation, rollback, duplicate anchor, and duplicate nonce are negative tests; redundant controllers separately require shared transactional/consensus authority | activation aborts and no lease is issued while the applicable composite authority is unavailable; single- and redundant-controller modes both fail closed | refusal receipt, nonce, first-consumption timestamp, burn-store integrity result |
 | T-03 | **Wrong robot / model / calibration** | `activate` compares receipt digests against **live device-queried** firmware, kinematic, calibration, tool values | activation aborts | refusal receipt listing each mismatched digest |
 | T-04 | **NaN / Inf / denormal actions** | rejected at canonical encode; re-checked per setpoint (check 6) | inline `REVOKED` transition, then `category_1_stop`; no later tick emits | refusal receipt w/ seq index and raw bit pattern |
 | T-05 | **Unsafe intermediate path** — endpoints legal, path not | per-tick `admissible()`; SDF + polytope evaluated on every setpoint, not just waypoints | inline `REVOKED` transition, then `category_1_stop` at first inadmissible tick — **geometric violation, so the path must not be followed further** (§5) | refusal receipt w/ seq, violated constraint id, margin |

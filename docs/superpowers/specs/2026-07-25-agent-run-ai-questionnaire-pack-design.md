@@ -976,11 +976,14 @@ failure binding exactly as it covers a successful result.
 The trusted linearizable `OutcomeAppendAuthority` then CAS-reserves the current
 head before any event signature is issued. Canonical `OutcomeReservation`
 contains `reservation_id`, `job_id`, expected head hash/version, assigned next
-`sequence`, `payload_hash`, nonempty bounded `expires_at`, and status
-`ACTIVE|CONSUMED|EXPIRED|CANCELLED`. The reservation transaction succeeds only
-when the supplied head/version are still current and no active reservation owns
-that successor slot. A conflict returns no reservation and **no signature is
-issued**.
+`sequence`, `payload_hash`, nonempty bounded `expires_at`, append status
+`ACTIVE|CONSUMED|EXPIRED|CANCELLED`, and a distinct signing-grant state
+`UNUSED|CLAIMED|USED` plus nullable `signing_grant_nonce`, `claimed_event_hash`,
+and `signature_ref`. Append status and signing-grant state are separate atomic
+fields: issuing one signature never consumes the append reservation needed by
+finalize. The reservation transaction succeeds only when the supplied
+head/version are still current and no active reservation owns that successor
+slot. A conflict returns no reservation and **no signature is issued**.
 
 Canonical `OutcomeEventUnsignedPreimage` contains the complete payload plus the
 active `reservation_id`, assigned `sequence`, expected `previous_outcome_hash`,
@@ -989,16 +992,25 @@ append acceptance. Define
 `outcome_hash = SHA256(canonical(OutcomeEventUnsignedPreimage))`, then
 `signature = KMS.Sign("acgs-outcome-v1" || outcome_hash)`. The event signer signs
 only after authenticating an active, unexpired reservation whose job, payload
-hash, sequence, and predecessor match exactly, and consumes that reservation's
-single-use signing authorization. This ordering avoids self-reference and
-prevents rejected contenders from obtaining candidate signatures. The split is
+hash, sequence, and predecessor match exactly. In one linearizable transaction
+it CASes the distinct signing grant from `UNUSED` to `CLAIMED`, creates a unique
+`signing_grant_nonce`, and binds that nonce to this exact `outcome_hash`. The KMS
+request uses an idempotency key derived from the reservation id, nonce, and event
+hash; after signing, the signer stores the signature reference and CASes
+`CLAIMED -> USED`. Recovery may retry only that same bound KMS request. A
+`CLAIMED` grant cannot sign another hash, and `USED` cannot sign again. This
+consumes exactly one signing grant without changing append status `ACTIVE`, so
+the same reservation remains eligible for finalize. This ordering avoids
+self-reference and prevents rejected contenders from obtaining candidate
+signatures. The split is
 the fail-closed shape and must be preserved:
 **authorization is minted before execution; the outcome is recorded after.** A
 single merged record would permit after-the-fact authorization.
 
 Finalize is a second CAS-serialized transaction. It accepts only the event and
-signature matching the still-active reservation and rechecks the expected head
-and version. In one durable transaction it stores the event, marks the
+signature matching the still-active reservation, requires signing-grant state
+`USED` with the exact stored nonce/event-hash/signature reference, and rechecks
+the expected head and version. In one durable transaction it stores the event, marks the
 reservation `CONSUMED`, advances head to
 `(outcome_hash, expected_version + 1)`, and persists immutable canonical
 `AppendAcceptanceUnsignedPreimage` plus `acceptance_hash`. That preimage binds
@@ -1294,12 +1306,17 @@ The production ledger MUST provide:
   occurred, may fully release its reservation. Ambiguous outcomes remain charged
   or held at the capped maximum until authoritative, exactly bound usage permits
   a single-use downward reconciliation.
-- **Bounded retries** — retry attempts reserve like first attempts (below).
+- **Bounded retries** — retry attempts reserve like first attempts (below). Until the operation reaches a terminal state, the ledger retains the capped maximum for every unused or ambiguous remaining attempt; a completed attempt may establish known actual spend but cannot release retry headroom early.
 - **Auditable cost decisions** — every reservation and reconciliation carries a receipt.
 
 Gemini calls remain **side-effecting** product actions regardless of which ledger implements the bound.
 
 - A per-job spend ceiling is reserved at quote time (step 2) and bound to the `job_id`.
+- The ledger owns a canonical operation lifecycle. `SpendOperation.state` is the
+  closed enum `OPEN|SUCCEEDED|FAILED|ESCALATED|CANCELLED`; `OPEN` is the only
+  nonterminal state. Every attempt slot, hold, usage record, and release belongs
+  to that same operation row/version. No worker-local state may establish
+  terminality or release retry capacity.
 - Before the first provider call, compute one operation-wide worst-case maximum
   across **all bounded attempts** from capped input tokens, capped output tokens,
   the maximum attempt count, and the pinned model price. Atomically reserve that
@@ -1315,8 +1332,9 @@ Gemini calls remain **side-effecting** product actions regardless of which ledge
   `credential_min_valid_until`, each
   `capped_attempt_max_minor_units`, and
   `operation_wide_max_minor_units`. Before committing each `DispatchIntent`, the ledger transaction
-  requires `attempt_id` and `dispatch_sequence` to be the next unused values and
-  not exceed `max_attempts`; exact equality with every pinned model, token, price,
+  atomically requires `SpendOperation.state == OPEN`, requires `attempt_id` and
+  `dispatch_sequence` to be the next unused values and not exceed `max_attempts`;
+  exact equality with every pinned model, token, price,
   billing rule/version, account/credential mapping, workload identity binding,
   and per-attempt cap; a new `idempotency_key`; and proof that the sum of all
   authorized attempt caps remains at or below the reserved operation maximum.
@@ -1499,12 +1517,28 @@ Gemini calls remain **side-effecting** product actions regardless of which ledge
   or internally inconsistent records—including nonzero fields on
   `FINAL_NOT_CHARGED`—retain the full hold. Only a complete valid terminal record
   can be consumed for reconciliation.
-  Authoritative usage may reconcile downward idempotently, but never below
-  already known spend and never by double-releasing the same reservation. If no
+  Authoritative usage may reconcile downward idempotently by recording known
+  per-attempt spend, but while retry remains possible the operation hold is at
+  least
+  `known_actual_spend + sum(capped_attempt_max_minor_units for every unused or`
+  `ambiguous remaining attempt)`.
+  No reconciliation may release the maximum for a not-yet-terminal retry slot.
+  Terminalization is one ledger transaction: CAS `OPEN -> SUCCEEDED|FAILED|ESCALATED|CANCELLED`,
+  atomically retire every unused attempt slot, then release only caps proven
+  unreachable by that committed terminal state. The release is computed after
+  slot retirement in the same transaction. A `DispatchIntent` commit and
+  terminalization therefore race on the same operation row/version and have one
+  linearization winner. If terminalization wins, the intent sees a non-`OPEN`
+  state and makes zero provider calls. If the retry intent wins, its cap remains
+  charged or held; terminalization must retry against the new version and may
+  release only after accounting for that committed attempt. Only after this
+  terminal CAS may the ledger reconcile total actual usage once and atomically
+  release the unused remainder, never below already known spend and never by
+  double-releasing the same reservation. If no
   authoritative provider record exists, or no valid `UsageRecord` exists, the
-  capped maximum remains held. Every later
-  operation sees that hold as spent, so aggregate known spend plus holds plus new
-  reservations cannot exceed the job ceiling.
+  capped maximum remains held for the affected attempt. Every later operation
+  sees known spend plus all retained attempt holds as spent, so aggregate known
+  spend plus holds plus new reservations cannot exceed the job ceiling.
 - Ceiling exhaustion → `ESCALATE` the job. It MUST NOT silently truncate the questionnaire
   and deliver a partial pack as complete (§7).
 - Concurrency across the fan-out is capped so that reservation is not raced.
@@ -2223,6 +2257,16 @@ Also race two workers preparing the same next attempt. Exactly one durable
 monotonic `DispatchIntent` CAS may authorize network handoff; the conflict loser
 makes zero provider calls. A provider `UsageRecord` is consumed once across both
 workers, so replay or a record bound to the loser's attempt cannot lower the hold.
+
+Race a next retry intent against operation terminalization on the same ledger
+row/version. Assert both transactions require `OPEN`. If terminalization CASes
+`OPEN -> SUCCEEDED|FAILED|ESCALATED|CANCELLED` first, it atomically retires all
+unused slots before releasing unreachable caps, and the losing intent makes zero
+provider calls. If the retry intent commits first, its cap remains charged or
+held; terminalization retries against the new version, accounts for the committed
+attempt, retires the remaining unused slots, and only then releases unreachable
+caps. Assert there is exactly one linearization winner and no schedule can both
+authorize the retry and release its cap.
 
 ### 8.3.8 Cross-instance webhook replay
 

@@ -149,12 +149,12 @@ Intro ZH: 这一页就是产品。若你要的是下面其中一项，gove-zone 
 | Not | Why (EN) | Why (ZH) |
 |---|---|---|
 | Not a sandbox | It does not contain a compromised host. | 它不把失陷宿主关进笼子。 |
-| Not IAM / FGA | It does not answer "may this principal use this tool." It answers "may this call, with these arguments, run now." | 它不问「这个主体能不能用这工具」。它问「这一次调用、这组参数、现在能不能跑」。 |
+| Not a complete IAM / FGA system | By default it answers whether this bound call may run. The opt-in `authz_enforce` path can also require a configured `PrincipalRegistry`, but that registry is application-supplied and is not a complete IAM lifecycle or FGA product. | 默认回答这次绑定调用能否执行。可选的 `authz_enforce` 路径也可要求已配置的 `PrincipalRegistry`，但该注册表由应用提供，并非完整的 IAM 生命周期或 FGA 产品。 |
 | Not a content filter | It does not score whether text is toxic or on-brand. Guardrails are a different layer. | 它不给文本打毒性或品牌分。护栏是另一层。 |
 | Not a compliance certificate | No SOC 2, HIPAA, GDPR, PCI, or EU AI Act attestation is claimed. Mapping documents and acgs assess reports are not certificates. | 不声称 SOC 2、HIPAA、GDPR、PCI 或欧盟 AI 法案获证。映射文档和 acgs assess 报告不是证书。 |
 | Not a human-approval UI | There is no queue, no "click Allow," no console product on this origin. | 没有审批队列，没有「点允许」，本源站没有控制台产品。 |
 | Not a Cursor / host lock | Unwired host tools are unwired. That is a boundary, not a failure. | 未接线的宿主工具就是未接线。这是边界，不是无能。 |
-| Not OPA, not an MCP gateway, not Agent Hooks | Different scope: policy engine, identity front door, cooperative hook. None of those is a parameter-bound receipt on the execute path. | 不同范围：策略引擎、身份门口、合作 hook。都不是执行路径上绑参数的收据。 |
+| Not OPA, not a general MCP gateway, not Agent Hooks | Different scope: policy engine, general identity front door, cooperative hook. The shipped alpha `adapters.mcp_gateway` is a receipt-gated proxy only for explicitly wired MCP calls; transport hardening, MCP identity, deployment, and unwired servers remain operator scope. | 不同范围：策略引擎、通用身份门口、合作 hook。已发布的 alpha `adapters.mcp_gateway` 仅代理明确接线且受收据闸控的 MCP 调用；传输加固、MCP 身份、部署及未接线服务器仍由运营方负责。 |
 
 Footer EN: HTTP 202 from a bus is not approval. A green membrane check is not the kernel gate. A GitHub star count is not a user count.
 Footer ZH: 总线上的 HTTP 202 不是批准。膜检查变绿不是内核闸。GitHub 星标不是用户数。
