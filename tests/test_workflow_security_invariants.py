@@ -1,10 +1,16 @@
 import json
 import pathlib
 import re
+import subprocess
+import textwrap
 
 import pytest
+from count_codex_connector_evidence import CONNECTOR_BOT, count_comments
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
+
+HEAD_SHA = "33d9eec6277c2b12f7c8c7aefeaf639a0a7ca2dd"
+OLD_SHA = "2d39074fc72efffc9d63f17c730051dc0b6d0d05"
 
 
 @pytest.fixture
@@ -12,15 +18,189 @@ def ai_review_workflows() -> list[pathlib.Path]:
     return sorted((REPO_ROOT / ".github" / "workflows").glob("*code-review.yml"))
 
 
-def test_ai_review_workflows_gate_trusted_author_associations(
+def _codex_workflow_text() -> str:
+    return (REPO_ROOT / ".github" / "workflows" / "codex-code-review.yml").read_text()
+
+
+def _job_level_if_lines(text: str) -> list[str]:
+    """Return job-level ``if:`` lines (4-space indent), not step-level (6+)."""
+    return [
+        line
+        for line in text.splitlines()
+        if line.startswith("    if:") and not line.startswith("      ")
+    ]
+
+
+def test_codex_review_workflow_has_no_job_level_skip(
     ai_review_workflows: list[pathlib.Path],
 ) -> None:
-    trusted_associations = ("OWNER", "MEMBER", "COLLABORATOR")
-
+    assert ai_review_workflows
     for workflow in ai_review_workflows:
         text = workflow.read_text()
-        assert "author_association" in text, workflow
-        assert any(association in text for association in trusted_associations), workflow
+        assert not _job_level_if_lines(text), workflow
+
+
+def test_codex_review_workflow_wires_sha_bound_evidence_counter() -> None:
+    text = _codex_workflow_text()
+    assert "scripts/count_codex_connector_evidence.py" in text
+    assert CONNECTOR_BOT in text
+    assert "codex-review-waived" not in text
+    assert "There is no label or actor waiver" in text
+    assert "statuses: write" in text
+    assert "id-token: write" not in text
+
+
+def test_codex_review_workflow_executes_only_trusted_base_code() -> None:
+    text = _codex_workflow_text()
+    assert re.search(r"^  pull_request_target:", text, re.MULTILINE)
+    assert re.search(r"^  issue_comment:", text, re.MULTILINE)
+    assert not re.search(r"^  pull_request:", text, re.MULTILINE)
+    assert not re.search(r"^  pull_request_review:", text, re.MULTILINE)
+    assert text.count("uses: actions/checkout@") == 1
+    assert "ref: ${{ github.workflow_sha }}" in text
+    assert "github.event.pull_request.head" not in text
+    assert "refs/pull/" not in text
+    assert "persist-credentials: false" in text
+    assert 'pulls/${PR_NUMBER}/reviews' not in text
+    assert ".changes.body.from" in text
+    assert text.index("- name: Mark affected head pending") < text.index(
+        "- name: Confirm the affected SHA is the current PR head"
+    )
+    assert "if ! current_head=" not in text
+
+
+def test_codex_review_edit_event_prioritizes_the_new_head_sha() -> None:
+    text = _codex_workflow_text()
+    match = re.search(
+        r"head_sha=\$\(jq -r '\n(?P<filter>.*?)\n\s*' \"\$GITHUB_EVENT_PATH\"\)",
+        text,
+        re.DOTALL,
+    )
+    assert match
+    jq_filter = textwrap.dedent(match.group("filter"))
+    payload = {
+        "comment": {
+            "body": (
+                "<!-- codex-security-review:v1 "
+                f'{{"headSha":"{HEAD_SHA}","status":"running"}} -->'
+            )
+        },
+        "changes": {
+            "body": {
+                "from": (
+                    "<!-- codex-security-review:v1 "
+                    f'{{"headSha":"{OLD_SHA}","status":"completed"}} -->'
+                )
+            }
+        },
+    }
+    result = subprocess.run(
+        ["jq", "-r", jq_filter],
+        input=json.dumps(payload),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == HEAD_SHA
+
+
+def test_codex_review_accepts_only_full_exact_head_comment_evidence() -> None:
+    comments = [
+        [
+            {
+                "user": {"login": CONNECTOR_BOT},
+                "body": (
+                    f"| 📝 **Code Review** | ✅ **Completed** | `{HEAD_SHA[:7]}` "
+                    "| Manual request |\n"
+                    "<!-- codex-security-review:v1 "
+                    f'{{"headSha":"{HEAD_SHA}","status":"completed"}} -->'
+                ),
+            },
+            {
+                "user": {"login": CONNECTOR_BOT},
+                "body": (
+                    f"| 📝 **Code Review** | ✅ **Completed** | `{OLD_SHA[:7]}` "
+                    "| Manual request |\n"
+                    "<!-- codex-security-review:v1 "
+                    f'{{"headSha":"{OLD_SHA}","status":"completed"}} -->'
+                ),
+            },
+            {
+                "user": {"login": CONNECTOR_BOT},
+                "body": f"**Reviewed commit:** `{HEAD_SHA}`",
+            },
+            {
+                "user": {"login": "someone-else"},
+                "body": (
+                    f"| 📝 **Code Review** | ✅ **Completed** | `{HEAD_SHA[:7]}` "
+                    "| Manual request |\n"
+                    "<!-- codex-security-review:v1 "
+                    f'{{"headSha":"{HEAD_SHA}","status":"completed"}} -->'
+                ),
+            },
+        ]
+    ]
+
+    assert count_comments(comments, sha=HEAD_SHA) == 1
+    assert count_comments(comments, sha=OLD_SHA) == 1
+
+
+def test_codex_review_rejects_incomplete_or_malformed_metadata() -> None:
+    comments = [
+        {
+            "user": {"login": CONNECTOR_BOT},
+            "body": (
+                f"| 📝 **Code Review** | ✅ **Completed** | `{HEAD_SHA[:7]}` | Manual request |\n"
+                "<!-- codex-security-review:v1 "
+                f'{{"headSha":"{HEAD_SHA}","status":"running"}} -->'
+            ),
+        },
+        {
+            "user": {"login": CONNECTOR_BOT},
+            "body": (
+                f"| 📝 **Code Review** | ⏳ **Running** | `{HEAD_SHA[:7]}` | Manual request |\n"
+                "<!-- codex-security-review:v1 "
+                f'{{"headSha":"{HEAD_SHA}","status":"completed"}} -->'
+            ),
+        },
+        {
+            "user": {"login": CONNECTOR_BOT},
+            "body": (
+                f"| 📝 **Code Review** | ✅ **Completed** | `{HEAD_SHA[:7]}` | Manual request |\n"
+                "<!-- codex-security-review:v1 {not-json} -->"
+            ),
+        },
+    ]
+    assert count_comments(comments, sha=HEAD_SHA) == 0
+
+
+def test_codex_review_rejects_stale_code_row_with_current_metadata() -> None:
+    comments = [
+        {
+            "user": {"login": CONNECTOR_BOT},
+            "body": (
+                f"| 📝 **Code Review** | ✅ **Completed** | `{OLD_SHA[:7]}` | Manual request |\n"
+                "<!-- codex-security-review:v1 "
+                f'{{"headSha":"{HEAD_SHA}","status":"completed"}} -->'
+            ),
+        }
+    ]
+    assert count_comments(comments, sha=HEAD_SHA) == 0
+
+
+@pytest.mark.parametrize("length", [0, 7, 10, 39])
+def test_codex_review_rejects_malformed_current_head(length: int) -> None:
+    comments = [
+        {
+            "user": {"login": CONNECTOR_BOT},
+            "body": (
+                f"| 📝 **Code Review** | ✅ **Completed** | `{HEAD_SHA[:7]}` | Manual request |\n"
+                "<!-- codex-security-review:v1 "
+                f'{{"headSha":"{HEAD_SHA}","status":"completed"}} -->'
+            ),
+        }
+    ]
+    assert count_comments(comments, sha=HEAD_SHA[:length]) == 0
 
 
 def test_ai_review_workflows_do_not_request_id_token_write(
