@@ -1,9 +1,8 @@
-"""Count SHA-bound ChatGPT Codex connector evidence for the required review gate.
+"""Count exact-head ChatGPT Codex connector comments for the review gate.
 
-Used by `.github/workflows/codex-code-review.yml`. Empty-body reviews, dismissed
-reviews, and the connector's "create an environment" stub are not evidence.
-Issue comments count only when they contain ``**Reviewed commit:** `sha``` matching
-the current head (how Codex records a clean pass).
+The trusted workflow checks only issue comments posted by the connector bot. A
+comment qualifies when its connector-owned metadata is complete, cites the full
+pull-request head SHA, and its summary table says the code review completed.
 """
 
 from __future__ import annotations
@@ -16,13 +15,16 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 CONNECTOR_BOT = "chatgpt-codex-connector[bot]"
-REVIEW_STATES = frozenset({"COMMENTED", "APPROVED", "CHANGES_REQUESTED"})
-ENV_STUB = "create an environment for this repo"
-REVIEWED_COMMIT_RE = re.compile(
-    r"\*\*Reviewed commit:\*\*\s*`([0-9a-f]{7,40})`",
-    re.IGNORECASE,
+FULL_SHA_RE = r"[0-9a-f]{40}"
+SECURITY_REVIEW_METADATA_RE = re.compile(
+    r"<!--\s*codex-security-review:v1\s+(\{.*?\})\s*-->",
+    re.IGNORECASE | re.DOTALL,
 )
-SHA_PREFIX_LEN = 10
+COMPLETED_CODE_REVIEW_ROW_RE = re.compile(
+    r"^\|\s*📝\s*\*\*Code Review\*\*\s*\|\s*✅\s*\*\*Completed\*\*[^\n|]*"
+    r"\|\s*`([0-9a-f]{7,40})`\s*\|",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _pages(payload: Any) -> list[Mapping[str, Any]]:
@@ -44,58 +46,46 @@ def _pages(payload: Any) -> list[Mapping[str, Any]]:
     return items
 
 
-def count_reviews(payload: Any, *, sha: str, bot: str = CONNECTOR_BOT) -> int:
-    if len(sha) < SHA_PREFIX_LEN:
-        return 0
-    n = 0
-    for item in _pages(payload):
-        user = (item.get("user") or {}).get("login")
-        body = item.get("body") or ""
-        if user != bot:
+def _cited_shas(body: str) -> set[str]:
+    reviewed_prefixes = {
+        match.group(1).lower() for match in COMPLETED_CODE_REVIEW_ROW_RE.finditer(body)
+    }
+    if not reviewed_prefixes:
+        return set()
+    cited: set[str] = set()
+    for match in SECURITY_REVIEW_METADATA_RE.finditer(body):
+        try:
+            metadata = json.loads(match.group(1))
+        except json.JSONDecodeError:
             continue
-        if item.get("commit_id") != sha:
-            continue
-        if item.get("state") not in REVIEW_STATES:
-            continue
-        if not body.strip():
-            continue
-        if ENV_STUB.lower() in body.lower():
-            continue
-        n += 1
-    return n
-
-
-def _cited_sha_matches(cited: str, sha: str) -> bool:
-    return sha.startswith(cited) or cited.startswith(sha[: len(cited)])
+        head_sha = metadata.get("headSha")
+        if metadata.get("status") == "completed" and isinstance(head_sha, str):
+            if re.fullmatch(FULL_SHA_RE, head_sha, re.IGNORECASE):
+                normalized = head_sha.lower()
+                if any(normalized.startswith(prefix) for prefix in reviewed_prefixes):
+                    cited.add(normalized)
+    return cited
 
 
 def count_comments(payload: Any, *, sha: str, bot: str = CONNECTOR_BOT) -> int:
-    if len(sha) < SHA_PREFIX_LEN:
+    if not re.fullmatch(FULL_SHA_RE, sha, re.IGNORECASE):
         return 0
-    n = 0
-    for item in _pages(payload):
-        user = (item.get("user") or {}).get("login")
-        body = item.get("body") or ""
-        if user != bot:
-            continue
-        if any(
-            _cited_sha_matches(match.group(1), sha) for match in REVIEWED_COMMIT_RE.finditer(body)
-        ):
-            n += 1
-    return n
+    expected = sha.lower()
+    return sum(
+        1
+        for item in _pages(payload)
+        if (item.get("user") or {}).get("login") == bot
+        and expected in _cited_shas(item.get("body") or "")
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("kind", choices=("reviews", "comments"))
     parser.add_argument("--sha", required=True)
     parser.add_argument("--bot", default=CONNECTOR_BOT)
     args = parser.parse_args(argv)
     payload = json.load(sys.stdin)
-    if args.kind == "reviews":
-        print(count_reviews(payload, sha=args.sha, bot=args.bot))
-    else:
-        print(count_comments(payload, sha=args.sha, bot=args.bot))
+    print(count_comments(payload, sha=args.sha, bot=args.bot))
     return 0
 
 

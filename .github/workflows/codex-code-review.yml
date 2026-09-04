@@ -1,152 +1,163 @@
 name: Codex Code Review
 
 on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review, reopened, labeled, unlabeled]
-  # Re-run after a late connector review so a timed-out required check can
-  # turn green without a new push. This event is read from the default-branch
-  # workflow after merge; until then, re-run the job by hand.
-  pull_request_review:
-    types: [submitted]
+  # Both events load this workflow from the default branch. The job reads PR
+  # metadata and connector comments only; it never executes pull-request code.
+  pull_request_target:
+    types: [opened, synchronize, ready_for_review, reopened]
+  issue_comment:
+    types: [created, edited, deleted]
 
 concurrency:
-  group: codex-review-${{ github.event.pull_request.number }}
+  group: codex-review-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: true
 
-# `codex-review` is a REQUIRED status check on master. It must therefore always run and
-# always report a real conclusion.
+# This workflow publishes the explicit commit-status context `codex-review` on
+# the current PR head. A green status requires a completed connector summary
+# whose trusted metadata embeds that complete 40-character head SHA and whose
+# table says the code review completed. There is no label or actor waiver.
 #
-# GitHub satisfies a required check on `success`, `skipped`, OR `neutral`, and documents that
-# "a job that is skipped will report its status as 'Success'. It will not prevent a pull
-# request from merging, even if it is a required check." A job-level `if:` on a required job
-# is therefore a silent bypass of that gate, not a way to opt out of it.
-#
-# This workflow previously carried two such bypasses:
-#   1. a job-level `if:` on author_association, so any pull request from outside the
-#      OWNER/MEMBER/COLLABORATOR set skipped the job and satisfied the gate with no review;
-#   2. an empty OPENAI_API_KEY, which skipped every reviewing step and left the job green —
-#      this one fired for collaborators too, e.g. if the secret were rotated out or unset.
-#
-# The gate now fails closed instead. When the review genuinely cannot run, a maintainer must
-# make that call explicitly by applying the `codex-review-waived` label, which leaves an
-# auditable record on the pull request.
-#
-# Review auth is the ChatGPT Codex GitHub connector (subscription seat), not platform
-# API credits. `openai/codex-action` always bills an API key through the Responses API
-# proxy, and stuffing `~/.codex/auth.json` into Actions is not allowed on a public
-# repository. The connector already posts as `chatgpt-codex-connector[bot]`. This job
-# waits for SHA-bound evidence from that bot on the pull request head:
-#   * a review whose `commit_id` equals the head SHA, with a non-empty body that is not
-#     the connector's "create an environment" stub;
-#   * or an issue comment that contains `Reviewed commit` and the head SHA prefix.
-# Empty-body reviews, dismissed reviews, and issue-level 👍 reactions are not evidence.
-#
-# The gate can only decide what it is allowed to reach. Every step that can fail for
-# infrastructure reasons therefore carries `continue-on-error: true` and an `id:`, and the
-# gate reads the review-path outcomes explicitly. `continue-on-error` here does not soften
-# the gate: missing SHA-bound connector evidence with no waiver still exits non-zero below.
+# Connector comment create/edit/delete events re-evaluate the status. The event
+# payload supplies the previously accepted SHA before any API request, allowing
+# the workflow to mark that SHA pending before fallible metadata lookups.
 jobs:
-  codex-review:
+  evaluate:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: read
       pull-requests: read
+      statuses: write
     env:
-      IS_WAIVED: ${{ contains(github.event.pull_request.labels.*.name, 'codex-review-waived') }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      EVENT_NAME: ${{ github.event_name }}
+      CONNECTOR_BOT: chatgpt-codex-connector[bot]
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      # persist-credentials is false: nothing later needs git auth, and the
-      # working tree must not contain a token even though no model runs here.
-      - name: Checkout evidence counter
-        id: checkout
-        if: ${{ env.IS_WAIVED != 'true' }}
-        continue-on-error: true
-        uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-          fetch-depth: 1
-
-      # `continue-on-error` keeps a timeout from turning the job red on its own: the
-      # "Gate on review outcome" step below is the sole decider of this required check.
-      - name: Wait for ChatGPT Codex subscription review
-        if: ${{ env.IS_WAIVED != 'true' && steps.checkout.outcome == 'success' }}
-        id: codex-review
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          CONNECTOR_BOT: "chatgpt-codex-connector[bot]"
-          WAIT_SECONDS: "900"
+      - name: Resolve affected head from trusted event payload
+        id: event
         run: |
           set -euo pipefail
 
-          if ! [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error title=Missing head SHA::pull request head SHA is unset or malformed."
+          if [ "$EVENT_NAME" = "pull_request_target" ]; then
+            pr_number=$(jq -r '.pull_request.number' "$GITHUB_EVENT_PATH")
+            head_sha=$(jq -r '.pull_request.head.sha' "$GITHUB_EVENT_PATH")
+          else
+            pr_number=$(jq -r '.issue.number' "$GITHUB_EVENT_PATH")
+            is_pr=$(jq -r '.issue.pull_request.url // empty' "$GITHUB_EVENT_PATH")
+            comment_author=$(jq -r '.comment.user.login // empty' "$GITHUB_EVENT_PATH")
+            if [ -z "$is_pr" ] || [ "$comment_author" != "$CONNECTOR_BOT" ]; then
+              echo "is_pr=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            # On edit, changes.body.from preserves the formerly accepted SHA;
+            # on create/delete, comment.body carries the relevant body.
+            head_sha=$(jq -r '
+              [(.comment.body // ""), (.changes.body.from // "")]
+              | map(try capture("\\\"headSha\\\"\\s*:\\s*\\\"(?<sha>[0-9a-fA-F]{40})\\\"").sha catch empty)
+              | first // empty
+            ' "$GITHUB_EVENT_PATH")
+            if [ -z "$head_sha" ]; then
+              echo "is_pr=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          if ! [[ "$head_sha" =~ ^[0-9a-fA-F]{40}$ && "$pr_number" =~ ^[0-9]+$ ]]; then
+            echo "::error title=Malformed event metadata::Head SHA or PR number is malformed."
             exit 1
           fi
 
-          count_reviews() {
-            gh api --paginate --slurp "repos/${GH_REPO}/pulls/${PR_NUMBER}/reviews" \
-              | python3 scripts/count_codex_connector_evidence.py reviews --sha "$HEAD_SHA" --bot "$CONNECTOR_BOT"
-          }
+          {
+            echo "is_pr=true"
+            echo "pr_number=$pr_number"
+            echo "head_sha=${head_sha,,}"
+          } >> "$GITHUB_OUTPUT"
 
-          count_comments() {
-            gh api --paginate --slurp "repos/${GH_REPO}/issues/${PR_NUMBER}/comments" \
-              | python3 scripts/count_codex_connector_evidence.py comments --sha "$HEAD_SHA" --bot "$CONNECTOR_BOT"
-          }
-
-          deadline=$((SECONDS + WAIT_SECONDS))
-          while true; do
-            reviews=$(count_reviews)
-            comments=$(count_comments)
-            if [ "$reviews" -gt 0 ] || [ "$comments" -gt 0 ]; then
-              echo "ChatGPT Codex connector evidence found for ${HEAD_SHA} (reviews=${reviews}, comments=${comments})."
-              exit 0
-            fi
-            if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "::error title=ChatGPT Codex review missing::No ${CONNECTOR_BOT} SHA-bound review or Reviewed-commit comment for ${HEAD_SHA} after ${WAIT_SECONDS}s."
-              echo "Comment '@codex review', then re-run this job after the review lands (or wait for the pull_request_review trigger once this workflow is on the default branch)."
-              exit 1
-            fi
-            echo "Waiting for ${CONNECTOR_BOT} evidence of ${HEAD_SHA} (reviews=0, comments=0)..."
-            sleep 20
-          done
-
-      # Decides the required check. Runs unconditionally so the gate can never be satisfied
-      # by a skip; the only green paths are "the ChatGPT connector left SHA-bound evidence
-      # for this head" and "a maintainer waived it". This is a liveness gate: it does not
-      # parse the review text as an APPROVE/REJECT verdict.
-      - name: Gate on review outcome
-        if: ${{ always() }}
+      - name: Mark affected head pending
+        if: ${{ steps.event.outputs.is_pr == 'true' }}
         env:
-          REVIEW_OUTCOME: ${{ steps.codex-review.outcome }}
-          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          HEAD_SHA: ${{ steps.event.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/${GH_REPO}/statuses/${HEAD_SHA}" \
+            -f state=pending \
+            -f context=codex-review \
+            -f description="Revalidating exact-head Codex review evidence" \
+            -f target_url="$RUN_URL"
+
+      - name: Confirm the affected SHA is the current PR head
+        if: ${{ steps.event.outputs.is_pr == 'true' }}
+        id: current
+        env:
+          HEAD_SHA: ${{ steps.event.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.event.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          current_head=$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" --jq '.head.sha')
+          if [ "$current_head" = "$HEAD_SHA" ]; then
+            echo "is_current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_current=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout trusted evidence counter
+        if: ${{ steps.event.outputs.is_pr == 'true' && steps.current.outputs.is_current == 'true' }}
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Evaluate exact-head connector evidence
+        if: ${{ steps.event.outputs.is_pr == 'true' && steps.current.outputs.is_current == 'true' }}
+        id: evidence
+        continue-on-error: true
+        env:
+          HEAD_SHA: ${{ steps.event.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.event.outputs.pr_number }}
+          WAIT_SECONDS: ${{ github.event_name == 'pull_request_target' && '900' || '0' }}
         run: |
           set -euo pipefail
 
-          if [ "$REVIEW_OUTCOME" = "success" ]; then
-            echo "ChatGPT Codex connector SHA-bound evidence is present for this head."
-            exit 0
-          fi
+          deadline=$((SECONDS + WAIT_SECONDS))
+          while true; do
+            comments=$(gh api --paginate --slurp "repos/${GH_REPO}/issues/${PR_NUMBER}/comments" \
+              | python3 scripts/count_codex_connector_evidence.py --sha "$HEAD_SHA" --bot "$CONNECTOR_BOT")
+            if [ "$comments" -gt 0 ]; then
+              echo "Completed exact-head connector evidence found for ${HEAD_SHA}."
+              exit 0
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error title=Codex review missing::No completed ${CONNECTOR_BOT} summary is bound to ${HEAD_SHA}."
+              exit 1
+            fi
+            echo "Waiting for completed ${CONNECTOR_BOT} evidence of ${HEAD_SHA}..."
+            sleep 20
+          done
 
-          if [ "$IS_WAIVED" = "true" ]; then
-            echo "::warning title=Codex review waived::A maintainer applied the 'codex-review-waived' label, so this required check passes without a Codex review. The waiver is recorded in the pull request's label history."
-            exit 0
-          fi
+      - name: Publish Codex review status
+        if: ${{ always() && steps.event.outputs.is_pr == 'true' }}
+        env:
+          HEAD_SHA: ${{ steps.event.outputs.head_sha }}
+          EVIDENCE_OUTCOME: ${{ steps.evidence.outcome }}
+        run: |
+          set -euo pipefail
 
-          if [ "$CHECKOUT_OUTCOME" != "success" ]; then
-            reason="the evidence-counter checkout did not succeed (outcome: '$CHECKOUT_OUTCOME')"
-          elif [ "$REVIEW_OUTCOME" = "skipped" ]; then
-            reason="the wait step was skipped without a waiver"
+          if [ "$EVIDENCE_OUTCOME" = "success" ]; then
+            state=success
+            description="Completed exact-head Codex review is present"
           else
-            reason="no chatgpt-codex-connector[bot] SHA-bound review or Reviewed-commit comment for this head (outcome: '$REVIEW_OUTCOME')"
+            state=failure
+            description="Completed exact-head Codex review is missing"
           fi
 
-          echo "::error title=Codex review did not run::This required check fails closed because $reason."
-          echo "Reason: $reason."
-          echo
-          echo "Comment '@codex review' and re-run this check after SHA-bound evidence lands,"
-          echo "or apply the 'codex-review-waived' label after a maintainer reviews the change by hand."
-          exit 1
+          gh api --method POST "repos/${GH_REPO}/statuses/${HEAD_SHA}" \
+            -f state="$state" \
+            -f context=codex-review \
+            -f description="$description" \
+            -f target_url="$RUN_URL"
+
+          [ "$state" = "success" ]
