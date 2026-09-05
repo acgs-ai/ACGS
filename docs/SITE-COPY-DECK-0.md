@@ -314,7 +314,7 @@ Auditor: Cursor agent (plan execution). Method: PyPI JSON API, live fetches of a
 | Row | Verdict | Notes |
 |---|---|---|
 | C1 | **Verified** | Stable README invariant and `examples/receipt-gated-execution/demo.py` symbols/paths match. Smoke is a shorter allow/deny/audit check and was not re-run this session. |
-| C2 | **Verified** | PyPI JSON: version 1.0.0rc2, upload 2026-08-23, Beta classifier. Monorepo nested `packages/gove-zone/pyproject.toml` shows 0.1.0.dev0 Alpha — confirms "pin PyPI not source." |
+| C2 | **Verified** | PyPI JSON: published version 1.0.0rc2, upload 2026-08-23, Beta classifier. Keep that public pin separate from source metadata. The current monorepo manifest uses `dynamic = ["version"]` and the Beta classifier; `[tool.hatch.version]` reads `src/gove_zone/__init__.py`, whose source/editable fallback is `1.0.0rc1`. It does not declare `0.1.0.dev0` or Alpha. |
 | C3 | **Verified** | PyPI README "It does not provide" list matches deck. |
 | C4 | **Verified** | acgs-lite 2.12.0 on PyPI; gove bridge marked Experimental in published README. |
 | C5 | **Verified** | acgs-lite README "No independently confirmed production users yet." |

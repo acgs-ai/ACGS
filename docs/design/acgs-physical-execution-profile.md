@@ -431,17 +431,19 @@ unknown-field plus missing-required-field failure. Any unavailable authoritative
 input, malformed digest encoding, static/live substitution, or mismatch fails
 before arming.
 
-Per-motion fields are deliberately outside the contract projection and are
-checked separately against the same MAR: `trajectory` (digest/root/block shape,
-duration, encoding), `compiler.input_plan_digest`, `initial_state`, `lease`, the
-canonical `MotionRequest`/`argument_hash`, `source_hash`, and immutable source
-revision. Their comparisons are exact except for the one declared physical
-comparison: measured initial joint positions may differ only within the bound
-`initial_state.tolerance_rad`; observation age must be within
-`observation_max_age_ms`, while timestamp, perception digest, trajectory,
-sequence, nonce, duration, actuator-group, source, and artifact bindings remain
-exact. Contract-owned and per-motion fields may not be moved between these sets
-by an adapter.
+Per-motion fields are deliberately outside the contract projection. The
+normative vocabulary is the existing MAR schema: `trajectory.trajectory_digest`,
+`trajectory.merkle_root`, `trajectory.block_size_ticks`,
+`trajectory.block_count`, `trajectory.duration_ms`, `trajectory.encoding`,
+`compiler.input_plan_digest`, `initial_state`, and `lease`. The wrapper also
+binds `motion_id`, `source_hash`, and immutable `source_revision` from the
+canonical `MotionRequest`/`argument_hash` binding. Their comparisons are exact
+except for the one declared physical comparison: measured initial joint
+positions may differ only within the bound `initial_state.tolerance_rad`;
+observation age must be within `observation_max_age_ms`, while timestamp,
+perception digest, trajectory, sequence, nonce, duration, actuator-group, source,
+and artifact bindings remain exact. Contract-owned and per-motion fields may not
+be moved between these sets by an adapter.
 
 ### Why each binding exists
 
@@ -455,7 +457,7 @@ by an adapter.
 - **compiler_digest + input_plan_digest** — proves *which* deterministic
   transformation produced the authorized artifact from the proposal. A changed
   compiler yields a different receipt.
-- **merkle_root + block_size** — the trajectory-bytes root. It is *not* used
+- **merkle_root + block_size_ticks** — the trajectory-bytes root. It is *not* used
   directly for enforcement: the lease carries `execution_root`, which binds it to
   the derived lease context (robot, calibration epoch, contract, lease, and boot;
   §6.3). This identity does not itself provide freshness or replay protection.
@@ -467,6 +469,165 @@ by an adapter.
 - **sequence_lo/hi + nonce + max_duration** — makes the authority bounded in
   count *and* wall time, and single-use.
 
+### Evaluated-motion binding artifact
+
+The shipped core audit record retains `DecisionRecord.argument_hash`, not raw
+`ToolCall.args`. A profile side store therefore cannot reconstruct evaluated
+arguments later and is not authoritative by itself. Before policy evaluation,
+the physical wrapper freezes the actual `ToolCall.args` into the closed
+`EvaluatedMotionPreimage/v0` containing exactly:
+
+| Field | Closed type |
+|---|---|
+| `schema_version` | the literal string `EvaluatedMotionPreimage/v0` |
+| `tool` | nonempty string |
+| `actor` | nonempty string |
+| `canonical_tool_arguments` | the exact RFC 8785 JSON object passed to `ToolCall` |
+| `argument_hash` | 64 lowercase hexadecimal characters, exactly `ToolCall.argument_hash()` |
+| `per_motion_binding_hash` | `sha256:` plus 64 lowercase hexadecimal characters |
+
+There is only one authoritative projection. The wrapper deterministically
+extracts `PhysicalContractProjection/v0` from
+`canonical_tool_arguments.physical_contract_projection` and recomputes its
+digest; the sibling
+`canonical_tool_arguments.physical_contract_projection_hash` must equal that
+digest exactly. Neither the preimage nor the artifact accepts a second
+projection copy.
+
+The same argument object contains one closed
+`per_motion_binding: PerMotionBindingPreimage/v0` and its sibling
+`per_motion_binding_hash`. The preimage contains exactly
+`schema_version` (literal `PerMotionBindingPreimage/v0`), nonempty
+`motion_id`, `trajectory`, `compiler`, `initial_state`, `lease`,
+`source_hash`, and nonempty `source_revision`. This is a total one-to-one
+projection from the already authoritative MAR plus the canonical
+`MotionRequest`; it introduces no aliases. `trajectory` contains exactly
+`trajectory_digest`, `merkle_root`, positive JSON integers
+`block_size_ticks` and `block_count`, positive JSON integer `duration_ms`, and
+nonempty `encoding`, copied from the identically named MAR fields. `compiler`
+contains exactly `input_plan_digest`, copied from
+`MAR.compiler.input_plan_digest`. `initial_state` contains exactly
+`joint_position_hash`, a nonempty array `joint_position` of finite JSON
+numbers, finite nonnegative `tolerance_rad`, timezone-aware
+`observation_timestamp`, positive JSON integer `observation_max_age_ms`, and
+`perception_digest`, copied field-for-field from `MAR.initial_state`. `lease`
+contains exactly nonempty `nonce`, nonnegative JSON integers `sequence_lo` and
+`sequence_hi` with `sequence_lo <= sequence_hi`, positive JSON integer
+`max_duration_ms`, and nonempty `actuator_group`, copied field-for-field from
+`MAR.lease`. Every named digest is `sha256:` plus 64
+lowercase hexadecimal characters. Unknown fields, booleans in integer
+positions, non-finite numbers, coercion, and implicit defaults are forbidden.
+The cross-binding map is total and closed:
+
+| Per-motion path | Authoritative equal path |
+|---|---|
+| `trajectory.*` | `MAR.constraints.physical.trajectory.*` with identical member names |
+| `compiler.input_plan_digest` | `MAR.constraints.physical.compiler.input_plan_digest` |
+| `initial_state.*` | `MAR.constraints.physical.initial_state.*` with identical member names |
+| `lease.*` | `MAR.constraints.physical.lease.*` with identical member names |
+| `motion_id`, `source_hash`, `source_revision` | identically named canonical `MotionRequest` / `ToolCall.args` members |
+
+The wrapper enforces those equalities before artifact finalization, receipt
+minting, and activation; a receipt constraint cannot substitute a second copy.
+The per-motion preimage excludes `per_motion_binding_hash`, `argument_hash`,
+and all evaluated-motion hashes, and is hashed exactly as:
+
+```text
+per_motion_binding_hash =
+  "sha256:" + lowerhex(SHA256(
+    "acgs.physical.per-motion-binding/v0\0" ||
+    JCS_UTF8(PerMotionBindingPreimage/v0)))
+```
+
+The wrapper recomputes this hash from
+`canonical_tool_arguments.per_motion_binding` and requires exact equality
+with both its sibling argument field and
+`EvaluatedMotionPreimage.per_motion_binding_hash`. Finalization, receipt minting,
+and activation each require exact equality for every projection member against
+its named MAR or `MotionRequest` source. The aliases `artifact_digest`,
+`trajectory_root`, `block_size`, top-level `input_plan_digest`, and
+`lease_request` are forbidden unknown fields; mixing an alias with a normative
+name is not compatibility input. Unknown fields, non-JSON values, alternate
+digest encodings, or a missing, substituted, or mismatched nested projection or
+per-motion member fail closed.
+
+The preimage excludes `evaluated_motion_preimage_hash` and is hashed exactly
+as:
+
+```text
+evaluated_motion_preimage_hash =
+  "sha256:" + lowerhex(SHA256(
+    "acgs.physical.evaluated-motion-preimage/v0\0" ||
+    JCS_UTF8(EvaluatedMotionPreimage/v0)))
+```
+
+After `evaluate_and_append` succeeds, the wrapper finalizes the closed
+immutable `EvaluatedMotionArtifact/v0` containing exactly `schema_version`
+(the literal `EvaluatedMotionArtifact/v0`), `preimage`,
+`evaluated_motion_preimage_hash`, `decision_event_id`,
+`decision_record_argument_hash`, `audit_event_hash`, and
+`previous_audit_hash`. The last five identifiers/digests are nonempty strings;
+each SHA-256 value uses its specified lowercase encoding. The artifact excludes
+`evaluated_motion_artifact_hash`, which is computed independently as:
+
+```text
+evaluated_motion_artifact_hash =
+  "sha256:" + lowerhex(SHA256(
+    "acgs.physical.evaluated-motion-artifact/v0\0" ||
+    JCS_UTF8(EvaluatedMotionArtifact/v0)))
+```
+
+Artifact finalization also requires exact, case-sensitive equality:
+`preimage.tool == ToolCall.name == DecisionRecord.tool` and
+`preimage.actor == ToolCall.actor == DecisionRecord.actor`, in addition to
+`preimage.argument_hash == decision_record_argument_hash`. Receipt minting and
+activation extend those chains through
+`DecisionReceipt.proposed_action` and `DecisionReceipt.actor`,
+respectively. Any actor or tool substitution fails before artifact finalization,
+minting, and activation. The artifact binds the exact core audit anchors and is
+stored content-addressed in the profile's append-only artifact store. A missing
+artifact or store uncertainty fails closed, but store presence alone grants no
+authority: acceptance always requires the signed receipt, matching core audit
+event, presented arguments, and recomputed hashes.
+
+The executable frozen vector uses actor `operator-1`, tool
+`robot.motion.execute`, motion id `motion-1`, compiler version
+`compiler/v1`, compiler digest `sha256:` followed by 64 zeroes, contract
+version `contract/v1`, decision id `decision-1`, audit hash of 64 `a`
+characters, and predecessor hash of 64 `b` characters. Its per-motion block
+maps digest sentinels `sha256:` plus 64 repetitions as follows:
+trajectory digest=`1`, Merkle root=`2`, input plan=`3`, joint position=`4`,
+perception=`5`, and source=`6`; it uses trajectory
+`block_size_ticks=256`, `block_count=1`, `duration_ms=100`, `encoding=f64le`,
+joint positions `[0,1]`, tolerance `0.01`, timestamp
+`2026-07-26T22:40:00Z`, observation age `200`, lease
+`nonce-1/0..0/100/arm-0/joints`, and source revision `rev-1`. The expected
+hashes are:
+
+- `physical_contract_projection_hash =
+  sha256:d1af75ca6dfb86818771cbe47cb838d536e29c2f11f6060ea122dc038665b2c0`
+- `per_motion_binding_hash =
+  sha256:c194bdc0e8c88f98cc542b964bf088641fd0967ac01c264753aa4bd9d39cd9ec`
+- `argument_hash =
+  69e156017a2b66ee90f1f8cf82bc54a5c59ce3487041135bfc4e98ee4451d458`
+- `evaluated_motion_preimage_hash =
+  sha256:cdb1d2466b2128830f63bad5f5f873351639374eb24595058852a5d77b7aa340`
+- `evaluated_motion_artifact_hash =
+  sha256:862c75eb2fe6c51da02dccf522b821ca59e17115758aa789bdef0ed6d5f26cda`
+
+Changing any canonical argument byte, per-motion member, nested projection
+member, actor, or tool changes or violates the binding chain and must be
+rejected before finalize, mint, and activation.
+
+The profile wrapper derives
+`constraints.physical_evaluated_binding = {evaluated_motion_artifact_hash,
+evaluated_motion_preimage_hash, physical_contract_projection_hash,
+per_motion_binding_hash}` solely from the finalized artifact and supplies that
+closed object to `DecisionReceipt.from_record`. It never accepts this
+constraint object from a caller. After receipt construction it recomputes the
+constraint object and requires exact equality with the signed receipt
+constraints, `DecisionReceipt.argument_hash`, and audit anchors.
+
 ### Issuance flow
 
 `Kernel.dispatch` is an execute-and-return API: after `ALLOW` or `TRANSFORM` it
@@ -474,17 +635,25 @@ invokes the registered tool. Registering `robot.motion.execute` and calling
 `dispatch` would run the motion **before** the Lease Authority could validate a
 MAR. Issuance must not execute.
 
-1. Motion compiler emits canonical artifact + digests (`trajectory_root` /
+1. Motion compiler emits canonical artifact + digests (`trajectory_digest` /
    `merkle_root`, contract digest, calibration epoch). Non-finite values,
    out-of-order timestamps, and NaN/Inf are rejected **here**, at encode time.
    The compiler does **not** emit `execution_root` — that root includes
    `receipt_id`, `lease_id`, and `boot_id`, which do not exist yet (§6.3).
-2. `ToolCall` constructed. `audited = Kernel.evaluate_and_append(call)` evaluates
-   the cell's policy bundle and appends the decision without executing. Mint only
-   with `DecisionReceipt.from_record(audited.record, audited.audit_hash,
-   audited.append_result["previous_hash"], ...)`. Do **not** call `dispatch` or
-   substitute `evaluate_and_record`: the immutable append result is the source
-   of both the event hash and predecessor hash.
+2. The physical wrapper freezes the actual `ToolCall.args` and constructs
+   the evaluated-motion preimage above. The call's closed arguments include the
+   complete `PhysicalContractProjection/v0` block,
+   `physical_contract_projection_hash`, and per-motion bindings.
+   `audited = Kernel.evaluate_and_append(call)` evaluates that exact call and
+   appends the decision without executing. The wrapper requires
+   `call.argument_hash() == audited.record.argument_hash`, then finalizes the
+   content-addressed artifact with `audited.audit_hash` and
+   `audited.append_result["previous_hash"]`. Mint only with
+   `DecisionReceipt.from_record(audited.record, audited.audit_hash,
+   audited.append_result["previous_hash"], ...)` and only with the wrapper-
+   derived `physical_evaluated_binding` constraints above. Do **not** call
+   `dispatch` or substitute `evaluate_and_record`: the immutable append
+   result is the source of both the event hash and predecessor hash.
 3. `DENY` / `ESCALATE` → no executable receipt. `ESCALATE` is **never**
    executable. A physical-motion `TRANSFORM` also cannot proceed directly: the
    rewritten arguments are recompiled, rebound to new artifact/contract
@@ -954,7 +1123,7 @@ valid old trajectory + valid old root + different physical context
 The root must bind the execution context, not just the bytes. Split the two
 roots so construction order is possible:
 
-- **`trajectory_root` / `merkle_root`** — compiler output. Trajectory bytes
+- **`trajectory_digest` / `merkle_root`** — compiler output. Trajectory bytes
   only. Available before any receipt or lease exists.
 - **`execution_root`** — computed at **lease issuance**, after `receipt_id`,
   `lease_id`, and `boot_id` exist. Never a compiler output. The loader
@@ -1039,7 +1208,7 @@ observability**, not enforcement.
 | Transition | Checks performed |
 |---|---|
 | `configure` | load contract blob; verify `contract_digest`; verify RT kernel binary hash; map shared memory; lock pages; verify clock source is monotonic RT |
-| `activate` | require MAR; verify signature, `receipt_hash`, nonempty timezone-aware expiry with trusted clock and bounded maximum TTL (`require_expiry=True` / strict receipt version), tenant, boundary, actor, policy digest; compare the MAR's static `PhysicalContractProjection` only with the compiled artifact and compare its disjoint `LiveDeviceProjection` only with freshly queried robot/tool/action-space inputs; require exact field equality, canonical digest encoding, both bound projection hashes, and the complete contract digest before arming; separately verify every per-motion field with only the declared initial-joint tolerance; verify perception age; **read `calibration_epoch`, re-verify the calibration digest at that epoch, and pin the epoch into the lease** (T-13); allocate fresh lease/boot identities, fresh request page, and fresh generation namespace; derive `execution_root` (§6.3); require the profile-local composite receipt-plus-`mar_nonce` burn authority and fail closed while it is unimplemented; only after its one durable atomic burn may activation initialize fresh authority fields and request STM `EMPTY -> ARMED`; never clear/rebind an old request page or reuse a terminal block |
+| `activate` | require MAR; verify signature, `receipt_hash`, nonempty timezone-aware expiry with trusted clock and bounded maximum TTL (`require_expiry=True` / strict receipt version), tenant, boundary, actor, policy digest; load the content-addressed `EvaluatedMotionArtifact/v0` named by the signed receipt constraints, verify its audit anchors against the core audit event, recompute the presented ToolCall argument hash, require exact equality across artifact, `DecisionRecord.argument_hash`, and `DecisionReceipt.argument_hash`, require `preimage.tool == ToolCall.name == DecisionRecord.tool == DecisionReceipt.proposed_action`, and require `preimage.actor == ToolCall.actor == DecisionRecord.actor == DecisionReceipt.actor`; compare the MAR's static `PhysicalContractProjection` only with the compiled artifact and compare its disjoint `LiveDeviceProjection` only with freshly queried robot/tool/action-space inputs; require exact field equality, canonical digest encoding, both bound projection hashes, and the complete contract digest before arming; separately verify every per-motion field with only the declared initial-joint tolerance; verify perception age; **read `calibration_epoch`, re-verify the calibration digest at that epoch, and pin the epoch into the lease** (T-13); allocate fresh lease/boot identities, fresh request page, and fresh generation namespace; derive `execution_root` (§6.3); require the profile-local composite receipt-plus-`mar_nonce` burn authority and fail closed while it is unimplemented; only after its one durable atomic burn may activation initialize fresh authority fields and request STM `EMPTY -> ARMED`; never clear/rebind an old request page or reuse a terminal block |
 | `deactivate` | publish an allocation-bound revoke request; while ticks are scheduled only the servo thread may invoke STM; `category_1_stop` (never path-following ramp stop); stop scheduling and wait for RT quiescence; if the lease is already `CONSUMED`, `REVOKED`, or `EXPIRED`, the trusted control thread directly acknowledges the observed terminal generation without attempting a transition; otherwise perform the bounded terminal transition; return only after terminal acknowledgement |
 | `cleanup` | publish the allocation's terminal revoke; stop scheduling new RT ticks; wait for RT quiescence; if still pending, the trusted RT component's control thread may then perform the bounded direct STM transition and acknowledge only a terminal state; only after acknowledgement/terminal observation revoke mappings, unmap, and retire/destroy without zero/reset/reuse; reauthorization creates a fresh allocation, identity, and namespace |
 | `error` (`on_error`) | publish an allocation-bound revoke request; `category_1_stop`; while scheduled, only the servo thread invokes STM; emit refusal evidence; require operator acknowledgement before re-activate |
@@ -1140,7 +1309,7 @@ Each phase has an exit gate. No phase claims the next phase's properties.
 
 | Phase | Scope | Exit gate |
 |---|---|---|
-| **P0-1** Compiler | `PhysicalExecutionCompiler`: inputs `PhysicalSafetyContract`, `RobotCapability`, `CellPolicy`, `OperatorConstraint`, `CalibrationManifest`, `TrajectoryBundle` → emits `ExecutionArtifact` { `contract_digest`, `constraint_digest`, `trajectory_root`, `calibration_epoch`, `compiler_version`, `provenance` }. **Does not emit `execution_root`** | Monotonicity lattice `operator ⊆ cell ⊆ capability` enforced — a relaxation yields `CompilationRejected` and **no artifact**; provenance present on every constraint and covered by `contract_digest`; byte-identical output for identical input |
+| **P0-1** Compiler | `PhysicalExecutionCompiler`: inputs `PhysicalSafetyContract`, `RobotCapability`, `CellPolicy`, `OperatorConstraint`, `CalibrationManifest`, `TrajectoryBundle` → emits `ExecutionArtifact` { `contract_digest`, `constraint_digest`, `trajectory_digest`, `calibration_epoch`, `compiler_version`, `provenance` }. **Does not emit `execution_root`** | Monotonicity lattice `operator ⊆ cell ⊆ capability` enforced — a relaxation yields `CompilationRejected` and **no artifact**; provenance present on every constraint and covered by `contract_digest`; byte-identical output for identical input |
 | **P0-2** Loader + MAR | MAR as a `constraints.physical` profile; canonical encoder w/ NaN rejection; policy bundle for one cell; mint MAR only from `evaluate_and_append` metadata (no `dispatch`); require signed, bounded, timezone-aware expiry; compare receipt constraints to the live contract; verify `calibration_epoch`; allocate `lease_id` and read `boot_id`; **then** derive `execution_root` (§6.3); consume receipt and nonce; write lease; enable executor | Receipts issue + verify against the unmodified kernel; tests reject missing/mismatched predecessor metadata, empty/naive/expired/overlong expiry, wrong trusted-clock result, receipt/live-constraint mismatch, replay after consumption, boot mismatch, and unavailable shared nonce authority; **a test asserts the loader cannot widen a constraint, resolve a layer conflict, or default a missing field** (§6.4) |
 | **P1** Lease + RT kernel in sim | Lease Authority, shm control block, RT kernel as a userspace `SCHED_FIFO` loop against a simulated arm (MuJoCo/Isaac) | All 13 threats (T-01…T-13) reproduced as **failing-before / passing-after** tests; each asserts the side effect did *not* occur |
 | **P2** Timing characterization | `PREEMPT_RT` kernel; `cyclictest` baseline; measure worst-case `admissible()` under full contract, incl. the SDF lookup | Measured WCET reported with p99.9 and max; **no green claim without literal output**; budget declared *before* measuring (below) |

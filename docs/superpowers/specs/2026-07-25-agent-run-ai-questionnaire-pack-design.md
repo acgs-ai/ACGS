@@ -208,7 +208,6 @@ Explicitly excluded from the MVP:
 | `semantic_adjudication_record_id` | str \| None | FK to the signed semantic record; null until independently adjudicated |
 | `semantic_adjudication_event_hash` | str \| None | Canonical hash of that signed semantic record |
 | `evidence_binding_hash` | str | Final hash of producer lineage, QA pointers, and semantic-record pointers after adjudication |
-| `contradicts_locator` | Evidence \| None | A *different* artifact found to contradict the assertion this citation was offered for (§5.4.1). Non-null forces `CONTRADICTED`. |
 
 A citation without `commit_sha` and `artifact_hash` is not a citation. It cannot be
 reproduced by the customer, and reproducibility is the entire value (§6).
@@ -244,22 +243,128 @@ model-authored aggregate verdict.
 | `qa_verdict` | enum | `PASS`, `REFUTED`, `INSUFFICIENT`, `CONTRADICTED` |
 | `qa_rationale` | str | Bounded model output; never authoritative by itself |
 | `qa_receipt_id` | str | Receipt authorizing the QA call |
+| `qa_result_hash` | str | Inner payload hash of the canonical QA result |
+| `qa_successful_result_envelope` | SuccessfulResultEnvelope | Complete typed envelope retained for offline verification |
 | `qa_outcome_hash` | str | Canonical `OutcomeEvent` hash for the QA result |
-| `contradicts_evidence_id` | str \| None | Different artifact establishing contradiction |
+| `contradiction_record_id` | str \| None | Finalized after the QA outcome from its authenticated `contradiction_candidate`; never a mining `Evidence` id |
+| `contradiction_record_hash` | str \| None | Canonical hash derived from that authenticated candidate after the QA outcome exists |
 | `semantic_adjudication_record_id` | str | Exact signed record id |
 | `semantic_adjudication_event_hash` | str | Canonical hash of the signed semantic record preimage |
 | `semantic_adjudication_signature` | str | Signature over `semantic_adjudication_event_hash` |
 | `semantic_signing_key_id` | str | Key id resolved through the adjudicator allowlist |
 | `semantic_evidence_binding_hash` | str | Exact pre-adjudication binding carried by the semantic record |
+| `citation_qa_record_hash` | str | Recomputable final record hash defined below |
 
-The QA `ToolCall` arguments contain the immutable `job_id`, `question_id`,
-`response_id`, `response_version`, `answer_hash`, `assertion_id`,
-`assertion_hash`, and complete `source_evidence_hash` binding; its receipt `argument_hash`
-must cover that canonical object. The QA `OutcomeEvent.result_hash` must equal
-the hash of the canonical QA result bytes containing the same bindings and
-verdict. The response reducer recomputes and compares every hash and accepts
-only records whose job/question/response-version/assertion/evidence bindings
-match. It also requires exact cross-pointer equality:
+The canonical QA `ToolCall` arguments are a closed object containing exactly
+`job_id`, `question_id`, `response_id`, `response_version`, `answer_hash`,
+`assertion_id`, `assertion_hash`, `evidence_id`, `source_evidence_hash`, and
+`producer_lineage_hash`; unknown fields or coercions fail closed. Its receipt
+`argument_hash` must cover those exact canonical bytes. Before execution and
+again during reduction, the wrapper requires exact `producer_lineage_hash`
+equality with the selected `Evidence` and the authenticated
+`MiningOutcomeEnvelope`, plus exact equality for every other argument field.
+Substituting a valid lineage from another mining result changes the argument
+hash and fails closed before the QA call.
+
+The trusted wrapper converts the checked QA output into the closed acyclic
+`QAResultPreimage/v1` before constructing an outcome. It contains exactly:
+
+| Field | Closed type |
+|---|---|
+| `schema_version` / `result_kind` | literal strings `QAResultPreimage/v1` / `QA_RESULT` |
+| `citation_qa_record_id`, `job_id`, `question_id`, `response_id` | nonempty strings |
+| `response_version` | nonnegative JSON integer |
+| `answer_hash`, `assertion_hash`, `source_evidence_hash`, `producer_lineage_hash` | `sha256:` plus 64 lowercase hexadecimal characters |
+| `assertion_id`, `evidence_id`, `qa_receipt_id` | nonempty strings |
+| `deterministic_check_passed` | JSON boolean |
+| `qa_verdict` | `PASS`, `REFUTED`, `INSUFFICIENT`, or `CONTRADICTED` |
+| `qa_rationale` | bounded UTF-8 string |
+| `contradiction_candidate` | null unless `CONTRADICTED`; otherwise exactly one validated `ContradictionRecordPreimage/v1` |
+
+Unknown fields and alternate types are forbidden. The preimage explicitly
+excludes `qa_result_hash`, `qa_successful_result_envelope`, the outer
+`OutcomeEvent.result_hash`, `qa_outcome_hash`, every finalized
+`contradiction_record_id`/`contradiction_record_hash` pointer, and every
+semantic-adjudication id, hash, signature, or binding. Those values do not exist
+yet and therefore cannot participate in this preimage.
+
+Construction order is normative: validate the QA receipt and deterministic
+bindings; freeze `QAResultPreimage/v1`; encode its exact RFC 8785 JCS UTF-8
+bytes; construct `SuccessfulResultEnvelope/v1` with
+`result_kind=QA_RESULT` and `encoding=JCS_JSON`; append and attest its
+`OutcomeEvent`; convert any authenticated `CONTRADICTED` candidate to
+its final contradiction record; obtain the independent semantic event; and only
+then finalize `CitationQARecord` with `qa_result_hash`, the complete
+successful-result envelope, `qa_outcome_hash`, and the resulting
+contradiction/semantic pointers. `qa_result_hash` is its inner
+`payload_hash`; the QA `OutcomeEvent.result_hash` is its distinct outer
+envelope hash. No final citation record exists before all required later
+pointers are available.
+
+The closed acyclic `CitationQARecordPreimage/v1` is constructed only at that
+final step and contains exactly `schema_version` (literal
+`CitationQARecordPreimage/v1`), `citation_qa_record_id`, `job_id`,
+`question_id`, `response_id`, `response_version`, `answer_hash`,
+`assertion_id`, `assertion_hash`, `evidence_id`,
+`source_evidence_hash`, `producer_lineage_hash`,
+`deterministic_check_passed`, `qa_verdict`, `qa_rationale`,
+`qa_receipt_id`, `qa_result_hash`, the complete
+`qa_successful_result_envelope`, `qa_outcome_hash`,
+`contradiction_record_id`, `contradiction_record_hash`,
+`semantic_adjudication_record_id`,
+`semantic_adjudication_event_hash`,
+`semantic_adjudication_signature`, `semantic_signing_key_id`, and
+`semantic_evidence_binding_hash`. Field types and enums are exactly those in
+the table and `QAResultPreimage/v1`; every digest is `sha256:` plus 64
+lowercase hexadecimal characters. The two contradiction fields are both null
+or both nonempty, and all semantic fields are nonempty. Unknown fields are
+forbidden. It excludes `citation_qa_record_hash`, all assembly hashes, and all
+presentation/delivery pointers. Its final hash is:
+
+```text
+citation_qa_record_hash =
+  "sha256:" + lowerhex(SHA256(
+    "acgs.questionnaire.citation-qa-record/v1\0" ||
+    JCS_UTF8(CitationQARecordPreimage/v1)))
+```
+
+The reducer reconstructs this preimage, verifies the embedded successful-result
+envelope and every later pointer, and recomputes the hash. The assembly field
+`ordered_citation_qa_record_hashes` contains only these recomputed hashes,
+ordered by `(assertion_id, evidence_id, citation_qa_record_id)`; supplied
+hashes that do not recompute are rejected.
+
+For the frozen vector, use `citation_qa_record_id=qa-1`, `job_id=job-1`,
+`question_id=q-1`, `response_id=resp-1`, `response_version=1`,
+`answer_hash=sha256:` plus 64 `b` characters,
+`assertion_id=as-1`, `assertion_hash=sha256:` plus 64 `a` characters,
+`evidence_id=ev-1`, `source_evidence_hash=sha256:` plus 64 `c`
+characters, `producer_lineage_hash=sha256:` plus 64 `d` characters,
+`deterministic_check_passed=true`, `qa_verdict=PASS`,
+`qa_rationale=supported`, `qa_receipt_id=qa-rec-1`, and
+`contradiction_candidate=null`. The JCS payload length is 734 bytes, its inner
+payload hash is
+`sha256:ff7095e6bae2d19139fbb7e73c056c7de1a7130ffde47319b44d5474c40b6063`,
+and the outer envelope hash is
+`sha256:07f5886ce181cd243494fe83badcef00c7797c35124405bfb5e7564b36739cd1`.
+For the corresponding final-record vector, retain that complete envelope; use
+`qa_outcome_hash=sha256:` plus 64 `e` characters, null contradiction fields,
+`semantic_adjudication_record_id=sem-1`,
+`semantic_adjudication_event_hash=sha256:` plus 64 `f` characters,
+`semantic_adjudication_signature=sig-1`,
+`semantic_signing_key_id=sem-key-1`, and
+`semantic_evidence_binding_hash=sha256:` plus 64 `1` characters. Its 2506-byte
+JCS preimage hashes to
+`sha256:6f24a9ceec24637d7aa61a8caede0ad2c69903fd778668016982f7ddf962e9a5`.
+Mutating any settled pointer or record member must change that hash.
+
+The proof material retains the complete envelope. The response reducer decodes
+it, reconstructs the closed preimage from the finalized record's pre-outcome
+fields, and requires byte-for-byte equality with the exact canonical preimage
+bytes before recomputing both hashes. It rejects a missing field, substituted
+binding, unknown field, wrong construction order, or inner/outer hash swap. It
+accepts only records whose job/question/response-version/assertion/evidence
+bindings match. It also requires exact cross-pointer equality:
 `Evidence.verified_by_receipt_id == CitationQARecord.qa_receipt_id`,
 `Evidence.verified_by_outcome_hash == CitationQARecord.qa_outcome_hash`, and
 `Evidence.citation_qa_record_id == CitationQARecord.citation_qa_record_id`.
@@ -267,8 +372,59 @@ The reducer also requires exact equality for `producer_lineage_hash` and all
 semantic-record pointers. `Evidence.evidence_binding_hash` is recomputed over
 producer lineage, these three QA pointers, semantic record id/hash, signature,
 signing key id, and `semantic_evidence_binding_hash`. Any substituted
-otherwise-valid pointer fails closed; a
-stale response version or swapped assertion/evidence record fails closed too.
+otherwise-valid pointer fails closed; a stale response version or swapped
+assertion/evidence record fails closed too. When `qa_verdict == CONTRADICTED`,
+the authenticated `contradiction_candidate` must validate and produce the
+later exact `contradiction_record_id`/`contradiction_record_hash` binding;
+missing, mismatched, or unauthenticated contradiction lineage fails closed.
+
+#### ContradictionRecord
+
+A contradiction discovered by QA is not mining `Evidence` and is never
+attributed to the mining receipt or mining outcome. To avoid self-reference,
+the closed immutable `ContradictionRecordPreimage/v1` contains exactly
+`schema_version`, `contradiction_record_id`, `job_id`, `question_id`,
+`response_id`, `response_version`, `answer_hash`, `assertion_id`,
+`assertion_hash`, `source_file_path`, `source_commit_sha`,
+`source_line_start`, `source_line_end`, `source_excerpt_hash`,
+`source_artifact_hash`, and `qa_receipt_id`; it excludes
+`qa_outcome_hash`. Its canonical hash is
+`"sha256:" + lowerhex(SHA256("acgs.questionnaire.contradiction/v1\0" ||
+JCS_UTF8(ContradictionRecordPreimage/v1)))`.
+`source_excerpt_hash` is exactly the §2.3.3 whole-line excerpt digest:
+`"sha256:" + lowerhex(SHA256("acgs.questionnaire.excerpt/v1\0" ||
+excerpt_bytes))`, with the same strict decoded excerpt bytes and line-range
+equality. `source_artifact_hash` is exactly the §2.3.3 Git-blob digest:
+`"sha256:" + lowerhex(SHA256("acgs.questionnaire.artifact/v1\0" ||
+file_bytes))`. No alternate contradiction-specific text decoding, newline
+conversion, or artifact serialization is allowed.
+
+The frozen contradiction vector reuses §2.3.3's `alpha\n` Git blob and
+`alpha` whole-line excerpt, so `source_artifact_hash =
+sha256:1e6f051f9e613e96aa7cae9326e57c1e48eca357fc5c81728786ce493f1d4f43`
+and `source_excerpt_hash =
+sha256:bb38581a1481f962bdb5e211141f1e62d8a76e6ba1552c9586fec56b8b563648`.
+With `contradiction_record_id=cr-1`, `job_id=job-1`, `question_id=q-1`,
+`response_id=resp-1`, `response_version=1`, `answer_hash=sha256:`
+followed by 64 `b` characters, `assertion_id=as-1`,
+`assertion_hash=sha256:` followed by 64 `a` characters, the §2.3.3 commit
+and locator, and `qa_receipt_id=qa-rec-1`, the canonical contradiction hash is
+`sha256:ed439722855ac5c404a636edaee0ae2ccabfb0b74dd5669a228dd72f7c0949b9`.
+Mutating the excerpt bytes, range, file bytes, commit, either reused digest, or
+any owning/QA binding must change the hash and fail closed.
+
+The source locator and digests are validated against repository bytes before
+the preimage is accepted as `QAResultPreimage.contradiction_candidate`. The
+canonical QA result envelope authenticates that complete candidate preimage;
+it does not contain the later record hash or outcome pointer. Its outer
+`OutcomeEvent.result_hash` authenticates the typed successful-result envelope
+carrying those bytes. Only after that outcome is finalized does the wrapper
+compute the contradiction hash and construct the closed
+`ContradictionRecord/v1` envelope containing exactly `preimage`,
+`contradiction_record_hash`, and `qa_outcome_hash`. The reducer recomputes the preimage hash and requires exact
+equality among the final record, `CitationQARecord`, QA receipt, and QA outcome
+pointers. A mining outcome pointer, mining producer lineage, or an object
+typed/stored as `Evidence` is forbidden on this record.
 
 It derives `verification_state` and lifecycle state from the complete record
 set. Source-fidelity check 0 proves that quoted bytes are authentic; it does
@@ -519,15 +675,286 @@ padding, non-url-safe alphabet characters, non-zero discarded bits,
 non-canonical re-encoding, wrong decoded lengths, and any other algorithm.
 `not_before` and `not_after` are UTC RFC 3339 seconds with `Z` and no fractional
 seconds; the interval is valid only when `not_before < not_after` and uses the
-half-open predicate `not_before <= t < not_after`.
+half-open predicate `not_before <= t < not_after`. The integrated verifier
+closed-validates every key record, requires the ordered key list to be sorted by
+`(purpose, key_id, signature_alg)` with unique key IDs, and resolves an
+`ACTIVE` key only inside that interval. Missing, extra, duplicate, reordered,
+unknown-purpose/status/algorithm, malformed-key, or noncanonical-time records
+fail closed. Before any `get`, iteration, parsing, or canonicalization, the
+registry verifier requires the manifest and every nested carrier/scalar to pass
+the bounded exact-built-in closed-JSON validator. Its `accepted_at` input must
+also be an exact built-in string in canonical form. Dict/list/string subclasses
+are rejected before attacker-defined `get`, `items`, iteration, `encode`,
+`endswith`, slicing, or equality can execute.
 `registry_verification_key_manifest_hash` is exactly
 `"sha256:" + lowerhex(SHA256(
 "acgs.questionnaire.registry-verification-keys/v1\0" ||
 JCS(RegistryVerificationKeyManifest)))`.
 
+The closed `AssemblyVerificationTrustManifest/v1` artifact contains exactly
+`schema_version` (that literal), `preimage`, and
+`assembly_verification_trust_manifest_hash`. Its closed preimage contains exactly
+`schema_version = "AssemblyVerificationTrustManifestPreimage/v1"`, nonempty
+`trust_root_id`, nonnegative integer `trust_root_version`, nonempty
+`root_signing_key_id`, `authorized_manifest_purposes` equal to the sorted,
+duplicate-free exact set
+`["ASSEMBLY_MANIFEST_PREDECESSOR_SIGNING",
+"ASSEMBLY_VERIFICATION_MANIFEST_SIGNING",
+"RECEIPT_BURN_VERIFICATION_MANIFEST_SIGNING"]`, literal
+`signature_algorithm = "ECDSA_P256_SHA256"`, literal
+`signature_encoding = "P1363_BASE64URL_NOPAD"`, canonical unpadded
+`root_public_key_spki_der_b64u`, `root_public_key_spki_sha256`, nonnegative
+integer `min_manifest_sequence`, canonical UTC RFC 3339 seconds
+`valid_from` and `valid_until` with literal `Z` and no fraction or offset,
+literal
+`head_acceptance_key_purpose = "BURN_MANIFEST_HEAD_ACCEPTANCE_SIGNING"`,
+literal
+`predecessor_signing_key_purpose = "ASSEMBLY_MANIFEST_PREDECESSOR_SIGNING"`,
+literal
+`predecessor_signing_domain = "acgs.questionnaire.assembly-manifest-predecessor-signature/v1"`,
+and the complete closed `revocation_snapshot` plus `revocation_snapshot_hash`.
+The predecessor purpose must be a member of the authenticated exact purpose
+set; the predecessor envelope purpose must equal this authenticated field.
+The root interval is parsed as UTC instants, requires `valid_from < valid_until`,
+and is accepted only under the half-open predicate
+`valid_from <= t < valid_until`. The snapshot contains exactly nonnegative
+integer `snapshot_sequence`, canonical UTC RFC 3339-seconds `issued_at` with
+literal `Z` and no fraction or offset, sorted duplicate-free `list[str]`
+`revoked_signing_key_ids`, and sorted duplicate-free canonical-digest
+`list[str]` `revoked_verification_manifest_hashes`. Its hash is
+`"sha256:" + lowerhex(SHA256(
+"acgs.questionnaire.assembly-revocation-snapshot/v1\0" ||
+JCS_UTF8(revocation_snapshot)))`. The SPKI digest is defined in §2.4. The trust
+preimage excludes its own derived hash, and the artifact hash is exactly
+`"sha256:" + lowerhex(SHA256(
+"acgs.questionnaire.assembly-verification-trust/v1\0" ||
+JCS_UTF8(AssemblyVerificationTrustManifestPreimage/v1)))`. The complete artifact,
+including exact root SPKI DER bytes and revocation snapshot, is archived in the
+policy proof; a hash-only or proof-pack-supplied root is insufficient.
+
+The shared `validate_verified_assembly_trust_chain` routine uses bounded
+iterative closed validation for the complete policy-bundle preimage and
+materialized bundle, the complete trust-manifest envelope and preimage, and the
+nested revocation snapshot before any JCS serialization or domain hash. The
+limits are maximum nesting depth 32, maximum 4,096 visited scalar/container/key
+nodes, and maximum 1,024 containers. Container identity may appear only once;
+cycles and repeated list/object identities are rejected. Dict keys must be
+exact built-in UTF-8-safe strings. Carriers and scalars are restricted to exact
+built-in `dict`, `list`, `str`, `bool`, `int`, or `null`; subclasses are rejected
+before calling `items`, iteration, `get`, equality, or `encode`. Boolean is
+handled separately from integer. This profile accepts integers only in the
+I-JSON interoperable range `[-(2^53)+1, (2^53)-1]` and rejects floats and
+out-of-range integers before JCS. Before pushing children, the validator checks
+the exact built-in container length against the remaining node budget and counts
+direct child containers against the remaining container budget; it never
+materializes an unbounded `extend` from attacker input. Bytes, custom objects,
+mixed nested arrays, ill-formed Unicode, and any over-limit input fail closed
+without recursion. The shared safe-JCS and safe-domain-hash helpers catch
+validator exceptions, always require a successful validation first, and convert
+canonicalization, encoding, or hashing errors to `None`; no verifier exception
+or authority-state mutation is permitted. The safe domain-hash exception
+boundary encloses the validator call, JCS serialization, domain encoding,
+backend hash construction/update/finalization, lowercase encoding, and `sha256:`
+prefix assembly; an injected runtime/backend failure therefore returns `None`.
+Every timestamp parser likewise requires an exact built-in string before
+regular-expression checks, `endswith`, slicing, or `fromisoformat`/`strptime`,
+and converts parser failures to the verifier's fail-closed result.
+This gate applies before canonicalization in predecessor registration, assembly
+manifest publication/verification, burn-manifest verification and append,
+burn- and assembly-head proof verification, integrated
+`RegistryKeyAuthorityProof` verification, and receipt-verifier resolution.
+
+The closed root-signed `ReceiptBurnVerificationManifestPreimage/v1` contains
+exactly `schema_version` (that literal), nonempty `manifest_id`, nonnegative
+integer `manifest_sequence`, `previous_burn_verification_manifest_hash`,
+`trust_root_id`, nonnegative integer
+`trust_root_version`, `authority_id`, literal
+`key_purpose = "RECEIPT_BURN_ACCEPTANCE_SIGNING"`, literal
+`signature_algorithm = "ECDSA_P256_SHA256"`, literal
+`signature_encoding = "P1363_BASE64URL_NOPAD"`, `signing_key_id`, canonical
+unpadded `public_key_spki_der_b64u`, `public_key_spki_sha256`, UTC RFC 3339
+seconds `valid_from` and `valid_until`, and the complete closed
+`revocation_snapshot` plus `revocation_snapshot_hash`. The snapshot contains
+exactly nonnegative integer `snapshot_sequence`, UTC `issued_at`, sorted
+duplicate-free `revoked_burn_signing_key_ids`, and sorted duplicate-free
+`revoked_burn_verification_manifest_hashes`; its digest is
+`"sha256:" + lowerhex(SHA256(
+"acgs.questionnaire.receipt-burn-revocation-snapshot/v1\0" ||
+JCS_UTF8(revocation_snapshot)))`. The verifier closed-validates the nested
+burn revocation snapshot itself: exact fields, nonnegative integer sequence,
+canonical UTC-seconds `issued_at`, and sorted duplicate-free nonempty key IDs
+and canonical manifest digests. Unknown fields, wrong types, alternate time
+encodings, duplicates, or unsorted members fail even under a fresh valid root
+signature. The manifest hash is
+`"sha256:" + lowerhex(SHA256(
+"acgs.questionnaire.receipt-burn-verification-manifest/v1\0" ||
+JCS_UTF8(ReceiptBurnVerificationManifestPreimage/v1)))`.
+
+The policy-bound burn-manifest append authority owns a linearizable,
+append-only high-water store per `trust_root_id` and `authority_id`. Genesis
+is exactly `manifest_sequence == min_manifest_sequence` with
+`previous_burn_verification_manifest_hash = "GENESIS"`; every later acceptance
+requires `manifest_sequence == accepted_sequence + 1` and predecessor equality
+with the accepted head hash. Candidate validation is complete before any store mutation. The transaction
+generates one authoritative transaction timestamp and uses exactly that instant
+for leaf-validity validation and persisted `accepted_at`; a second clock read is
+forbidden. Exact `valid_from` is accepted and exact `valid_until` is rejected.
+One linearizable compare-and-swap transaction creates the immutable acceptance
+record and advances the head only if both expected values still match; two concurrent
+valid candidates for the same predecessor/sequence therefore have exactly one
+winner, and the losing transaction leaves no acceptance or head mutation. Its
+authority-authenticated immutable read-back proof binds root id/version,
+authority id, sequence, predecessor, manifest hash, accepted UTC timestamp, and
+committed store version. A rejected contender, fork, missing read-back proof,
+sequence gap, predecessor substitution, rollback (including sequence 7 after
+accepted sequence 9), or head/store uncertainty is not a valid manifest.
+
+Each successful append first persists a closed
+`BurnManifestHeadStoreRecordPreimage/v1` containing exactly `schema_version`
+(the literal), nonempty `trust_root_id`, nonnegative integer
+`trust_root_version`, nonempty `authority_id` and `store_id`, nonnegative integer
+`accepted_sequence`, canonical `accepted_manifest_hash`, canonical
+`predecessor_manifest_hash` or literal `GENESIS`, nonempty `transaction_id`,
+canonical UTC RFC 3339 microsecond `accepted_at`, and positive integer
+`store_version`. Its `store_record_hash` is exactly `"sha256:" +
+lowerhex(SHA256("acgs.questionnaire.burn-manifest-head-store-record/v1\0" ||
+JCS_UTF8(BurnManifestHeadStoreRecordPreimage/v1)))`.
+
+The append then creates one closed, root-signed
+`BurnManifestHeadAcceptanceReadbackProof/v1` envelope. Its closed preimage
+contains exactly
+`schema_version = "BurnManifestHeadAcceptancePreimage/v1"`, nonempty
+`trust_root_id`, nonnegative integer `trust_root_version`, nonempty
+`authority_id`, nonempty `store_id`, nonnegative integer `accepted_sequence`,
+canonical `accepted_manifest_hash`, canonical `predecessor_manifest_hash` or
+literal `GENESIS`, nonempty `transaction_id`, canonical UTC RFC 3339
+microsecond `transaction_timestamp` and `read_timestamp`, positive integer
+`monotonic_generation`, canonical `store_record_hash`, canonical
+`root_binding_hash`, literal
+`key_purpose = "BURN_MANIFEST_HEAD_ACCEPTANCE_SIGNING"`, and nonempty
+`signing_key_id`. It excludes every derived hash and signature. Its hash is
+exactly
+`"sha256:" + lowerhex(SHA256(
+"acgs.questionnaire.burn-manifest-head-acceptance/v1\0" ||
+JCS_UTF8(BurnManifestHeadAcceptancePreimage/v1)))`.
+The envelope contains exactly `schema_version` (the envelope literal),
+`preimage`, `head_acceptance_hash`, literal
+`signature_algorithm = "ECDSA_P256_SHA256"`, literal
+`signature_encoding = "P1363_BASE64URL_NOPAD"`, and `signature`. The exact
+signed message is
+`UTF8("acgs.questionnaire.burn-manifest-head-acceptance-signature/v1\0") ||
+ASCII(head_acceptance_hash)`. The signer is the policy-bound trust root under
+the separate `head_acceptance_key_purpose`. The complete authenticated policy chain is mandatory; there is no ambient or
+optional fallback. The verifier accepts that complete reconstructed chain,
+invokes the shared trust validator, derives the root SPKI and trust binding
+solely from that chain, and requires exact root
+id/version/key equality, `root_binding_hash` equality to the complete trust
+artifact, a canonical low-S signature, and both timestamps within the root's
+half-open validity interval. `read_timestamp` cannot precede
+`transaction_timestamp`. The invoked verifier rejects unknown, missing, ill-typed, or empty fields in
+the envelope, proof preimage, and store record; decodes and verifies the
+canonical envelope signature rather than accepting an out-of-band signature.
+The immutable read-back must reproduce the exact accepted store record, its
+hash, and generation: root id/version, authority/store ids, sequence, manifest
+and predecessor hashes, transaction id, `transaction_timestamp == accepted_at`,
+and `monotonic_generation == store_version` all compare exactly. The verifier
+takes the complete authenticated burn-manifest envelope and compares the proof
+and store sequence, manifest hash, and predecessor directly to that envelope;
+ambient process head variables, cached fork hashes, or fixture constants are
+never verification inputs. The policy proof archive embeds the complete
+accepted leaf manifest and this complete proof; a hash-only, stale,
+badly signed, forked, substituted, revoked, or rolled-back head is rejected
+offline. No global fixture key, hard-coded public scalar, or caller-selected
+root is a verification authority.
+
+The closed `ReceiptBurnVerificationManifest/v1` envelope contains exactly
+`schema_version`, `preimage`, `burn_verification_manifest_hash`, literal
+`root_signature_algorithm = "ECDSA_P256_SHA256"`, literal
+`root_signature_encoding = "P1363_BASE64URL_NOPAD"`,
+`root_signing_key_id`, and `root_signature`. Its root-signed message is exactly
+`UTF8("acgs.questionnaire.receipt-burn-verification-manifest-signature/v1\0") ||
+ASCII(burn_verification_manifest_hash)`. The root id, version, SPKI, purpose,
+algorithm, validity interval, minimum manifest sequence, and revocation
+snapshot are resolved from the complete policy-bound
+`AssemblyVerificationTrustManifest/v1`; that root must list the requested
+`RECEIPT_BURN_VERIFICATION_MANIFEST_SIGNING` domain in its exact
+`authorized_manifest_purposes` set. The burn key is never accepted from a
+proof-pack-supplied or hash-only root. Verification requires a canonical low-S
+P-256 P1363 signature, exact SPKI digest, `valid_from <= t < valid_until`, a
+sequence accepted by the high-water protocol above, predecessor equality, an
+immutable read-back proof, and absence of the key and manifest hash from the
+bound policy-root revocation snapshot. The shared trust-chain validator first
+requires `root_signing_key_id not in revoked_signing_key_ids`; the burn verifier
+then explicitly tests both `signing_key_id not in revoked_signing_key_ids` and
+`burn_verification_manifest_hash not in revoked_verification_manifest_hashes`.
+Membership in any of those positions fails even when the candidate was freshly
+root-signed.
+The same root may sign only the three explicitly
+authorized manifest domains; cross-purpose use, an unauthorized domain, wrong
+root, purpose, key, algorithm, future/expired/revoked/rolled-back manifest, or
+any substitution fails closed.
+
+The closed `ReceiptVerificationKeyManifest/v1` contains exactly `schema_version`,
+`manifest_id`, `key_purpose = "DECISION_RECEIPT_SIGNING"`, nonempty `key_id`,
+`status = "ACTIVE"`, `signature_algorithm = "ed25519"`, canonical unpadded
+base64url `public_key_b64u` decoding to exactly 32 bytes, canonical UTC-seconds
+`valid_from` and `valid_until`, and a sorted, duplicate-free string array
+`revoked_key_ids`. The resolver first requires `revoked_key_ids` to be a
+JSON array whose every member is a nonempty string, and only then performs
+duplicate and sort checks; mixed or nested values fail closed without
+comparison or set conversion. It runs the bounded iterative validator over the complete receipt-key
+manifest and archive envelope against their closed schemas and JSON-domain
+types before any JCS serialization or domain hash. Thus a bytes-valued
+`status`, custom object, or other nested non-JSON value returns `None`
+without canonicalization, exception, barrier entry, head/consumption mutation,
+or invocation. Its digest is exactly `"sha256:" + lowerhex(SHA256(
+"acgs.questionnaire.receipt-verification-keys/v1\0" ||
+JCS_UTF8(manifest)))`. The verifier requires `valid_from <= verification_time <
+valid_until`, rejects a key listed in `revoked_key_ids`, and resolves the receipt
+verification key solely from this embedded, policy-bound artifact. Unknown,
+revoked, inactive, expired, future, malformed, substituted, or wrong-purpose
+keys fail closed; no ambient public key or caller-supplied key id is authority.
+
+That policy binding is not self-authenticating. The proof also embeds one closed
+`QuestionnairePolicyArchiveAcceptance/v1`; its closed preimage contains exactly
+`schema_version = "QuestionnairePolicyArchiveAcceptancePreimage/v1"`,
+`purpose = "QUESTIONNAIRE_POLICY_BUNDLE_SIGNING"`, `trust_root_id`,
+`trust_root_version`, `policy_bundle_id`, `policy_version`,
+`receipt_verification_key_manifest_hash`, and canonical UTC-seconds
+`accepted_at`. Its hash is `"sha256:" + lowerhex(SHA256(
+"acgs.questionnaire.policy-archive-acceptance/v1\0" || JCS_UTF8(preimage)))`;
+its canonical low-S P-256 signature covers
+`"acgs.questionnaire.policy-archive-acceptance-signature/v1\0" ||
+acceptance_hash`. The verifier resolves that key only from the independently
+pinned current archive-root SPKI digest and exact root id/version/purpose and
+verifies this acceptance before trusting the bundle's expected policy hash or
+receipt key. Replacing the Ed25519 key, manifest, bundle, policy version, receipt,
+and producer reference together still cannot pass without a fresh archive-root
+signature.
+
+`valid_from`, `valid_until`, and archive `accepted_at` use the
+single lexical form `YYYY-MM-DDTHH:MM:SSZ`; offsets, fractional seconds,
+normalization, and permissive parser equivalents are rejected before instant
+parsing. `verification_time` is not a caller clock or fixture. The resolver
+first authenticates the complete assembly-manifest envelope and its
+authoritative assembly-head store/readback record. Verification time is exactly
+that head record's `accepted_at`, which must equal archive `accepted_at`
+byte-for-byte. Receipt-key validity and `DecisionReceipt` liveness are
+evaluated at that instant, and the burn store's canonical microsecond commit
+timestamp must represent the same instant. Missing, uncertain, stale,
+substituted, or mismatched head evidence fails closed. The head record must be an
+exact built-in object whose complete nested value passes the bounded closed-JSON
+validator before lookup equality or any mapping method is used; a mapping
+subclass cannot run attacker-defined `get`, `items`, or equality. A receipt or
+key expired at commit is denied even if it was valid earlier.
+
 The closed `QuestionnairePolicyBundle/v1` contains exactly `schema_version`,
-`policy_bundle_id`, `policy_version`, `decision_policy_artifact_hash`, and
-`registry_verification_key_manifest_hash`; `schema_version` is exactly
+`policy_bundle_id`, `policy_version`, `decision_policy_artifact_hash`,
+`registry_verification_key_manifest_hash`,
+`receipt_verification_key_manifest_hash`,
+`assembly_verification_trust_manifest_hash`,
+`burn_verification_manifest_hash`, and `burn_manifest_head_acceptance_hash`;
+`schema_version` is exactly
 `QuestionnairePolicyBundle/v1`. `decision_policy_artifact_hash` is exactly
 `"sha256:" + lowerhex(SHA256(
 "acgs.questionnaire.decision-policy-artifact/v1\0" ||
@@ -538,8 +965,12 @@ re-serialization, normalization, or rule-subset projection is allowed.
 To avoid a self-referential `policy_version`, the content address is computed
 from one closed `QuestionnairePolicyBundlePreimage/v1` projection containing
 exactly `schema_version = "QuestionnairePolicyBundlePreimage/v1"`,
-`policy_bundle_id`, `decision_policy_artifact_hash`, and
-`registry_verification_key_manifest_hash`. It excludes only the derived
+`policy_bundle_id`, `decision_policy_artifact_hash`,
+`registry_verification_key_manifest_hash`,
+`receipt_verification_key_manifest_hash`,
+`assembly_verification_trust_manifest_hash`,
+`burn_verification_manifest_hash`, and
+`burn_manifest_head_acceptance_hash`. It excludes only the derived
 `policy_version`. The content-addressed version is exactly
 `"questionnaire-policy/" + lowerhex(SHA256(
 "acgs.questionnaire.policy-bundle/v1\0" ||
@@ -554,10 +985,19 @@ stamps the same derived version into both `DecisionReceipt.policy_version` and
 Offline verification reconstructs the preimage and requires exact equality:
 `bundle.policy_bundle_id == DecisionReceipt.policy_bundle_id` and
 `bundle.policy_version == DecisionReceipt.policy_version ==
-DecisionReceipt.policy_hash == derived_policy_version`. A wrong bundle id,
-wrong version, or legacy semantic version fails closed. The derived value
-therefore identifies the complete decision-policy bytes and key-manifest digest,
-not metadata alone.
+DecisionReceipt.policy_hash == derived_policy_version`. It also requires the
+same recomputed `assembly_verification_trust_manifest_hash`, latest accepted
+`burn_verification_manifest_hash`, and
+`burn_manifest_head_acceptance_hash` in their archived rooted artifacts,
+policy preimage, and materialized bundle. The accepted-head proof's leaf hash
+must equal the bundle's burn-manifest hash, its sequence must be at least the
+policy-bound minimum and equal the latest accepted high-water value, and its
+predecessor/generation must match the immutable store read-back. Substituting
+any hash changes the derived
+policy version and invalidates the receipt equality. A wrong
+bundle id, wrong version, or legacy semantic version fails closed. The derived
+value therefore identifies the complete decision-policy bytes plus registry,
+assembly-trust, and rooted receipt-burn-manifest digests, not metadata alone.
 
 The cross-implementation known vector uses a manifest with
 `manifest_id = "source-classifier-registry-keys/v1"`, validity interval
@@ -570,13 +1010,33 @@ Its exact manifest digest is
 The exact decision-policy artifact bytes `{"default":"DENY"}` have unpadded
 base64url `eyJkZWZhdWx0IjoiREVOWSJ9` and digest
 `sha256:05a834e1d29ada549d71f6b5b35f734b7e49d9e3c0085f345cbdfe3c873d8e38`.
-Putting both digests in
+The frozen assembly trust artifact uses P-256 private-scalar-1's canonical SPKI,
+root id `assembly-root-1`, version 2, minimum manifest sequence 7, and empty
+revocation snapshot sequence 4 at `2026-07-01T00:00:00Z`; its root validity
+interval is `2026-01-01T00:00:00Z..2027-01-01T00:00:00Z`. Its trust-manifest
+hash is
+`sha256:923f98c43c9ade6ffac7e85aff5c0f6ae9b46aa60423bfe7d29dc2d75aaaba6b`.
+The frozen append chain advances from the sequence-7 genesis candidate
+`sha256:26de74aa8b88621232d7ce3c238552f37c459f912fa8d210cad199e4b8bb01da`,
+whose root signature is
+`PtETt4g7TFkGODedsMIc2hZ0LtAlUEi_QzOR03S8IdE0jRS5Eq7c4IQKeM1Y0IUcLuABw9qoR3MpmopXsduWyA`,
+through sequence 9; the policy binds sequence-9 leaf
+`sha256:60364b456803f3bcfe69cc8f425e6c765333b2cc2d28c52887c28c75786bd778`
+and signed head proof
+`sha256:8648e3e87ed07345a53968938afe3bee08f756d2f3db20429716c1b226560078`,
+never the earlier sequence-7 candidate. Root private scalar 1 with vector nonce
+23 signs that head proof as
+`DpHHI5wmQNfSij451Fg_pjwLwKXfZKT-Zy5XMEXKeJZjY0XpeaxgxqsXMQyNRF7aJhdwZRlWoeUq6fL7UkA8yQ`.
+The frozen receipt-key artifact uses Ed25519 seed bytes `01` repeated 32 times
+only as a test vector, public key
+`iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w`, and digest
+`sha256:47afc439f1b0f8ed6fa3f10f7c149c1d2787b02fb57634379a1a45f01df45bf7`.
+Putting all six digests in
 `QuestionnairePolicyBundlePreimage/v1(questionnaire-default)` yields exactly
-`questionnaire-policy/62a949696e4d806e44ad3bdc18ef77dc64ae3cf9ef33c5d5f19f82abbc65c16f`;
+`questionnaire-policy/362f29863ccc36786ff47b4943e33be587ecc1d7d5362f1f26f63ec456a8c277`;
 that exact value is the materialized bundle version and both receipt version
-fields.
-Changing only the rule bytes to `{"default":"ALLOW"}` yields
-`questionnaire-policy/5266c8f7c19d763bc36a74b28a52045007e162ac9373b867e031830735f0d517`,
+fields. Changing only the rule bytes to `{"default":"ALLOW"}` yields
+`questionnaire-policy/05de26503f630e07e1a354b852fb512dbf391c33a56b99d1caf41a0141368e42`,
 proving that an ALLOW/DENY rule change cannot preserve the receipt policy hash.
 Implementations must freeze both values and reject any field-order-independent
 JCS preimage whose schema, key order, encoding, purpose, interval, or field set
@@ -585,8 +1045,24 @@ does not satisfy the closed contracts above.
 The mining preimage and delivered proof pack embed one closed
 `RegistryKeyAuthorityProof/v1` containing exactly `schema_version`, the complete
 `questionnaire_policy_bundle`, the complete
-`registry_verification_key_manifest`, and
-`decision_policy_artifact_b64u`. The artifact field is the unpadded base64url
+`registry_verification_key_manifest`, the complete
+`receipt_verification_key_manifest`, the complete independently root-signed
+`questionnaire_policy_archive_acceptance`, the complete
+`assembly_verification_trust_manifest`, the complete root-signed latest
+`receipt_burn_verification_manifest`, the complete
+`assembly_manifest_head_store_record`, the complete
+`assembly_manifest_head_readback_proof`, the complete
+`burn_manifest_head_store_record`, the complete
+`burn_manifest_head_acceptance_readback_proof`, and
+`decision_policy_artifact_b64u`. The embedded store record is exactly the closed
+`BurnManifestHeadStoreRecordPreimage/v1`; offline verification recomputes its
+`store_record_hash` and requires every store field to equal the corresponding
+signed head-proof field. No external database row or caller-supplied record is
+an authority input. The integrated verifier derives the burn store record,
+accepted sequence, predecessor hash, transaction time, and accepted time solely
+from those embedded authenticated objects; hard-coded sequences, fixture
+hashes, ambient stores, and omitted verification context are denied.
+The artifact field is the unpadded base64url
 encoding of the exact policy bytes. It inherits only the encoding-canonicality
 rules above: no padding or whitespace, URL-safe alphabet only, zero discarded
 bits, and exact canonical re-encoding. Its decoded value is variable length but
@@ -596,12 +1072,55 @@ accepted 18-byte value `{"default":"DENY"}`. Empty, oversized, malformed, or
 non-canonically encoded artifacts fail closed. `schema_version` is
 exactly `RegistryKeyAuthorityProof/v1`. Offline verification decodes the policy
 artifact, recomputes `decision_policy_artifact_hash` and requires exact equality
-with the bundle field, validates the manifest schema version, recomputes
-`registry_verification_key_manifest_hash`, and requires exact equality with the
-field inside the policy bundle. It reconstructs
-`QuestionnairePolicyBundlePreimage/v1`, derives the content-addressed policy
-version, enforces the bundle/receipt id and version equalities above, then
-resolves each envelope's
+with the bundle field, validates the registry manifest, recomputes
+`registry_verification_key_manifest_hash`, exact-validates the embedded receipt
+verification-key manifest, recomputes
+`receipt_verification_key_manifest_hash`, validates the complete assembly trust
+artifact and revocation snapshot, recomputes
+`assembly_verification_trust_manifest_hash`, validates the root-signed receipt
+burn verification manifest against that trust artifact, recomputes
+`burn_verification_manifest_hash`, validates the archived burn-head record and
+its signed acceptance proof, validates the archived assembly-head record and
+its signed read-back proof, and requires exact equality for every authority
+hash inside the policy bundle. It accepts the complete serialized delivered `DecisionReceipt` as an explicit
+input and validates it before inserting it into the reconstructed trust chain.
+This questionnaire profile is explicitly shipped-receipt-v1-only; scoped v2
+`ReceiptTrustRegistry` verification is out of scope. The closed v1 wire set is
+the literal shipped `DecisionReceipt.to_dict()` base fields, with only
+`action_tier` optionally present when it is the valid non-default `explore`
+value. `receipt_schema_version`, `project_id`, `environment_id`, and
+`trust_epoch` are forbidden, so every v2 receipt is denied before parsing. The
+field set is protocol-defined, never inferred from a fixture. The verifier parses
+with `DecisionReceipt.from_dict`, requires byte-for-byte-equivalent `to_dict()`,
+recomputes `receipt_hash = sha256_json(DecisionReceipt._hash_payload())` where
+`receipt_hash` and `signature` are excluded, requires an allowlisted
+`signature_algorithm` and `signing_key_id`, and verifies the receipt signature
+over UTF-8 bytes of the lowercase receipt hash with the Ed25519 key resolved
+solely from the embedded `ReceiptVerificationKeyManifest/v1` whose digest equals
+the policy preimage and materialized bundle. It invokes shipped
+`DecisionReceipt.verify(require_signature=True, require_expiry=True)` with the
+expected producer actor, action, authority, execution boundary, exact arguments,
+policy id/hash, tenant, and audit hash. Only shipped `decision="allow"` is
+executable; freshly signed `deny` or `escalate`, wrong actor/action/authority,
+empty required identity, expired receipt, argument/audit/boundary mismatch,
+unknown or revoked key, unsupported receipt schema, and v1/v2 trust-field
+mismatch all fail closed. `ReceiptValidationError` and malformed input types are
+converted to denial rather than escaping. Unsigned or partially projected
+receipts are invalid for this production gate.
+
+The separately named closed `producer_receipt_reference` object contains exactly
+nonempty string `produced_by_receipt_id` and canonical `policy_hash`. The former
+remains a string, never an object with a `.policy_hash` member. Verification
+requires `produced_by_receipt_id == delivered_receipt.receipt_id` and exact
+`producer_receipt_reference.policy_hash == delivered_receipt.policy_hash`.
+A forged same-ID/same-policy receipt with a bad hash or signature, a coordinated
+substitution changing both receipt IDs, or the same policy hash with a different
+receipt identity is denied. The verifier reconstructs `QuestionnairePolicyBundlePreimage/v1`,
+derives the content-addressed policy version, enforces the bundle/receipt id and
+version equalities above, and enforces exact receipt policy-hash equality; no
+ambient fixture receipt participates. A malformed non-object proof, delivered
+receipt, or producer reference returns denial before field access rather than
+raising. It then resolves each envelope's
 `signature_alg`/`key_id` only from an active key in that verified manifest.
 The entry envelope must resolve a key whose `purpose` is exactly `ENTRY`; the
 checkpoint envelope must resolve a key whose `purpose` is exactly `CHECKPOINT`.
@@ -623,6 +1142,17 @@ the wrapper must obtain a new nonce-bound live checkpoint, rebuild
 `MiningOutcomePreimage`, recompute `mining_result_hash`, and reserve/sign a new
 outcome. A crash-recovered or delayed finalizer may not reuse the expired
 candidate.
+
+`append_burn_manifest` and the burn-before-invoke helper also accept an
+untrusted object and reject `None`, list, or scalar roots before `.get` or index
+access; rejection leaves head, acceptance, consumption, and invocation stores
+unchanged.
+
+Every public verifier or append/register entry point accepts an untrusted object
+and first requires each root, envelope, preimage, store record, policy chain, and
+nested manifest input to be a mapping before any key-set, `.get`, or index
+operation. `None`, list, scalar, missing, or malformed nested inputs return denial
+and never raise or mutate authority state.
 
 Missing policy artifact or policy/key proof,
 archive/envelope/preimage/signature/key, an unknown,
@@ -769,35 +1299,45 @@ classifier_registry_proofs[] sorted by
 containing one complete ClassifierRegistryProofArchive/v1 for every unique
 SourceMetadata registry-hash pair and no unreferenced archive,
 one RegistryKeyAuthorityProof/v1 containing the exact policy bundle and
-verification-key manifest bound through produced_by_receipt_id.policy_hash
+verification-key manifest bound through producer_receipt_reference.policy_hash
 ```
 
 The product wrapper canonicalizes the preimage it constructed from the accepted
-raw result and defines
-`mining_result_hash = SHA256(canonical(MiningOutcomePreimage))`; that value must
-equal `OutcomeEvent.result_hash`. The preimage MUST NOT contain
-`produced_by_outcome_hash`. Only after the wrapper reserves the unique append
-slot, computes and KMS-signs the matching `OutcomeEvent`, atomically finalizes
-the pending commit, and verifies its `ATTESTED` `AppendAcceptance` may it construct the canonical
-`MiningOutcomeEnvelope` object
-`{preimage, mining_result_hash, produced_by_outcome_hash}` where
+raw result as RFC 8785 JCS UTF-8. It wraps those exact bytes in
+`SuccessfulResultEnvelope/v1` with
+`result_kind=MINING_OUTCOME_PREIMAGE` and `encoding=JCS_JSON`.
+`mining_result_hash` is the envelope's inner `payload_hash`;
+`OutcomeEvent.result_hash` is the distinct outer envelope hash. The preimage
+MUST NOT contain `produced_by_outcome_hash`. Only after the wrapper reserves
+the unique append slot, computes and KMS-signs the matching `OutcomeEvent`,
+atomically finalizes the pending commit, and verifies its `ATTESTED`
+`AppendAcceptance` may it construct the canonical `MiningOutcomeEnvelope`
+object `{preimage, mining_result_hash, successful_result_envelope,
+outcome_result_hash, produced_by_outcome_hash}`, where
+`outcome_result_hash == OutcomeEvent.result_hash` and
 `produced_by_outcome_hash == OutcomeEvent.outcome_hash`; the referenced event
-must have a matching committed acceptance proof. The envelope's own
-`mining_envelope_hash` hashes those complete envelope bytes. Evidence producer
-pointers are projections from this envelope, and `producer_lineage_hash` binds
-`source_evidence_hash`, the preimage's receipt/outcome-event ids, the result
-hash, and the outcome hash. `Response.response_lineage_hash` binds the response
-identities, answer hash, assertion manifest hash, both producer pointers, and
-the sorted set of evidence producer lineage hashes. This two-stage construction binds the final event
-pointer without asking either hash to contain itself.
+must have a matching committed acceptance proof. The complete successful-result
+envelope is stored in proof material so an offline verifier can decode and
+recompute both hashes. The envelope's own `mining_envelope_hash` hashes those
+complete envelope bytes. Evidence producer pointers are projections from this
+envelope, and `producer_lineage_hash` binds `source_evidence_hash`, the
+preimage's receipt/outcome-event ids, the inner mining result hash, outer
+outcome result hash, and outcome hash. `Response.response_lineage_hash` binds
+the response identities, answer hash, assertion manifest hash, both producer
+pointers, and the sorted set of evidence producer lineage hashes. This
+two-stage construction binds the final event pointer without asking either hash
+to contain itself.
 
 The reducer verifies the mining receipt's `argument_hash` against the canonical
 mining `ToolCall` arguments, checks every envelope identity, the stored ordered
-assertion manifest, and every evidence record,
-recomputes the preimage/result hash and canonical outcome-event hash, and
-requires exact equality with `OutcomeEvent.result_hash`,
-`OutcomeEvent.outcome_hash`, `Evidence.produced_by_*`, and
-`Response.produced_by_*`. A substituted producer pointer, wrong envelope, or
+assertion manifest, and every evidence record, decodes the carried
+successful-result envelope, and requires its payload bytes to equal the JCS
+`MiningOutcomePreimage`. It recomputes the inner
+`mining_result_hash`, outer `OutcomeEvent.result_hash`, canonical
+outcome-event hash, `OutcomeEvent.outcome_hash`, `Evidence.produced_by_*`,
+and `Response.produced_by_*`. An inner/outer hash swap, substituted
+result-kind or encoding, omitted payload envelope, substituted producer pointer,
+wrong envelope, or
 evidence record omitted from the preimage fails closed. Every evidence assertion
 id/hash must name an exact manifest member. Before any supported assembly, the
 reducer requires every manifest assertion to have at least one bound `Evidence`,
@@ -816,12 +1356,15 @@ omits the assertion from completeness accounting.
 | `answer_text` | str | Draft, for customer review and editing |
 | `assertion_manifest` | AssertionManifest | Canonical ordered manifest frozen and stored for this response version |
 | `assertion_manifest_hash` | str | Domain-separated hash bound into mining and response lineage |
+| `presentation_annotation_set_root` | str | Canonical complete ordered annotation-set root required by assembly/delivery |
+| `presentation_annotations` | list[PresentationAnnotation] | Append-only overlays; never edits to answer bytes |
 | `evidence` | list[Evidence] | Empty iff state is `NOT_EVIDENCED` or `ESCALATED` |
 | `verification_state` | enum | **Deterministic reducer output** from bound `CitationQARecord` values — see below. Never model-authored. |
 | `job_id` | str | Owning job — required for lineage |
 | `produced_by_receipt_id` | str | The `DecisionReceipt` authorizing the mining call that produced this response |
 | `produced_by_outcome_hash` | str | Canonical `OutcomeEvent.outcome_hash` of that mining outcome |
 | `response_lineage_hash` | str | Canonical producer binding defined by `MiningOutcomeEnvelope` (§2.3.3) |
+| `assembly_lineage_hash` | str | Post-QA hash binding response lineage, recomputed QA/semantic/contradiction sets, annotation root, and acyclic content manifest |
 
 **`verification_state` replaces the former `confidence` field, which is deleted.** A
 `HIGH | MEDIUM | LOW` label with no derivation rule re-imports model self-assessment as if
@@ -833,7 +1376,7 @@ because it returns on the first satisfied branch, the states are mutually
 exclusive and deterministic even for mixed records:
 
 ```
-1. CONTRADICTED_BY_OTHER_ARTIFACT  any citation has a valid contradicts_locator
+1. CONTRADICTED_BY_OTHER_ARTIFACT  any citation has a valid bound ContradictionRecord
 2. QA_REFUTED                      otherwise, any check-0-valid citation is REFUTED
 3. QA_INSUFFICIENT                 otherwise, any check-0-valid citation is INSUFFICIENT
 4. CANDIDATE_EVIDENCE              otherwise, any check-0-valid citation lacks a
@@ -875,11 +1418,521 @@ Lifecycle states:
 SUPPORTED            every assertion in answer_text carries >=1 evidence citation
                      with valid QA and signed semantic adjudication records
 PARTIALLY_SUPPORTED  some assertions have both valid records; others do not.
-                     Uncited assertions MUST be marked inline in answer_text.
+                     Unsupported spans are identified only by immutable
+                     PresentationAnnotation records; answer_text is unchanged.
 NOT_EVIDENCED        no surviving citation. answer_text states what was searched
                      and what was not found. A Gap MUST be created.
 ESCALATED            human review required before the response may be delivered
 ```
+
+A partial-support marker is a separate immutable presentation overlay, never an
+edit to the frozen response. The closed
+`PresentationAnnotationPreimage/v1` contains exactly `schema_version`,
+`presentation_annotation_id`, `job_id`, `question_id`, `response_id`,
+`response_version`, `answer_hash`, `assertion_manifest_hash`,
+`assertion_index`, `assertion_id`, `assertion_hash`,
+`annotation_kind` (the closed enum `UNSUPPORTED` or `ADVERSE_QA`), and
+`created_at`; it excludes `presentation_annotation_hash`. The immutable
+`PresentationAnnotation/v1` contains exactly that preimage and
+`presentation_annotation_hash`, computed as:
+
+```text
+"sha256:" + lowerhex(
+  SHA256("acgs.questionnaire.presentation-annotation/v1\0" ||
+         JCS_UTF8(PresentationAnnotationPreimage/v1)))
+```
+
+Only the trusted append-only `PresentationAnnotationAuthority` may append an
+annotation after deterministic reduction. It validates the frozen manifest
+member and rejects mutation or reuse of an existing annotation id. The complete
+annotation set is ordered by
+`(assertion_index, annotation_kind, presentation_annotation_id)`; duplicate
+keys are forbidden. `presentation_annotation_set_root` is
+`"sha256:" + lowerhex(SHA256(
+"acgs.questionnaire.presentation-annotation-set/v1\0" ||
+JCS_UTF8(complete_ordered_annotations)))`.
+
+Assembly derives the exact expected set from the complete frozen manifest:
+each member that fails the full Evidence + QA + semantic support predicate has
+exactly one annotation; its kind is `ADVERSE_QA` when a valid adverse QA or
+contradiction record caused failure, otherwise `UNSUPPORTED`. Every supported
+member has zero annotations. A fully supported response therefore binds the
+canonical empty-set root. Before assembly and delivery, the reducer recomputes
+the expected set and root and requires exact equality with the append-only
+records.
+
+Assembly uses an acyclic two-stage content/authority layering. First, the
+closed `ContentManifestPreimage/v1` contains exactly `schema_version`,
+`job_id`, `question_id`, `response_id`, `response_version`,
+`answer_hash`, `assertion_manifest_hash`, `response_lineage_hash`,
+`presentation_annotation_set_root`, and `ordered_payload_artifacts`.
+Each payload member contains exactly `relative_path`, `artifact_kind`,
+`media_type`, `byte_length`, and `artifact_hash`; paths are normalized,
+unique repository-relative strings, lengths are nonnegative JSON integers, and
+hashes are `sha256:` plus 64 lowercase hexadecimal characters over the exact
+stored bytes. The array is duplicate-free and sorted by
+`(relative_path, artifact_kind)`.
+
+Membership is exact: it includes the frozen answer/response, assertion
+manifest, Evidence records, final `CitationQARecordPreimage/v1` records,
+semantic-adjudication records, contradiction records, presentation annotations,
+Gap records, and rendered customer payload artifacts. It includes no
+`ContentManifestPreimage/v1` or its hash, no
+`AssemblyLineagePreimage/v1`, no assembly acceptance/proof/archive file, and
+no detached outer index. An expected member missing from the array, an extra
+member, or a byte/hash/path/order mismatch fails closed. The content hash is:
+
+```text
+content_manifest_hash =
+  "sha256:" + lowerhex(
+    SHA256("acgs.questionnaire.content-manifest/v1\0" ||
+           JCS_UTF8(ContentManifestPreimage/v1)))
+```
+
+Second, the post-QA closed `AssemblyLineagePreimage/v1` contains exactly
+`schema_version`, `job_id`, `question_id`, `response_id`,
+`response_version`, `answer_hash`, `assertion_manifest_hash`,
+`response_lineage_hash`, `ordered_citation_qa_record_hashes`,
+`ordered_semantic_adjudication_event_hashes`,
+`ordered_contradiction_record_hashes`,
+`presentation_annotation_set_root`, and `content_manifest_hash`.
+Identifiers are nonempty strings, `response_version` is a nonnegative JSON
+integer, and digest arrays contain complete, duplicate-free recomputed hashes
+in their specified canonical order. It excludes `assembly_lineage_hash`,
+the acceptance, its signature, every acceptance/proof/archive path, and the
+detached index. Its hash is exactly:
+
+```text
+assembly_lineage_hash =
+  "sha256:" + lowerhex(
+    SHA256("acgs.questionnaire.assembly-lineage/v1\0" ||
+           JCS_UTF8(AssemblyLineagePreimage/v1)))
+```
+
+The trusted `AssemblyAuthority` alone constructs those preimages after reading
+the append-only annotations and complete QA, semantic, contradiction, response,
+and payload sets. It does not sign an ungoverned local assembly.
+
+The assembly verification key is described by the closed
+`AssemblyVerificationManifestPreimage/v1`, which contains exactly
+`schema_version` (that literal), nonempty `manifest_id`, nonnegative JSON
+integer `manifest_sequence`, nonempty `trust_root_id`, nonnegative JSON
+integer `trust_root_version`, nonempty `authority_id`, literal
+`key_purpose="ASSEMBLY_ACCEPTANCE_SIGNING"`, literal
+`signature_algorithm="ECDSA_P256_SHA256"`, literal
+`signature_encoding="P1363_BASE64URL_NOPAD"`, nonempty `signing_key_id`,
+canonical unpadded `public_key_spki_der_b64u`, `public_key_spki_sha256`,
+timezone-aware `valid_from` and `valid_until`, nullable timezone-aware
+`revoked_at`, and nullable `previous_verification_manifest_hash`. The SPKI field
+decodes and canonically re-encodes to the exact RFC 5480 SubjectPublicKeyInfo DER
+bytes for `id-ecPublicKey` on `prime256v1`; alternate DER encodings fail.
+`public_key_spki_sha256` is exactly `"sha256:" + lowerhex(SHA256(
+"acgs.questionnaire.p256-spki/v1\0" || spki_der_bytes))`. Digests use
+`sha256:` plus 64 lowercase hexadecimal characters; `valid_from < valid_until`.
+The preimage
+excludes `verification_manifest_hash` and every signature field. Its hash is:
+
+```text
+verification_manifest_hash =
+  "sha256:" + lowerhex(
+    SHA256("acgs.questionnaire.assembly-verification-manifest/v1\0" ||
+           JCS_UTF8(AssemblyVerificationManifestPreimage/v1)))
+```
+
+Before any JCS serialization or domain-separated hashing, the invoked verifier
+recursively validates the complete envelope and preimage against their closed
+schemas and JSON-domain types. Only JSON null, booleans, integers, strings,
+arrays, and string-keyed objects are admissible, subject to each field's
+narrower type contract. A bytes value such as `revoked_at = b"x"`, a custom
+object, or any mixed or nested non-JSON member is rejected before
+canonicalization. This rejection is a normal `False` result: it cannot escape
+as a canonicalizer exception and cannot mutate the manifest head.
+The fail-closed boundary also contains encoding, SHA-256, SPKI-digest,
+policy-version, and signature-verification backend failures. Every verifier-side hash
+of authority or untrusted data uses a checked helper that returns no digest on
+any validation, encoding, canonicalization, or cryptographic-backend exception;
+callers then return `False`/`None` before registration, publication, burn,
+barrier entry, or invocation. No public verifier may call a raw hash backend on
+such data. Deterministic fault injection at successive hash calls, including
+the second and fourth calls of composed verification, must leave predecessor
+and head stores, burn/consumption stores, barrier entries, and invocation logs
+unchanged.
+Safe helpers receive the structured object directly: callers must not first
+evaluate an unsafe JCS serializer and pass its bytes as an argument. The
+receipt-grant boundary contains receipt-verifier resolution, expected argument
+hash recomputation, the shipped `DecisionReceipt.verify` call, and Ed25519
+SHA-512 signature verification. Any SHA-256, SHA-512, JCS, SPKI, or signature
+backend exception denies the grant before it can enter a burn race or barrier.
+The complete intended 91-byte scalar-1 P-256 assembly-root SPKI DER is an
+independently frozen literal, not output trusted merely because a constructor
+returns a plausible prefix and length. The pinned-root loader is the only
+contained access path: it compares the loaded or constructed output byte-for-byte
+to that literal and returns the frozen literal or no key on any mismatch,
+constructor failure, or backend failure. Consequently, valid scalar-2 DER and a
+coordinated scalar-2 re-signing of the trust chain remain unauthorized and are
+denied by shared-trust, manifest, publisher, archive, and receipt-key verifiers
+without state mutation. Those verifiers propagate the checked-loader result;
+they never evaluate a P-256/SPKI constructor as an argument or outside the
+fail-closed boundary.
+
+The archived file is the closed
+`AssemblyVerificationManifestEnvelope/v1` containing exactly
+`schema_version` (that literal), `preimage`, `verification_manifest_hash`,
+literal `root_signature_algorithm="ECDSA_P256_SHA256"`, literal
+`root_signature_encoding="P1363_BASE64URL_NOPAD"`,
+`root_signing_key_id`, and `root_signature`. The verifier recomputes the
+manifest hash and verifies ECDSA-P256-SHA256 over the exact message bytes
+`"acgs.questionnaire.assembly-verification-manifest-signature/v1\0" ||
+ASCII(verification_manifest_hash)`; it does not sign raw JSON, a decoded digest,
+or an implementation-selected framing. Both the burn-manifest verifier and assembly-leaf verifier first invoke the
+single `validate_verified_assembly_trust_chain` routine; neither carries a
+second trust interpretation. The invoked assembly verifier accepts exactly the
+complete `AssemblyVerificationManifestEnvelope/v1`, an explicit accepted-at RFC 3339
+instant, and an already verified policy trust chain containing the complete
+policy-bundle preimage, materialized bundle, `DecisionReceipt`, and
+`AssemblyVerificationTrustManifest/v1`. It rejects missing, extra, empty, or
+ill-typed envelope/preimage members, recomputes `verification_manifest_hash`,
+canonically decodes and verifies the envelope's own `root_signature`, and
+never accepts an out-of-band signature or public key. It reconstructs the
+policy version and requires exact policy bundle id/version/hash equality through
+the receipt before following
+`assembly_verification_trust_manifest_hash` to the trust artifact.
+
+The root key is resolved only from the
+complete `AssemblyVerificationTrustManifest/v1` whose exact hash is present in
+both the materialized questionnaire policy bundle and its preimage. The root key
+is not learned from this envelope or any proof-pack file: `trust_root_id`,
+`trust_root_version`, exact root SPKI DER bytes, minimum accepted
+`manifest_sequence`, and the complete revocation snapshot/hash are policy-bound,
+and the assembly receipt binds that derived `policy_hash`. The invoked online
+verifier obtains the head only through its own linearizable high-water lookup
+keyed by `(trust_root_id, manifest_id)`; a caller-supplied head object has no
+authority. Publication accepts the complete root-signed
+`AssemblyVerificationManifestEnvelope/v1` plus the verified policy chain and,
+before any store mutation, runs the bounded iterative validator over the complete
+candidate envelope/preimage as closed JSON-domain data, invokes the shared trust validator,
+and recomputes the candidate hash. It requires the candidate preimage schema literal
+`AssemblyVerificationManifestPreimage/v1`, canonically decodes and verifies
+the envelope signature from the policy-bound root SPKI, and checks purpose,
+root, authority, leaf key, and revocation equality. Unsigned, malformed, attacker-signed, or otherwise invalid
+candidates leave the store byte-for-byte unchanged. Publication is an atomic
+compare-and-swap transaction: the first record requires an already
+authority-authenticated predecessor envelope for the exact
+`(trust_root_id, manifest_id)`; there is no implicit missing-row genesis. The
+closed `AssemblyManifestPredecessorPreimage/v1` contains exactly its schema
+literal, trust-root id/version, manifest id, nonnegative integer
+`predecessor_sequence`, integer
+`next_sequence == predecessor_sequence + 1`, canonical predecessor manifest
+digest, literal
+`signing_key_purpose = "ASSEMBLY_MANIFEST_PREDECESSOR_SIGNING"`, and
+policy-bundle id/version. Its digest is
+`"sha256:" + lowerhex(SHA256(
+"acgs.questionnaire.assembly-manifest-predecessor/v1\0" ||
+JCS_UTF8(preimage)))`. The closed
+`AssemblyManifestPredecessorEnvelope/v1` adds that digest, literal
+ECDSA-P256/P1363 metadata, the policy-bound root key id, and a canonical
+signature over
+`UTF8(authenticated_trust.predecessor_signing_domain || "\0") ||
+ASCII(predecessor_record_hash)`. Registration invokes the shared trust
+validator and requires the envelope purpose to equal
+`authenticated_trust.predecessor_signing_key_purpose`, membership of that
+purpose in `authorized_manifest_purposes`, and exact schema, canonical digest,
+signature, root, and policy binding before publishing the predecessor row.
+A recomputed policy/trust artifact with a changed predecessor purpose or domain,
+or a correctly signed envelope carrying the wrong purpose, fails closed. Registration is an atomic
+create-if-absent operation keyed by `(trust_root_id, manifest_id)`: an exact
+idempotent replay is allowed, but a second differently signed predecessor
+cannot overwrite the registered record. A caller-written raw value, a
+wrong-purpose signature, or a matching predecessor member under an invalid
+digest/signature cannot authorize publication and leaves both predecessor and
+head stores unchanged. The first head must use exactly the registered
+`next_sequence`; a sequence-99 first head is rejected even when otherwise
+validly signed. A new head must advance the accepted sequence and name that exact predecessor
+or the accepted head hash, while an idempotent replay must reproduce the same
+sequence and hash. Two concurrent authenticated candidates for one successor
+have exactly one winner; forks, equivocation, stale values, a missing
+predecessor/head row, or an unavailable/uncertain lookup fail closed.
+
+For offline verification, the proof pack archives a closed
+`AssemblyManifestHeadStoreRecordPreimage/v1` plus a root-signed
+`AssemblyManifestHeadReadbackProof/v1`. The record contains exactly
+`schema_version`, `trust_root_id`, `manifest_id`, `manifest_sequence`,
+`verification_manifest_hash`, `previous_verification_manifest_hash`,
+`authority_id`, `signing_key_id`, positive `monotonic_generation`, and
+timezone-aware `accepted_at`. Its domain-separated JCS hash is
+`SHA256("acgs.questionnaire.assembly-manifest-head-store-record/v1\0" ||
+JCS_UTF8(record))`. The closed proof preimage contains exactly `schema_version`,
+`store_record_hash`, and every record member other than the record's own
+`schema_version`; its envelope contains exactly `schema_version`, `preimage`,
+`proof_hash`, `signature_algorithm`, `signature_encoding`,
+`root_signing_key_id`, literal
+`key_purpose = "ASSEMBLY_VERIFICATION_MANIFEST_SIGNING"`, and `signature`.
+It is signed by the policy-bound root over
+`"acgs.questionnaire.assembly-manifest-head-readback/v1\0" || ASCII(proof_hash)`.
+The invoked offline verifier exact-checks all three schemas and types,
+including a present, parseable `accepted_at` inside its fail-closed exception
+boundary, recomputes both hashes, requires the record schema literal
+`AssemblyManifestHeadStoreRecordPreimage/v1`, every record/preimage equality,
+canonical timestamp and positive generation, and rejects a
+`verification_manifest_hash` present in the policy-bound
+`revoked_verification_manifest_hashes`. It resolves the verifier solely through
+`validate_verified_assembly_trust_chain`, and verifies the envelope's embedded
+canonical signature. `RegistryKeyAuthorityProof/v1` validation invokes this
+verifier over its archived full record and proof. An offline pack missing this
+complete proof, carrying a stale/fabricated/substituted record, using a revoked
+or expired root, or failing signature, predecessor, generation, timestamp, or
+field equality is non-deliverable.
+
+The durable verifier high-water store rejects a sequence below the largest
+accepted value for `(trust_root_id, manifest_id)`; the independently
+pinned minimum protects a fresh offline verifier. The verifier parses the root
+and leaf validity strings as timezone-aware instants, enforces both half-open
+intervals at accepted-at, checks the policy-bound root key id and purpose, and
+requires exact leaf `authority_id`, `signing_key_id`, sequence, predecessor,
+and accepted high-water equality. It inspects the bound snapshot for both the
+root signing key and leaf signing key and for the candidate manifest hash. A
+manifest is rejected when its root, version, predecessor, or sequence is
+inconsistent; its key purpose,
+algorithm, or encoding differs; the key is revoked; `revoked_at` is nonnull;
+or the acceptance time is outside `[valid_from, valid_until)`.
+
+For both root and assembly signatures, P-256 signatures are exactly 64 raw bytes
+`r || s`, with each scalar a 32-byte unsigned big-endian integer, encoded as
+unpadded base64url. Verifiers require `1 <= r,s < n` and low-S
+`s <= n/2`. DER, padded base64, noncanonical scalar width, high-S, unknown
+algorithm, wrong-purpose key, or alternate encoding fails closed.
+
+Assembly itself passes the universal receipt gate. The closed canonical
+`AssemblyToolArguments/v1` contains exactly `schema_version` (that literal),
+`assembly_event_id`, `job_id`, `question_id`, `response_id`,
+nonnegative JSON integer `response_version`, `answer_hash`,
+`assertion_manifest_hash`, `presentation_annotation_set_root`,
+`content_manifest_hash`, `assembly_lineage_hash`, and
+`verification_manifest_hash`. Identifiers are nonempty and digests use the
+canonical `sha256:` encoding. The shipped `ToolCall.args` is this closed
+`Mapping[str, JSONValue]`, treated as frozen; it is not a byte string.
+`ToolCall.argument_hash()` is the 64-character lowercase hexadecimal
+`SHA256(UTF8(canonical_json(dict(ToolCall.args))))`, where shipped
+`canonical_json` uses sorted keys, no whitespace, `ensure_ascii=False`, and
+separators `(",", ":")`. The wrapper compares the shipped method's result to
+the decision and receipt argument hashes. RFC 8785/JCS hashes elsewhere in this
+section remain separate content-addressing contracts and are never substituted
+for the shipped argument hash. The gate requires
+`ToolCall.name == DecisionRecord.tool == DecisionReceipt.proposed_action ==
+"questionnaire.pack.assemble"`, and
+`ToolCall.actor == DecisionRecord.actor == DecisionReceipt.actor ==
+"assembly-authority-1"`. Only a signed, unexpired `ALLOW` receipt with exact
+argument, audit, policy, actor, and action bindings is executable; `DENY`,
+`ESCALATE`, and `TRANSFORM` do not authorize this exact assembly operation.
+The shared receipt-burn authority consumes the receipt anchor once before the
+assembly executor writes any pack bytes. A missing, stale, substituted, or
+replayed receipt produces zero assembly side effects.
+
+The canonical receipt key is derived from a closed
+`ReceiptAnchorPreimage/v1` containing exactly `schema_version` (that literal)
+and bare 64-lowercase-hex `decision_audit_event_hash`, matching the shipped
+`DecisionReceipt.audit_event_hash` representation. `receipt_anchor` is exactly
+`"sha256:" + lowerhex(SHA256(
+"acgs.questionnaire.receipt-anchor/v1\0" ||
+JCS_UTF8(ReceiptAnchorPreimage/v1)))`. Its audit member must equal
+`DecisionReceipt.audit_event_hash`. The key is selected solely by the decision
+audit hash. The receipt id and recomputed receipt hash
+remain exact bound values in the burn store and acceptance records, but neither
+selects or changes the consumption key. Re-minting, re-signing, changing expiry,
+subject, or signing key for a receipt derived from the same decision audit event
+therefore resolves to the same anchor; no transaction or caller-selected value
+participates. The durable store key is exactly
+`receipt_consumptions/{receipt_anchor}` and the burn transaction performs one
+linearizable create-if-absent; an existing key rejects every later burn even if
+`transaction_id` or other envelope metadata differs.
+
+That authority returns a product-owned closed
+`ReceiptBurnAcceptancePreimage/v1` containing exactly `schema_version` (that
+literal), nonempty `burn_acceptance_id` and `receipt_id`, bare
+64-lowercase-hex `receipt_hash`, `decision_audit_event_hash`, and
+`argument_hash` matching the shipped `DecisionReceipt` and
+`ToolCall.argument_hash()` representations, canonical `receipt_anchor`,
+nonempty `actor`, `action`, and `transaction_id`,
+`commit_timestamp` in the exact canonical UTC RFC 3339 microsecond form
+`YYYY-MM-DDTHH:MM:SS.ffffffZ`, `store_record_digest`, literal
+`burn_state = "CONSUMED"`, nonempty `burn_authority_id`,
+`burn_signing_key_id`, and `burn_verification_manifest_hash`. The value
+`t` used for burn-key validity is exactly the actual persisted
+`ReceiptBurnStoreRecordPreimage/v1.commit_timestamp`, obtained from the durable
+store's trusted commit clock; callers cannot supply or override it. The verifier
+parses it as a calendar instant, requires the exact canonical UTC RFC 3339
+microsecond string to equal the timestamp signed into the acceptance, accepts
+`t == valid_from`, and rejects `t == valid_until`. Lexical timestamp comparison,
+alternate encodings, local clocks, malformed or backdated values, an altered
+persisted timestamp, or a validity check performed at any other time fail closed.
+The authority
+recomputes the anchor and requires exact equality before transaction commit and
+again on immutable read-back. Before constructing that acceptance, the
+transaction persists a closed `ReceiptBurnStoreRecordPreimage/v1` containing
+exactly the same fields except `store_record_digest`, with `schema_version`
+changed to that literal. `store_record_digest` is exactly
+`"sha256:" + lowerhex(SHA256(
+"acgs.questionnaire.receipt-burn-store-record/v1\0" ||
+JCS_UTF8(ReceiptBurnStoreRecordPreimage/v1)))`. `store_record_digest`,
+`burn_verification_manifest_hash`, and `receipt_anchor` use `sha256:` plus 64
+lowercase hexadecimal digits. Before reaching any concurrency barrier, lock,
+durable mutation, or tool invocation, the burn helper requires the input to be a
+exact built-in object whose complete nested value passes the bounded closed-JSON
+validator before any `get`, `items`, indexing, or equality operation. Mapping
+subclasses and hostile scalar/container subclasses are rejected without invoking
+their methods. The object has exactly the complete closed store-record field set,
+the exact schema literal, nonempty strings of the specified types, literal
+`burn_state = "CONSUMED"`, and the canonical commit timestamp parsed as a real
+UTC calendar instant. It requires `receipt_hash`,
+`decision_audit_event_hash`, and `argument_hash` each to be bare
+64-lowercase-hex, while `burn_verification_manifest_hash` and `receipt_anchor`
+use the exact `sha256:` plus 64-lowercase-hex form. A receipt may enter
+the burn authority's closed verified-grant table only after the complete shipped
+object has exact runtime type `DecisionReceipt` (subclasses and proxies are
+rejected before attribute/property access) and has passed
+`DecisionReceipt.verify(...)` with
+`require_signature=True`, `require_expiry=True`, decision `ALLOW`, and exact
+actor, action, authority, execution-boundary, arguments, policy, and audit
+bindings under the policy-bound receipt verification key. The executor resolves
+that verifier solely from the independently authenticated policy archive and
+the complete closed `ReceiptVerificationKeyManifest/v1` whose recomputed digest
+equals `QuestionnairePolicyBundle.receipt_verification_key_manifest_hash`; it
+validates the archive root signature and the key ID, purpose, `ACTIVE` status,
+algorithm, validity interval, and revocation state; mixed or nested values fail closed
+before sort or set conversion. It authenticates the
+authoritative assembly-head store/readback record; its acceptance time
+must equal archive `accepted_at`, and the burn commit must represent the
+same instant. A caller-supplied verifier map or attacker-selected public key has
+no authorization weight. The grant insertion boundary explicitly tests
+`DecisionReceipt.decision == "allow"` after signature and binding verification.
+A freshly signed `TRANSFORM` remains non-executable even when its transformation
+would reproduce the original arguments; signed `DENY` and `ESCALATE` are
+likewise rejected. An unsigned, unverified, expired, non-`ALLOW`, or partially
+projected same-audit remint never becomes a verified grant and cannot reach the
+burn barrier. For the verified
+receipt grant selected by `receipt_id`, the helper first compares both the
+expected `receipt_hash` and expected `DecisionReceipt.audit_event_hash`, then
+compares `actor`, `action`, argument hash, and verification-manifest hash.
+Only after
+that authenticated audit comparison does it recompute
+`ReceiptAnchorPreimage/v1` from the bound decision audit hash and
+requires exact anchor equality. A non-object, missing/extra key, wrong type,
+empty value, wrong state, malformed digest, semantic binding mismatch, stale or
+recomputed-anchor mismatch, malformed timestamp, or impossible but
+regex-shaped calendar date returns false without crossing the barrier. The
+consumption store, burn-head store, acceptance store, and invocation log remain
+unchanged. The
+burn preimage excludes its
+hash, signature, and envelope. Its hash is exactly
+`"sha256:" + lowerhex(SHA256(
+"acgs.questionnaire.receipt-burn-acceptance/v1\0" ||
+JCS_UTF8(ReceiptBurnAcceptancePreimage/v1)))`. The closed signed
+`ReceiptBurnAcceptance/v1` envelope contains exactly `schema_version` (that
+literal), `preimage`, `burn_acceptance_hash`, literal
+`signature_algorithm = "ECDSA_P256_SHA256"`, literal
+`signature_encoding = "P1363_BASE64URL_NOPAD"`, and `signature`. The burn
+signature is ECDSA-P256-SHA256 over exact message bytes
+`"acgs.questionnaire.receipt-burn-acceptance-signature/v1\0" ||
+ASCII(burn_acceptance_hash)`. The key is resolved only from the independently
+policy-bound `burn_verification_manifest_hash`; its purpose must be
+`RECEIPT_BURN_ACCEPTANCE_SIGNING`. The burn transaction atomically persists the
+one-time receipt state and complete preimage, and immutable read-back verifies
+the record digest, hash, key purpose, and signature before execution. Missing,
+replayed, substituted, forged, bad-signature, or unreadable burn evidence is not
+an authorization and produces zero pack writes.
+
+After execution, the product outcome protocol must produce an accepted
+successful `OutcomeEvent` bound to that receipt and exact result envelope.
+Only then does the authority create the closed
+`AssemblyAcceptancePreimage/v1`, containing exactly `schema_version` (that
+literal), `assembly_event_id`, `job_id`, `question_id`, `response_id`,
+`response_version`, `content_manifest_hash`, `assembly_lineage_hash`,
+`authority_id`, `assembly_action`, `assembly_actor`,
+`assembly_argument_hash`, `assembly_receipt_id`, `assembly_receipt_hash`,
+`assembly_audit_event_hash`, `assembly_burn_acceptance_hash`,
+`assembly_burn_acceptance_signature`, `burn_verification_manifest_hash`,
+`assembly_outcome_hash`, `signature_algorithm`, `signature_encoding`,
+`signing_key_id`, `verification_manifest_hash`, and timezone-aware `created_at`. The action and actor equal the chains above; receipt and audit
+hashes are 64 lowercase hexadecimal characters, while all other named hashes
+use `sha256:` plus 64 lowercase hexadecimal characters. The preimage excludes
+`assembly_acceptance_hash`, `signature`, and its envelope. Its hash is:
+
+```text
+assembly_acceptance_hash =
+  "sha256:" + lowerhex(
+    SHA256("acgs.questionnaire.assembly-acceptance/v1\0" ||
+           JCS_UTF8(AssemblyAcceptancePreimage/v1)))
+```
+
+The closed signed `AssemblyAcceptance/v1` envelope contains exactly
+`schema_version` (that literal), `preimage`, `assembly_acceptance_hash`,
+and `signature`. The signature is canonical P1363 base64url as bound by the preimage and is
+ECDSA-P256-SHA256 over exact message bytes
+`"acgs.questionnaire.assembly-acceptance-signature/v1\0" ||
+ASCII(assembly_acceptance_hash)`. It is verified using only the accepted
+manifest envelope and its independently policy-bound trust manifest. The authority atomically appends this complete
+envelope to the immutable assembly-acceptance store. Delivery is forbidden
+until immutable read-back verification succeeds.
+
+The assembly frozen vector uses `job-1/q-1/resp-1`, response version 1,
+digest sentinels `sha256:` plus 64 repeated characters, and two ordered
+payload members: `answer.json/RESPONSE/application/json/2` with sentinel
+`2`, and
+`qa/qa-1.json/CITATION_QA_RECORD/application/json/3` with sentinel `3`.
+The 958-byte content preimage hashes to
+`sha256:a6b4216511d36b6c26ca3d146140f65bcc850e926466c1482a27ef2b504bf0a6`.
+With QA sentinel `d`, semantic sentinel `e`, empty contradictions, and
+annotation sentinel `f`, the 895-byte assembly preimage hashes to
+`sha256:47e9884130e25c9a923fed28043e445d0fe22283b26c5e7e78fc094828ae2657`.
+The assembly public key is P-256 private-scalar-2's canonical SPKI. The
+832-byte verification-manifest preimage hashes to
+`sha256:89155b6f6020157d52e361bf0091875bb58941a70220ced64ec0c79d2876745c`.
+P-256 root private scalar 1 with vector nonce 3 produces the valid canonical
+root signature
+`Xsvk0aYzCkTI9--VHUvxZebGtyHvramF-0FmG8bn_WxMykOTAZT62Io4Z7V_hhsLKAGMNa6vPW1ZCi7uvv2tnw`.
+The shipped `ToolCall.argument_hash()` for the exact assembly mapping is
+`98f5a3678ac4d296cc22d7efbc84fc22d3e5c32b53f5298a7762a6e83b786e1f`.
+The receipt-anchor preimage selected solely by decision-audit hash sentinel `2`
+hashes to
+`sha256:825fb13ddfcbcfbae635f4f26c87c60366c99906a2b3ae70bd87179828b9e6b8`.
+The separately bound receipt id `assembly-receipt-1` and receipt-hash sentinel
+`1` do not select that key. The 935-byte burn preimage hashes to
+`sha256:9e90d65b820a5f16737e339ced9021756d75e56ec6ae9461e7cd4ac5cbf141cb`;
+P-256 burn private scalar 3 with vector nonce 7 produces
+`jlM7b6C_e0YluzBmfAH7YH75-LioD-9bMAYocDGHsqN-wVSUHqTFAadkc7pjw73Yi4n7Z68EPto_ILXBy8lX_w`.
+With that burn proof and outcome sentinel `0`, the 1505-byte acceptance preimage
+hashes to
+`sha256:1fe094a4fa15a1eed4e7e44ac450905067044eeb292195429412ad78318d78c4`;
+P-256 assembly private scalar 2 with vector nonce 5 produces
+`UVkLelFRQNLXhMhWCGaP3--Mgv0fW-UkIVVKDcPQM-0PjnZPQNH64R7qtycI8CymU3O9wlqO0S9bPtnD7ex3YQ`.
+These executable vectors are locked by
+`test_partial_support_annotations_do_not_mutate_frozen_answer_lineage`.
+
+The exact immutable read-back acceptance envelope, verification-manifest
+envelope, independently authenticated policy archive, assembly
+`DecisionReceipt`, decision audit event, signed receipt-burn acceptance, and
+accepted `OutcomeEvent` plus `AppendAcceptance` are embedded in the proof
+pack. Offline verification recomputes every payload/content/QA/lineage/manifest/
+receipt/acceptance hash, verifies both signature chains and the receipt policy
+binding, and rejects any missing or substituted proof without network or store
+access. Equality with the current live store is an additional online-only audit
+check, never an offline prerequisite.
+
+After acceptance, a detached `FinalPackIndex/v1` may list every distributed
+file, including the content manifest and embedded acceptance proof/archive. It
+is never an input to the content manifest, assembly lineage, or acceptance and
+grants no authority. A recomputed unkeyed replacement, self-inclusion, cycle,
+unknown or revoked key, algorithm or verification-manifest substitution, bad
+signature, missing archive, or missing acceptance has no delivery authority.
+Missing, duplicate, extra, stale-version, mutated, reordered, or substituted
+annotations, records, payload members, roots, manifests, or acceptances fail
+closed and block delivery.
+
+Annotations render using the frozen manifest span. Creating one cannot change
+`answer_text`, `answer_hash`, assertion byte spans, `assertion_manifest`,
+or any Evidence/QA/semantic lineage. Any desired wording change requires a new
+response version followed by complete resegmentation, mining, QA, and semantic
+adjudication.
 
 State transitions are monotonic toward safety. A response may move
 `SUPPORTED → NOT_EVIDENCED` (QA refutation) but never `NOT_EVIDENCED → SUPPORTED`
@@ -949,7 +2002,7 @@ product-owned canonical `OutcomeEvent` schema and append:
 | `job_id` / `question_id` | Product lineage bindings |
 | `actor` / `action` / `argument_hash` | Must match the verified execution request |
 | `status` | `SUCCEEDED` or `FAILED` |
-| `result_hash` | SHA-256 of canonical returned bytes/value; nonnull iff `SUCCEEDED` |
+| `result_hash` | Domain-separated SHA-256 of the closed typed successful-result envelope defined below; nonnull iff `SUCCEEDED` |
 | `error_hash` | SHA-256 of canonical redacted `ErrorEnvelope`; nonnull iff `FAILED` |
 | `error_envelope` | Stable redacted failure payload; null on success |
 | `timestamp` | Nonempty timezone-aware completion time |
@@ -957,10 +2010,61 @@ product-owned canonical `OutcomeEvent` schema and append:
 | `signature_algorithm` / `signing_key_id` | Pinned KMS algorithm and allowlisted outcome-signing key |
 | `signature` | KMS signature over the domain-separated `outcome_hash` |
 
+A successful result uses one closed canonical `SuccessfulResultEnvelope/v1`
+so producer and verifier never guess how a returned value was encoded. It
+contains exactly `schema_version`, `result_kind`, `encoding`,
+`payload_hash`, `payload_length`, and `payload_b64`. `result_kind` is a
+nonempty allowlisted tool-specific type tag (for example
+`MINING_OUTCOME_PREIMAGE` or `QA_RESULT`) and is hash-bound so different
+result types cannot collide. `encoding` is exactly one of `RAW_BYTES`,
+`UTF8_TEXT`, or `JCS_JSON`. For `RAW_BYTES`, payload bytes are the exact
+returned bytes. For `UTF8_TEXT`, they are strict UTF-8 bytes of the unchanged
+string, with no normalization or line-ending conversion. For `JCS_JSON`, the
+wrapper parses with duplicate-key/non-finite rejection and emits RFC 8785 JCS
+encoded as UTF-8. `payload_b64` is RFC 4648 base64 with required padding and
+decodes to exactly `payload_length` bytes; alternate encodings and unknown
+fields fail closed.
+
+The inner payload digest and outer envelope digest are distinct:
+
+```text
+payload_hash =
+  "sha256:" + lowerhex(
+    SHA256("acgs.questionnaire.success-payload/v1\0" ||
+           UTF8(result_kind) || 0x00 || UTF8(encoding) || 0x00 ||
+           payload_bytes))
+
+result_hash =
+  "sha256:" + lowerhex(
+    SHA256("acgs.questionnaire.success-result/v1\0" ||
+           JCS_UTF8(SuccessfulResultEnvelope/v1)))
+```
+
+The frozen vector `result_kind=QA_RESULT`, `encoding=JCS_JSON`, and
+payload bytes `{}` (`payload_b64=e30=`, length 2) yields inner
+`payload_hash=sha256:308d772c8c53751e2eb901b230d9228cbef1beaa6338fbe5ce05181f5cce5dcf`
+and outer
+`result_hash=sha256:33f1915bec956ebd3ec93567cd0bbe41cab3498fec6476e7fba2913b7e335b47`.
+Changing only `result_kind`, encoding, or payload changes the inner hash and
+therefore the outer hash; substituting either known hash into the other's field
+fails verification.
+
+For mining, `mining_result_hash` means this inner `payload_hash` over the
+JCS-encoded `MiningOutcomePreimage`; for QA, `qa_result_hash` means the same
+inner digest over the canonical QA result. `OutcomeEvent.result_hash` always
+means only the outer envelope digest. Proof material carries the complete
+`SuccessfulResultEnvelope/v1`, never merely its outer hash or an ambiguous
+raw value. The verifier decodes and validates the closed envelope, repeats the
+encoding-specific canonicalization, recomputes payload length, inner hash, and
+outer hash, and requires outer-hash equality with
+`OutcomeEvent.result_hash`. A type-tag change, raw/text/JSON
+reinterpretation, normalization, reserialization, inner-hash substitution, or
+payload mutation therefore fails closed.
+
 The product first constructs canonical `OutcomePayloadPreimage`: the business
 and execution-binding fields above through `timestamp`, but no reservation,
 sequence, predecessor, event hash/signature, or acceptance fields. Define
-`payload_hash = SHA256(canonical(OutcomePayloadPreimage))`. This preimage can be
+`outcome_payload_hash = SHA256(canonical(OutcomePayloadPreimage))`. This preimage can be
 hashed before a chain slot exists and is not itself an accepted event.
 
 Exactly one outcome hash is populated. `SUCCEEDED` requires nonnull
@@ -976,7 +2080,7 @@ failure binding exactly as it covers a successful result.
 The trusted linearizable `OutcomeAppendAuthority` then CAS-reserves the current
 head before any event signature is issued. Canonical `OutcomeReservation`
 contains `reservation_id`, `job_id`, expected head hash/version, assigned next
-`sequence`, `payload_hash`, nonempty bounded `expires_at`, append status
+`sequence`, `outcome_payload_hash`, nonempty bounded `expires_at`, append status
 `ACTIVE|CONSUMED|EXPIRED|CANCELLED`, and a distinct signing-grant state
 `UNUSED|CLAIMED|USED` plus nullable `signing_grant_nonce`, `claimed_event_hash`,
 and `signature_ref`. Append status and signing-grant state are separate atomic
@@ -1144,8 +2248,11 @@ Adversarial QA agent    separate invocation; attempts to REFUTE
     v
 Semantic adjudicator    signed independent rule/human event; model PASS is insufficient
     v
-Artifact assembly       responses + gaps + citations + verifier
-    |
+AssemblyAuthority       freezes content/lineage/manifest-bound ToolCall args
+    |                   universal ALLOW receipt gate + shared one-time burn
+    v
+Assembly executor        writes pack bytes; accepted OutcomeEvent follows
+    |                   signed AssemblyAcceptance binds receipt/outcome proofs
     v
 Sealed delivery package email delivery + receipt chain export
     (signed only when         (§1.4 — "signed" is conditional on §8.7)
@@ -1172,7 +2279,7 @@ Agent proposal
     ->  Product outcome wrapper             (hash -> reserve -> sign -> durable finalize)
     ->  Acceptance finalizer                (pending commit -> signed ATTESTED proof)
     ->  AppendAcceptance verification       (matching ATTESTED slot required)
-    ->  Final MiningOutcomeEnvelope         (only after accepted outcome_hash exists)
+    ->  Final typed outcome envelope         (only after accepted outcome_hash exists)
 ```
 
 **There are two appends, and the first one precedes execution.** The decision is anchored in
@@ -1238,8 +2345,9 @@ neither is implied by the plain executor defaults:
    `execute_with_receipt` default is `require_expiry=False`, so relying on the
    runtime default is a release-blocking defect.
 2. Before invoking the tool, a Firestore transaction creates exactly one
-   `receipt_consumptions/{receipt_anchor}` record, where the anchor binds
-   receipt id, receipt hash, and decision audit hash. This shared atomic
+   `receipt_consumptions/{receipt_anchor}` record, where the key is selected
+   solely by the decision audit hash while the record separately binds the
+   receipt id and receipt hash. This shared atomic
    burn-before-execute authority is used by every Cloud Run worker and every
    side-effecting action. If the record exists, the executor refuses. If the
    transaction fails or its result is uncertain, execution refuses. A crash
@@ -1252,6 +2360,13 @@ single-node `ReceiptConsumptionLedger` is not presented as cross-worker proof;
 the Firestore authority is planned product code and must be exercised through
 the real executor wrapper.
 
+Assembly is not an exception. Step 6 uses the exact
+`AssemblyToolArguments/v1` and equality chains in §2.4, requires an executable
+`ALLOW` `DecisionReceipt`, burns it once before writing bytes, and appends an
+accepted successful `OutcomeEvent` before signing `AssemblyAcceptance/v1`.
+Missing, stale, `DENY`, `ESCALATE`, transformed, substituted, or replayed
+assembly authority yields zero pack writes and blocks delivery.
+
 ### 3.3 Step gates
 
 | # | Step | Agent role | Gate behavior |
@@ -1261,7 +2376,7 @@ the real executor wrapper.
 | 3 | Payment | Verify Stripe webhook | Missing/invalid → executor refuses |
 | 4 | Evidence mining | Per-question repo search + reasoning | `ALLOW`; Gemini failure → retry → `ESCALATE` |
 | 5 | Adversarial QA | Refute each citation | `ALLOW`; verdict drives response state |
-| 6 | Assembly | Build + seal pack via `gove_zone.proofpack` + product-owned directory digest | `ALLOW`; refuses to emit a pack described as signed while `signature == "unsigned_local"` |
+| 6 | Assembly | Build + seal pack via `gove_zone.proofpack` + product-owned directory digest | Exact §2.4 `AssemblyToolArguments/v1`; signed, unexpired `ALLOW` receipt only; shared one-time burn before any pack write; accepted `OutcomeEvent` before signed acceptance; refuses `DENY`/`ESCALATE`/`TRANSFORM`, replay, and `signature == "unsigned_local"` |
 | 7 | Delivery | Email pack + receipts | `ALLOW`; **the pack root digest MUST be recorded in the delivery receipt and published alongside the download** (§3.3.3) |
 | 8 | Follow-up | Day-7 check-in | `ALLOW` |
 
@@ -1815,8 +2930,8 @@ omitting the disconfirming artifact is the worst available failure — worse tha
 nothing, because it manufactures false confidence in a representation the customer signs.
 
 **Contradiction lens.** A QA lens MUST search for artifacts that contradict the assertion,
-not merely adjudicate the one offered. Any contradicting artifact found is recorded on the
-response and reported to the customer.
+not merely adjudicate the one offered. Any contradicting artifact found is recorded in a separate QA-produced
+`ContradictionRecord` and reported to the customer.
 
 `CONTRADICTED` **dominates** `PASS`: conflicting evidence can never yield a supported
 answer. Precedence, most to least dominant:
@@ -1825,9 +2940,11 @@ answer. Precedence, most to least dominant:
 CONTRADICTED  >  REFUTED  >  INSUFFICIENT  >  PASS
 ```
 
-The contradicting artifact is recorded in `Evidence.contradicts_locator` (§2.3) so the
-customer can open it themselves. Reporting it is the product working correctly, not a
-defect.
+The contradicting artifact is recorded in the separate
+`ContradictionRecord/v1` (§2.3.1), with its source locator/digests and QA
+receipt/outcome lineage, so the customer can open it themselves. It is not
+mining `Evidence` and carries no mining producer attribution. Reporting it is
+the product working correctly, not a defect.
 
 ### 5.4.2 Independent semantic-relevance gate
 
@@ -1892,7 +3009,7 @@ for it.
 |---|---|
 | gove-zone policy kernel and receipt verifier | Decide executable `ALLOW`/exact `TRANSFORM` and validate bindings; compromise can authorize arbitrary side effects |
 | Receipt signer and receipt-key custody | Authenticate pre-execution authority; compromise can mint accepted receipts |
-| Shared receipt-burn authority and Firestore consumption store | Make one receipt anchor executable at most once across workers; compromise can permit replay or deny execution |
+| Shared receipt-burn authority and Firestore consumption store with purpose-bound signing key/trust manifest and immutable read-back archive | Atomically consume one receipt anchor at most once and authenticate the complete `ReceiptBurnAcceptance/v1`; compromise can permit replay, forge burn evidence, or deny execution |
 | Spend ledger and Firestore transaction authority | Reserve one operation-wide ceiling and reconcile it once; compromise can overspend or deny jobs |
 | `ProviderCredentialInjector` principal, workload credential mapping store, and short-lived credential issuer | Resolve only hash-bound identity/account metadata into the same-account Authorization secret; compromise can substitute credentials/accounts and dispatch paid calls within the compromised credential scope |
 | `ProviderUsageAttestor`, pinned provider account/API endpoint, read-only usage credential, and KMS attestation key custody | Fetch and authenticate exactly bound provider usage; it has no direct ledger-write/release grant, but its signature co-authorizes downward reconciliation, so compromise can falsely release holds |
@@ -1903,8 +3020,11 @@ for it.
 | `OutcomeAppendAuthority` identity and reservation/finalization store | CAS-reserve each unique predecessor/sequence, atomically persist event/head/pending acceptance, and block successors until attested; compromise can accept forks or fabricate commit state |
 | Dedicated acceptance-finalizer identity and append-acceptance key custody | Revalidate only durable pending commits, sign their immutable acceptance hashes, and attest idempotently; compromise can authenticate fabricated commit history |
 | Semantic adjudicator, allowlisted rules, identities, and keys | Establish independently signed semantic relevance; compromise can manufacture support |
+| `PresentationAnnotationAuthority` identity and append-only annotation store | Append the complete deterministic unsupported/adverse overlay without mutating answer lineage; compromise can omit, duplicate, or substitute presentation state |
+| `AssemblyAuthority`, receipt-gated assembly executor, immutable acceptance store, and dedicated KMS key custody | Construct exact content/lineage/tool arguments, enforce the assembly receipt/outcome chain, and sign only the accepted assembly lineage; compromise can fabricate pack bytes or sign a fabricated deliverable within its credential scope |
+| Assembly verification trust-root keys, policy archive, revocation snapshot, and monotonic manifest high-water store | Authenticate only purpose-bound manifest keys and reject expiry, revocation, and rollback; compromise can substitute an assembly verification key or revive revoked authority |
 | Classifier registry signer/key custody, linearizable authenticated-head service, and durable per-key high-water store | Prove a classifier entry is current, complete, and non-revoked; compromise can suppress revocation, replay stale authority, equivocate, or deny classification |
-| Questionnaire policy-bundle archive and immutable registry verification-key manifest | Bind registry public keys through the producer receipt's content-addressed policy; compromise can substitute offline verification authority |
+| Questionnaire policy-bundle archive, immutable registry verification-key manifest, and complete assembly verification trust manifest | Bind registry and assembly root keys/revocation state through the receipt's content-addressed policy; compromise can substitute offline verification authority |
 | Immutable classifier artifact store/loader and deterministic classifier executor | Load and run the exact hash-bound classifier bytes; compromise can substitute artifacts or falsify language/role provenance |
 | Deterministic code checks | Recompute hashes, locators, rule inputs, and chain links; compromise can accept fabricated lineage |
 
@@ -2241,8 +3361,9 @@ call is made** (assert the Gemini client was not invoked).
 ### 8.3.6 Contradicting artifact
 
 Fixture repository containing a policy document asserting a control and a config file
-disabling it. Assert the response does **not** ship `SUPPORTED`: verdict is `CONTRADICTED`,
-`contradicts_locator` points at the config file, and a Gap exists.
+disabling it. Assert the response does **not** ship `SUPPORTED`: verdict is
+`CONTRADICTED`, a QA-produced `ContradictionRecord/v1` points at the config
+file with authenticated QA receipt/outcome lineage, and a Gap exists.
 
 ### 8.3.7 Two-worker spend concurrency
 
@@ -2288,8 +3409,13 @@ Produce a citation QA record, then change the response version/answer text;
 assert the stale record cannot support delivery. Swap the assertion id/hash or
 evidence locator/hash from another otherwise-valid record and assert reduction
 fails closed. Tamper the QA `ToolCall` canonical binding, receipt
-`argument_hash`, canonical QA result bytes, or `OutcomeEvent.result_hash` and
-assert the record is rejected rather than reduced into response state.
+`argument_hash`, a required `QAResultPreimage/v1` field, canonical QA result
+bytes, inner `qa_result_hash`, carried `SuccessfulResultEnvelope/v1`, or
+outer `OutcomeEvent.result_hash`; inject a later semantic/contradiction
+pointer into the acyclic preimage; or substitute an otherwise-valid assertion
+or evidence binding. Assert the exact frozen-vector payload/envelope hashes
+recompute and every missing, injected, or substituted case is rejected rather
+than reduced into response state.
 Substitute an otherwise-valid QA receipt id, outcome hash, or record id on
 `Evidence` and assert exact cross-pointer equality plus the recomputed
 `evidence_binding_hash` rejects it. For every contributing citation, require a
@@ -2325,6 +3451,54 @@ domain-separated lowercase `sha256:` digest. Attempt to include
 literal or any owning/version/segmentation/member field, uppercase the hex, or
 remove the prefix; every case must fail before evidence or QA lineage is accepted.
 
+For a partially supported response, derive the exact annotation set from every
+manifest member. Assert each unsupported/adverse member has exactly one
+correctly typed annotation and each supported member has none. Recompute the
+ordered annotation-set root, exact payload membership,
+`content_manifest_hash`, `assembly_lineage_hash`, signed acceptance, embedded
+verification archive, and detached proof-pack index. Remove, duplicate, mutate,
+reorder, or substitute an annotation; reuse an id; change
+answer/manifest/assertion/version bindings; add
+an annotation for a supported member; or present a stale/wrong/empty set root.
+Every case must fail assembly and delivery. Assert the append-only annotation
+authority refuses mutation and the frozen answer bytes/hash/spans never change.
+Also substitute the annotation root or `content_manifest_hash` inside an
+otherwise valid `AssemblyLineagePreimage/v1`; add self-inclusion, omit an
+expected payload, or feed the detached index back into a preimage. Substitute a
+proof-pack-supplied trust root or substitute the policy-bound trust-manifest
+hash; change manifest purpose, key, SPKI bytes/digest, algorithm, encoding,
+predecessor, sequence, signature message, or signature; use an expired,
+not-yet-valid, revoked, or rolled-back manifest; or mutate its hash. Valid P-256
+vectors must verify, while wrong root/key/purpose/algorithm/signature, bad
+validity, revocation, and rollback fail cryptographic and policy validation.
+Likewise remove, stale, substitute, replay, or change the actor/action/arguments
+of the assembly `DecisionReceipt`; use `DENY`, `ESCALATE`, or `TRANSFORM`;
+omit the one-time `ReceiptBurnAcceptance/v1` or accepted `OutcomeEvent`; alter
+the burn receipt/hash/actor/action/argument/audit/transaction/store/state/key/
+trust binding or signature; mutate the audit member of
+`ReceiptAnchorPreimage/v1`; re-mint, re-sign, or change expiry/subject/key for
+the same audit anchor and retry the same
+`receipt_consumptions/{receipt_anchor}` key; use a different transaction id;
+use a burn manifest with wrong root/purpose/domain/key/algorithm,
+future/expired/revoked validity, missing predecessor/read-back proof, a fork,
+sequence gap, or accepted sequence 7 after the signed high-water proof has advanced
+to sequence 9; race two valid successors for the same predecessor and require
+exactly one append; alter ambient process head/fork/sequence variables and prove
+offline verification is unchanged; replay its signed envelope; forge or
+substitute the signed `BurnManifestHeadAcceptanceReadbackProof/v1`;
+independently root-resign a
+candidate after adding either its signing key id or its manifest hash to the
+recomputed revocation snapshot; alter, backdate, or malform the persisted burn
+store `commit_timestamp`; or alter any bound hash or signature in
+`AssemblyAcceptancePreimage/v1`. Assert exact `valid_from` is accepted, exact
+`valid_until` is rejected, and zero pack writes before a
+valid burn and zero delivery without the accepted outcome and closed signed
+`AssemblyAcceptance/v1` envelope. Offline verification must reject every case;
+only the exact immutable read-back acceptance, independently rooted manifest
+envelope, policy archive, receipt/audit/burn proof, and accepted outcome proof
+embedded in the pack authorize delivery. Current live-store equality is tested
+separately as online-only.
+
 ### 8.3.12 Mining envelope and producer lineage
 
 Execute a mining call through the receipt-gated executor and capture the exact
@@ -2332,12 +3506,14 @@ Execute a mining call through the receipt-gated executor and capture the exact
 construct the manifest, canonical preimage, or outcome. The trusted product
 wrapper canonicalizes the answer, freezes and stores the ordered assertion
 manifest, validates every evidence assertion binding, constructs
-`MiningOutcomePreimage`, and only then computes the result hash, reserves a unique append
-slot, signs the matching event, atomically finalizes the pending record, waits for
+`MiningOutcomePreimage`, and only then computes the inner payload hash and outer
+successful-result-envelope hash, reserves a unique append slot, signs the matching event, atomically finalizes the pending record, waits for
 and verifies the bound `ATTESTED` `AppendAcceptance`, and only afterward constructs
 `MiningOutcomeEnvelope`. Assert
 the receipt `argument_hash` covers the canonical mining call,
-`OutcomeEvent.result_hash` equals the recomputed preimage hash, and every
+`mining_result_hash` equals the recomputed inner payload hash,
+`OutcomeEvent.result_hash` equals the distinct recomputed outer envelope hash,
+the complete typed envelope is carried in proof material, and every
 Evidence/Response producer pointer and lineage hash is an exact projection from
 the envelope, including the stored ordered assertion manifest and
 `assertion_manifest_hash`. Substitute an otherwise-valid producer receipt,
@@ -2469,8 +3645,9 @@ valid signature for the same hash. Assert the signer refuses every precommit,
 expired, cancelled, or aborted reservation, and assert no consumer/offline
 verifier exposes the event before `ATTESTED`.
 
-Execute both outcome statuses. `SUCCEEDED` must have a recomputed `result_hash`
-and null error fields. `FAILED` must have null `result_hash`, a stable redacted
+Execute both outcome statuses. `SUCCEEDED` must carry a decodable typed
+successful-result envelope, have a recomputed inner payload hash and outer
+`result_hash`, and have null error fields. `FAILED` must have null `result_hash`, a stable redacted
 `ErrorEnvelope`, and `error_hash` equal to its canonical bytes. Tamper the error
 class, code, safe-message hash, retryability, or status/result/error exclusivity;
 the event signature or offline verifier must reject it without exposing raw
