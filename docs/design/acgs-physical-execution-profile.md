@@ -74,7 +74,8 @@ VLA (proposer)
                           └─> Lease Authority      (validates receipt, consumes nonce)
                                 └─> Servo Lease    (volatile, bounded, single-use)
                                       └─> RT Safety Kernel  (per-tick constraint filter)
-                                            └─> actuator
+                                            └─> drive command arbiter
+                                                  └─> actuator
 ```
 
 Each arrow is one-way. No downstream stage may re-enter an upstream one. In
@@ -93,30 +94,50 @@ flowchart TB
     ROS["ROS 2 graph / DDS domain"]
   end
 
-  subgraph SEMI["Semi-trusted — deterministic, auditable, non-real-time"]
+  subgraph SEMI["Non-RT processing — deterministic and auditable"]
     MC["Motion compiler"]
-    ACGS["gove-zone Kernel + policy bundle"]
-    LA["Lease Authority"]
     AUD["Audit chain / evidence store"]
+    REV["revoke request adapter"]
   end
 
-  subgraph TCB["Trusted Computing Base — hard real-time"]
-    RTSK["RT Safety Kernel<br/>static memory, no crypto, no alloc"]
+  subgraph TCB["Security TCB (RT subset marked)"]
+    ACGS["gove-zone policy decision + receipt issuer/signer"]
+    LA["Lease Authority"]
+    LOAD["Non-RT verified-buffer loader"]
+    RTSK["Trusted RT component<br/>Safety Kernel + inline STM"]
     SHM[("Lease control block<br/>volatile shared memory")]
+    SCB["Profile single-controller composite burn authority<br/>UNIMPLEMENTED — required before activation"]
+    BURN["Shared transactional burn/nonce authority<br/>UNIMPLEMENTED — required for redundant controllers"]
   end
 
-  subgraph HW["Hardware — independent of all software above"]
-    DRV["Drive / motor controller"]
+  subgraph REF["Reference only — outside Security TCB"]
+    RCL["ReceiptConsumptionLedger(path, checkpoint=True)<br/>receipt-anchor-only reference; insufficient"]
+  end
+
+  subgraph HWT["Hardware command TCB"]
+    DRV["Drive command arbiter / motor controller"]
+  end
+
+  subgraph HW["Independent safety hardware"]
     ESTOP["Safety-rated E-stop + STO"]
   end
 
   VLA --> OPT --> MC
   ROS -. "may publish anything;<br/>cannot mint authority" .-> MC
   MC --> ACGS --> LA
+  MC -. "artifact blocks" .-> LOAD
+  LA --> LOAD
   LA --> AUD
-  LA -- "writes once" --> SHM
+  LA -. "reference receipt-only consume" .-> RCL
+  LA -. "single-controller composite burn required;<br/>fail closed if absent" .-> SCB
+  LA -. "redundant consume required;<br/>fail closed if absent" .-> BURN
+  LA -- "authority fields" --> SHM
+  LA -- "off-loop EMPTY→ARMED mailbox" --> RTSK
+  LOAD -- "verified buffer + watermark" --> SHM
+  REV -- "lease-bound monotonic revoke generation" --> RTSK
+  RTSK -- "inline validated STM state path" --> SHM
   SHM -- "reads" --> RTSK
-  RTSK --> DRV
+  RTSK -- "exclusive authenticated/physically isolated command channel" --> DRV
   ESTOP == "hardwired, bypasses all software" ==> DRV
 
   classDef untrusted fill:#3a1f1f,stroke:#b45050,color:#f2dede
@@ -124,22 +145,103 @@ flowchart TB
   classDef tcb fill:#16301f,stroke:#3f9d63,color:#dff3e6
   classDef hw fill:#1c2733,stroke:#4a80b0,color:#dbe9f5
   class VLA,OPT,ROS untrusted
-  class MC,ACGS,LA,AUD semi
-  class RTSK,SHM tcb
-  class DRV,ESTOP hw
+  class MC,AUD,REV,RCL semi
+  class ACGS,LOAD,RTSK,SHM,LA,SCB,BURN tcb
+  class DRV tcb
+  class ESTOP hw
 ```
 
-### TCB enumeration (deliberately small)
+### TCB enumeration (security TCB and RT subset)
 
-In the TCB:
+In the **security TCB**:
 1. RT Safety Kernel executable (fixed, hash-pinned at boot).
 2. The compiled `PhysicalSafetyContract` blob it loads at activation.
 3. The lease control block layout in shared memory.
 4. The RT clock source and tick counter.
+5. The Lease Authority binary and its pinned configuration.
+6. The Lease Authority's bootstrap write path for the authority page and its
+   typed `EMPTY -> ARMED` request to the STM, including the OS identity,
+   permissions, and process isolation that revoke the authority-page write
+   after activation. Field-specific mappings below enforce ownership.
+7. The policy bundle and policy-decision path that decide whether the proposed
+   motion is `ALLOW`.
+8. The receipt issuer, signer, verification-key custody, and the configuration
+   binding those identities and keys to the Lease Authority.
+9. The non-RT loader executable, its exclusive ownership of the verified
+   setpoint buffer, and its exclusive capability to release-store
+   `blocks_verified`. A compromised loader can publish an unverified watermark,
+   so it is security-critical even though it never defines policy constraints.
+10. The logical State Transition Monitor (STM) API within item 1. The trusted RT
+    component has the state page's only RW mapping; STM is its sole reviewed
+    state-mutation code path and performs constant-time permitted-predecessor
+    CAS. It is not an OS isolation boundary against compromise of the RT kernel.
+    The servo loop calls it inline; it never performs IPC, waits, allocates, or
+    takes a lock. Its revoke operation permits only
+    `ARMED|ACTIVE -> REVOKED`; it refuses promotions and terminal overwrites.
+11. The drive command boundary: arbiter/firmware, pinned bus/interface
+    configuration, command-channel credentials or physical isolation, and the
+    hardware acceptance path that converts an authenticated RT command into
+    current/torque. Drives accept commands only from the RT kernel over this
+    exclusive channel; ROS, DDS, and other processes receive neither the bus
+    mapping nor command credential. Compromise can command arbitrary motion
+    within independent drive/E-stop limits and is therefore a TCB compromise.
+12. For a single controller, a separate profile-local composite receipt-plus-
+    `mar_nonce` burn authority with one durable transaction/lock and protected
+    checkpoint is REQUIRED but UNIMPLEMENTED. It must atomically reject reuse of
+    either the exact receipt anchor or exact bound nonce. Lease issuance and
+    activation fail closed until this authority exists. Its store, lock,
+    checkpoint, and integrity controls enter the TCB when implemented; deletion,
+    truncation, or rollback could otherwise reopen authority.
+13. For any redundant-controller deployment, the shared nonce/receipt-burn
+    authority plus its durable transactional or consensus store. Compromise can
+    reopen burned receipts across controllers. This authority is not yet
+    implemented; redundant controllers remain unsupported and must fail closed
+    rather than fall back to per-host ledgers.
+
+The published receipt-only
+`ReceiptConsumptionLedger(path, checkpoint=True).consume(receipt)` is
+non-authoritative reference code for this Draft profile. It is outside the
+Security TCB, cannot satisfy item 12, and is excluded from the claim that
+compromise can mint accepted motion. Its dotted diagram edge is descriptive,
+not an activation dependency or authority grant.
+
+Items 1--4, including item 1's inline STM path, are the **RT software subset**: only they
+execute or are read in the servo loop. Items 5--9 remain in the security TCB off the RT path because
+they mediate whether authority becomes executable or a command is published as
+verified. External LA, revoke, and lifecycle callers never enter the servo loop:
+they submit fixed-size requests through per-principal SPSC mailboxes owned by
+the RT protection domain. While ticks are scheduled, lifecycle and revoke callers
+only publish an allocation-bound monotonic revoke generation and only the servo thread may invoke STM
+for revocation. After scheduling stops and RT quiescence is proven, the trusted
+RT component's control thread may perform a pending direct bounded transition.
+The servo loop acquire-loads the revoke generation at its first and final state
+checks. No
+synchronous IPC or blocking operation exists on the servo path.
+Item 11 is the **hardware command subset** immediately downstream of that loop;
+items 12--13 are required future replay authorities outside the hot path.
+Compromise of the policy decision, issuer/signer, key custody, Lease Authority,
+loader, trusted RT component, drive command boundary, profile-local composite
+burn authority, shared burn authority, or their OS isolation can mint an
+accepted motion, forge a lease,
+reopen consumed authority, or
+publish unverified commands and therefore can cause unauthorized motion; those
+failures are not containable to denial. A compromised revoke adapter is
+constrained to denial or failure to request early revocation: it has no writable
+lease-state, identity, or acknowledgement mapping and no transition authority.
+Its sole RW capability is the safe-direction `revoke_publish_page` containing
+`published_generation` for its allocation.
+Acceptance tests
+must prove that an untrusted component cannot write the lease block, substitute
+a policy bundle or signing key, roll back a durable burn, or cause a receipt from
+a compromised/unpinned decision path to verify. A direct ROS publisher or
+untrusted process attempting drive actuation must be rejected at the bus/arbiter
+boundary without actuator motion.
 
 **Not** in the TCB: the VLA, the optimizer, ROS 2, DDS, the motion compiler,
-gove-zone itself, the audit store, and every network path. Compromise of any of
-those must be containable to *denial of motion*, never to *unauthorized motion*.
+the audit store, and general network paths. The exclusive authenticated or
+physically isolated RT-to-drive channel is the explicit exception. Compromise of those
+non-TCB components must be containable to *denial of motion*, never to
+*unauthorized motion*.
 
 ROS 2 is an integration layer, **not a security boundary**. Any node on the DDS
 domain can publish any topic. The profile therefore assumes the ROS graph is
@@ -153,22 +255,31 @@ hostile and places the enforcement point below it.
 The physical binding lives in fields that already exist. This is what keeps the
 profile an adapter rather than a fork:
 
-> **Why this is sound rather than decorative.** The design depends on
-> `constraints` being covered by the canonical hash — otherwise an attacker could
-> swap a calibration digest without invalidating `receipt_hash`. Verified against
-> the current implementation: `constraints` is emitted inside `to_dict()`
-> (`receipt.py:186`), which is what `compute_hash` canonicalizes, so the whole
-> physical block is hash-bound and signature-covered. The gate additionally
-> supports exact-match pinning via `expected_constraints`
-> (`receipt.py:701` → "Constraints mismatch"), which is precisely the check the
-> Lease Authority performs in §7. **No core change is required for any of this.**
+> **Why the hash binding is sound, and where a core check is still required.**
+> The design depends on `constraints` being covered by the canonical hash —
+> otherwise an attacker could swap a calibration digest without invalidating
+> `receipt_hash`. Verified against the published kernel: `constraints` is
+> emitted inside `_hash_payload()`, which `compute_hash` canonicalizes, so the
+> physical block is hash-bound and signature-covered against later mutation of
+> the receipt.
+>
+> That is **not** a comparison against the loader's live compiled
+> `PhysicalSafetyContract`. `DecisionReceipt.verify()` has no
+> `expected_constraints` parameter and no "Constraints mismatch" branch; the
+> published `execute_with_receipt` gate likewise does not pin a caller-supplied
+> constraint dict. Hash-binding stops a tampered receipt; it does not stop a
+> valid receipt issued against a different physical contract. The Lease
+> Authority in §7 **must** compare `constraints["physical"]` (and the
+> contract digest inside it) to the live compiled contract before arming a
+> lease. That comparison is a profile requirement, not an existing kernel
+> primitive.
 
 | MAR concept | Existing `DecisionReceipt` field |
 |---|---|
 | action identity | `proposed_action = "robot.motion.execute"` |
 | motion request binding | `argument_hash` = `sha256_json(canonical MotionRequest)` |
 | physical binding block | `constraints["physical"]` |
-| irreversibility | `action_tier = "commit"` (always; motion is never `explore`) |
+| irreversibility | `constraints["physical"]["lease"]` bounds the one motion grant; no separate tier API is assumed |
 | robot cell | `execution_boundary = "cell:<site>/<cell-id>"` |
 | operator/task authority | `authority`, `validator_id`, `validator_role` |
 | short life | `expires_at` |
@@ -177,7 +288,9 @@ profile an adapter rather than a fork:
 
 `ToolCall` maps cleanly too: `name="robot.motion.execute"`,
 `path=("site","cell-3","arm-0","joint-group-a")` for policies-on-paths,
-`state={...}` for cell state (door closed, human presence, shift mode).
+`state={...}` for cell state (door closed, human presence, shift mode). Its
+canonical arguments also bind the artifact `source_hash` and immutable source
+repository revision; a different upload or revision is a different call.
 
 ### `constraints.physical` — the binding block
 
@@ -219,7 +332,9 @@ only meaningful relative to a robot, a frame, a calibration, and a tool.
   },
   "safety_contract": {
     "contract_digest": "sha256:…",
-    "contract_version": "cell-3/strict/v7"
+    "contract_version": "cell-3/strict/v7",
+    "physical_contract_projection_hash": "sha256:…",
+    "live_device_projection_hash": "sha256:…"
   },
   "initial_state": {
     "joint_position_hash": "sha256:…",
@@ -239,6 +354,97 @@ only meaningful relative to a robot, a frame, a calibration, and a tool.
 }
 ```
 
+### Canonical physical-contract projection and activation comparison
+
+The Lease Authority does not compare an ad hoc subset of the receipt or mix
+compiled authority with live observations. The MAR binds two disjoint,
+closed-schema projections.
+
+```text
+PhysicalContractProjection/v0:
+  profile
+  compiler.{compiler_digest,compiler_version}
+  safety_contract.{contract_version}
+
+LiveDeviceProjection/v0:
+  robot.{robot_id,serial,firmware_digest,kinematic_model_digest,
+         calibration_digest,tool.{tool_id,tcp_digest,payload_kg}}
+  action_space.{kind,dof,joint_order,units,control_rate_hz,
+                coordinate_frame,frame_tree_digest}
+```
+
+Both projections use RFC 8785 canonical JSON encoded as UTF-8. Non-finite
+numbers, unknown fields, duplicate keys, omitted required fields, implicit
+defaults, and fields from the other projection are rejected. Their serialized
+digests are exactly:
+
+```text
+physical_contract_projection_hash =
+  "sha256:" + lowerhex(
+    SHA256("acgs.physical.contract-projection/v0\0" ||
+           JCS(PhysicalContractProjection)))
+
+live_device_projection_hash =
+  "sha256:" + lowerhex(
+    SHA256("acgs.physical.live-device-projection/v0\0" ||
+           JCS(LiveDeviceProjection)))
+```
+
+Each digest is therefore `sha256:` followed by exactly 64 lowercase hexadecimal
+characters. The projection preimages exclude both projection-hash fields and
+`contract_digest`, avoiding self-reference. `contract_digest` separately covers
+the complete compiled contract, including both expected projection hashes. The
+loaded compiled contract is valid only when recomputing each projection from
+the artifact yields its embedded expected projection hash.
+
+| Field set | Authoritative source | Exact before-arm comparison |
+|---|---|---|
+| `profile` | Loaded compiled contract | MAR `PhysicalContractProjection` equals compiled-artifact projection |
+| `compiler_digest`, `compiler_version` | Loaded compiler/artifact manifest | MAR value equals compiled-artifact value |
+| `contract_version` | Loaded compiled safety contract | MAR value equals compiled-artifact value |
+| `physical_contract_projection_hash` | Loaded compiled contract | Recomputed MAR hash equals the compiled contract's expected static hash |
+| `live_device_projection_hash` | Loaded compiled contract plus fresh device projection | Recomputed MAR hash, compiled expected live hash, and fresh live hash are all equal |
+| Robot identity, firmware, kinematics, calibration | Fresh controller/device query | MAR `LiveDeviceProjection` equals live projection |
+| Installed tool id, TCP digest, configured payload | Fresh tool/controller query | MAR value equals live value |
+| Action-space kind, DOF, order, units, rate, frame, frame tree | Fresh controller/cell capability query | MAR value equals live value |
+
+Immediately before requesting `EMPTY -> ARMED`, the Lease Authority constructs
+the static projection from the MAR and independently from the loaded compiled
+artifact. It requires field-for-field canonical equality, recomputes the static
+hash, and compares it to the MAR-bound
+`physical_contract_projection_hash` and to the compiled contract's embedded
+expected static hash. Separately, it constructs the live projection from the
+MAR and from freshly queried robot, tool, controller, and cell inputs. It
+requires field-for-field canonical equality and three-way equality among the
+recomputed MAR live hash, the compiled contract's embedded expected live hash,
+and the freshly recomputed live-device hash. It also requires the complete
+compiled `contract_digest` to equal the MAR value. These comparisons are one
+indivisible activation predicate: a validly signed MAR that mixes contract A's
+`contract_digest` with contract B's `live_device_projection_hash` is rejected
+even when contract B happens to match the freshly queried device.
+
+String, array order, integer, digest, unit, frame, rate, identity, and tool
+values are compared exactly—no coercion, tolerance, fallback, or default is
+allowed. A robot/tool/action-space field substituted into the static projection,
+or a compiler/contract field substituted into the live projection, is an
+unknown-field plus missing-required-field failure. Any unavailable authoritative
+input, malformed digest encoding, static/live substitution, or mismatch fails
+before arming.
+
+Per-motion fields are deliberately outside the contract projection. The
+normative vocabulary is the existing MAR schema: `trajectory.trajectory_digest`,
+`trajectory.merkle_root`, `trajectory.block_size_ticks`,
+`trajectory.block_count`, `trajectory.duration_ms`, `trajectory.encoding`,
+`compiler.input_plan_digest`, `initial_state`, and `lease`. The wrapper also
+binds `motion_id`, `source_hash`, and immutable `source_revision` from the
+canonical `MotionRequest`/`argument_hash` binding. Their comparisons are exact
+except for the one declared physical comparison: measured initial joint
+positions may differ only within the bound `initial_state.tolerance_rad`;
+observation age must be within `observation_max_age_ms`, while timestamp,
+perception digest, trajectory, sequence, nonce, duration, actuator-group, source,
+and artifact bindings remain exact. Contract-owned and per-motion fields may not
+be moved between these sets by an adapter.
+
 ### Why each binding exists
 
 - **firmware / kinematic / calibration digests** — the same joint angles mean a
@@ -251,10 +457,11 @@ only meaningful relative to a robot, a frame, a calibration, and a tool.
 - **compiler_digest + input_plan_digest** — proves *which* deterministic
   transformation produced the authorized artifact from the proposal. A changed
   compiler yields a different receipt.
-- **merkle_root + block_size** — the trajectory-bytes root. It is *not* used
+- **merkle_root + block_size_ticks** — the trajectory-bytes root. It is *not* used
   directly for enforcement: the lease carries `execution_root`, which binds it to
-  robot, calibration epoch, contract, lease, and boot (§6.3), so the same bytes
-  cannot be replayed in a different physical context. It lets the RT path verify integrity
+  the derived lease context (robot, calibration epoch, contract, lease, and boot;
+  §6.3). This identity does not itself provide freshness or replay protection.
+  It lets the RT path verify integrity
   incrementally, off the critical path (§5.3), instead of hashing 4200 setpoints
   per tick.
 - **initial_state + tolerance** — binds the authorization to the world state it
@@ -262,14 +469,215 @@ only meaningful relative to a robot, a frame, a calibration, and a tool.
 - **sequence_lo/hi + nonce + max_duration** — makes the authority bounded in
   count *and* wall time, and single-use.
 
+### Evaluated-motion binding artifact
+
+The shipped core audit record retains `DecisionRecord.argument_hash`, not raw
+`ToolCall.args`. A profile side store therefore cannot reconstruct evaluated
+arguments later and is not authoritative by itself. Before policy evaluation,
+the physical wrapper freezes the actual `ToolCall.args` into the closed
+`EvaluatedMotionPreimage/v0` containing exactly:
+
+| Field | Closed type |
+|---|---|
+| `schema_version` | the literal string `EvaluatedMotionPreimage/v0` |
+| `tool` | nonempty string |
+| `actor` | nonempty string |
+| `canonical_tool_arguments` | the exact RFC 8785 JSON object passed to `ToolCall` |
+| `argument_hash` | 64 lowercase hexadecimal characters, exactly `ToolCall.argument_hash()` |
+| `per_motion_binding_hash` | `sha256:` plus 64 lowercase hexadecimal characters |
+
+There is only one authoritative projection. The wrapper deterministically
+extracts `PhysicalContractProjection/v0` from
+`canonical_tool_arguments.physical_contract_projection` and recomputes its
+digest; the sibling
+`canonical_tool_arguments.physical_contract_projection_hash` must equal that
+digest exactly. Neither the preimage nor the artifact accepts a second
+projection copy.
+
+The same argument object contains one closed
+`per_motion_binding: PerMotionBindingPreimage/v0` and its sibling
+`per_motion_binding_hash`. The preimage contains exactly
+`schema_version` (literal `PerMotionBindingPreimage/v0`), nonempty
+`motion_id`, `trajectory`, `compiler`, `initial_state`, `lease`,
+`source_hash`, and nonempty `source_revision`. This is a total one-to-one
+projection from the already authoritative MAR plus the canonical
+`MotionRequest`; it introduces no aliases. `trajectory` contains exactly
+`trajectory_digest`, `merkle_root`, positive JSON integers
+`block_size_ticks` and `block_count`, positive JSON integer `duration_ms`, and
+nonempty `encoding`, copied from the identically named MAR fields. `compiler`
+contains exactly `input_plan_digest`, copied from
+`MAR.compiler.input_plan_digest`. `initial_state` contains exactly
+`joint_position_hash`, a nonempty array `joint_position` of finite JSON
+numbers, finite nonnegative `tolerance_rad`, timezone-aware
+`observation_timestamp`, positive JSON integer `observation_max_age_ms`, and
+`perception_digest`, copied field-for-field from `MAR.initial_state`. `lease`
+contains exactly nonempty `nonce`, nonnegative JSON integers `sequence_lo` and
+`sequence_hi` with `sequence_lo <= sequence_hi`, positive JSON integer
+`max_duration_ms`, and nonempty `actuator_group`, copied field-for-field from
+`MAR.lease`. Every named digest is `sha256:` plus 64
+lowercase hexadecimal characters. Unknown fields, booleans in integer
+positions, non-finite numbers, coercion, and implicit defaults are forbidden.
+The cross-binding map is total and closed:
+
+| Per-motion path | Authoritative equal path |
+|---|---|
+| `trajectory.*` | `MAR.constraints.physical.trajectory.*` with identical member names |
+| `compiler.input_plan_digest` | `MAR.constraints.physical.compiler.input_plan_digest` |
+| `initial_state.*` | `MAR.constraints.physical.initial_state.*` with identical member names |
+| `lease.*` | `MAR.constraints.physical.lease.*` with identical member names |
+| `motion_id`, `source_hash`, `source_revision` | identically named canonical `MotionRequest` / `ToolCall.args` members |
+
+The wrapper enforces those equalities before artifact finalization, receipt
+minting, and activation; a receipt constraint cannot substitute a second copy.
+The per-motion preimage excludes `per_motion_binding_hash`, `argument_hash`,
+and all evaluated-motion hashes, and is hashed exactly as:
+
+```text
+per_motion_binding_hash =
+  "sha256:" + lowerhex(SHA256(
+    "acgs.physical.per-motion-binding/v0\0" ||
+    JCS_UTF8(PerMotionBindingPreimage/v0)))
+```
+
+The wrapper recomputes this hash from
+`canonical_tool_arguments.per_motion_binding` and requires exact equality
+with both its sibling argument field and
+`EvaluatedMotionPreimage.per_motion_binding_hash`. Finalization, receipt minting,
+and activation each require exact equality for every projection member against
+its named MAR or `MotionRequest` source. The aliases `artifact_digest`,
+`trajectory_root`, `block_size`, top-level `input_plan_digest`, and
+`lease_request` are forbidden unknown fields; mixing an alias with a normative
+name is not compatibility input. Unknown fields, non-JSON values, alternate
+digest encodings, or a missing, substituted, or mismatched nested projection or
+per-motion member fail closed.
+
+The preimage excludes `evaluated_motion_preimage_hash` and is hashed exactly
+as:
+
+```text
+evaluated_motion_preimage_hash =
+  "sha256:" + lowerhex(SHA256(
+    "acgs.physical.evaluated-motion-preimage/v0\0" ||
+    JCS_UTF8(EvaluatedMotionPreimage/v0)))
+```
+
+After `evaluate_and_append` succeeds, the wrapper finalizes the closed
+immutable `EvaluatedMotionArtifact/v0` containing exactly `schema_version`
+(the literal `EvaluatedMotionArtifact/v0`), `preimage`,
+`evaluated_motion_preimage_hash`, `decision_event_id`,
+`decision_record_argument_hash`, `audit_event_hash`, and
+`previous_audit_hash`. The last five identifiers/digests are nonempty strings;
+each SHA-256 value uses its specified lowercase encoding. The artifact excludes
+`evaluated_motion_artifact_hash`, which is computed independently as:
+
+```text
+evaluated_motion_artifact_hash =
+  "sha256:" + lowerhex(SHA256(
+    "acgs.physical.evaluated-motion-artifact/v0\0" ||
+    JCS_UTF8(EvaluatedMotionArtifact/v0)))
+```
+
+Artifact finalization also requires exact, case-sensitive equality:
+`preimage.tool == ToolCall.name == DecisionRecord.tool` and
+`preimage.actor == ToolCall.actor == DecisionRecord.actor`, in addition to
+`preimage.argument_hash == decision_record_argument_hash`. Receipt minting and
+activation extend those chains through
+`DecisionReceipt.proposed_action` and `DecisionReceipt.actor`,
+respectively. Any actor or tool substitution fails before artifact finalization,
+minting, and activation. The artifact binds the exact core audit anchors and is
+stored content-addressed in the profile's append-only artifact store. A missing
+artifact or store uncertainty fails closed, but store presence alone grants no
+authority: acceptance always requires the signed receipt, matching core audit
+event, presented arguments, and recomputed hashes.
+
+The executable frozen vector uses actor `operator-1`, tool
+`robot.motion.execute`, motion id `motion-1`, compiler version
+`compiler/v1`, compiler digest `sha256:` followed by 64 zeroes, contract
+version `contract/v1`, decision id `decision-1`, audit hash of 64 `a`
+characters, and predecessor hash of 64 `b` characters. Its per-motion block
+maps digest sentinels `sha256:` plus 64 repetitions as follows:
+trajectory digest=`1`, Merkle root=`2`, input plan=`3`, joint position=`4`,
+perception=`5`, and source=`6`; it uses trajectory
+`block_size_ticks=256`, `block_count=1`, `duration_ms=100`, `encoding=f64le`,
+joint positions `[0,1]`, tolerance `0.01`, timestamp
+`2026-07-26T22:40:00Z`, observation age `200`, lease
+`nonce-1/0..0/100/arm-0/joints`, and source revision `rev-1`. The expected
+hashes are:
+
+- `physical_contract_projection_hash =
+  sha256:d1af75ca6dfb86818771cbe47cb838d536e29c2f11f6060ea122dc038665b2c0`
+- `per_motion_binding_hash =
+  sha256:c194bdc0e8c88f98cc542b964bf088641fd0967ac01c264753aa4bd9d39cd9ec`
+- `argument_hash =
+  69e156017a2b66ee90f1f8cf82bc54a5c59ce3487041135bfc4e98ee4451d458`
+- `evaluated_motion_preimage_hash =
+  sha256:cdb1d2466b2128830f63bad5f5f873351639374eb24595058852a5d77b7aa340`
+- `evaluated_motion_artifact_hash =
+  sha256:862c75eb2fe6c51da02dccf522b821ca59e17115758aa789bdef0ed6d5f26cda`
+
+Changing any canonical argument byte, per-motion member, nested projection
+member, actor, or tool changes or violates the binding chain and must be
+rejected before finalize, mint, and activation.
+
+The profile wrapper derives
+`constraints.physical_evaluated_binding = {evaluated_motion_artifact_hash,
+evaluated_motion_preimage_hash, physical_contract_projection_hash,
+per_motion_binding_hash}` solely from the finalized artifact and supplies that
+closed object to `DecisionReceipt.from_record`. It never accepts this
+constraint object from a caller. After receipt construction it recomputes the
+constraint object and requires exact equality with the signed receipt
+constraints, `DecisionReceipt.argument_hash`, and audit anchors.
+
 ### Issuance flow
 
-1. Motion compiler emits canonical artifact + digests. Non-finite values,
+`Kernel.dispatch` is an execute-and-return API: after `ALLOW` or `TRANSFORM` it
+invokes the registered tool. Registering `robot.motion.execute` and calling
+`dispatch` would run the motion **before** the Lease Authority could validate a
+MAR. Issuance must not execute.
+
+1. Motion compiler emits canonical artifact + digests (`trajectory_digest` /
+   `merkle_root`, contract digest, calibration epoch). Non-finite values,
    out-of-order timestamps, and NaN/Inf are rejected **here**, at encode time.
-2. `ToolCall` constructed; `Kernel.dispatch` evaluates the cell's policy bundle.
-3. `DENY` / `ESCALATE` → no receipt. `ESCALATE` is **never** executable.
-4. `ALLOW` → receipt issued, signed (Ed25519 required in this profile — see §11).
-5. Receipt persisted to the audit chain before the lease is requested.
+   The compiler does **not** emit `execution_root` — that root includes
+   `receipt_id`, `lease_id`, and `boot_id`, which do not exist yet (§6.3).
+2. The physical wrapper freezes the actual `ToolCall.args` and constructs
+   the evaluated-motion preimage above. The call's closed arguments include the
+   complete `PhysicalContractProjection/v0` block,
+   `physical_contract_projection_hash`, and per-motion bindings.
+   `audited = Kernel.evaluate_and_append(call)` evaluates that exact call and
+   appends the decision without executing. The wrapper requires
+   `call.argument_hash() == audited.record.argument_hash`, then finalizes the
+   content-addressed artifact with `audited.audit_hash` and
+   `audited.append_result["previous_hash"]`. Mint only with
+   `DecisionReceipt.from_record(audited.record, audited.audit_hash,
+   audited.append_result["previous_hash"], ...)` and only with the wrapper-
+   derived `physical_evaluated_binding` constraints above. Do **not** call
+   `dispatch` or substitute `evaluate_and_record`: the immutable append
+   result is the source of both the event hash and predecessor hash.
+3. `DENY` / `ESCALATE` → no executable receipt. `ESCALATE` is **never**
+   executable. A physical-motion `TRANSFORM` also cannot proceed directly: the
+   rewritten arguments are recompiled, rebound to new artifact/contract
+   digests, rehashed, and submitted through a fresh evaluation. The original
+   arguments are discarded and MUST never execute. Only the resulting final
+   `ALLOW` decision can be minted into a MAR or receive a lease.
+4. `ALLOW` → receipt issued with a nonempty, timezone-aware `expires_at` no
+   later than the cell's configured maximum MAR TTL, using the Lease Authority's
+   trusted clock, and signed (`require_signature=True` with a real
+   verifier — see §11). Direct `DecisionReceipt.verify()` defaults
+   `require_signature=False` and is **not** an execution boundary.
+   The physical profile MUST select `require_expiry=True` explicitly (for
+   example through `GovernanceProfile.production_strict`) or use receipt v2's
+   strict expiry requirement. The plain shipped executor default is
+   `require_expiry=False`; it is insufficient for this profile. At the profile
+   gate, missing, naive, expired, overlong, or untrusted-clock lifetimes fail
+   closed.
+5. `evaluate_and_append` persists the `DecisionRecord` before
+   `DecisionReceipt.from_record` constructs the receipt in memory. The design
+   does not claim that the receipt itself is appended by that API. A
+   missing/malformed `previous_hash`, or any mismatch between append metadata
+   and the audited record, blocks minting and arming. Motion
+   runs only later, through `execute_with_receipt` / `GovernedExecutor` after
+   the lease is armed.
 
 ---
 
@@ -438,9 +846,27 @@ The lease is the constant-time, real-time-safe projection of a receipt.
 
 - **Derived, never primary.** A lease exists only as the product of a fully
   validated receipt. The Lease Authority performs every expensive check *once*.
-- **No replay.** Issuance consumes the receipt nonce through the existing
-  `ReceiptConsumptionStore.reserve()` (SQLite, atomic, durable-before-return).
-  A second lease for the same nonce fails closed.
+- **Replay authority is explicit and not yet implemented for this profile.**
+  The shipped reference is constructed as
+  `ReceiptConsumptionLedger(path, checkpoint=True)` and then called as
+  `.consume(receipt)`. It burns only the receipt anchor; `checkpoint=True` is
+  constructor configuration, not an external expected-tail argument, and the
+  API has no `mar_nonce` or composite transaction. It is therefore insufficient
+  to issue a physical lease.
+  A conforming single-controller deployment requires a separate profile-local
+  composite receipt-plus-`mar_nonce` burn authority that atomically burns the
+  exact receipt anchor and exact bound `mar_nonce` under one durable
+  transaction/lock and protected checkpoint.
+  Missing authority, unavailable or uncertain transaction, checkpoint deletion
+  or truncation, rollback, duplicate receipt anchor, or duplicate nonce all fail
+  before `EMPTY -> ARMED`. This authority is REQUIRED but UNIMPLEMENTED, so this
+  Draft profile must fail closed at activation until it exists.
+  Multi-controller semantics separately require the durable shared
+  nonce/receipt-burn authority in T-02. That authority is also unimplemented;
+  redundant controllers remain unsupported and fail closed. Freshness/replay
+  protection comes from signed receipt bindings, bounded expiry, consumed
+  receipt/nonce state, pinned boot state, and the applicable composite authority
+  -- not from `execution_root`.
 - **No reboot survival.** The control block lives in volatile shared memory
   (`tmpfs`/`/dev/shm`, `mlock`ed) and carries the kernel `boot_id`. On mismatch
   the RT kernel refuses it. A lease can never outlive the machine state it was
@@ -448,13 +874,23 @@ The lease is the constant-time, real-time-safe projection of a receipt.
 - **Bounded scope.** One actuator group, one sequence range, one contract digest,
   one wall-clock deadline.
 - **Atomic consumption.** Each tick advances a monotonic counter by compare-and-swap.
-- **Revocable.** A revocation flag is a single word; the RT kernel checks it every
-  tick and treats *any* non-ARMED value as safe-stop.
+- **Revocable and latched.** The STM performs every state transition as a
+  compare-and-swap from
+  one explicitly permitted predecessor: fresh-block `EMPTY -> ARMED`, `ARMED -> ACTIVE`, `ACTIVE ->
+  CONSUMED`, and `ARMED|ACTIVE -> REVOKED`. No transition can overwrite
+  `REVOKED`, `EXPIRED`, or `CONSUMED`; terminal states cannot be overwritten,
+  and blind stores are forbidden. Deadline
+  failure requests `ARMED|ACTIVE -> EXPIRED`; revocation is dominant in
+  the sense that no activation, completion, or expiry path can replace an
+  already observed `REVOKED`. The RT kernel acquire-loads the state every tick
+  and safe-stops on any non-`ARMED`/`ACTIVE` value. Re-authorization creates a
+  new lease.
 
-### Control block (fixed layout, cache-line aligned)
+### Control block (fixed layout, page-separated capabilities)
 
 ```c
-struct servo_lease {          /* written once by Lease Authority; RO to RT loop */
+/* Page A: LA initializes once and seals RO before activation. */
+struct lease_authority_page {
   uint64_t magic;             /* profile + layout version */
   uint64_t boot_id_lo, boot_id_hi;
   uint8_t  receipt_hash[32];  /* binding back to the MAR */
@@ -465,37 +901,170 @@ struct servo_lease {          /* written once by Lease Authority; RO to RT loop 
   uint64_t seq_lo, seq_hi;
   uint64_t deadline_tick;     /* RT monotonic tick, not wall clock */
   uint32_t block_size_ticks;
-  uint32_t blocks_verified;   /* advanced by non-RT loader; RT only reads */
   uint64_t calibration_epoch; /* pinned at issuance; see T-13 */
-  /* --- mutable, RT-owned, separate cache line --- */
+};
+
+/* Page B: loader RW only; every other principal RO. */
+struct loader_watermark_page {
+  _Atomic uint32_t blocks_verified; /* loader release-store; RT acquire-load */
+};
+
+/* Page C: RT kernel RW only; every other principal RO. */
+struct rt_sequence_page {
   _Atomic uint64_t seq_next;  /* CAS-advanced each tick */
-  _Atomic uint32_t state;     /* ARMED | ACTIVE | CONSUMED | REVOKED */
+};
+
+/* Page D: trusted RT component RW only; external processes RO or unmapped.
+   Inline STM is the component's sole validated state-mutation code path. */
+struct lease_state_page {
+  _Atomic uint32_t state;     /* EMPTY | ARMED | ACTIVE | CONSUMED | REVOKED | EXPIRED */
 };
 
 /* Written by the calibration owner ONLY; read-only to everything else.
    Any successful calibration, tool change, or kinematic reload bumps this
    monotonically BEFORE the new values become readable. */
 struct calibration_epoch_cell { _Atomic uint64_t epoch; };
+
+/* Three separate page-aligned request mappings; never one shared field page. */
+struct revoke_identity_page {          /* LA initializes, then RO externally */
+  uint8_t allocation_id[32];
+  uint8_t lease_identity[32];          /* immutable generation namespace */
+};
+struct revoke_publish_page {           /* adapter RW; contains ONLY this field */
+  _Atomic uint64_t published_generation;
+};
+struct revoke_ack_page {               /* trusted RT component RW only */
+  _Atomic uint64_t acknowledged_generation; /* exact processed generation */
+};
 ```
+
+The verified setpoint buffer is a fifth region: loader RW, RT kernel RO, and
+unmapped from LA/STM/revoke adapter. OS credentials and separate file descriptors enforce
+the matrix below; page alignment ensures no writable mapping exposes a
+neighbor's field or cache line.
+
+| Principal | Writable mapping | All other lease/request regions |
+|---|---|---|
+| Lease Authority | authority and `revoke_identity_page` during bootstrap only; mappings revoked before activation returns | state/publish/ack and all non-authority regions unmapped or RO |
+| non-RT loader | verified setpoint buffer and `loader_watermark_page` only | RO or unmapped |
+| Trusted RT component (Safety Kernel + inline STM) | `rt_sequence_page`, `lease_state_page`, and `revoke_ack_page` | identity/publish RO; every other external-owned region RO or unmapped; state writes use the logical STM API by code invariant |
+| revoke request adapter | `revoke_publish_page` only | identity RO; ack and every lease region unmapped or RO |
+
+The STM is not a service process or a protection boundary. It is a bounded
+function inside the same trusted RT component that owns the state RW mapping.
+A compromised RT component can bypass it; that component is already in the TCB.
+Each STM invocation validates one transition tuple and executes at most one CAS
+in constant time.
+External fixed-size mailboxes and the three page-aligned revoke structures are
+separate request memory, not lease memory. Identity, publish, and acknowledgement
+never share a writable page, so protection is page-level rather than a false
+field-level claim. Each allocation receives a fresh random allocation/lease
+identity and independent generation namespace. The revoke adapter's sole RW
+capability is the safe-direction `revoke_publish_page.published_generation` for
+its allocation. It has no writable lease-state, identity, or acknowledgement
+mapping. RT snapshots the immutable
+identity and published generation consistently, rejects an identity mismatch, and
+monotonically advances `acknowledged_generation` after processing. Multiple
+requests may coalesce but none can be forgotten. A publish after either per-tick
+snapshot is observed no later than the next tick.
+
+Retirement revokes every request mapping. A stale handle therefore targets only
+the retired allocation and cannot address a fresh allocation, whose identity
+and generation namespace are new. Activation never clears or rebinds an old
+request page; it allocates a new page with generation zero exactly once.
+
+Negative capability tests attempt every external cross-field write: LA after
+activation cannot change authority/state, loader cannot change
+authority/sequence/state, and the revoke adapter cannot map or write lease state,
+identity, or acknowledgement; its only writable word is its allocation's
+safe-direction `published_generation`. Each forbidden external attempt must fault
+or be refused while the original bytes remain unchanged. Structural review and
+unit tests—not OS mapping claims—prove
+that trusted RT source mutates state only through STM. State-transition tests
+also prove invalid predecessors are refused and requests for
+`REVOKED -> ACTIVE|ARMED` or `CONSUMED|EXPIRED -> ACTIVE|ARMED` cannot promote a
+terminal lease. Compromise of the trusted RT component invalidates this
+guarantee and is explicitly inside the TCB threat boundary.
 
 ### Per-tick RT check (the whole hot path)
 
 ```
 /* seq_lo/seq_hi are INCLUSIVE; i is the zero-based index into the buffer. */
-1. state == ARMED|ACTIVE                       else -> safe_stop
-2. boot_id matches current boot                else -> safe_stop
-3. tick <= deadline_tick                       else -> safe_stop
+fail_terminal(reason, target=REVOKED):
+   observed = STM.transition_inline(ARMED|ACTIVE -> target); /* at most one CAS */
+   preserve the first terminal winner if CAS loses;
+   emit failure evidence; category_1_stop; return END_TICK
+
+process_revoke_snapshot(revoke):
+   result = STM.transition_inline(ARMED|ACTIVE -> REVOKED); /* first CAS */
+   observed = result.current_state; /* success returns REVOKED; loss returns current */
+   if result == CAS_LOST and observed == ACTIVE: /* ARMED -> ACTIVE won */
+      result = STM.transition_inline(ACTIVE -> REVOKED); /* one bounded retry */
+      observed = result.current_state;
+   if observed in {REVOKED, EXPIRED, CONSUMED}:
+      release-store acknowledged_generation = revoke.published; /* exact snapshot */
+      emit revoke evidence with observed terminal state and generation;
+      category_1_stop;
+      return END_TICK /* caller must not continue this tick */
+   /* Still ARMED/ACTIVE or unexpected: pending request remains unacknowledged. */
+   emit pending-terminalization evidence; category_1_stop; return END_TICK
+   /* Next tick retries the same generation before any command can emit. */
+
+1. revoke = snapshot_generation_for(lease_identity);
+   if revoke.published > revoke.acknowledged:
+      return process_revoke_snapshot(revoke)
+   state = acquire-load;
+   if ARMED: STM.transition_inline(ARMED->ACTIVE) must succeed; else reload state;
+   require current state == ACTIVE;
+   otherwise preserve terminal winner or ensure REVOKED, category_1_stop, return
+2. boot_id matches current boot                else -> fail_terminal(BOOT_MISMATCH)
+3. tick <= deadline_tick                       else -> fail_terminal(DEADLINE, EXPIRED)
 4. seq = CAS(seq_next, s, s+1); seq_lo <= seq <= seq_hi
-                                               else -> safe_stop
+                                               else -> fail_terminal(SEQUENCE)
 5. i = seq - seq_lo
-   i / block_size_ticks < blocks_verified      else -> safe_stop   (integrity gate)
-6. u = setpoint[i]; finite(u)                  else -> safe_stop
-7. admissible(u, x_measured)                   else -> safe_stop
-8. perception_age <= max_age                   else -> safe_stop
+   i / block_size_ticks < blocks_verified      else -> fail_terminal(WATERMARK)
+6. u = setpoint[i]; finite(u)                  else -> fail_terminal(NONFINITE)
+7. admissible(u, x_measured)                   else -> fail_terminal(INADMISSIBLE)
+8. perception_age <= max_age                   else -> fail_terminal(STALE_PERCEPTION)
 9. calibration_epoch == lease.calibration_epoch
-                                               else -> safe_stop   (T-13)
-10. emit u to drive
+                                               else -> fail_terminal(CALIBRATION)
+10. revoke = snapshot_generation_for(lease_identity);
+    if revoke.published > revoke.acknowledged:
+       return process_revoke_snapshot(revoke)
+    final_state = acquire-load immediately before emit;
+    final_state == ACTIVE; otherwise preserve a safe terminal winner or ensure
+    REVOKED, category_1_stop, emit failure evidence, return
+11. emit u to drive
+12. if seq == seq_hi:
+      outcome = STM.transition_inline(ACTIVE->CONSUMED); /* exactly one CAS */
+      if outcome == SUCCESS: report normal CONSUMED completion and return;
+      if observed state is REVOKED/EXPIRED: preserve it, category_1_stop,
+          report that terminal outcome, return;
+      otherwise make at most one additional conditional
+          STM.transition_inline(ARMED|ACTIVE->REVOKED) CAS;
+          category_1_stop and emit failure evidence regardless of its result;
+          return; never loop and never report normal completion while ACTIVE
 ```
+
+This is an honest bounded next-tick revocation contract, not an atomic hardware
+emission gate. A revoke that wins before check 10 prevents the command. A
+concurrent revoke after check 10 may permit at most the current command already
+committed to the drive interface. Continued execution observes and latches the
+request no later than the next tick, then emits nothing. If this was the final
+command and `ACTIVE -> CONSUMED` wins before the request is processed, the state
+remains terminal `CONSUMED`; the protected control path acknowledges the revoke
+generation as terminal/non-executable and does not promote or reset it. No
+subsequent tick may emit under that lease. Stronger
+same-instruction cancellation would require a hardware emission primitive that
+atomically tests lease state with command acceptance; this profile does not
+claim one.
+
+Acknowledgement proves terminal observation, not merely a CAS attempt. If the
+first revoke CAS loses to `ARMED -> ACTIVE`, the servo thread retries
+`ACTIVE -> REVOKED` exactly once. A second loss or any nonterminal/unexpected
+state leaves the generation pending and unacknowledged, performs
+`category_1_stop`, ends the tick, and retries before emission on the next tick.
+Thus a CAS loss can delay acknowledgement but cannot authorize a later command.
 
 Check 9 is one 64-bit compare. It is what makes calibration binding a *live*
 property rather than an activation-time snapshot: re-verifying the calibration
@@ -505,12 +1074,33 @@ publishing new values. Any calibration change mid-motion therefore stops the
 robot, even if the new calibration is legitimate.
 
 Both bounds are inclusive, so a trajectory of `block_count × block_size_ticks`
-setpoints is addressed by `seq_lo = 0`, `seq_hi = count - 1`. Step 4 exhausting
-the range is a normal completion, not a fault: the lease transitions to
-`CONSUMED` and the kernel holds position.
+setpoints is addressed by `seq_lo = 0`, `seq_hi = count - 1`. Step 12 runs only
+after the final command is committed. Its guarded inline
+`ACTIVE -> CONSUMED` STM transition must succeed before normal completion is
+reported; success returns without scheduling a next out-of-range tick. If a
+concurrent `REVOKED`/`EXPIRED` wins, that terminal state is
+preserved, no extra command is emitted, and the kernel safe-stops. Any other
+failure makes at most one additional conditional CAS to `REVOKED`, safe-stops,
+emits failure evidence regardless of that CAS result, and
+never reports normal completion while the lease remains `ACTIVE`.
 
-Steps 1–8 are integer compares, one CAS, and the bounded contract filter. **No
-hash is computed, no lock is taken, no memory is allocated.**
+The steady ACTIVE branch performs one sequence CAS. The first tick may also
+make one inline STM `ARMED -> ACTIVE` transition; the final tick may also make
+one inline STM `ACTIVE -> CONSUMED` transition. The final unexpected-failure
+branch performs one sequence CAS, exactly one `ACTIVE -> CONSUMED` CAS, and at
+most one additional conditional `ARMED|ACTIVE -> REVOKED` CAS: at most two state
+CAS operations, with no loop. An ordinary expiry/integrity branch makes at most
+one safe-terminal state CAS and no emit. WCET characterization must measure each
+branch separately, including the constant-time primitive. A revoke branch makes
+one state CAS, or exactly one additional `ACTIVE -> REVOKED` retry when its first
+CAS loses to activation; it performs no sequence CAS and never emits.
+**No IPC, wait, timeout, hash, lock, or allocation occurs in the hot path.**
+
+Every authority or integrity failure in checks 1--10 therefore follows the
+same ordering: inline safe-terminal transition (deadline may choose `EXPIRED`,
+all others choose `REVOKED`), preserve any first terminal winner, execute
+`category_1_stop`, record the observed terminal outcome, and return without
+emitting. Because terminal states are latched, no subsequent tick can emit.
 
 ### 6.3 Trajectory integrity without in-loop crypto
 
@@ -530,8 +1120,17 @@ valid old trajectory + valid old root + different physical context
       = still cryptographically valid
 ```
 
-The root must bind the execution context, not just the bytes. The verified root
-is domain-separated and computed over the context tuple:
+The root must bind the execution context, not just the bytes. Split the two
+roots so construction order is possible:
+
+- **`trajectory_digest` / `merkle_root`** — compiler output. Trajectory bytes
+  only. Available before any receipt or lease exists.
+- **`execution_root`** — computed at **lease issuance**, after `receipt_id`,
+  `lease_id`, and `boot_id` exist. Never a compiler output. The loader
+  recomputes it from the live tuple and compares; it does not trust a
+  pre-authorization root that could not have included those fields.
+
+The verified root is domain-separated and computed over the context tuple:
 
 ```
 execution_root = H( "acgs.physical.traj/v0"
@@ -545,18 +1144,24 @@ execution_root = H( "acgs.physical.traj/v0"
                   ‖ boot_id )            /* which power cycle               */
 ```
 
-`execution_root` — not `merkle_root` — is what the lease block carries and what
-the loader verifies against. Replaying a trajectory under a different robot,
-calibration, contract, lease, or boot yields a different root and fails closed.
-The trajectory bytes stay reusable; the *authority to execute them here, now,
-on this machine* does not.
+`execution_root` — not `merkle_root` — is the derived lease-context identity the
+lease block carries and the loader compares. A different robot, calibration,
+contract, lease, or boot produces a different identity and a comparison
+mismatch. The root neither authorizes motion nor supplies freshness/replay
+protection; those come from the signed receipt and the explicit authorities
+listed above.
 - A **non-RT loader thread** verifies block *n+1* against the root while the RT
   loop consumes block *n* (double buffering), then increments `blocks_verified`.
-- The RT loop's only integrity obligation is check 5: *never read past the
-  verified watermark*. That is one integer compare.
+- The non-RT loader publishes `blocks_verified` only after verification with an
+  atomic release-store; the RT loop reads it with an acquire-load. Its integrity
+  obligation is check 5: *never read past the verified watermark*. That is one
+  integer compare with a defined publication boundary.
+- The loader exclusively owns the verified setpoint buffer and is the only
+  principal permitted to write `blocks_verified`; both capabilities are in the
+  security TCB. Other non-RT components receive read-only mappings.
 - If the loader falls behind, `blocks_verified` stalls, check 5 fails, and the
-  robot safe-stops. **Falling behind degrades to a stop, never to unverified
-  motion.**
+  RT loop transitions the lease to `REVOKED` before `category_1_stop`.
+  **Falling behind degrades to a terminal stop, never to unverified motion.**
 
 ### 6.4 Compiler / Loader authority boundary
 
@@ -603,21 +1208,45 @@ observability**, not enforcement.
 | Transition | Checks performed |
 |---|---|
 | `configure` | load contract blob; verify `contract_digest`; verify RT kernel binary hash; map shared memory; lock pages; verify clock source is monotonic RT |
-| `activate` | require MAR; verify signature, `receipt_hash`, expiry, tenant, boundary, actor, policy digest; verify `firmware/kinematic/calibration/tool` digests against **live queried device values**; verify measured joint state within `initial_state.tolerance_rad`; verify perception age; **read `calibration_epoch`, re-verify the calibration digest at that epoch, and pin the epoch into the lease** (T-13); compute `execution_root` (§6.3); consume nonce; write lease block; set `ARMED` |
-| `deactivate` | set `REVOKED`; ramp stop; emit lifecycle evidence |
-| `cleanup` | zero the lease block; unmap |
-| `error` (`on_error`) | set `REVOKED`; `category_1_stop`; emit refusal evidence; require operator acknowledgement before re-activate |
-| `shutdown` | `category_0_stop`; zero lease |
+| `activate` | require MAR; verify signature, `receipt_hash`, nonempty timezone-aware expiry with trusted clock and bounded maximum TTL (`require_expiry=True` / strict receipt version), tenant, boundary, actor, policy digest; load the content-addressed `EvaluatedMotionArtifact/v0` named by the signed receipt constraints, verify its audit anchors against the core audit event, recompute the presented ToolCall argument hash, require exact equality across artifact, `DecisionRecord.argument_hash`, and `DecisionReceipt.argument_hash`, require `preimage.tool == ToolCall.name == DecisionRecord.tool == DecisionReceipt.proposed_action`, and require `preimage.actor == ToolCall.actor == DecisionRecord.actor == DecisionReceipt.actor`; compare the MAR's static `PhysicalContractProjection` only with the compiled artifact and compare its disjoint `LiveDeviceProjection` only with freshly queried robot/tool/action-space inputs; require exact field equality, canonical digest encoding, both bound projection hashes, and the complete contract digest before arming; separately verify every per-motion field with only the declared initial-joint tolerance; verify perception age; **read `calibration_epoch`, re-verify the calibration digest at that epoch, and pin the epoch into the lease** (T-13); allocate fresh lease/boot identities, fresh request page, and fresh generation namespace; derive `execution_root` (§6.3); require the profile-local composite receipt-plus-`mar_nonce` burn authority and fail closed while it is unimplemented; only after its one durable atomic burn may activation initialize fresh authority fields and request STM `EMPTY -> ARMED`; never clear/rebind an old request page or reuse a terminal block |
+| `deactivate` | publish an allocation-bound revoke request; while ticks are scheduled only the servo thread may invoke STM; `category_1_stop` (never path-following ramp stop); stop scheduling and wait for RT quiescence; if the lease is already `CONSUMED`, `REVOKED`, or `EXPIRED`, the trusted control thread directly acknowledges the observed terminal generation without attempting a transition; otherwise perform the bounded terminal transition; return only after terminal acknowledgement |
+| `cleanup` | publish the allocation's terminal revoke; stop scheduling new RT ticks; wait for RT quiescence; if still pending, the trusted RT component's control thread may then perform the bounded direct STM transition and acknowledge only a terminal state; only after acknowledgement/terminal observation revoke mappings, unmap, and retire/destroy without zero/reset/reuse; reauthorization creates a fresh allocation, identity, and namespace |
+| `error` (`on_error`) | publish an allocation-bound revoke request; `category_1_stop`; while scheduled, only the servo thread invokes STM; emit refusal evidence; require operator acknowledgement before re-activate |
+| `shutdown` | publish a terminal revoke; stop scheduling new RT ticks; `category_0_stop`; wait for RT quiescence; only then may the trusted control thread perform a pending bounded direct STM transition; after acknowledgement/terminal observation revoke mappings, unmap, and retire/destroy without reset or reuse |
 
 Activation is **fail-closed and non-negotiable**: any failed check aborts the
 transition to `inactive`. There is no "warn and continue" path.
+If activation allocates a fresh block but fails before the `EMPTY -> ARMED` CAS,
+the block was never published as a lease. The authority stops tick scheduling,
+proves no RT tick ever started for that allocation and RT quiescence holds, then
+retires/destroys the never-published `EMPTY` allocation directly without waiting
+for revoke acknowledgement. That allocation is never exposed, reset, or reused;
+this pre-publication retirement is distinct from cleanup of an observable lease.
+During cleanup and shutdown the state remains terminal for the allocation's
+entire observable lifetime. No mapping is revoked or unmapped before both RT
+quiescence and revoke acknowledgement/terminal observation. Retirement then
+destroys the allocation; it never writes `EMPTY`, zeroes state, or reuses identity.
+While servo ticks remain scheduled, only the servo thread calls STM for a revoke;
+every non-servo, adapter, and lifecycle caller can only publish a request. Direct
+control-thread transition is permitted only after tick scheduling has stopped and
+RT quiescence is proven.
 
 ### Interfaces
 
 - `~/authorize` (service) — accepts a serialized MAR, returns lease handle or a
   structured refusal. **The only path to motion authority.**
 - `~/status` (topic) — lease state, seq watermark, blocks verified, last refusal.
-- `~/revoke` (service) — always available, requires no authority, single word write.
+- `~/revoke` (service) — always available and requires no motion authority. The
+  adapter uses its allocation-bound handle to atomically increment
+  `published_generation`; it cannot clear or retarget the request. It has no
+  writable lease-state, identity, or acknowledgement mapping; its sole RW
+  capability is the safe-direction publish page for its allocation. While ticks
+  are scheduled, only the servo loop services the request: it compares published and acknowledged
+  generations plus immutable lease identity at checks 1 and 10 and invokes the inline
+  STM. The STM permits only `ARMED|ACTIVE -> REVOKED`, refusing invalid
+  predecessors, promotion, and terminal overwrite. Non-servo/lifecycle callers
+  only publish; a trusted control-thread direct transition is allowed only after
+  tick scheduling stops and RT quiescence is proven.
 - `~/evidence` (topic) — receipt/refusal events mirrored for observability only.
 
 ### Why ROS 2 is not the boundary
@@ -633,27 +1262,29 @@ every ROS node yields denial of service, not unauthorized torque.
 
 | ID | Attack | Detection | Fail-closed response | Evidence |
 |---|---|---|---|---|
-| T-01 | **Signed trajectory mutation** — bytes altered after authorization | Merkle block verify in non-RT loader; `blocks_verified` never advances past a bad block | RT check 5 fails → `category_1_stop` (commanded geometry is untrusted); lease `REVOKED` | refusal receipt w/ block index, expected vs. actual block hash |
-| T-02 | **Replay** of a previously valid MAR | `ReceiptConsumptionStore.reserve()` rejects the consumed nonce; `boot_id` mismatch after restart; `expires_at` | activation aborts; no lease issued | refusal receipt, nonce, first-consumption timestamp |
+| T-01 | **Signed trajectory mutation** — bytes altered after authorization | Merkle block verify in non-RT loader; `blocks_verified` never advances past a bad block | RT check 5 fails → inline `REVOKED`, then `category_1_stop` (commanded geometry is untrusted); no later tick emits | refusal receipt w/ block index, expected vs. actual block hash |
+| T-02 | **Replay** of a previously valid MAR | the shipped `ReceiptConsumptionLedger(path, checkpoint=True).consume(receipt)` is receipt-anchor-only reference code and is insufficient; single-controller activation requires an unimplemented profile-local atomic receipt-plus-`mar_nonce` burn with one durable transaction/lock and protected checkpoint; deletion, truncation, rollback, duplicate anchor, and duplicate nonce are negative tests; redundant controllers separately require shared transactional/consensus authority | activation aborts and no lease is issued while the applicable composite authority is unavailable; single- and redundant-controller modes both fail closed | refusal receipt, nonce, first-consumption timestamp, burn-store integrity result |
 | T-03 | **Wrong robot / model / calibration** | `activate` compares receipt digests against **live device-queried** firmware, kinematic, calibration, tool values | activation aborts | refusal receipt listing each mismatched digest |
-| T-04 | **NaN / Inf / denormal actions** | rejected at canonical encode; re-checked per setpoint (check 6) | `category_1_stop` | refusal receipt w/ seq index and raw bit pattern |
-| T-05 | **Unsafe intermediate path** — endpoints legal, path not | per-tick `admissible()`; SDF + polytope evaluated on every setpoint, not just waypoints | `category_1_stop` at first inadmissible tick — **geometric violation, so the path must not be followed further** (§5) | refusal receipt w/ seq, violated constraint id, margin |
-| T-06 | **Stale perception** — world moved since authorization | `observation_max_age_ms` at activation; per-tick `perception_age` (check 8) | activation aborts; mid-motion → `category_1_stop` (the world is unknown, so continuing along the path is unjustified) | refusal receipt w/ observation timestamp and measured age |
-| T-07 | **Malicious ROS node** — spoofs topics, floods services, impersonates the adapter | adapter holds no capability; Lease Authority re-validates independently; `~/revoke` is unauthenticated *in the safe direction only* | no lease issued; spurious revokes cause stops, never motion | audit chain entry per authorize attempt, incl. rejected ones |
-| T-08 | **Optimizer modifies the authorized trajectory** — refines after authorization | `trajectory_digest` / `merkle_root` bound in receipt; the optimizer sits *upstream* of the compiler and has no write path to the verified buffer | digest mismatch → no lease, or check 5 stall mid-motion | refusal receipt w/ authorized vs. presented digest |
-| T-09 | **Lease forgery** — attacker writes the shm block directly | shm is RO to every process but the Lease Authority (OS perms + separate UID); `magic`/layout version; `boot_id` | RT kernel refuses malformed block | integrity alarm; requires host compromise to attempt |
-| T-10 | **Deadline / clock manipulation** | RT kernel uses a monotonic tick counter, never wall clock; `deadline_tick` computed at issuance | tick past deadline → safe-stop | lifecycle evidence w/ tick counts |
-| T-11 | **Sequence rollback / skip** | monotonic CAS on `seq_next`; range check | any non-monotonic advance → safe-stop | refusal receipt w/ observed and expected seq |
+| T-04 | **NaN / Inf / denormal actions** | rejected at canonical encode; re-checked per setpoint (check 6) | inline `REVOKED` transition, then `category_1_stop`; no later tick emits | refusal receipt w/ seq index and raw bit pattern |
+| T-05 | **Unsafe intermediate path** — endpoints legal, path not | per-tick `admissible()`; SDF + polytope evaluated on every setpoint, not just waypoints | inline `REVOKED` transition, then `category_1_stop` at first inadmissible tick — **geometric violation, so the path must not be followed further** (§5) | refusal receipt w/ seq, violated constraint id, margin |
+| T-06 | **Stale perception** — world moved since authorization | `observation_max_age_ms` at activation; per-tick `perception_age` (check 8) | activation aborts; mid-motion → inline `REVOKED` transition, then `category_1_stop`; no later tick emits | refusal receipt w/ observation timestamp and measured age |
+| T-07 | **Malicious ROS node** — spoofs topics, floods services, impersonates the adapter, or publishes a direct drive command | adapter holds no command capability; Lease Authority re-validates independently; drive arbiter accepts only the exclusive authenticated/isolated RT channel; `~/revoke` is unauthenticated *in the safe direction only* | no lease or actuation; direct drive command rejected; spurious revokes cause stops | audit chain entry plus arbiter rejection evidence |
+| T-08 | **Optimizer modifies the authorized trajectory** — refines after authorization | `trajectory_digest` / `merkle_root` bound in receipt; the optimizer sits *upstream* of the compiler and has no write path to the verified buffer | digest mismatch → no lease; check 5 failure mid-motion → inline `REVOKED`, then `category_1_stop` | refusal receipt w/ authorized vs. presented digest |
+| T-09 | **Lease forgery** — attacker writes the shm block directly | external mappings enforce field ownership: bootstrap LA writes authority, loader writes buffer/watermark, trusted RT component writes sequence/state, and revoke callers map no writable lease page; STM is the reviewed state-mutation path, not isolation from RT compromise; `magic`/layout version; `boot_id` | unauthorized external writes fault; STM rejects invalid predecessor/target; RT refuses malformed block | integrity alarm plus transition refusal; compromise of the trusted RT component is a TCB compromise |
+| T-10 | **Deadline / clock manipulation** | RT kernel uses a monotonic tick counter, never wall clock; `deadline_tick` computed at issuance | tick past deadline → inline `EXPIRED`, then safe-stop; no later tick emits | lifecycle evidence w/ tick counts |
+| T-11 | **Sequence rollback / skip** | monotonic CAS on `seq_next`; range check | any non-monotonic advance → inline `REVOKED`, then safe-stop; no later tick emits | refusal receipt w/ observed and expected seq |
 | T-12 | **Authority confusion** — `ESCALATE` treated as executable | Lease Authority accepts only `decision == "allow"`; `ESCALATE`/`DENY` produce no lease | no lease | escalation record in audit chain |
-| T-13 | **Calibration drift after authorization** — receipt stays valid while the calibration transform changes under it, so authorized joint angles now mean a different pose. **The physical-world-specific failure mode**, and the one T-03 does *not* cover: T-03 checks calibration at `activate`, which says nothing about tick 3000 | per-tick `calibration_epoch` compare (check 9); non-RT re-verification of `calibration_digest` on every epoch bump | `category_1_stop`; lease `REVOKED`; re-authorization required — a new calibration needs a new receipt, never a resumed one | refusal receipt w/ `receipt_id`, expected vs. observed epoch and digest, controller id, seq at stop, timestamp |
+| T-13 | **Calibration drift after authorization** — receipt stays valid while the calibration transform changes under it, so authorized joint angles now mean a different pose. **The physical-world-specific failure mode**, and the one T-03 does *not* cover: T-03 checks calibration at `activate`, which says nothing about tick 3000 | per-tick `calibration_epoch` compare (check 9); non-RT re-verification of `calibration_digest` on every epoch bump | inline `REVOKED`, then `category_1_stop`; re-authorization requires a fresh allocation and receipt, never a resumed lease | refusal receipt w/ `receipt_id`, expected vs. observed epoch and digest, controller id, seq at stop, timestamp |
 
 **Residual risks, stated plainly:** host/root compromise of the Lease Authority
 machine; private-key custody and revocation (no PKI — the verifier map is static,
-inherited from the base kernel); the single-node `ReceiptConsumptionStore`
+inherited from the base kernel); the single-node `ReceiptConsumptionLedger`
 provides **no cross-instance replay protection**, so a multi-controller cell needs
 a shared consumption authority before this profile is safe there; modeling error
-in the contract (a wrong SDF authorizes a real collision); and any hardware fault
-below the RT kernel. None of these are addressed by cryptography.
+in the contract (a wrong SDF authorizes a real collision); compromise of the drive
+arbiter, bus credential/configuration, or motor firmware (which can command motion
+despite correct upstream authority); and independent hardware faults. None of
+these are addressed by cryptography.
 
 ---
 
@@ -678,8 +1309,8 @@ Each phase has an exit gate. No phase claims the next phase's properties.
 
 | Phase | Scope | Exit gate |
 |---|---|---|
-| **P0-1** Compiler | `PhysicalExecutionCompiler`: inputs `PhysicalSafetyContract`, `RobotCapability`, `CellPolicy`, `OperatorConstraint`, `CalibrationManifest`, `TrajectoryBundle` → emits `ExecutionArtifact` { `contract_digest`, `constraint_digest`, `trajectory_root`, `calibration_epoch`, `execution_root`, `compiler_version`, `provenance` } | Monotonicity lattice `operator ⊆ cell ⊆ capability` enforced — a relaxation yields `CompilationRejected` and **no artifact**; provenance present on every constraint and covered by `contract_digest`; byte-identical output for identical input |
-| **P0-2** Loader + MAR | MAR as a `constraints.physical` profile; canonical encoder w/ NaN rejection; policy bundle for one cell; loader: verify `execution_root` → verify receipt signature → verify `calibration_epoch` → create lease → enable executor | Receipts issue + verify against the unmodified kernel; round-trip replay stable; negative-path tests prove no receipt → no lease; **a test asserts the loader cannot widen a constraint, resolve a layer conflict, or default a missing field** (§6.4) |
+| **P0-1** Compiler | `PhysicalExecutionCompiler`: inputs `PhysicalSafetyContract`, `RobotCapability`, `CellPolicy`, `OperatorConstraint`, `CalibrationManifest`, `TrajectoryBundle` → emits `ExecutionArtifact` { `contract_digest`, `constraint_digest`, `trajectory_digest`, `calibration_epoch`, `compiler_version`, `provenance` }. **Does not emit `execution_root`** | Monotonicity lattice `operator ⊆ cell ⊆ capability` enforced — a relaxation yields `CompilationRejected` and **no artifact**; provenance present on every constraint and covered by `contract_digest`; byte-identical output for identical input |
+| **P0-2** Loader + MAR | MAR as a `constraints.physical` profile; canonical encoder w/ NaN rejection; policy bundle for one cell; mint MAR only from `evaluate_and_append` metadata (no `dispatch`); require signed, bounded, timezone-aware expiry; compare receipt constraints to the live contract; verify `calibration_epoch`; allocate `lease_id` and read `boot_id`; **then** derive `execution_root` (§6.3); consume receipt and nonce; write lease; enable executor | Receipts issue + verify against the unmodified kernel; tests reject missing/mismatched predecessor metadata, empty/naive/expired/overlong expiry, wrong trusted-clock result, receipt/live-constraint mismatch, replay after consumption, boot mismatch, and unavailable shared nonce authority; **a test asserts the loader cannot widen a constraint, resolve a layer conflict, or default a missing field** (§6.4) |
 | **P1** Lease + RT kernel in sim | Lease Authority, shm control block, RT kernel as a userspace `SCHED_FIFO` loop against a simulated arm (MuJoCo/Isaac) | All 13 threats (T-01…T-13) reproduced as **failing-before / passing-after** tests; each asserts the side effect did *not* occur |
 | **P2** Timing characterization | `PREEMPT_RT` kernel; `cyclictest` baseline; measure worst-case `admissible()` under full contract, incl. the SDF lookup | Measured WCET reported with p99.9 and max; **no green claim without literal output**; budget declared *before* measuring (below) |
 | **P3** ROS 2 adapter | Lifecycle node, activation checks, evidence topics; hostile-node test harness | Compromised-ROS-graph test yields DoS only, never motion |
@@ -725,8 +1356,10 @@ does not re-derive geometry either.
 
 ### Frozen before P0 — change these only by amending this RFC
 
-1. **`execution_root` is the sole physical execution binding identity.** Nothing
-   downstream enforces against a bare `merkle_root` (§6.3).
+1. **`execution_root` is the derived lease-context identity.** Nothing
+   downstream enforces against a bare `merkle_root`, but freshness and replay
+   rejection remain the responsibility of signed bindings, expiry, consumed
+   receipt/nonce state, pinned boot state, and shared nonce authority (§6.3).
 2. **`calibration_epoch` is the RT drift guard.** A calibration change is an
    authority transition, not a parameter update: new calibration ⇒ new receipt,
    never a resumed lease (§6, check 9; T-13).
@@ -739,11 +1372,15 @@ does not re-derive geometry either.
 
 ### Open questions
 
-1. **Signing is mandatory here, unsigned is the base-kernel default.** This
-   profile requires `require_signature=True` with a real verifier. Key custody
-   and rotation for robot cells is unsolved and blocks P4.
-2. **Cross-controller replay.** The consumption store is single-node. A cell with
-   redundant controllers needs a shared, fail-closed consumption authority.
+1. **Signing is mandatory here.** Execution gates
+   (`execute_with_receipt`, `GovernedExecutor`) default
+   `require_signature=True`. Direct `DecisionReceipt.verify()` defaults
+   `False` and is not an execution boundary. This profile requires a real
+   verifier at the lease gate. Key custody and rotation for robot cells is
+   unsolved and blocks P4.
+2. **Cross-controller replay.** `ReceiptConsumptionLedger` is single-node JSONL.
+   A cell with redundant controllers needs a shared, fail-closed nonce-reservation
+   authority.
 3. **Contract authoring and review** — who signs a `PhysicalSafetyContract`, and
    what evidence backs the SDF/limit values? Currently undefined.
 4. **Force/impedance and admittance control** — the joint-position action space
